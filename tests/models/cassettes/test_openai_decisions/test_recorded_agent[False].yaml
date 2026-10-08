@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "946"
+      - "639"
       content-type:
       - application/json
       host:
@@ -20,42 +20,29 @@ interactions:
       type: json
       content:
         model: gpt-6-luna
-        input: "{\"message\":\"I was charged twice. Please refund the duplicate charge today.\"}"
+        input: >-
+          I was charged twice for my subscription and nobody has answered my emails for a
+          week. Fix this today!
         questions:
         - name: urgent
           type: predicate
-          instructions: |-
-            Does the customer explicitly need action today?
-            Yes: Explicitly asks for action today
-            No: No deadline or a later deadline
+          instructions: "{\"field\":\"urgent\",\"question\":\"Does this need attention today?\"}"
         - name: department
           type: choice
           choices:
           - value: billing
-            description: Payments and refunds
           - value: technical
-            description: Bugs and integrations
-          - value: other
-          instructions: Which team should handle this message?
+          instructions: "{\"field\":\"department\",\"question\":\"Which team owns this?\"}"
         - name: frustration
           type: score
           levels:
           - label: "0"
-            description: Calm and polite
+            description: Calm
           - label: "1"
-            description: Expresses frustration
+            description: Frustrated
           - label: "2"
-            description: Angry or hostile
-          instructions: How frustrated is the customer?
-        - name: sentiment
-          type: score
-          levels:
-          - label: "0"
-            description: Negative
-          - label: "1"
-          - label: "2"
-            description: Positive
-          instructions: ""
+            description: Angry
+          instructions: frustration
   response:
     status: 200
     headers:
@@ -71,9 +58,9 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "56"
+      - "42"
       server-timing-total:
-      - "55.869"
+      - "41.860"
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -87,7 +74,7 @@ interactions:
         answers:
         - type: predicate
           name: urgent
-          probability: 1.0
+          probability: 0.97
         - type: choice
           name: department
           choice: billing
@@ -96,44 +83,28 @@ interactions:
             probability: 1.0
           - value: technical
             probability: 0.0
-          - value: other
-            probability: 0.0
           confidence: 1.0
         - type: score
           name: frustration
-          score: 0.68
+          score: 1.26
           probabilities:
           - value: 0
             label: "0"
-            probability: 0.32
-          - value: 1
-            label: "1"
-            probability: 0.68
-          - value: 2
-            label: "2"
             probability: 0.0
-          confidence: 0.52
-        - type: score
-          name: sentiment
-          score: 0.76
-          probabilities:
-          - value: 0
-            label: "0"
-            probability: 0.43
           - value: 1
             label: "1"
-            probability: 0.38
+            probability: 0.74
           - value: 2
             label: "2"
-            probability: 0.19
-          confidence: 0.0
+            probability: 0.26
+          confidence: 0.61
         usage:
-          input_tokens: 536
+          input_tokens: 409
           input_tokens_details:
             cached_tokens: 0
             cache_write_tokens: 0
           output_tokens: 0
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 536
-  recorded_at: 2026-10-08T13:04:32.898072+00:00
+          total_tokens: 409
+  recorded_at: 2026-10-08T13:04:33.133205+00:00

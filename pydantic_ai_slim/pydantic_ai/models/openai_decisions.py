@@ -167,13 +167,13 @@ def _question(name: str, question: DecisionQuestion) -> dict[str, object]:
     elif isinstance(question, ScoreQuestion):
         body['type'] = 'score'
         body['levels'] = [
-            {'label': str(index), 'description': _text(description) if description is not None else None}
+            {'label': str(index), **({'description': _text(description)} if description is not None else {})}
             for index, description in enumerate(question.criteria)
         ]
     else:
         assert_never(question)
-    if instructions:
-        body['instructions'] = '\n'.join(instructions)
+    # The API requires `instructions` on every question, but accepts an empty string.
+    body['instructions'] = '\n'.join(instructions)
     return body
 
 

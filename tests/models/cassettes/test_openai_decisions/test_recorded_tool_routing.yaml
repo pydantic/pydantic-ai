@@ -1,0 +1,153 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/decisions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "656"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        input: Was my duplicate charge refunded? You need to look up the payment to know.
+        questions:
+        - name: Status.refunded
+          type: predicate
+          instructions: "{\"field\":\"refunded\",\"premise\":\"If the user's request calls for Status: Report whether the customer's payment was refunded.\",\"question\":\"Was the payment refunded?\"}"
+        - name: route
+          type: choice
+          choices:
+          - value: Status
+            description: Report whether the customer's payment was refunded.
+          - value: look_up_payment
+            description: Look up the status of the customer's payment in the billing system.
+          instructions: Which of these does this call for?
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - x-request-id,retry-after,server-timing-total
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "93"
+      server-timing-total:
+      - "92.924"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        answers:
+        - type: predicate
+          name: Status.refunded
+          probability: 0.5
+        - type: choice
+          name: route
+          choice: look_up_payment
+          probabilities:
+          - value: Status
+            probability: 0.0
+          - value: look_up_payment
+            probability: 1.0
+          confidence: 1.0
+        usage:
+          input_tokens: 325
+          input_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 325
+  recorded_at: 2026-10-08T13:04:33.540928+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/decisions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "505"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        input: "{\"text\":\"Was my duplicate charge refunded? You need to look up the payment to know.\",\"done\":[{\"tool_call\":{\"name\":\"look_up_payment\",\"args\":{}}},{\"tool_return\":{\"name\":\"look_up_payment\",\"content\":\"The duplicate charge was refunded yesterday.\"}}]}"
+        questions:
+        - name: refunded
+          type: predicate
+          instructions: "{\"field\":\"refunded\",\"question\":\"Was the payment refunded?\",\"goal\":\"Report whether the customer's payment was refunded.\"}"
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - x-request-id,retry-after,server-timing-total
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "39"
+      server-timing-total:
+      - "39.688"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        answers:
+        - type: predicate
+          name: refunded
+          probability: 1.0
+        usage:
+          input_tokens: 229
+          input_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 229
+  recorded_at: 2026-10-08T13:04:33.656710+00:00

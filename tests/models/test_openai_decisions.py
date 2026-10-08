@@ -39,9 +39,6 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
 
-# This is the published preview user's recording, converted to cassetter's serialization without
-# changing the request or response. It is not a recording made with our credentials.
-# https://github.com/crmne/ruby_llm/pull/1008 (head fcea120022d9abbbd9904fc7dcf16f28f484851b)
 @pytest.mark.vcr(additional_matchers=['json_body'])
 async def test_recorded_questions(openai_api_key: str, request_capture: RequestCapture):
     model = OpenAIDecisionsModel(
@@ -65,20 +62,22 @@ async def test_recorded_questions(openai_api_key: str, request_capture: RequestC
                     instructions='How frustrated is the customer?',
                     criteria=['Calm and polite', 'Expresses frustration', 'Angry or hostile'],
                 ),
+                # The API requires `instructions` and rejects a `null` level description.
+                'sentiment': ScoreQuestion(criteria=['Negative', None, 'Positive']),
             },
         ),
         {},
     )
     assert response.model_name == 'gpt-6-luna'
-    assert response.provider_response_id == '<X_REQUEST_ID>'
-    assert response.usage == RequestUsage(input_tokens=396, output_tokens=3, details={'reasoning_tokens': 0})
+    assert response.usage == snapshot(RequestUsage(details={'reasoning_tokens': 0}, input_tokens=536))
     assert response.answers == snapshot(
         {
             'urgent': NoulAnswer(noul=1.0),
             'department': ChoiceAnswer(
                 choice='billing', confidence=1.0, probabilities={'billing': 1.0, 'technical': 0.0, 'other': 0.0}
             ),
-            'frustration': ScoreAnswer(score=1.0, confidence=1.0, probabilities={0: 0.0, 1: 1.0, 2: 0.0}),
+            'frustration': ScoreAnswer(score=0.68, confidence=0.52, probabilities={0: 0.32, 1: 0.68, 2: 0.0}),
+            'sentiment': ScoreAnswer(score=0.76, confidence=0.0, probabilities={0: 0.43, 1: 0.38, 2: 0.19}),
         }
     )
     assert request_capture.body('/decisions') == snapshot(
@@ -89,8 +88,11 @@ async def test_recorded_questions(openai_api_key: str, request_capture: RequestC
                 {
                     'name': 'urgent',
                     'type': 'predicate',
-                    'instructions': 'Does the customer explicitly need action today?\n'
-                    'Yes: Explicitly asks for action today\nNo: No deadline or a later deadline',
+                    'instructions': """\
+Does the customer explicitly need action today?
+Yes: Explicitly asks for action today
+No: No deadline or a later deadline\
+""",
                 },
                 {
                     'name': 'department',
@@ -111,6 +113,16 @@ async def test_recorded_questions(openai_api_key: str, request_capture: RequestC
                         {'label': '2', 'description': 'Angry or hostile'},
                     ],
                     'instructions': 'How frustrated is the customer?',
+                },
+                {
+                    'name': 'sentiment',
+                    'type': 'score',
+                    'levels': [
+                        {'label': '0', 'description': 'Negative'},
+                        {'label': '1'},
+                        {'label': '2', 'description': 'Positive'},
+                    ],
+                    'instructions': '',
                 },
             ],
         }
@@ -137,7 +149,7 @@ class Ticket(BaseModel):
 
 @pytest.mark.vcr
 async def test_access_denied(allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture):
-    """Recorded with our API key: authentication succeeds, but Decisions access is not enabled."""
+    """Recorded with a key whose project authenticates but doesn't have Decisions access."""
     model = OpenAIDecisionsModel(
         'gpt-6-luna', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
     )
@@ -152,7 +164,67 @@ async def test_access_denied(allow_model_requests: None, openai_api_key: str, re
     }
 
 
-# Synthetic responses exercise agent-generated questions and failures unavailable in the published recording.
+@pytest.mark.vcr
+@pytest.mark.parametrize('stream', [False, True])
+async def test_recorded_agent(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture, stream: bool
+):
+    model = OpenAIDecisionsModel(
+        'gpt-6-luna', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
+    prompt = 'I was charged twice for my subscription and nobody has answered my emails for a week. Fix this today!'
+    agent = Agent(model, output_type=Ticket)
+    if stream:
+        async with agent.run_stream(prompt) as streamed:
+            output = await streamed.get_output()
+            usage = streamed.usage
+            response = streamed.response
+    else:
+        result = await agent.run(prompt)
+        output, usage, response = result.output, result.usage, result.response
+    assert output == snapshot(Ticket(urgent=True, department='billing', frustration=1))
+    assert (usage.input_tokens, usage.output_tokens) == snapshot((409, 0))
+    assert response.provider_details == snapshot(
+        {
+            'confidence': {'urgent': 0.94, 'department': 1.0, 'frustration': 0.61},
+            'probabilities': {
+                'department': {'billing': 1.0, 'technical': 0.0},
+                'frustration': {'0': 0.0, '1': 0.74, '2': 0.26},
+            },
+            'scores': {'frustration': 1.26},
+        }
+    )
+
+
+@pytest.mark.vcr
+async def test_recorded_tool_routing(allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture):
+    class Status(BaseModel):
+        """Report whether the customer's payment was refunded."""
+
+        refunded: bool = Field(description='Was the payment refunded?')
+
+    calls: list[str] = []
+
+    def look_up_payment() -> str:
+        """Look up the status of the customer's payment in the billing system."""
+        calls.append('looked up')
+        return 'The duplicate charge was refunded yesterday.'
+
+    model = OpenAIDecisionsModel(
+        'gpt-6-luna', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
+    result = await Agent(model, output_type=Status, tools=[look_up_payment]).run(
+        'Was my duplicate charge refunded? You need to look up the payment to know.'
+    )
+    assert result.output == snapshot(Status(refunded=True))
+    assert calls == snapshot(['looked up'])
+    assert len(request_capture.bodies('/decisions')) == 2
+    assert request_capture.body('/decisions', 1)['input'] == snapshot(
+        '{"text":"Was my duplicate charge refunded? You need to look up the payment to know.","done":[{"tool_call":{"name":"look_up_payment","args":{}}},{"tool_return":{"name":"look_up_payment","content":"The duplicate charge was refunded yesterday."}}]}'
+    )
+
+
+# Synthetic responses exercise settings forwarding, token details and failures a live run can't produce on demand.
 def ticket_response() -> dict[str, object]:
     return {
         'model': 'gpt-6-luna',
@@ -308,14 +380,12 @@ async def test_json_descriptions_and_missing_usage():
 Yes: {"label":"Yes"}\
 """,
                     },
-                    {'name': 'empty', 'type': 'predicate'},
+                    {'name': 'empty', 'type': 'predicate', 'instructions': ''},
                     {
                         'name': 'score',
                         'type': 'score',
-                        'levels': [
-                            {'label': '0', 'description': None},
-                            {'label': '1', 'description': '{"label":"Very good"}'},
-                        ],
+                        'levels': [{'label': '0'}, {'label': '1', 'description': '{"label":"Very good"}'}],
+                        'instructions': '',
                     },
                 ],
             }
@@ -361,8 +431,14 @@ Yes: {"label":"Yes"}\
     ],
 )
 async def test_optional_token_details(usage: dict[str, object]):
-    model = mock_model(lambda _: httpx2.Response(200, json={'model': 'gpt-6-luna', 'answers': [], 'usage': usage}))
+    model = mock_model(
+        lambda _: httpx2.Response(
+            200, json={'model': 'gpt-6-luna', 'answers': [], 'usage': usage}, headers={'x-request-id': 'req_1'}
+        )
+    )
     response = await model.decide(DecisionRequest(state='', questions={}), {})
+    # Cassette hooks drop `x-*` headers, so the recorded tests can't check this.
+    assert response.provider_response_id == 'req_1'
     assert response.usage.input_tokens == 5
     assert response.usage.output_tokens == 1
     assert response.usage.cache_read_tokens == response.usage.cache_write_tokens == 0
@@ -491,53 +567,3 @@ async def test_invalid_distribution(answer: dict[str, object]):
     )
     with pytest.raises(UnexpectedModelBehavior, match=r'invalid .* probabilities'):
         await model.decide(DecisionRequest(state='x', questions={'value': question}), {})
-
-
-async def test_tool_routing(allow_model_requests: None):
-    class Status(BaseModel):
-        """Report whether the customer's payment was refunded."""
-
-        refunded: bool = Field(description='Was the payment refunded?')
-
-    calls: list[str] = []
-
-    def look_up_order() -> str:
-        """Look up the customer's payment."""
-        calls.append('looked up')
-        return 'Payment refunded yesterday.'
-
-    responses = iter(
-        [
-            {
-                'model': 'gpt-6-luna',
-                'answers': [
-                    {'name': 'Status.refunded', 'type': 'predicate', 'probability': 0.5},
-                    {
-                        'name': 'route',
-                        'type': 'choice',
-                        'choice': 'look_up_order',
-                        'confidence': 0.9,
-                        'probabilities': [
-                            {'value': 'Status', 'probability': 0.1},
-                            {'value': 'look_up_order', 'probability': 0.9},
-                        ],
-                    },
-                ],
-            },
-            {
-                'model': 'gpt-6-luna',
-                'answers': [{'name': 'refunded', 'type': 'predicate', 'probability': 1}],
-            },
-        ]
-    )
-    requests: list[httpx2.Request] = []
-
-    def respond(request: httpx2.Request) -> httpx2.Response:
-        requests.append(request)
-        return httpx2.Response(200, json=next(responses))
-
-    result = await Agent(mock_model(respond), output_type=Status, tools=[look_up_order]).run('Was I refunded?')
-    assert result.output == Status(refunded=True)
-    assert calls == ['looked up']
-    assert len(requests) == 2
-    assert 'Payment refunded yesterday.' in json.loads(requests[1].content)['input']
