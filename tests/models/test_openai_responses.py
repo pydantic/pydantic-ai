@@ -3865,7 +3865,7 @@ async def test_openai_previous_response_id(allow_model_requests: None, openai_ap
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
     result = await agent.run('The secret key is sesame')
-    settings = OpenAIResponsesModelSettings(openai_previous_response_id=result.all_messages()[-1].provider_response_id)  # pyright: ignore[reportArgumentType, reportAttributeAccessIssue, reportUnknownMemberType]
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id=result.response.provider_response_id)
     result = await agent.run('What is the secret code?', model_settings=settings)
     assert result.output == snapshot('sesame')
 
