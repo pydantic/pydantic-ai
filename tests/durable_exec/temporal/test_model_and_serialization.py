@@ -1064,6 +1064,8 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_event_stream_replacements',  # live workflow-side legacy-replacement state applied at stream position
         '_capability',  # live capability instance used only while dispatching workflow-side hooks
         'realtime_session',  # live RealtimeSession, not serializable; realtime sessions don't run inside Temporal activities
+        'realtime_run',  # live realtime run handle, unavailable inside an activity just like realtime_session
+        '_steering',  # live native input controller; steering cannot cross the activity boundary
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
         '_durable_operations',  # workflow-side callables cannot cross the activity boundary; worker dispatch is pre-registered
         '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker agent instead

@@ -3622,9 +3622,9 @@ async def test_repeated_malformed_json_args_exceed_tool_retry_budget() -> None:
     with pytest.raises(UnexpectedModelBehavior, match="Tool 'noop' exceeded max retries count of 1"):
         await collect_events(session)
 
-    assert session._tool_manager.failed_tools == set()  # pyright: ignore[reportPrivateUsage]
-    assert session._tool_manager.ctx is not None  # pyright: ignore[reportPrivateUsage]
-    assert session._tool_manager.ctx.retries == {'noop': 1}  # pyright: ignore[reportPrivateUsage]
+    assert session._run.tool_manager.failed_tools == set()  # pyright: ignore[reportPrivateUsage]
+    assert session._run.tool_manager.ctx is not None  # pyright: ignore[reportPrivateUsage]
+    assert session._run.tool_manager.ctx.retries == {'noop': 1}  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_tool_runner_exception_ends_session() -> None:
@@ -6353,7 +6353,7 @@ async def test_concurrent_iteration_raises() -> None:
 def _queued_realtime_events(session: _RealtimeSession) -> list[RealtimeEvent]:
     return [
         item
-        for item in session._queue  # pyright: ignore[reportPrivateUsage]
+        for item in session._run.queue  # pyright: ignore[reportPrivateUsage]
         if isinstance(
             item,
             (
@@ -6416,7 +6416,7 @@ async def test_active_session_iterator_does_not_drop_deltas() -> None:
             for event in events
             if isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta)
         ] == chunks
-        assert session._queue_dropped_deltas == 0  # pyright: ignore[reportPrivateUsage]
+        assert session._run.queue_dropped_deltas == 0  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_closing_session_iterator_bounds_remaining_deltas() -> None:
@@ -6427,8 +6427,8 @@ async def test_closing_session_iterator_bounds_remaining_deltas() -> None:
         assert isinstance(events, AsyncGenerator)
         await events.aclose()
 
-        assert session._queue_delta_count == 512  # pyright: ignore[reportPrivateUsage]
-        assert session._queue_dropped_deltas == 1488  # pyright: ignore[reportPrivateUsage]
+        assert session._run.queue_delta_count == 512  # pyright: ignore[reportPrivateUsage]
+        assert session._run.queue_dropped_deltas == 1488  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_unconsumed_session_queue_bounds_structural_events() -> None:
@@ -6452,7 +6452,7 @@ async def test_unconsumed_session_queue_bounds_structural_events() -> None:
         assert len(structural) == 512
         # Seven structural events per turn, not five: the untranscribed-segment placeholder this PR
         # adds contributes a part start and end of its own.
-        assert session._queue_dropped_structural == turns * 7 - 512  # pyright: ignore[reportPrivateUsage]
+        assert session._run.queue_dropped_structural == turns * 7 - 512  # pyright: ignore[reportPrivateUsage]
         # The window that survives is the most recent one, and it still ends on a turn boundary.
         assert isinstance(structural[-1], RealtimeTurnCompleteEvent)
         # No delta is orphaned; `test_unconsumed_session_queue_never_orphans_a_delta` covers the
@@ -6514,7 +6514,7 @@ async def test_active_session_iterator_does_not_drop_structural_events() -> None
 
     async with RealtimeSession(FakeRealtimeConnection(events)) as session:
         received = [event async for event in session]
-        assert session._queue_dropped_structural == 0  # pyright: ignore[reportPrivateUsage]
+        assert session._run.queue_dropped_structural == 0  # pyright: ignore[reportPrivateUsage]
         assert sum(isinstance(event, RealtimeTurnCompleteEvent) for event in received) == 200
 
 
@@ -8293,7 +8293,7 @@ async def test_agent_realtime_session_rejects_non_text_enqueue() -> None:
 )
 async def test_realtime_pending_messages_reject_unsupported_message_shapes(messages: list[ModelMessage]) -> None:
     session = RealtimeSession(FakeRealtimeConnection([]))
-    manager = session._tool_manager  # pyright: ignore[reportPrivateUsage]
+    manager = session._run.tool_manager  # pyright: ignore[reportPrivateUsage]
     assert manager.ctx is not None
     assert manager.ctx.pending_messages is not None
     with pytest.raises(UserError, match='support plain-text prompts and system-prompt parts only'):
@@ -8345,7 +8345,7 @@ async def test_tool_context_enqueue_after_session_close_raises() -> None:
 def test_session_accepts_unprepared_tool_manager_without_pending_context() -> None:
     manager = ToolManager(FunctionToolset())
     session = _RealtimeSession(FakeRealtimeConnection([]), tool_manager=manager)
-    assert session._tool_manager.ctx is None  # pyright: ignore[reportPrivateUsage]
+    assert session._run.tool_manager.ctx is None  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_replayed_items_are_suppressed_by_item_and_tool_call_id() -> None:
@@ -8445,7 +8445,7 @@ async def test_failed_asap_drain_is_forwarded_to_session_iterator() -> None:
             raise RuntimeError('send failed')
 
     session = RealtimeSession(_FailingSend([]))
-    manager = session._tool_manager  # pyright: ignore[reportPrivateUsage]
+    manager = session._run.tool_manager  # pyright: ignore[reportPrivateUsage]
     assert manager.ctx is not None
     assert manager.ctx.pending_messages is not None
     async with session:
@@ -8460,7 +8460,7 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn)
     session._asap_drain_deferred = True  # pyright: ignore[reportPrivateUsage]
-    session._pending_messages.append(  # pyright: ignore[reportPrivateUsage]
+    session._run.pending_messages.append(  # pyright: ignore[reportPrivateUsage]
         PendingMessage(
             messages=[ModelRequest(parts=[UserPromptPart(content='after tool')])],
             priority='asap',
@@ -8471,6 +8471,7 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
     async def complete_after_usage(
         call_part: ToolCallPart,
         *,
+        run: realtime_session_module._RealtimeRunState,  # pyright: ignore[reportPrivateUsage]
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
         response_usage_follows: bool,
@@ -8479,14 +8480,17 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
     ) -> tuple[ToolReturnPart, None]:
         del validation_done, execution_prerequisites, response_usage_follows
         del run_step, reserved_budget
-        session._tool_calls_awaiting_usage.clear()  # pyright: ignore[reportPrivateUsage]
+        session._finalize_response()  # pyright: ignore[reportPrivateUsage]
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
-    session._tool_calls_awaiting_usage.add('call')  # pyright: ignore[reportPrivateUsage]
+    session._handle_tool_call_part(  # pyright: ignore[reportPrivateUsage]
+        ToolCallPart(tool_name='noop', args={}, tool_call_id='call'), response_usage_follows=True
+    )
     monkeypatch.setattr(session, '_execute_tool', complete_after_usage)
     completion = asyncio.Event()
     await session._run_tool(  # pyright: ignore[reportPrivateUsage]
         ToolCallPart(tool_name='noop', args={}, tool_call_id='call'),
+        run=session._run,  # pyright: ignore[reportPrivateUsage]
         validation_done=validation_done,
         execution_prerequisites=(),
         completion=completion,
@@ -8512,23 +8516,26 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
         async def send(self, content: RealtimeInput) -> None:
             if isinstance(content, str):
                 raise RuntimeError('drain send failed')
-            # This test only drives the drain's text-turn send.
-            await super().send(content)  # pragma: no cover
+            assert isinstance(content, ToolResult)
+            await super().send(content)
 
     conn = _FailingDrain([])
     session = RealtimeSession(conn)
     await session.__aenter__()
     event_task = asyncio.create_task(drain_events(session)) if consumer == 'iterating' else None
     transcripts = session.stream_transcripts()
-    await asyncio.sleep(0)
     session._asap_drain_deferred = True  # pyright: ignore[reportPrivateUsage]
-    session._pending_messages.append(  # pyright: ignore[reportPrivateUsage]
-        PendingMessage(messages=[ModelRequest(parts=[UserPromptPart(content='after tool')])], priority='asap')
+    # Seed this internal deferred-drain scenario without scheduling a competing notification task.
+    # The assertion below proves the error escapes the tool task itself, not another queue drain.
+    list[PendingMessage].append(
+        session._run.pending_messages,  # pyright: ignore[reportPrivateUsage]
+        PendingMessage(messages=[ModelRequest(parts=[UserPromptPart(content='after tool')])], priority='asap'),
     )
 
     async def complete_after_usage(
         call_part: ToolCallPart,
         *,
+        run: realtime_session_module._RealtimeRunState,  # pyright: ignore[reportPrivateUsage]
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
         response_usage_follows: bool,
@@ -8537,15 +8544,18 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
     ) -> tuple[ToolReturnPart, None]:
         del validation_done, execution_prerequisites, response_usage_follows
         del run_step, reserved_budget
-        session._tool_calls_awaiting_usage.clear()  # pyright: ignore[reportPrivateUsage]
+        session._finalize_response()  # pyright: ignore[reportPrivateUsage]
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
-    session._tool_calls_awaiting_usage.add('call')  # pyright: ignore[reportPrivateUsage]
+    session._handle_tool_call_part(  # pyright: ignore[reportPrivateUsage]
+        ToolCallPart(tool_name='noop', args={}, tool_call_id='call'), response_usage_follows=True
+    )
     monkeypatch.setattr(session, '_execute_tool', complete_after_usage)
 
     task = asyncio.create_task(
         session._run_tool(  # pyright: ignore[reportPrivateUsage]
             ToolCallPart(tool_name='noop', args={}, tool_call_id='call'),
+            run=session._run,  # pyright: ignore[reportPrivateUsage]
             validation_done=asyncio.Event(),
             execution_prerequisites=(),
             completion=asyncio.Event(),
@@ -8557,8 +8567,10 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
         )
     )
     task.add_done_callback(session._tool_task_done)  # pyright: ignore[reportPrivateUsage]
-    await asyncio.gather(task, return_exceptions=True)
-    await asyncio.sleep(0)  # let the done-callback run
+    (error,) = await asyncio.gather(task, return_exceptions=True)
+    assert isinstance(error, RuntimeError)
+    assert str(error) == 'drain send failed'
+    assert conn.sent == [ToolResult(tool_call_id='call', output='done')]
 
     if event_task is not None:
         with pytest.raises(RuntimeError, match='drain send failed'):
@@ -8680,21 +8692,6 @@ async def test_iterator_reuses_receive_pump_started_by_session_owner() -> None:
     session = RealtimeSession(FakeRealtimeConnection([ResponseDone()]))
     async with session:
         assert [event async for event in session] == [RealtimeTurnCompleteEvent()]
-
-
-async def test_receive_pump_stops_when_event_handler_trips_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    session = RealtimeSession(FakeRealtimeConnection([ResponseDone(), ResponseDone()]))
-    handled = 0
-
-    async def stop_after_first(event: RealtimeCodecEvent) -> bool:
-        nonlocal handled
-        handled += 1
-        return True
-
-    monkeypatch.setattr(session, '_handle_pump_event', stop_after_first)
-    await session._pump(None)  # pyright: ignore[reportPrivateUsage]
-
-    assert handled == 1
 
 
 async def test_tool_manager_reports_validation_failure_when_retry_budget_is_exhausted(
@@ -9032,7 +9029,7 @@ async def test_tools_from_one_response_share_a_run_step() -> None:
     # Pins the graph's invariant: every call from one response runs at the step in effect when that
     # response produced it, the way a graph batch shares the step advanced before its request.
     #
-    # This passes against the previous code too — reading `self._tool_run_step` inside `_execute_tool`
+    # This passes against the previous code too — reading `self._run.tool_run_step` inside `_execute_tool`
     # happened to be safe, because `on_validate` sets `validation_done` *before* awaiting the barrier
     # and the pump blocks on it, pinning every manager sync ahead of the next upstream event. The
     # capture makes the invariant the code's own rather than a consequence of that interleaving, and
@@ -9830,7 +9827,7 @@ async def test_when_idle_enqueue_after_pump_finishes_is_delivered() -> None:
     session = RealtimeSession(conn)
     async with session:
         assert await drain_events(session) == []
-        session._pending_messages.append(  # pyright: ignore[reportPrivateUsage]
+        session._run.pending_messages.append(  # pyright: ignore[reportPrivateUsage]
             PendingMessage(
                 messages=[ModelRequest(parts=[UserPromptPart(content='late idle message')])],
                 priority='when_idle',
@@ -11791,7 +11788,10 @@ async def test_wait_for_reply_returns_when_a_tool_result_trips_the_request_limit
                 await session.wait_for_reply()
             await events
     returns = [part for message in session.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)]
-    assert [part.outcome for part in returns] == ['failed']
+    # Execution succeeded. Refusing the follow-up request must not erase the actual result.
+    assert [(part.outcome, part.content) for part in returns] == [('success', 'done')]
+    (operation,) = session.tool_operations
+    assert (operation.execution, operation.delivery) == ('completed', 'ready')
 
 
 # --- context window ----------------------------------------------------------------------------

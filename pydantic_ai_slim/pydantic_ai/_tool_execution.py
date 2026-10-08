@@ -17,7 +17,7 @@ from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
 from pydantic_graph import GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
-from . import _output, exceptions, messages as _messages, result
+from . import _operations, _output, exceptions, messages as _messages, result
 from ._deferred_capabilities import LoadCapabilityCallPart
 from .exceptions import ToolFailedError, ToolRetryError
 from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDenied, ToolKind
@@ -308,6 +308,7 @@ async def process_tool_calls(
     tool_manager: ToolManager[DepsT],
     *,
     tool_calls: list[_messages.ToolCallPart],
+    source_response: _messages.ModelResponse,
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None,
     tool_call_metadata: dict[str, dict[str, Any]] | None,
     final_result: result.FinalResult[NodeRunEndT] | None,
@@ -362,6 +363,7 @@ async def process_tool_calls(
     processor = processor_class(
         tool_manager=tool_manager,
         tool_calls=tool_calls,
+        source_response=source_response,
         tool_call_results=tool_call_results,
         tool_call_metadata=tool_call_metadata,
         ctx=ctx,
@@ -389,6 +391,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     tool_manager: ToolManager[DepsT]
     tool_calls: list[_messages.ToolCallPart]
+    source_response: _messages.ModelResponse
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None
     tool_call_metadata: dict[str, dict[str, Any]] | None
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -532,9 +535,46 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     ) -> Iterator[_messages.HandleResponseEvent]:
         """Append an output tool's return/retry `part` to `output_parts` and emit its call/result events."""
         self.output_parts.append(part)
+        # Only executed/validated output calls have an operation; skipped siblings must not
+        # acquire execution permission merely because their status is written to history.
+        call_index = next(i for i, original in enumerate(self.tool_calls) if original is call)
+        state = self.ctx.state
+        operation_id = self._operation_id(call, call_index) if args_valid is not None else None
+        if operation_id is not None:
+            operation = state.tool_operations[operation_id]
+            request = _messages.ModelRequest(parts=[part], run_id=state.run_id, conversation_id=state.conversation_id)
+            if operation.execution == 'running':
+                _operations.apply(state.tool_operations, operation_id, _operations.CompleteTool([request]))
+            else:
+                assert operation.execution == 'completed'
+                _operations.apply(state.tool_operations, operation_id, _operations.SetOutputResult([request]))
         yield from _emit_output_tool_events(call, part, args_valid=args_valid)
 
     async def _run_output_tool_call(self, call: _messages.ToolCallPart) -> _OutputCallResult[NodeRunEndT]:
+        state = self.ctx.state
+        call_index = next(i for i, original in enumerate(self.tool_calls) if original is call)
+        operation_id = self._operation_id(call, call_index)
+        # `Agent.iter()` may already have processed partial output snapshots in the model
+        # node. Final validation continues that operation, rather than admitting a second effect.
+        if state.tool_operations[operation_id].execution != 'running':
+            _operations.apply(state.tool_operations, operation_id, _operations.StartTool())
+        _operations.apply(state.tool_operations, operation_id, _operations.UpdateOutputCall(call))
+        try:
+            outcome = await self._execute_output_tool_call(call)
+        except BaseException:
+            _operations.apply(state.tool_operations, operation_id, _operations.InterruptTool())
+            raise
+        status = (
+            (_OUTPUT_EXECUTION_FAILED if outcome.args_valid else _OUTPUT_VALIDATION_FAILED)
+            if outcome.raise_exc is not None
+            else _FINAL_RESULT_PROCESSED
+        )
+        part = outcome.retry_part or self._status_part(call, status)
+        request = _messages.ModelRequest(parts=[part], run_id=state.run_id, conversation_id=state.conversation_id)
+        _operations.apply(state.tool_operations, operation_id, _operations.CompleteTool([request]))
+        return outcome
+
+    async def _execute_output_tool_call(self, call: _messages.ToolCallPart) -> _OutputCallResult[NodeRunEndT]:
         """Validate and execute an output tool call, returning a structured result.
 
         The caller interprets the result against the winner (first valid output by emission
@@ -591,7 +631,12 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     async def _run_output(self, call: _messages.ToolCallPart) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Run a single output tool call (or stub it if a final result was already chosen)."""
-        if self.final_result is not None and self.final_result.tool_call_id == call.tool_call_id:
+        if (
+            self.final_result is not None
+            and self.winning_output_part is None
+            and self.final_result.tool_call_id == call.tool_call_id
+        ):
+            # A streamed-in result is emitted once; a sibling may reuse its provider call ID.
             for event in self._emit_winning_output(call):
                 yield event
         elif self.final_result is not None:
@@ -713,7 +758,75 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 if self._is_retry_wins_trigger(part, kind=kind):
                     self.retry_wins_triggered = True
 
+    def _operation_id(self, call: _messages.ToolCallPart, call_index: int) -> str:
+        state = self.ctx.state
+        if self.tool_call_results is not None:
+            # A deferred resume is a new Run, but settles the original logical operation.
+            # The resume path already rejects duplicate call IDs in its source response.
+            for operation in reversed(state.tool_operations.values()):
+                if (
+                    operation.run_id == self.source_response.run_id
+                    and operation.response_timestamp == self.source_response.timestamp
+                    and operation.call_index == call_index
+                    and operation.call.tool_call_id == call.tool_call_id
+                    and operation.call.tool_name == call.tool_name
+                    and operation.execution == 'deferred'
+                ):
+                    return operation.operation_id
+        return _operations.admit(
+            state.tool_operations,
+            run_id=state.run_id,
+            run_step=state.run_step,
+            call=call,
+            call_index=call_index,
+            response_timestamp=self.source_response.timestamp,
+        )
+
     async def _call_tool(
+        self,
+        tool_call: ValidatedToolCall[DepsT] | _messages.ToolCallPart,
+        *,
+        call_index: int,
+        tool_call_result: DeferredToolResult | None,
+    ) -> tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]:
+        state = self.ctx.state
+        call = tool_call.call if isinstance(tool_call, ValidatedToolCall) else tool_call
+        operation_id = self._operation_id(call, call_index)
+        actions = _operations.apply(state.tool_operations, operation_id, _operations.StartTool())
+        assert 'execute_tool' in actions
+        if pending := state.deferred_tool_requests:
+            pending.calls = [p for p in pending.calls if p.tool_call_id != call.tool_call_id]
+            pending.approvals = [p for p in pending.approvals if p.tool_call_id != call.tool_call_id]
+            pending.metadata.pop(call.tool_call_id, None)
+            if not pending.calls and not pending.approvals:
+                state.deferred_tool_requests = None
+        try:
+            parts, content = await self._execute_tool(tool_call, tool_call_result=tool_call_result)
+        except (exceptions.CallDeferred, exceptions.ApprovalRequired) as exc:
+            _operations.apply(state.tool_operations, operation_id, _operations.DeferTool())
+            if state.deferred_tool_requests is None:
+                state.deferred_tool_requests = DeferredToolRequests()
+            pending = state.deferred_tool_requests
+            if isinstance(exc, exceptions.CallDeferred):
+                pending.calls.append(call)
+            else:
+                pending.approvals.append(call)
+            if exc.metadata is not None:
+                pending.metadata[call.tool_call_id] = exc.metadata
+            raise
+        except BaseException:
+            _operations.apply(state.tool_operations, operation_id, _operations.InterruptTool())
+            raise
+        request_parts: list[_messages.ModelRequestPart] = list(parts)
+        if content:
+            request_parts.append(_messages.UserPromptPart(content))
+        request = _messages.ModelRequest(
+            parts=request_parts, run_id=state.run_id, conversation_id=state.conversation_id
+        )
+        _operations.apply(state.tool_operations, operation_id, _operations.CompleteTool([request]))
+        return parts, content
+
+    async def _execute_tool(
         self,
         tool_call: ValidatedToolCall[DepsT] | _messages.ToolCallPart,
         *,
@@ -843,6 +956,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             call = tool_calls[index]
             return self._call_tool(
                 validated_calls.get(call.tool_call_id, call),
+                call_index=next(i for i, original in enumerate(self.tool_calls) if original is call),
                 tool_call_result=tool_call_results.get(call.tool_call_id),
             )
 
@@ -965,7 +1079,20 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         # locate it by identity and replace it in `output_parts` without scanning for a content match.
         assert self.winning_output_part is not None
         idx = self.output_parts.index(self.winning_output_part)
-        self.output_parts[idx] = dataclasses.replace(self.winning_output_part, content=_RETRY_WINS)
+        replacement = dataclasses.replace(self.winning_output_part, content=_RETRY_WINS)
+        self.output_parts[idx] = replacement
+        # The emitted event keeps its original status; persisted execution facts must instead
+        # match the final request that will actually be delivered. Identity also handles
+        # providers that reuse a call ID within one response.
+        operation = next(
+            operation
+            for operation in self.ctx.state.tool_operations.values()
+            if operation.result and operation.result[0].parts[0] is self.winning_output_part
+        )
+        request = dataclasses.replace(operation.result[0], parts=[replacement])
+        _operations.apply(
+            self.ctx.state.tool_operations, operation.operation_id, _operations.SetOutputResult([request])
+        )
         self.final_result = None
 
     async def _finalize_deferred(self) -> AsyncIterator[_messages.AgentStreamEvent]:
@@ -1033,10 +1160,22 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 f'Deferred tool calls must have unique tool_call_id values; duplicate ids: {duplicate_ids}'
             )
 
+        for call in [*self.deferred_calls['external'], *self.deferred_calls['unapproved']]:
+            call_index = next(i for i, original in enumerate(self.tool_calls) if original is call)
+            operation_id = self._operation_id(call, call_index)
+            _operations.apply(self.ctx.state.tool_operations, operation_id, _operations.DeferTool())
+
         deferred_tool_requests: DeferredToolRequests | None = DeferredToolRequests(
             calls=self.deferred_calls['external'],
             approvals=self.deferred_calls['unapproved'],
             metadata=self.deferred_metadata,
+        )
+
+        self.ctx.state.deferred_tool_requests = dataclasses.replace(
+            deferred_tool_requests,
+            calls=list(deferred_tool_requests.calls),
+            approvals=list(deferred_tool_requests.approvals),
+            metadata=dict(deferred_tool_requests.metadata),
         )
 
         # Emit the batch of deferred requests so stream consumers can observe the pending
@@ -1101,6 +1240,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 deferred_tool_requests.approvals.extend(new_deferred_calls['unapproved'])
                 deferred_tool_requests.metadata.update(new_deferred_metadata)
 
+        self.ctx.state.deferred_tool_requests = deferred_tool_requests
         if deferred_tool_requests is not None:
             if not self.ctx.deps.output_schema.allows_deferred_tools:
                 raise exceptions.UserError(
@@ -1198,6 +1338,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                 output_results[i] = _OutputCallResult(
                     call=self.tool_calls[i], args_valid=True, final_result=self.final_result
                 )
+                break
 
         # Segment by barriers: a `sequential=True` tool (or run-scoped 'sequential' mode) runs alone.
         # Pre-committed streamed outputs have no task to launch, so they're excluded from segmentation.
@@ -1224,6 +1365,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             try:
                 return index, await self._call_tool(
                     validated_calls.get(call.tool_call_id, call),
+                    call_index=index,
                     tool_call_result=self.calls_to_run_results.get(call.tool_call_id),
                 )
             except (exceptions.CallDeferred, exceptions.ApprovalRequired) as e:
@@ -1303,7 +1445,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                     # Every output index is populated above.
                     if r is None:
                         continue  # pragma: no cover
-                    is_winner = self.final_result is not None and r.call.tool_call_id == self.final_result.tool_call_id
+                    is_winner = self.final_result is not None and r.final_result is self.final_result
                     if is_winner and self.final_result_was_set_externally:
                         # Streamed-in winner: record "processed" without claiming it was selected here.
                         for event in self._emit_winning_output(r.call):

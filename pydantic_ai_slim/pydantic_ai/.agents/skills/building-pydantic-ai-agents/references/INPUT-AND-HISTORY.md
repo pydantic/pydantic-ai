@@ -144,3 +144,19 @@ A `priority` controls delivery:
 - `'when_idle'`: delivered only when the agent would otherwise terminate, after any `'asap'` messages — a follow-up task that shouldn't interrupt in-flight work.
 
 Both priorities drain however you drive the run — `agent.run()`, explicit `AgentRun.next()`, and a bare `async for node in agent_run:` loop all deliver enqueued messages. See [message history docs](https://pydantic.dev/docs/ai/core-concepts/message-history/#injecting-messages-mid-run) for details.
+
+## Own Sequential Runs with a Session
+
+Use `async with agent.session(conversation=..., deps=...) as session` when one live owner should carry history, cumulative usage, pending input, and model resources across runs. Omit `conversation` for a new thread; use `state=` instead to import a `SessionState`. The normal async run/stream/iter methods work on the owner. Do not replace history or usage per run, start overlapping runs, or call its sync methods. Existing `agent.run(...)` and `conversation=` usage remains supported without migration.
+
+`session.state` and `session.conversation` are detached snapshots. Serialize state using `SessionStateTypeAdapter`. An active checkpoint or unresolved tool/native delivery must be reconciled with `state.recover(...)` before reopening. Stop and fence the old owner first; a checkpoint does not guarantee exactly-once effects or contain a live socket.
+
+For realtime, `session.realtime(model).session()` is one run. For several explicit runs on one connection, enter `session.realtime(model).connect()` and then sequential `live.run()` contexts. Normal exit drains replies/tools/transcripts; abort closes the connection. Stop audio producers and apply an application deadline. Each `RealtimeRun` handle is revoked on exit. Hooks/tools access it through `ctx.realtime_run`, not `ctx.realtime_session`; select `ctx.realtime_run or ctx.realtime_session` to support both APIs. Keep wire settings, instructions and schemas unchanged between runs. Close the attachment before switching back to ordinary runs. Realtime remains unsupported inside Temporal/DBOS/Prefect durable containers.
+
+## Session-Owned Native Steering
+
+For Responses WebSocket requests, explicitly set `OpenAIResponsesModel(..., transport='websocket')` and `OpenAIResponsesModelSettings(openai_steering=True)`. Use `await ctx.steer(*user_content)`, `await run.steer(*user_content)`, or `await session.steer(*user_content)` during an active response. Keep using `enqueue` for provider-independent delivery at the next request boundary. Native steering is not available in durable execution units or with token-count preflight.
+
+A steering delivery ID is a send receipt, not proof of consumption. Read `session.state.steering`: acceptance queues input; commitment identifies the successor consuming it. The original response, steering user input, and successor remain separate in history. Do not resend accepted input with tool outputs. Only one unresolved delivery is admitted at a time.
+
+After loss or interruption, explicitly reconcile the checkpoint with `state.recover(steering={delivery_id: 'replay'})` or `'discard'`; never automatically replay uncertain input. Native successors inherit the original request's tools/settings, bypass request-selection and request-wrapper hooks, and permit observation but not response replacement/retry. Explicit tool-result continuations still run middleware but must retain the bound model and cannot be short-circuited by a cache. With steering enabled, `run_stream()` selects final output only at a response terminal event; use event handlers for intermediate events.

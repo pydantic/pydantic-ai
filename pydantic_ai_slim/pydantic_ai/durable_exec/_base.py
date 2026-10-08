@@ -325,6 +325,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         return self.engine_spec.cancellation_error_types
 
     @property
+    def _model_resources_in_durable_units(self) -> bool:
+        return self.in_durable_context
+
+    @property
     def agent(self) -> AbstractAgent[AgentDepsT, Any] | None:
         """The agent bound to this capability, or `None` before binding."""
         return self._agent
@@ -830,6 +834,17 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             f'time so `{type(self).__name__}.for_agent()` can register their durable {self.durable_unit_plural}.'
         )
 
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        # Realtime opens a live connection rather than a sequence of recorded model operations.
+        # Reject during resolution, before toolset entry, hooks or a provider connection can run.
+        if self.in_durable_context and not isinstance(ctx.model, Model):
+            raise UserError(
+                f'Realtime sessions cannot be used inside a {self.engine_name} {self.durable_container_noun}, '
+                'as they run a long-lived, non-deterministic connection. Use them outside the '
+                f'{self.durable_container_noun} instead.'
+            )
+        return self
+
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         # A `CancellationToken` is a same-process handle that cannot cross the durable execution
         # boundary, and firing it inside a workflow/flow would cancel the durable task out of band
@@ -1000,11 +1015,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         with self._durable_run_context_scope(run_context) as ctx, self._request_policy_scope(ctx):
             model = await self._resolve_model_for_request(model_id, ctx)
             registered, _ = self._registered_model_id(model)
-            async with managed_model_scope(model, owned=not registered) as active_model:
-                ctx.model = active_model
-                if isinstance(ctx, _RestrictedRunContext):
-                    ctx._expose_field('model')  # pyright: ignore[reportPrivateUsage]
-                yield active_model, ctx
+            async with managed_model_scope(model, owned=not registered) as managed_model:
+                async with managed_model.open_session() as active_model:
+                    ctx.model = active_model
+                    if isinstance(ctx, _RestrictedRunContext):
+                        ctx._expose_field('model')  # pyright: ignore[reportPrivateUsage]
+                    yield active_model, ctx
 
     @contextmanager
     def _request_policy_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[None]:

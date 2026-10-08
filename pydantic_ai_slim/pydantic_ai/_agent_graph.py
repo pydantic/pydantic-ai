@@ -48,6 +48,7 @@ from pydantic_graph.basenode import NodeRunEndT
 from . import (
     _display,
     _enqueue,
+    _operations,
     _output,
     _system_prompt,
     _usage_attribution,
@@ -72,6 +73,7 @@ from ._run_context import (
     recorded_workspace_ref,
     set_current_run_context,
 )
+from ._steering import SteeringController
 from .conversation import Conversation
 from .exceptions import ToolRetryError
 from .messages import (
@@ -97,6 +99,7 @@ from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
     AgentNativeTool,
+    DeferredToolRequests,
     DeferredToolResult,
     DeferredToolResults,
     RunContext,
@@ -402,6 +405,12 @@ class GraphAgentState:
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
     last_model_request_parameters: models.ModelRequestParameters | None = None
     """Last-resolved model request parameters, used for OTel span attributes."""
+    tool_operations: dict[str, _operations.ToolOperation] = dataclasses.field(
+        default_factory=dict[str, _operations.ToolOperation]
+    )
+    """Session-owned projection of logical tool completion and provider delivery."""
+    deferred_tool_requests: DeferredToolRequests | None = None
+    """Unresolved approval/external requests, retained even before run finalization."""
     pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
     """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
     for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
@@ -425,6 +434,23 @@ class GraphAgentState:
         # Keep the persisted shape a plain list while ensuring every live graph state uses the
         # thread-safe list subclass. Pydantic deserialization also runs this hook.
         self.pending_messages = _enqueue.PendingMessageQueue(self.pending_messages)
+        # Runtime-only observation, never serialized with graph state. A checkpoint must include
+        # the response being processed even before the model node commits it on context exit.
+        self.stream_snapshot: Callable[[], tuple[_messages.ModelResponse, _usage.RunUsage]] | None = None
+
+    def snapshot_conversation(self) -> Conversation:
+        messages = self.message_history
+        usage = self.usage
+        if self.stream_snapshot is not None:
+            response, usage = self.stream_snapshot()
+            response = replace(response, run_id=self.run_id, conversation_id=self.conversation_id)
+            messages = [*messages, response]
+        return Conversation(
+            messages=messages,
+            usage=usage,
+            conversation_id=self.conversation_id,
+            deferred_tool_requests=self.deferred_tool_requests,
+        )
 
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
@@ -479,7 +505,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     evaluate_model_selector: Callable[
         [ModelSelector[DepsT], models.ModelSelectionContext[DepsT]], Awaitable[tuple[models.Model, str | None]]
     ]
-    enter_model: Callable[[models.Model], Awaitable[None]]
+    enter_model: Callable[[models.Model], Awaitable[models.Model]]
     get_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
     usage_limits: _usage.UsageLimits
     max_output_retries: int
@@ -527,8 +553,10 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     display_banner: _display.BannerDisplay
     """Shows the first-run banner, once this run has resolved the model and tools it will use."""
 
-    agent: Agent[DepsT, Any] | None = None
+    steering: SteeringController = field(repr=False)
+    """Every ordinary run owns a controller, even when native steering is disabled."""
 
+    agent: Agent[DepsT, Any] | None = None
     cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation, repr=False)
     """The run's first-party cancellation controller. Runtime-only: holds a live task reference."""
 
@@ -1358,6 +1386,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     _: dataclasses.KW_ONLY
 
+    _native_successor: bool = False
+    _native_continuation: bool = False
+    _native_response: _messages.ModelResponse | None = None
+    """Observe a response already authorized by native steering, without another request."""
+
     _resume_suspended: _messages.ModelResponse | None = None
     """A suspended `ModelResponse` from a prior run to resume, when the run's `message_history`
     ends in a provider-paused turn (Anthropic `pause_turn`, OpenAI background mode). Set by
@@ -1385,11 +1418,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         return await self._make_request(ctx)
 
     @asynccontextmanager
-    async def stream(
+    async def stream(  # noqa: C901
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
         assert not self._did_stream, 'stream() should only be called once per node'
+        if self._native_successor:
+            async with self._stream_successor(ctx) as stream:
+                yield stream
+            return
 
         request_context, run_context = await self._prepare_request(ctx, streaming=True)
 
@@ -1437,20 +1474,23 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # into one continuous stream, so the whole chain is presented as a single
             # `AgentStream` and the model-request hooks wrap it once. The step is counted in
             # `ctx.state.usage.requests` when its response is committed, not here.
-            async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
-                self._did_stream = True
-                agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
-                agent_stream_holder.append(agent_stream)
-                stream_ready.set()
-                try:
-                    await stream_done.wait()
-                finally:
-                    # Report TTFT in a `finally` so it also lands when the consumer raises
-                    # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
-                    # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
-                    # that cancelled path `finish` is never reached today (no metrics of any
-                    # kind are recorded), so this is symmetry rather than an observable fix.
-                    time_to_first_chunk = sr.time_to_first_chunk(request_start)
+            with _operations.request_delivery(ctx.state.tool_operations, req_ctx.messages) as deliveries:
+                async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
+                    self._did_stream = True
+                    agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
+                    agent_stream_holder.append(agent_stream)
+                    stream_ready.set()
+                    try:
+                        await stream_done.wait()
+                    finally:
+                        # Report TTFT in a `finally` so it also lands when the consumer raises
+                        # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
+                        # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
+                        # that cancelled path `finish` is never reached today (no metrics of any
+                        # kind are recorded), so this is symmetry rather than an observable fix.
+                        time_to_first_chunk = sr.time_to_first_chunk(request_start)
+                if sr.get().state == 'complete':
+                    _operations.commit_request_delivery(ctx.state.tool_operations, deliveries)
             # Streaming core errors surface in the consumer task, which cancels this wrap task;
             # `on_model_request_error` cannot recover an error after streaming has begun.
             response = sr.get()
@@ -1459,6 +1499,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             self._record_response_usage(ctx, response, request_context=req_ctx)
             accounted_responses.append(response)
             capture_model_response_span_context(req_ctx, response, time_to_first_chunk)
+            self._capture_native_response(ctx, response, record_usage=False)
             return await ctx.deps.root_capability.after_model_request(
                 run_context, request_context=req_ctx, response=response
             )
@@ -1526,6 +1567,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 finally:
                     await agent_stream.aclose_events()
                 return
+            self._validate_native_response(model_response)
             self._did_stream = True
             replay_sr = CompletedStreamedResponse(
                 model_response,
@@ -1611,6 +1653,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # a stream that failed before producing anything doesn't.
             _usage_attribution.record_request(ctx.state.usage)
         ctx.state.message_history.append(partial_response)
+        ctx.state.stream_snapshot = None
 
     @staticmethod
     def _build_agent_stream(
@@ -1619,7 +1662,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_request_parameters: models.ModelRequestParameters,
     ) -> result.AgentStream[DepsT, T]:
         """Build an AgentStream from the given stream response and context."""
-        return result.AgentStream[DepsT, T](
+        stream = result.AgentStream[DepsT, T](
             _raw_stream_response=stream_response,
             _output_schema=ctx.deps.output_schema,
             _model_request_parameters=model_request_parameters,
@@ -1628,16 +1671,65 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _carried_workspace_ref=ctx.deps.carried_workspace_ref,
             _usage_limits=ctx.deps.usage_limits,
             _tool_manager=ctx.deps.tool_manager,
+            _tool_operations=ctx.state.tool_operations,
             _root_capability=ctx.deps.root_capability,
             _metadata_getter=lambda: ctx.state.metadata,
             _event_stream_buffer_getter=lambda: ctx.state.event_stream_buffer,
         )
+        ctx.state.stream_snapshot = lambda: (stream.response, stream.usage)
+        return stream
+
+    @asynccontextmanager
+    async def _stream_successor(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
+    ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
+        controller = ctx.deps.steering
+        assert controller.receive is not None
+        req_ctx = controller.inherited_request
+        assert req_ctx is not None
+        # This response was admitted before `steer` wrote. Request hooks/selectors/cache cannot
+        # replace it now. Keep the tool environment the server inherited instead of re-preparing.
+        ctx.state.run_step += 1
+        self.last_request_context = req_ctx
+        self._did_stream = True
+        run_context = build_run_context(ctx)
+        ctx.deps.tool_manager = replace(ctx.deps.tool_manager, ctx=run_context)
+        async with controller.receive() as sr:
+            stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
+            try:
+                yield stream
+            except BaseException as exc:
+                await self._commit_interrupted_response(ctx, req_ctx.model, exc, sr.get())
+                raise
+            finally:
+                await stream.aclose_events()
+        response = sr.get()
+        self._capture_native_response(ctx, response, record_usage=True)
+        self._enforce_usage_limits(ctx, [response])
+        try:
+            observed = await ctx.deps.root_capability.after_model_request(
+                run_context, request_context=req_ctx, response=response
+            )
+        except exceptions.ModelRetry as exc:
+            raise exceptions.UserError(
+                'An already admitted native successor cannot be retried by a request hook.'
+            ) from exc
+        self._validate_native_response(observed)
+        self._result = CallToolsNode(self._native_response or response, _native_successor=True)
 
     async def _make_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
         if self._result is not None:
             return self._result  # pragma: no cover
+
+        if self._native_successor:
+            async with self._stream_successor(ctx) as stream:
+                async for _ in stream:
+                    pass
+            assert self._result is not None
+            return self._result
 
         request_context, run_context = await self._prepare_request(ctx, streaming=False)
 
@@ -1667,9 +1759,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             capture_model_request_span_context(req_ctx)
             try:
-                response = await model_request(
-                    req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
-                )
+                with _operations.request_delivery(ctx.state.tool_operations, req_ctx.messages) as deliveries:
+                    response = await model_request(
+                        req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
+                    )
+                    _operations.commit_request_delivery(ctx.state.tool_operations, deliveries)
                 _handler_response = response
                 _handler_usage_recorded = True
                 self._record_response_usage(ctx, response, request_context=req_ctx)
@@ -1684,6 +1778,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 response = await self._recover_model_request_error(ctx, run_context, req_ctx, e)
             _handler_response = response
             capture_model_response_span_context(req_ctx, response)
+            self._capture_native_response(ctx, response, record_usage=not _handler_usage_recorded)
             return await ctx.deps.root_capability.after_model_request(
                 run_context, request_context=req_ctx, response=response
             )
@@ -1720,6 +1815,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         streaming: bool,
     ) -> tuple[ModelRequestContext, RunContext[DepsT]]:
+        self._native_continuation = ctx.deps.steering.pending
         if self._resume_suspended is not None:
             return await self._prepare_resume_request(ctx, streaming=streaming)
 
@@ -1862,7 +1958,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Preserve the object identity already held by outer wrappers while exposing the final
         # request produced by the before-chain. The lifecycle also continues with this original
         # object, retaining read-only dispatch fields such as `streaming`.
-        original_request_context.model = processed_context.model
+        # Hooks can select a definition that was never entered during run preparation. Resolve
+        # it through the same owner as dynamic selectors before counting tokens or sending.
+        original_request_context.model = (
+            processed_context.model
+            if processed_context.model is ctx.deps.model
+            else await ctx.deps.enter_model(processed_context.model)
+        )
         original_request_context.messages = list(processed_context.messages)
         original_request_context.model_settings = processed_context.model_settings
         original_request_context.model_request_parameters = processed_context.model_request_parameters
@@ -1870,6 +1972,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         request_context = original_request_context
 
         model = request_context.model
+        ctx.deps.steering.check_model(model)
+        ctx.deps.steering.inherited_request = request_context
         messages = request_context.messages
         model_settings = request_context.model_settings or None
         request_context.model_settings = model_settings
@@ -2035,7 +2139,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.last_model_request_parameters = model_request_parameters
 
         self.last_request_context = original_request_context
-
         return request_context
 
     async def _finish_handling(
@@ -2045,11 +2148,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         record_usage: bool = True,
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
+        self._validate_native_response(response)
         # Append the model response to state.message_history
         self._append_response(ctx, response, record_usage=record_usage)
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
-        self._result = CallToolsNode(response)
+        self._result = CallToolsNode(self._native_response or response)
 
         return self._result
 
@@ -2065,8 +2169,35 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             raise error
         return await root_capability.on_model_request_error(run_context, request_context=request_context, error=error)
 
-    @staticmethod
+    def _capture_native_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+        response: _messages.ModelResponse,
+        *,
+        record_usage: bool,
+    ) -> None:
+        controller = ctx.deps.steering
+        if controller.delivery_id is None:
+            return
+        delivery = controller.deliveries[controller.delivery_id]
+        if response.provider_response_id not in (delivery.parent_response_id, delivery.successor_response_id):
+            return
+        # These responses are provider facts, not replaceable cache results. Preserve them before
+        # hooks run (including in-place edits or exceptions), without letting limits lose history.
+        if record_usage:
+            self._record_response_usage(ctx, response)
+        self._append_response(ctx, response, record_usage=False)
+        self._native_response = deepcopy(response)
+        ctx.state.message_history[-1] = self._native_response
+
+    def _validate_native_response(self, response: _messages.ModelResponse) -> None:
+        if self._native_continuation and self._native_response is None:
+            raise exceptions.UserError('A request hook cannot short-circuit a native steering continuation.')
+        if self._native_response is not None and response != self._native_response:
+            raise exceptions.UserError('A request hook cannot replace a response participating in native steering.')
+
     def _append_response(
+        self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
         response: _messages.ModelResponse,
         *,
@@ -2079,6 +2210,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         wrapper's short-circuit or `SkipModelRequest`). A model call that fails without recovery
         commits no response, so it doesn't count, though any usage it reported does.
         """
+        if self._native_response is not None:
+            return  # Already recorded before middleware could change or discard it.
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         response.workspace_ref = ctx.deps.workspace_ref
         _usage_attribution.record_request(ctx.state.usage)
@@ -2086,6 +2219,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ModelRequestNode._record_response_usage(ctx, response)
             ModelRequestNode._enforce_usage_limits(ctx, [response])
         ctx.state.message_history.append(response)
+        ctx.state.stream_snapshot = None
 
     @staticmethod
     def _record_response_usage(
@@ -2125,6 +2259,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         Increments the retry counter and creates a new request with a RetryPromptPart.
         """
+        if self._native_response is not None or ctx.deps.steering.pending:
+            raise exceptions.UserError('Cannot retry a model response participating in native steering.') from error
         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error)
         m = _messages.RetryPromptPart(content=error.message)
         retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[m]))
@@ -2139,6 +2275,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that processes a model response, and decides whether to end the run or make a new request."""
 
     model_response: _messages.ModelResponse
+    _native_successor: bool = field(default=False, kw_only=True, repr=False)
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
     tool_call_metadata: dict[str, dict[str, Any]] | None = None
     """Metadata for deferred tool calls, keyed by `tool_call_id`."""
@@ -2223,6 +2360,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_schema = ctx.deps.output_schema
 
         async def _run_stream() -> AsyncIterator[_messages.AgentStreamEvent]:  # noqa: C901
+            if ctx.deps.steering.pending and not any(
+                isinstance(part, _messages.ToolCallPart) for part in self.model_response.parts
+            ):
+                self._next_node = ModelRequestNode(_messages.ModelRequest(parts=[]), _native_successor=True)
+                return
             if self.model_response.state == 'suspended':
                 # A suspended turn is not a completed response to handle: its partial parts could
                 # match an output schema and end the run on mid-turn output while the provider's
@@ -2445,7 +2587,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         )
 
         # This will raise errors for any tool name conflicts
-        ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+        if not self._native_successor:
+            ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
         # The manager was already prepared for this same run step before the model request, so
         # `for_run_step` normally returns it unchanged, keeping the retries it accumulated — which is
         # why the evidence lands field by field rather than by swapping in `run_context`. (It does
@@ -2489,6 +2632,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             async for event in process_tool_calls(
                 tool_manager=ctx.deps.tool_manager,
                 tool_calls=tool_calls,
+                source_response=self.model_response,
                 tool_call_results=self.tool_call_results,
                 tool_call_metadata=self.tool_call_metadata,
                 final_result=final_result,
@@ -2625,7 +2769,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         final_result: result.FinalResult[NodeRunEndT],
         tool_responses: list[_messages.ModelRequestPart],
-    ) -> End[result.FinalResult[NodeRunEndT]]:
+    ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
+        if ctx.deps.steering.pending and not isinstance(final_result.output, DeferredToolRequests):
+            return ModelRequestNode(_messages.ModelRequest(parts=tool_responses))
         messages = ctx.state.message_history
 
         # To allow this message history to be used in a future run without dangling tool calls,
@@ -2676,8 +2822,7 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
         usage=ctx.state.usage,
     )
     model, model_id = await ctx.deps.evaluate_model_selector(selector, selection_ctx)
-    await ctx.deps.enter_model(model)
-    ctx.deps.model = model
+    ctx.deps.model = await ctx.deps.enter_model(model)
     ctx.deps.model_id = model_id
     ctx.deps.model_selected_for_step = ctx.state.run_step
 
@@ -2710,6 +2855,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         loaded_capability_ids=ctx.deps.loaded_capability_ids,
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
+        _steering=ctx.deps.steering,
         _cancellation=ctx.deps.cancellation,
         _durable_operations=ctx.deps.durable_operations,
         _run_capabilities_by_id=ctx.deps.run_capabilities_by_id,

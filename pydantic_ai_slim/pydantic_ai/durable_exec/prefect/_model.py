@@ -13,7 +13,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._utils import fill_run_metadata
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.models import CompletedStreamedResponse, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
@@ -58,7 +58,8 @@ class PrefectModel(WrapperModel):
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
         ) -> ModelResponse:
-            response = await super(PrefectModel, self).request(messages, model_settings, model_request_parameters)
+            async with self.wrapped.open_session() as model:
+                response = await model.request(messages, model_settings, model_request_parameters)
             _stamp_response_provenance(response, messages)
             return response
 
@@ -72,9 +73,10 @@ class PrefectModel(WrapperModel):
             ctx: RunContext[Any] | None,
         ) -> ModelResponse:
             event_stream_handler = self._get_event_stream_handler()
-            async with super(PrefectModel, self).request_stream(
-                messages, model_settings, model_request_parameters, ctx
-            ) as streamed_response:
+            async with (
+                self.wrapped.open_session() as model,
+                model.request_stream(messages, model_settings, model_request_parameters, ctx) as streamed_response,
+            ):
                 if event_stream_handler is not None:
                     assert ctx is not None, (
                         'A Prefect model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. '
@@ -93,9 +95,19 @@ class PrefectModel(WrapperModel):
 
         @task
         async def cancel_suspended_response_task(response: ModelResponse) -> None:
-            await super(PrefectModel, self).cancel_suspended_response(response)
+            async with self.wrapped.open_session() as model:
+                await model.cancel_suspended_response(response)
 
         self._wrapped_cancel_suspended_response = cancel_suspended_response_task
+
+    @property
+    def _model_resources_in_durable_units(self) -> bool:
+        return FlowRunContext.get() is not None
+
+    @asynccontextmanager
+    async def open_session(self) -> AsyncGenerator[Model]:
+        # Registered callbacks close over this definition; each task opens its own interaction.
+        yield self
 
     async def request(
         self,
@@ -136,9 +148,12 @@ class PrefectModel(WrapperModel):
 
         # If not in a flow, just call the wrapped request_stream method
         if flow_run_context is None:
-            async with super().request_stream(
-                messages, model_settings, model_request_parameters, run_context
-            ) as streamed_response:
+            async with (
+                self.wrapped.open_session() as model,
+                model.request_stream(
+                    messages, model_settings, model_request_parameters, run_context
+                ) as streamed_response,
+            ):
                 yield streamed_response
                 return
 

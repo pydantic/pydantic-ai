@@ -179,10 +179,28 @@ class PendingMessageQueue(list[PendingMessage]):
         return PendingMessageQueue, (list(self),)
 
     def append(self, pending: PendingMessage) -> None:
+        if not self.try_append(pending):
+            raise UserError('`enqueue` is not available because the agent run has ended.')
+
+    def try_append(self, pending: PendingMessage) -> bool:
+        """Append unless the final drain has closed this run's lease."""
         with self._lock:
             if self._closed:
-                raise UserError('`enqueue` is not available because the agent run has ended.')
+                return False
             super().append(pending)
+            return True
+
+    def snapshot(self) -> list[PendingMessage]:
+        with self._lock:
+            return list(self)
+
+    def close_and_take(self) -> list[PendingMessage]:
+        """Revoke the run's lease and transfer undelivered messages to its session."""
+        with self._lock:
+            self._closed = True
+            pending = list(self)
+            self.clear()
+            return pending
 
     def pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
         with self._lock:

@@ -26,7 +26,7 @@ from inline_snapshot import snapshot
 
 pytest.importorskip('opentelemetry.sdk')  # only installed via the optional `logfire` extra
 
-from opentelemetry.context import Context
+from opentelemetry.context import Context, get_current
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import Histogram, InMemoryMetricReader
 from opentelemetry.sdk.trace import TracerProvider
@@ -76,10 +76,12 @@ from pydantic_ai.realtime.codec import (
     ResponseDone,
     SessionUsage,
     ToolCall,
+    ToolResult,
 )
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from .test_persistent_session import CountedModel, DuplexConnection
 from .test_session import FakeRealtimeModel, make_tool_manager
 
 
@@ -1696,8 +1698,21 @@ async def test_direct_session_runs_tool_via_runner() -> None:
     The hand-managed path has no `Instrumentation` capability, so no `execute_tool` span is produced;
     the runner's result is inserted into history when it completes.
     """
+    delivered = asyncio.Event()
+
+    class OrderedConnection(_Connection):
+        async def send(self, content: RealtimeInput) -> None:
+            delivered.set()
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            async for event in super().__aiter__():
+                if isinstance(event, OutputTranscript) and event.text == 'it is sunny':
+                    # The provider answers only after receiving the concurrent tool's result.
+                    await delivered.wait()
+                yield event
+
     settings, exporter = _settings()
-    conn = _Connection(
+    conn = OrderedConnection(
         [
             InputTranscript(text='weather in Paris?', is_final=True),
             OutputTranscript(text='let me check'),
@@ -1728,11 +1743,9 @@ async def test_direct_session_runs_tool_via_runner() -> None:
     assert len(chats) == 2
     _, second = chats
     assert second.attributes is not None
-    # The connection does not yield between the call and response, so the concurrent tool finishes
-    # after this span opens and is not yet present in its input attributes.
+    # Logical completion is recorded before delivery; the successor sees the completed result.
     assert json.loads(str(second.attributes['gen_ai.input.messages']))[-1]['parts'] == [
-        {'type': 'text', 'content': 'let me check'},
-        {'type': 'tool_call', 'id': 'c1', 'name': 'get_weather', 'arguments': '{"city": "Paris"}'},
+        {'type': 'tool_call_response', 'id': 'c1', 'name': 'get_weather', 'result': 'sunny'},
     ]
 
 
@@ -1883,3 +1896,45 @@ async def test_stalled_utterances_get_a_chat_span_each() -> None:
 
     chat_spans = [s for s in exporter.get_finished_spans() if s.name.startswith('chat ')]
     assert [(s.attributes or {}).get('gen_ai.usage.input_tokens') for s in chat_spans] == [60, 70]
+
+
+async def test_persistent_tool_spans_belong_to_their_current_run():
+    settings, exporter = _settings()
+    outer_context = get_current()
+
+    class ToolConnection(DuplexConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            self.sent.append(content)
+            if isinstance(content, str):
+                self.events.put_nowait(ToolCall(tool_name='identify', tool_call_id=content, args='{}'))
+                self.events.put_nowait(ResponseDone())
+            else:
+                assert isinstance(content, ToolResult)
+                self.events.put_nowait(OutputTranscript(content.output, output_text=True, is_final=True))
+                self.events.put_nowait(ResponseDone())
+
+    agent = Agent(TestModel(), deps_type=str, capabilities=[Instrumentation(settings)], name='persistent')
+
+    @agent.tool
+    async def identify(ctx: RunContext[str]) -> str:
+        return ctx.deps
+
+    async with agent.session(deps='default') as owner:
+        async with owner.realtime(CountedModel(ToolConnection())).connect() as live:
+            for label in ('first', 'second'):
+                async with live.run(deps=label, run_id=label) as run:
+                    await run.send(label)
+                assert run.result is not None
+                assert run.result.output == label
+                assert get_current() == outer_context
+
+    spans = exporter.get_finished_spans()
+    run_spans = [span for span in spans if span.name == 'invoke_agent persistent']
+    tool_spans = [span for span in spans if span.name == 'execute_tool identify']
+    assert len(run_spans) == len(tool_spans) == 2
+    for label, run_span, tool_span in zip(('first', 'second'), run_spans, tool_spans, strict=True):
+        assert run_span.context is not None and run_span.attributes is not None
+        assert run_span.attributes['gen_ai.agent.call.id'] == label
+        assert tool_span.parent is not None
+        assert tool_span.parent.span_id == run_span.context.span_id
+    assert get_current() == outer_context

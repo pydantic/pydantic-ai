@@ -80,6 +80,58 @@ What they can't carry is why the [`Conversation`][pydantic_ai.conversation.Conve
 
 Nor does a history reach past its own conversation. Replaying yesterday's threads to give an agent that continuity works until it doesn't: the prompt grows without bound, every request pays for it, and [compaction](capabilities/compaction.md) drops the parts you were counting on. [Remembering across conversations](#remembering-across-conversations) is a different mechanism.
 
+## Session checkpoints
+
+See [Sessions](sessions.md) for ownership, sequential ordinary and realtime runs, and migration.
+
+Use [`Agent.session`][pydantic_ai.agent.Agent.session] when one live owner should carry a conversation, undelivered input, and model interaction resources across sequential runs. Each run still has its own ID, hooks, tool preparation, cancellation, and result. Existing `Agent.run` and `conversation=` usage remains available.
+
+```python {title="session_checkpoint.py"}
+from pydantic_ai import Agent, SessionStateTypeAdapter
+from pydantic_ai.models.test import TestModel
+
+agent = Agent(TestModel())
+
+async def main():
+    async with agent.session() as session:
+        await session.run('First question')
+        session.enqueue('Context for the next question')
+        stored = SessionStateTypeAdapter.dump_json(session.state)
+
+    state = SessionStateTypeAdapter.validate_json(stored)
+    async with agent.session(state=state) as session:
+        await session.run('Follow-up question')
+```
+
+[`SessionState`][pydantic_ai.session.SessionState] contains a detached `Conversation`, pending input, tool-operation and native-input delivery facts, and the active run ID if captured during a run. It does not contain connections, dependencies, tasks, or the durable engine's execution journal. Store it in trusted application storage; it is not a client-supplied request format.
+
+### Ordinary and realtime runs on one owner
+
+[`session.realtime(model).session()`][pydantic_ai.session.AgentSession.realtime] runs a live interaction against the same owner as `session.run(...)`. It uses the session's default dependencies, conversation, accumulated usage, and tool-operation records. The live attachment is one run, including all of its speech turns; close it before starting another ordinary or realtime run. Opening a second run concurrently raises `UserError` instead of racing two writers over the conversation.
+
+`session.enqueue(...)` submits to the active driver, or keeps input for the next run while idle. Realtime accepts the same queued text content as [`RealtimeSession.enqueue`][pydantic_ai.realtime.RealtimeSession.enqueue]; unsupported queued content fails attachment and remains available for a later ordinary run. A short-circuited live run also leaves the idle inbox untouched. `session.cancel()` cancels the active run, including its lifecycle hooks and connection setup, without closing the owner. Run teardown settles history and drains tool tasks before the next run can begin.
+
+### Reconciling interrupted work
+
+Tool completion and result delivery are different facts. A tool can finish its external effect while the following model request fails. Its operation then retains the normalized result with `execution='completed'` and `delivery='uncertain'`. Opening that checkpoint directly is rejected.
+
+Use [`SessionState.recover`][pydantic_ai.session.SessionState.recover] to record an explicit decision before importing it:
+
+- `deliveries={operation_id: 'ready'}` authorizes resending the **existing result**, not executing the tool again. Use this only when your provider/application recovery policy permits it.
+- `deliveries={operation_id: 'committed'}` records external confirmation. It does not fetch a missing model response or remove the result from ordinary conversation history.
+- `tool_results={operation_id: request}` supplies a verified outcome for a running or interrupted tool. The normalized `ModelRequest` must contain exactly one matching `ToolReturnPart` or `RetryPromptPart`, optionally followed by user content. Recovery restores it beside the originating call; it does not invoke the tool.
+
+Keys are the framework's `operation_id`, which includes its originating run and step, not the provider's reusable tool-call ID. Normal [deferred approval and external execution](deferred-tools.md) still use `deferred_tool_results=`. A resumed approval gets a new run ID while retaining the original logical operation ID.
+
+An active checkpoint additionally requires `abandon_run=True`. First stop the old driver and ensure no other writer can continue it. Recovery closes unfinished model generation and unanswered calls; it does not undo or guess external tool effects. Unknown tool outcomes and uncertain sends must still be reconciled. Pending approvals and external requests, including their metadata, remain available as `recovered.conversation.deferred_tool_requests`; continue them through `deferred_tool_results=`. Recovery itself never grants approval. A result already completed in a resumed run is restored without executing its original deferred call again.
+
+!!! warning "A checkpoint is not an exactly-once guarantee"
+    A tool effect can happen after the last checkpoint and before its result is saved. Verify the outcome in the external system, use an application idempotency key, or let your durable engine recover its recorded operation. Replaying a workflow is different from importing a checkpoint and abandoning its run. Usage and provider responses produced after the checkpoint are not recovered by `recover()`.
+
+Recovery returns a new checkpoint and leaves the original unchanged, even on failure. It does not automatically reconnect a native live session or start a new run.
+
+Native-input delivery is recorded separately in `state.steering`. `accepted` means input was queued by the provider; only `committed`, with a successor response ID, means a response consumed it. A disconnected or rejected submission retains its original user content outside committed history. After reconciling remote history and stopping the old owner, use `steering={delivery_id: 'replay'}` to move that content into the ordinary boundary inbox, or `'discard'` to settle it without resending. Replay preserves the delivery ID as the enqueue ID and does not issue another native steering request. A settled record cannot be replayed twice.
+
 ## Not writing that code yourself
 
 [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) packages the pattern as a capability you add to an agent, so the load and save calls are not yours to write. It ships in-memory, file, SQLite and MongoDB backends, and its store is a protocol you can implement against your own database.
@@ -109,4 +161,4 @@ Weigh it against a store of your own: it is one provider's feature, OpenAI docum
 
 ## What isn't here
 
-Nothing here snapshots state in the middle of a step, so there is no "rewind to step 4 of a half-finished run and replay from there" inside a single run. Snapshots are taken at settled boundaries between runs, not mid-node. For a run that must survive a crash *while it is executing*, that is what [durable execution](durable_execution/overview.md) is for.
+A `SessionState` captured during execution records the observable conversation and operation frontier, not a serialized execution stack. It cannot rewind to a graph node or resume a live socket at an arbitrary frame. Reconcile and abandon that run before starting another, or use [durable execution](durable_execution/overview.md) when the execution itself must survive a crash.

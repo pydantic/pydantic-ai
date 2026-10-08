@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeAlias, cast, 
 import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream
 from pydantic import TypeAdapter
-from typing_extensions import TypedDict, TypeIs, TypeVar
+from typing_extensions import TypedDict, TypeIs, TypeVar, Unpack
 
 from pydantic_graph import End
 
@@ -61,6 +61,7 @@ from ..toolsets import AbstractToolset
 from ..workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 if TYPE_CHECKING:
+    from pydantic_ai._session import SessionRuntime
     from pydantic_ai.agent.spec import AgentSpec
     from pydantic_ai.capabilities import CombinedCapability
     from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -75,6 +76,9 @@ if TYPE_CHECKING:
         RealtimeSession,
         WebRTCAnswer,
     )
+    from pydantic_ai.session import AgentSession, SessionState
+
+    from ..session import RealtimeAgentSession, _RealtimeMediaOptions  # pyright: ignore[reportPrivateUsage]
 
 
 T = TypeVar('T')
@@ -348,6 +352,25 @@ class _RunStreamEventsContext(Generic[OutputDataT], AbstractAsyncContextManager[
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     """Abstract superclass for [`Agent`][pydantic_ai.agent.Agent], [`WrapperAgent`][pydantic_ai.agent.WrapperAgent], and your own custom agent implementations."""
+
+    def session(
+        self,
+        *,
+        conversation: Conversation | None = None,
+        state: SessionState | None = None,
+        deps: AgentDepsT = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+    ) -> AgentSession[AgentDepsT, OutputDataT]:
+        """Create a session owning conversation state and resources across multiple runs.
+
+        Enter it with `async with`. Pass `conversation` to continue portable history, or `state`
+        to restore a session checkpoint including undelivered input. Dependencies and model are
+        defaults for this session's runs; per-run values override them.
+        """
+        # AgentSession inherits the shared run APIs, so importing here avoids an import cycle.
+        from ..session import AgentSession
+
+        return AgentSession(self, conversation=conversation, state=state, deps=deps, model=model)
 
     @property
     @abstractmethod
@@ -1049,6 +1072,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 node = await cap.before_node_run(run_ctx, node=node)
 
                 if self.is_model_request_node(node):
+                    tool_returns: _messages.ModelRequest | None = None
                     async with node.stream(graph_ctx) as stream:
                         final_result_event = None
 
@@ -1087,7 +1111,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 The model response will have been added to messages by now
                                 by `StreamedRunResult._marked_completed`.
                                 """
-                                nonlocal final_result
+                                nonlocal final_result, tool_returns
                                 final_result = FinalResult(
                                     await stream.get_output(), final_result.tool_name, final_result.tool_call_id
                                 )
@@ -1104,6 +1128,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 async for _event in _agent_graph.process_tool_calls(
                                     tool_manager=graph_ctx.deps.tool_manager,
                                     tool_calls=stream.response.tool_calls,
+                                    source_response=stream.response,
                                     tool_call_results=None,
                                     tool_call_metadata=None,
                                     final_result=final_result,
@@ -1115,14 +1140,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # To allow this message history to be used in a future run without dangling tool calls,
                                 # append a new ModelRequest using the tool returns and retries
                                 if parts:
-                                    messages.append(
-                                        _messages.ModelRequest(
-                                            parts,
-                                            run_id=graph_ctx.state.run_id,
-                                            conversation_id=graph_ctx.state.conversation_id,
-                                            timestamp=_utils.now_utc(),
-                                        )
+                                    tool_returns = _messages.ModelRequest(
+                                        parts,
+                                        run_id=graph_ctx.state.run_id,
+                                        conversation_id=graph_ctx.state.conversation_id,
+                                        timestamp=_utils.now_utc(),
                                     )
+                                    messages.append(tool_returns)
 
                                 await agent_run.next(_agent_graph.SetFinalResult(final_result))
 
@@ -1141,14 +1165,20 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             # before_node_run fired above; on_complete() later calls
                             # agent_run.next(SetFinalResult(...)) which fires the full lifecycle
                             # for SetFinalResult, but not for this ModelRequestNode.
-                            break
+                    # The node commits its response on context exit. Append the tool returns
+                    # only afterwards, so the session and run hooks see the same ordered history
+                    # as the streamed result, without counting the response usage twice.
+                    if tool_returns is not None:
+                        graph_ctx.state.message_history.append(tool_returns)
+                    if yielded:
+                        break
                 elif self.is_call_tools_node(node):
-                    async with node.stream(agent_run.ctx) as stream:
+                    async with node.stream(agent_run.ctx) as tool_stream:
                         if event_stream_handler is not None:
-                            await event_stream_handler(run_ctx, stream)
+                            await event_stream_handler(run_ctx, tool_stream)
                         # Drain after the handler, same as the `ModelRequestNode` branch above, so the
                         # capability chain `node.stream()` wrapped around the node's events finalizes here.
-                        async for _ in stream:
+                        async for _ in tool_stream:
                             pass
 
                 # Advance through the documented streaming exception: `before_node_run` already
@@ -2216,6 +2246,7 @@ class _RealtimeSessionResolution(Generic[AgentDepsT]):
     wrap_event_stream: (
         Callable[[AsyncIterable[_messages.AgentStreamEvent]], AsyncIterable[_messages.AgentStreamEvent]] | None
     ) = None
+    owner: SessionRuntime | None = None
     lifecycle: _RealtimeSessionLifecycle | None = None
     """Set only when the caller asked for run-lifecycle hooks, i.e. by `_open_realtime_session`."""
     short_circuited: bool = False
@@ -2262,6 +2293,33 @@ class AgentRealtime(Generic[AgentDepsT]):
         self._conversation_id = _conversation_id
         self._run_id = _run_id
         self._message_history = _message_history
+
+    def connect(
+        self,
+        *,
+        audio_retention: AudioRetention = 'transcript_only',
+        handle_barge_in: bool = False,
+        retain_images_every_n: int = 1,
+        retain_images_max: int | None = 100,
+        retain_audio_max_seconds: float | None = 1800,
+        provider_session: RealtimeProviderSession | None = None,
+    ) -> RealtimeAgentSession[AgentDepsT]:
+        """Attach one connection to an `AgentSession` and execute multiple `.run()` contexts.
+
+        Use `session.realtime(model).connect()` inside `agent.session()`. The connection opens lazily
+        on the first run and stays open between runs. Existing `.session()` still means one run.
+        """
+        from ..session import RealtimeAgentSession
+
+        return RealtimeAgentSession(
+            self,
+            audio_retention=audio_retention,
+            handle_barge_in=handle_barge_in,
+            retain_images_every_n=retain_images_every_n,
+            retain_images_max=retain_images_max,
+            retain_audio_max_seconds=retain_audio_max_seconds,
+            provider_session=provider_session,
+        )
 
     async def answer_webrtc_offer(self, sdp_offer: str) -> WebRTCAnswer:
         """Resolve this agent's realtime configuration and relay a browser WebRTC SDP offer.
@@ -2420,6 +2478,27 @@ class AgentRealtime(Generic[AgentDepsT]):
                 (`send_audio`/`commit_audio`/`clear_audio`) are unavailable and `audio_retention` must be
                 left at `'transcript_only'`. See the realtime docs for the full browser/WebRTC flow.
         """
+        from ..session import AgentSession
+        from .wrapper import WrapperAgent
+
+        owner = self._agent
+        while isinstance(owner, WrapperAgent) and not isinstance(owner, AgentSession):
+            owner = owner.wrapped
+        if isinstance(owner, AgentSession) and owner._runtime.realtime is not None:  # pyright: ignore[reportPrivateUsage]
+            raise exceptions.UserError("Use the persistent connection's `run()` instead of `session()`.")
+        async with self._session(
+            audio_retention=audio_retention,
+            handle_barge_in=handle_barge_in,
+            retain_images_every_n=retain_images_every_n,
+            retain_images_max=retain_images_max,
+            retain_audio_max_seconds=retain_audio_max_seconds,
+            provider_session=provider_session,
+        ) as session:
+            yield session
+
+    @asynccontextmanager
+    async def _session(self, **media: Unpack[_RealtimeMediaOptions]) -> AsyncGenerator[RealtimeSession]:
+        """Open the driver; only the persistent run facade may expose it as a revocable handle."""
         async with self._agent._open_realtime_session(  # pyright: ignore[reportPrivateUsage]
             self._model,
             deps=self._deps,
@@ -2433,11 +2512,6 @@ class AgentRealtime(Generic[AgentDepsT]):
             conversation_id=self._conversation_id,
             run_id=self._run_id,
             message_history=self._message_history,
-            audio_retention=audio_retention,
-            handle_barge_in=handle_barge_in,
-            retain_images_every_n=retain_images_every_n,
-            retain_images_max=retain_images_max,
-            retain_audio_max_seconds=retain_audio_max_seconds,
-            provider_session=provider_session,
+            **media,
         ) as session:
             yield session

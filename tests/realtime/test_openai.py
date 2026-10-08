@@ -10,7 +10,7 @@ import json
 import re
 import wave
 from collections.abc import AsyncIterator, Sequence
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, nullcontext
 from decimal import Decimal
 from typing import Any, Literal, cast, get_args, get_origin
 from unittest.mock import patch
@@ -3178,6 +3178,102 @@ class _RecordingConnect:
                 return False
 
         return _CM()
+
+
+@pytest.mark.parametrize('idle_event', ['empty', 'drop', 'reconnect'])
+async def test_persistent_runs_handle_idle_protocol_traffic(monkeypatch: pytest.MonkeyPatch, idle_event: str) -> None:
+    """Exercise real handshake, frame parsing and redial between runs with deterministic socket traffic."""
+    before = asyncio.all_tasks()
+
+    class DuplexWebSocket(FakeWebSocket):
+        def __init__(self, label: str) -> None:
+            super().__init__([_created(), _updated()])
+            self.label = label
+            self.frames: asyncio.Queue[str | None] = asyncio.Queue()
+            self.reading = asyncio.Event()
+            self.processed_empty = asyncio.Event()
+            self.dropped = asyncio.Event()
+            self.responses = 0
+
+        async def send(self, data: str) -> None:
+            await super().send(data)
+            sent = json.loads(data)
+            if sent['type'] == 'conversation.item.create':
+                self.frames.put_nowait(
+                    json.dumps(sdk_frame({'type': 'conversation.item.created', 'item': sent['item']}))
+                )
+            elif sent['type'] == 'response.create':
+                self.responses += 1
+                response_id = f'{self.label}-{self.responses}'
+                frames: list[dict[str, Any]] = [
+                    {'type': 'response.created', 'response': {'id': response_id}},
+                    {'type': 'response.output_text.done', 'response_id': response_id, 'text': response_id},
+                    {'type': 'response.done', 'response': {'id': response_id, 'status': 'completed', 'output': []}},
+                ]
+                for frame in frames:
+                    self.frames.put_nowait(json.dumps(sdk_frame(frame)))
+
+        async def __aiter__(self) -> AsyncIterator[str]:
+            self.reading.set()
+            while True:
+                frame = await self.frames.get()
+                if frame is None:
+                    self.dropped.set()
+                    raise rt_openai.websockets.ConnectionClosed(None, None)
+                yield frame
+                if json.loads(frame)['type'] == 'rate_limits.updated':
+                    self.processed_empty.set()
+
+    first_socket, replacement = DuplexWebSocket('first'), DuplexWebSocket('replacement')
+    connect = _RecordingConnect([first_socket, replacement])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1}} if idle_event == 'reconnect' else None,
+    )
+    with anyio.fail_after(10):
+        async with Agent().session() as owner:
+            with pytest.raises(RealtimeError, match='connection closed') if idle_event == 'drop' else nullcontext():
+                async with owner.realtime(model).connect() as live:
+                    async with live.run() as first:
+                        await first.send('first')
+                    assert first.result is not None
+                    saved = first.result.all_messages()
+                    assert first.result.output == 'first-1'
+                    assert len(saved) == 2
+                    # This wire frame maps to no codec events; it must not terminate the idle reader.
+                    first_socket.frames.put_nowait(json.dumps({'type': 'rate_limits.updated', 'rate_limits': []}))
+                    await first_socket.processed_empty.wait()
+                    assert owner.conversation.messages == saved
+                    assert owner.state.active_run_id is None
+                    if idle_event != 'empty':
+                        first_socket.frames.put_nowait(None)
+                        await first_socket.dropped.wait()
+                    if idle_event != 'drop':
+                        if idle_event == 'reconnect':
+                            await replacement.reading.wait()
+                            replay = [json.loads(frame) for frame in replacement.sent]
+                            assert [frame['type'] for frame in replay] == [
+                                'session.update',
+                                'conversation.item.create',
+                                'conversation.item.create',
+                            ]
+                            assert [frame['item']['role'] for frame in replay[1:]] == ['user', 'assistant']
+                            assert connect.closed == [first_socket]
+                        async with live.run() as second:
+                            if idle_event == 'reconnect':
+                                event = await anext(aiter(second))
+                                assert isinstance(event, RealtimeSessionReconnectEvent)
+                                assert event.state_restored is True
+                            await second.send('second')
+                        assert second.result is not None
+                        assert second.result.output == ('replacement-1' if idle_event == 'reconnect' else 'first-2')
+                        assert len(owner.conversation.messages) == 4
+                        assert first.result.all_messages() == saved
+                        assert first.result.run_id != second.result.run_id
+            assert owner.state.active_run_id is None
+    assert connect.closed == ([first_socket, replacement] if idle_event == 'reconnect' else [first_socket])
+    assert asyncio.all_tasks() == before
 
 
 async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.MonkeyPatch) -> None:

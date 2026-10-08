@@ -1379,6 +1379,11 @@ except UnexpectedModelBehavior as e:
 
 ## Runs vs. Conversations
 
+For one live owner across sequential runs, use [`Agent.session()`][pydantic_ai.agent.Agent.session].
+A [session](sessions.md) owns the conversation, pending input, and reusable model resources; each run
+still has its own hooks, dependencies, cancellation, and result. Passing `conversation=` manually
+remains supported when no live owner is needed.
+
 An agent **run** might represent an entire conversation — there's no limit to how many messages can be exchanged in a single run. However, a **conversation** might also be composed of multiple runs, especially if you need to maintain state between separate interactions or API calls.
 
 Here's an example of a conversation comprised of multiple runs:

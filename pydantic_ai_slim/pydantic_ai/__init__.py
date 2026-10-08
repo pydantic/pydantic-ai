@@ -174,6 +174,7 @@ from .profiles import (
     ModelProfileSpec,
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
+from .session import AgentSession, SessionState, SessionStateTypeAdapter
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .template import TemplateStr
 from .tools import (
@@ -211,6 +212,9 @@ __all__ = (
     'BANNER_ENABLED',
     # agent
     'Agent',
+    'AgentSession',
+    'SessionState',
+    'SessionStateTypeAdapter',
     'CancellationToken',
     'AgentModelSettings',
     'AgentRetries',

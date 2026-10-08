@@ -30,12 +30,13 @@ _DurableOperationDispatch = Callable[
 
 if TYPE_CHECKING:
     from ._cancel import RunCancellation
+    from ._steering import SteeringController
     from .agent import Agent
     from .capabilities.abstract import AbstractCapability
     from .durable_exec._base import BaseDurabilityCapability
     from .durable_exec._toolset import RunHeldToolset
     from .models import AbstractModel
-    from .realtime import RealtimeModelSettings, RealtimeSession
+    from .realtime import RealtimeModelSettings, RealtimeRun, RealtimeSession
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
@@ -276,6 +277,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     to add messages rather than mutating it directly.
     """
 
+    _steering: SteeringController | None = field(default=None, repr=False)
+    """Run-owned native input port; never serialized across durable units."""
+
     _cancellation: RunCancellation | None = field(default=None, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
 
@@ -363,6 +367,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
     [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] playback or
     [`send()`][pydantic_ai.realtime.RealtimeSession.send] follow-up content, or call
     [`close()`][pydantic_ai.realtime.RealtimeSession.close] to hang up.
+
+    Explicit runs on a persistent connection expose [`realtime_run`][pydantic_ai.tools.RunContext.realtime_run]
+    instead; this field stays `None` so a retained context cannot control a later run.
+    """
+
+    realtime_run: RealtimeRun | None = field(default=None, repr=False, kw_only=True)
+    """The revocable handle for an explicit run on a persistent realtime connection.
+
+    Set during tools and event hooks in `AgentSession.realtime(...).connect().run()`, and retained
+    as a closed handle in `after_run`. `None` during setup, in ordinary runs, and with the existing
+    `AgentRealtime.session()` API. Use `ctx.realtime_run or ctx.realtime_session` for code supporting
+    both entry points. Keeping a run handle cannot submit work into a later run.
     """
 
     root_capability: AbstractCapability[RunContextAgentDepsT] | None = None
@@ -529,6 +545,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Inside a [realtime session](https://pydantic.dev/docs/ai/realtime/history#context-window), this is
         the session's [`context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used].
         """
+        if self.realtime_run is not None:
+            return self.realtime_run.context_window_used
         if self.realtime_session is not None:
             return self.realtime_session.context_window_used
         try:
@@ -827,6 +845,19 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # consumer to drain the buffered event and dispatch it a second time.
         await dispatch_event_immediate(self, event)
         return event
+
+    async def steer(self, *content: _messages.UserContent) -> str:
+        """Submit native mid-response user input and return its local delivery ID.
+
+        Supported by streaming OpenAI Responses WebSocket requests with `openai_steering=True`.
+        This is a send receipt, not acceptance or consumption. Session checkpoints retain the
+        input until a successor consumes it. Unlike `enqueue`, this never falls back to boundary
+        delivery. Call from the run's event loop, not a synchronous callback or durable unit.
+        """
+        controller: SteeringController | None = self.__dict__.get('_steering')
+        if controller is None or self.in_durable_context:
+            raise UserError('Native steering is unavailable in this run context or durable execution unit.')
+        return await controller.steer(content)
 
     def enqueue(
         self,

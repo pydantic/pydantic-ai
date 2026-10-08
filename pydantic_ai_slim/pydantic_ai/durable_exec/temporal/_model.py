@@ -104,9 +104,12 @@ class TemporalModel(WrapperModel):
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            async with managed_model_scope(
-                model_for_request, owned=not self._is_registered_model(model_for_request)
-            ) as active_model:
+            async with (
+                managed_model_scope(
+                    model_for_request, owned=not self._is_registered_model(model_for_request)
+                ) as managed_model,
+                managed_model.open_session() as active_model,
+            ):
                 messages = self._reprepare_messages(params, active_model)
                 return await active_model.request(
                     messages,
@@ -127,9 +130,12 @@ class TemporalModel(WrapperModel):
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            async with managed_model_scope(
-                model_for_request, owned=not self._is_registered_model(model_for_request)
-            ) as active_model:
+            async with (
+                managed_model_scope(
+                    model_for_request, owned=not self._is_registered_model(model_for_request)
+                ) as managed_model,
+                managed_model.open_session() as active_model,
+            ):
                 messages = self._reprepare_messages(params, active_model)
                 async with active_model.request_stream(
                     messages,
@@ -173,14 +179,21 @@ class TemporalModel(WrapperModel):
                     agent=self._agent,
                 )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            async with managed_model_scope(
-                model_for_request, owned=not self._is_registered_model(model_for_request)
-            ) as active_model:
+            async with (
+                managed_model_scope(
+                    model_for_request, owned=not self._is_registered_model(model_for_request)
+                ) as managed_model,
+                managed_model.open_session() as active_model,
+            ):
                 await active_model.cancel_suspended_response(params.response)
 
         self.cancel_suspended_response_activity = activity.defn(
             name=f'{activity_name_prefix}__model_cancel_suspended_response'
         )(cancel_suspended_response_activity)
+
+    @property
+    def _model_resources_in_durable_units(self) -> bool:
+        return workflow.in_workflow()
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:

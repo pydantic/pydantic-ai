@@ -733,6 +733,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self._graph_run.state.event_stream_buffer.append(event)
         return event
 
+    async def steer(self, *content: _messages.UserContent) -> str:
+        """Send native input to the active response; see [`RunContext.steer`][pydantic_ai.tools.RunContext.steer]."""
+        return await _agent_graph.build_run_context(self.ctx).steer(*content)
+
     def enqueue(
         self,
         *content: EnqueueContent,

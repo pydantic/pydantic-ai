@@ -23,7 +23,7 @@ from contextlib import (
     contextmanager,
 )
 from contextvars import ContextVar
-from copy import copy
+from copy import copy, deepcopy
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NamedTuple, Self, cast, overload
@@ -67,6 +67,8 @@ from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._run_context import dispatch_event_stream, set_current_run_context
+from .._session import ActiveRun, ModelResources, SessionRuntime, take_session
+from .._steering import SteeringController
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -1436,6 +1438,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
+        session = take_session(self, conversation)
         message_history, usage, conversation_id = _agent_graph.resolve_conversation(
             conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
         )
@@ -1445,6 +1448,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         prepared = await self._prepare_run(
             user_prompt,
+            session=session,
             output_type=output_type,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
@@ -1471,6 +1475,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
+        session: SessionRuntime | None = None,
         output_type: OutputSpec[Any] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
@@ -1494,12 +1499,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # toolset `for_run()` hooks below) runs in this context: a hook that starts a nested agent
         # run would otherwise consume it and attach the outer handle to the wrong run.
         binding = take_run_binding()
+        inferred_models = session.inferred_models if session is not None else None
 
         # The controller likewise exists before any user-supplied setup code, so `RunContext.cancel()`
         # from a capability/toolset `for_run()` hook records the request instead of raising. Delivery
         # still waits for `bind()` below: setup hooks are never interrupted, and a request recorded
         # here ends the run at the first await after binding, before any model request (#7386).
         cancellation = binding.cancellation if binding is not None else RunCancellation()
+        if session is not None:
+            session.bind_cancellation(cancellation)
 
         # A bare `int` overrides both budgets; a partial `retries={'tools': ...}` / `{'output': ...}`
         # dict overrides only the named budget for this run (riding `ToolManager.default_max_retries`).
@@ -1607,6 +1615,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capability=bootstrap_capability,
                 deps=deps,
                 resolved_models=resolved_models_by_selection,
+                inferred_models=inferred_models,
             )
         if model_contribution is not None:
             selection_messages, selection_prompt = _agent_graph.first_step_selection_messages(
@@ -1626,6 +1635,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capability=bootstrap_capability,
                 ctx=selection_ctx,
                 resolved_models=resolved_models_by_selection,
+                inferred_models=inferred_models,
             )
         elif default_model is not None:
             model_used = default_model
@@ -1678,6 +1688,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 message_history,
             ),
             conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
+        )
+        if session is None:
+            session = SessionRuntime(
+                Conversation(messages=state.message_history, usage=state.usage, conversation_id=state.conversation_id),
+                persistent=False,
+            )
+            session.claim()
+        steering = SteeringController(session.steering, state.run_id, lambda: state.message_history)
+        state.tool_operations = session.operations
+        state.deferred_tool_requests = deepcopy(session.conversation.deferred_tool_requests)
+        assert isinstance(state.pending_messages, _enqueue.PendingMessageQueue)
+        session.attach(
+            ActiveRun(
+                run_id=state.run_id,
+                pending_messages=state.pending_messages,
+                steering=steering,
+                snapshot=state.snapshot_conversation,
+            )
         )
         historical_response = next(
             (message for message in reversed(state.message_history) if isinstance(message, _messages.ModelResponse)),
@@ -1955,6 +1983,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capability=run_capability,
                 deps=deps,
                 resolved_models=resolved_models_by_selection,
+                inferred_models=inferred_models,
             )
             model_id = run_model_contribution if isinstance(run_model_contribution, str) else None
             model_selector = None
@@ -1980,6 +2009,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capability=run_capability,
                 ctx=selection_ctx,
                 resolved_models=resolved_models_by_selection,
+                inferred_models=inferred_models,
             )
 
         def display_banner(*, model: str, tools: int) -> None:
@@ -1995,7 +2025,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capabilities=_registered_capability_count(bootstrap_capability),
             )
 
-        model_resources = _RunModelResources(self._entered_model_ids.copy())
+        model_resources = session.resources
+        resource_policies: list[bool] = []
+        run_capability.apply(
+            lambda leaf: resource_policies.append(leaf._model_resources_in_durable_units)  # pyright: ignore[reportPrivateUsage]
+        )
+        model_resources_in_durable_units = any(resource_policies)
+        steering.blocked = model_resources_in_durable_units or model_used._model_resources_in_durable_units  # pyright: ignore[reportPrivateUsage]
+
+        async def enter_model(selected_model: models.Model) -> models.Model:
+            if model_resources_in_durable_units:
+                return selected_model
+            return await model_resources.get_model(selected_model)
+
+        if not session.persistent:
+            model_resources.entered_model_ids.update(self._entered_model_ids)
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             agent=self,
@@ -2008,7 +2052,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_selector=model_selector,
             model_selected_for_step=model_selected_for_step,
             evaluate_model_selector=evaluate_model_selector,
-            enter_model=model_resources.enter_model,
+            enter_model=enter_model,
             get_model_settings=get_model_settings,
             usage_limits=usage_limits,
             max_output_retries=effective_output_toolset_max_retries,
@@ -2032,6 +2076,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
             cancellation=cancellation,
+            steering=steering,
         )
 
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
@@ -2054,7 +2099,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cancellation_token=cancellation_token,
             model=model_used,
             capability_owns_current_model=capability_owns_current_model,
+            model_resources_in_durable_units=model_resources_in_durable_units,
             model_resources=model_resources,
+            session=session,
             run_capability=run_capability,
             toolset=toolset,
             usage_limits=usage_limits,
@@ -3122,6 +3169,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capability: AbstractCapability[AgentDepsT],
         deps: AgentDepsT,
         resolved_models: dict[tuple[int, str], models.Model] | None = None,
+        inferred_models: dict[str, models.Model] | None = None,
     ) -> models.Model:
         """Resolve a concrete model selection through the capability chain."""
         if not isinstance(selection, str):
@@ -3135,7 +3183,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return entered_model
         resolution_ctx = models.ModelResolutionContext(agent=self, deps=deps)
         resolved = await capability.resolve_model_id(resolution_ctx, model_id=selection)
-        resolved_model = resolved if resolved is not None else models.infer_model(selection)
+        if resolved is not None:
+            resolved_model = resolved
+        elif inferred_models is not None:
+            # Re-evaluate capability resolution each run (it can depend on dependencies), but
+            # keep ordinary provider models and their connections for the session's lifetime.
+            if selection not in inferred_models:
+                inferred_models[selection] = models.infer_model(selection)
+            resolved_model = inferred_models[selection]
+        else:
+            resolved_model = models.infer_model(selection)
         if resolved_models is not None:
             resolved_models[cache_key] = resolved_model
         return resolved_model
@@ -3147,13 +3204,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capability: AbstractCapability[AgentDepsT],
         ctx: models.ModelSelectionContext[AgentDepsT],
         resolved_models: dict[tuple[int, str], models.Model] | None = None,
+        inferred_models: dict[str, models.Model] | None = None,
     ) -> tuple[models.Model, str | None]:
         """Evaluate a static or dynamic model contribution and resolve its result."""
         selection = contribution(ctx) if callable(contribution) and not _is_model(contribution) else contribution
         if inspect.isawaitable(selection):
             selection = await selection
         model = await self._resolve_model_selection(
-            selection, capability=capability, deps=ctx.deps, resolved_models=resolved_models
+            selection,
+            capability=capability,
+            deps=ctx.deps,
+            resolved_models=resolved_models,
+            inferred_models=inferred_models,
         )
         return model, selection if isinstance(selection, str) else None
 
@@ -3574,6 +3636,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         from ..realtime import RealtimeModel, infer_realtime_model
 
+        owner = take_session(self) if run_lifecycle else None
+        if owner is not None and (
+            message_history is not owner.conversation.messages
+            or conversation_id != owner.conversation.conversation_id
+            or usage is not owner.conversation.usage
+        ):
+            raise exceptions.UserError(
+                'The agent wrapper did not delegate to its wrapped agent with the session conversation.'
+            )
+        if owner is not None and (attachment := owner.realtime) is not None:
+            if attachment.requested_model is not None and model != attachment.requested_model:
+                raise exceptions.UserError('A realtime connection cannot switch models between runs.')
+            attachment.requested_model = model
+            if attachment.model is not None:
+                model = attachment.model
         if not isinstance(model, RealtimeModel):
             model = infer_realtime_model(model)
 
@@ -3743,7 +3820,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if lifecycle_state.session is None:
                 lifecycle_state.short_result = result
             else:
-                lifecycle_state.session._result = result  # pyright: ignore[reportPrivateUsage]
+                lifecycle_state.session._run.result = result  # pyright: ignore[reportPrivateUsage]
 
         @asynccontextmanager
         async def _translate_cancellation() -> AsyncGenerator[None]:
@@ -3789,6 +3866,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 await session_stack.enter_async_context(_translate_cancellation())
                 cancellation.bind()
                 session_stack.callback(cancellation.finish)
+                if owner is not None:
+                    owner.bind_cancellation(cancellation)
                 lifecycle = await session_stack.enter_async_context(
                     _run_lifecycle_hooks(
                         run_capability,
@@ -3818,6 +3897,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             instrumentation_settings=session_instrumentation_settings,
                             conversation_id=conversation_id,
                             run_id=run_id,
+                            owner=owner,
                             lifecycle=lifecycle_state,
                             short_circuited=True,
                         )
@@ -3920,6 +4000,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 conversation_id=conversation_id,
                 run_id=run_id,
                 wrap_event_stream=wrap_event_stream,
+                owner=owner,
                 lifecycle=lifecycle_state,
             )
             try:
@@ -3950,6 +4031,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings=session_instrumentation_settings,
             conversation_id=conversation_id,
             run_id=run_id,
+            owner=owner,
             lifecycle=lifecycle_state,
             short_circuited=True,
         )
@@ -3983,7 +4065,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         [`agent.realtime(model).session()`][pydantic_ai.agent.AbstractAgent.realtime]; see
         [`realtime`][pydantic_ai.agent.AbstractAgent.realtime] for the parameter reference.
         """
-        from ..realtime import RealtimeSession
+        from ..realtime import RealtimeRun, RealtimeSession
         from ..realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput
 
         # A WebRTC sideband session doesn't own the audio transport: the browser streams audio to the
@@ -4013,6 +4095,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             message_history=message_history,
             run_lifecycle=True,
         ) as resolved:
+            owner = resolved.owner
+            attachment = owner.realtime if owner is not None else None
             lifecycle = resolved.lifecycle
             assert lifecycle is not None
 
@@ -4042,8 +4126,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     run_id=resolved.run_id,
                     metadata=resolved.run_context.metadata,
                 )
-                session._result = result  # pyright: ignore[reportPrivateUsage]
+                session._run.result = result  # pyright: ignore[reportPrivateUsage]
                 session._closed = True  # pyright: ignore[reportPrivateUsage]
+                session._run.pending_messages.close()  # pyright: ignore[reportPrivateUsage]
+                if owner is not None:
+                    session._attach_owner(owner)  # pyright: ignore[reportPrivateUsage]
                 return session
 
             if resolved.short_circuited:
@@ -4058,7 +4145,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     yielded = True
                 return
 
-            if message_history and not resolved.model_profile.get('supports_session_seeding', False):
+            if (
+                message_history
+                and (attachment is None or attachment.connection is None)
+                and not resolved.model_profile.get('supports_session_seeding', False)
+            ):
                 raise exceptions.UserError(
                     f'The {resolved.model.model_name!r} realtime model does not support seeding a session with '
                     '`message_history`.'
@@ -4089,45 +4180,73 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     model_request_parameters=resolved.model_request_parameters,
                 )
             )
-            async with connection_manager as connection:
-                session = RealtimeSession(
-                    connection,
+            if attachment is not None:
+                connection_manager = attachment.connect(
+                    connection_manager,
                     model=resolved.model,
-                    tool_manager=resolved.tool_manager,
-                    owns_media=owns_media,
-                    provider_session=provider_session,
-                    instrumentation=resolved.instrumentation_settings,
-                    # Fall back to 'agent' like the classic run span (see `capabilities/instrumentation.py`)
-                    # so the session span always carries an `agent_name`; backends that group runs by it
-                    # (e.g. Logfire's Runs view) would otherwise skip an unnamed agent's realtime session.
-                    agent_name=self.name or 'agent',
-                    usage=resolved.run_context.usage,
-                    usage_limits=usage_limits,
-                    audio_retention=audio_retention,
-                    handle_barge_in=handle_barge_in,
-                    retain_images_every_n=retain_images_every_n,
-                    retain_images_max=retain_images_max,
-                    retain_audio_max_seconds=retain_audio_max_seconds,
-                    message_history=message_history,
-                    conversation_id=resolved.conversation_id,
-                    run_id=resolved.run_id,
+                    settings=resolved.model_settings,
+                    parameters=resolved.model_request_parameters,
                     instructions=resolved.instructions,
-                    metadata=resolved.run_context.metadata,
-                    agent_description=(
-                        self.render_description(resolved.run_context.deps)
-                        if resolved.instrumentation_settings is not None
-                        else None
-                    ),
-                    output_modality=output_modality,
-                    # Surfaced on the session span so the session's configured native tools and realtime
-                    # settings are inspectable, respecting `include_model_request_parameters`.
-                    model_request_parameters=resolved.model_request_parameters,
-                    model_settings=resolved.model_settings,
-                    wrap_event_stream=resolved.wrap_event_stream,
                 )
+            async with connection_manager as connection:
+                if attachment is not None and attachment.session is not None:
+                    session = attachment.session
+                    session._resume_run(  # pyright: ignore[reportPrivateUsage]
+                        tool_manager=resolved.tool_manager,
+                        run_id=resolved.run_id,
+                        usage=resolved.run_context.usage,
+                        usage_limits=usage_limits,
+                        wrap_event_stream=resolved.wrap_event_stream,
+                        instrumentation=resolved.instrumentation_settings,
+                        metadata=resolved.run_context.metadata,
+                    )
+                else:
+                    session = RealtimeSession(
+                        connection,
+                        model=resolved.model,
+                        tool_manager=resolved.tool_manager,
+                        owns_media=owns_media,
+                        provider_session=provider_session,
+                        instrumentation=resolved.instrumentation_settings,
+                        # Fall back to 'agent' like the classic run span (see `capabilities/instrumentation.py`)
+                        # so the session span always carries an `agent_name`; backends that group runs by it
+                        # (e.g. Logfire's Runs view) would otherwise skip an unnamed agent's realtime session.
+                        agent_name=self.name or 'agent',
+                        usage=resolved.run_context.usage,
+                        usage_limits=usage_limits,
+                        audio_retention=audio_retention,
+                        handle_barge_in=handle_barge_in,
+                        retain_images_every_n=retain_images_every_n,
+                        retain_images_max=retain_images_max,
+                        retain_audio_max_seconds=retain_audio_max_seconds,
+                        message_history=message_history,
+                        conversation_id=resolved.conversation_id,
+                        run_id=resolved.run_id,
+                        instructions=resolved.instructions,
+                        metadata=resolved.run_context.metadata,
+                        agent_description=(
+                            self.render_description(resolved.run_context.deps)
+                            if resolved.instrumentation_settings is not None
+                            else None
+                        ),
+                        output_modality=output_modality,
+                        # Surfaced on the session span so the session's configured native tools and realtime
+                        # settings are inspectable, respecting `include_model_request_parameters`.
+                        model_request_parameters=resolved.model_request_parameters,
+                        model_settings=resolved.model_settings,
+                        wrap_event_stream=resolved.wrap_event_stream,
+                    )
+                if owner is not None:
+                    session._attach_owner(owner)  # pyright: ignore[reportPrivateUsage]
                 lifecycle.session = session
-                resolved.run_context.realtime_session = session
-                async with session:
+                if attachment is not None:
+                    handle = session._run.handle = RealtimeRun(session)  # pyright: ignore[reportPrivateUsage]
+                    resolved.run_context.realtime_run = handle
+                    assert resolved.tool_manager.ctx is not None
+                    resolved.tool_manager.ctx.realtime_run = handle
+                else:
+                    resolved.run_context.realtime_session = session
+                async with attachment.run(session) if attachment is not None else session:
                     try:
                         yield session
                     finally:
@@ -4302,26 +4421,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
 
 @dataclasses.dataclass
-class _RunModelResources:
-    """Enter every model selected by a run on its shared resource stack."""
-
-    entered_model_ids: set[int]
-    _stack: AsyncExitStack | None = dataclasses.field(default=None, init=False, repr=False)
-
-    def bind_stack(self, stack: AsyncExitStack) -> None:
-        assert self._stack is None
-        self._stack = stack
-
-    async def enter_model(self, selected_model: models.Model) -> None:
-        model_identity = id(selected_model)
-        if model_identity in self.entered_model_ids:
-            return
-        assert self._stack is not None
-        await self._stack.enter_async_context(selected_model)
-        self.entered_model_ids.add(model_identity)
-
-
-@dataclasses.dataclass
 class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     """The fully assembled inputs and resources for one graph-based agent run."""
 
@@ -4339,7 +4438,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     cancellation_token: CancellationToken | None
     model: models.Model
     capability_owns_current_model: bool
-    model_resources: _RunModelResources
+    model_resources_in_durable_units: bool
+    model_resources: ModelResources
+    session: SessionRuntime
     run_capability: AbstractCapability[_PreparedDepsT]
     toolset: AbstractToolset[_PreparedDepsT]
     usage_limits: _usage.UsageLimits
@@ -4419,6 +4520,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 graph_deps.cancellation.release_issued()
 
         async with AsyncExitStack() as stack:
+            if not self.session.persistent:
+                stack.callback(self.session.release)
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
             stack.callback(refresh_workspace_ref)
@@ -4437,10 +4540,12 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             # Nothing drains the queue once the graph stops, so reject later enqueues instead of
             # stranding them. A normal finish already closed it inside `drain_at_end`.
             stack.callback(pending_message_queue.close)
+            stack.push_async_callback(graph_deps.steering.close)
             if self.cancellation_token is not None:
                 graph_deps.cancellation.attach_token(self.cancellation_token)
 
-            self.model_resources.bind_stack(stack)
+            if not self.session.persistent:
+                self.model_resources.bind_stack(stack)
             task_id = anyio.get_current_task().id
             if isinstance(self.concurrency_limiter, _concurrency.ConcurrencyLimiter) and any(
                 active_task_id == task_id and limiter is self.concurrency_limiter
@@ -4458,8 +4563,10 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                     (*_ACTIVE_AGENT_LIMITERS.get(), (task_id, self.concurrency_limiter))
                 )
                 stack.callback(_ACTIVE_AGENT_LIMITERS.reset, limiter_token)
-            if self.capability_owns_current_model:
-                await self.model_resources.enter_model(self.model)
+            if not self.model_resources_in_durable_units:
+                graph_deps.model = await self.model_resources.get_model(
+                    self.model, enter_model=self.capability_owns_current_model or self.session.persistent
+                )
             graph_run = await stack.enter_async_context(
                 self.graph.iter(
                     inputs=self.user_prompt_node,
@@ -4487,6 +4594,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 if graph_deps.cancellation.cancel_requested:
                     raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
                 agent_run._result_override = result  # pyright: ignore[reportPrivateUsage]
+                self.session.record_result(result.conversation)
 
             def _extract_error(error: BaseException) -> BaseException:
                 # Use the original node error if available, since context manager __aexit__ chains

@@ -213,11 +213,11 @@ class Checker:
             self.shadow = ShadowChecker(self.sim, core)
         handle = session._handle_pump_event  # pyright: ignore[reportPrivateUsage]
 
-        async def observed(event: RealtimeCodecEvent) -> bool:
+        async def observed(event: RealtimeCodecEvent) -> None:
             self.codec_events.append(event)
             self._codec_issues += self.lifecycle.feed(event)
             self.sim.observe_codec_event(event)
-            return await handle(event)
+            await handle(event)
 
         session._handle_pump_event = observed  # pyright: ignore[reportPrivateUsage]
 

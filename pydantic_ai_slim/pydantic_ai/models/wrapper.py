@@ -3,6 +3,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from copy import copy
 from dataclasses import dataclass
 from datetime import timedelta
 from types import TracebackType
@@ -52,6 +53,21 @@ class WrapperModel(Model):
         exc_tb: TracebackType | None,
     ) -> bool | None:
         return await self.wrapped.__aexit__(exc_type, exc_val, exc_tb)
+
+    @property
+    def _model_resources_in_durable_units(self) -> bool:
+        return self.wrapped._model_resources_in_durable_units
+
+    @asynccontextmanager
+    async def open_session(self) -> AsyncGenerator[Model]:
+        async with self.wrapped.open_session() as wrapped:
+            if wrapped is self.wrapped:
+                yield self
+            else:
+                # Retain wrapper policy/configuration without mutating a shared model definition.
+                bound = copy(self)
+                bound.wrapped = wrapped
+                yield bound
 
     async def request(
         self,

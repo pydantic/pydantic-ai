@@ -48,7 +48,8 @@ class DBOSModel(WrapperModel):
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
         ) -> ModelResponse:
-            return await super(DBOSModel, self).request(messages, model_settings, model_request_parameters)
+            async with self.wrapped.open_session() as model:
+                return await model.request(messages, model_settings, model_request_parameters)
 
         self._dbos_wrapped_request_step = wrapped_request_step
 
@@ -64,9 +65,12 @@ class DBOSModel(WrapperModel):
             run_context: RunContext[Any] | None = None,
         ) -> ModelResponse:
             event_stream_handler = self._get_event_stream_handler()
-            async with super(DBOSModel, self).request_stream(
-                messages, model_settings, model_request_parameters, run_context
-            ) as streamed_response:
+            async with (
+                self.wrapped.open_session() as model,
+                model.request_stream(
+                    messages, model_settings, model_request_parameters, run_context
+                ) as streamed_response,
+            ):
                 if event_stream_handler is not None:
                     assert run_context is not None, (
                         'A DBOS model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
@@ -87,9 +91,19 @@ class DBOSModel(WrapperModel):
             **self.step_config,
         )
         async def wrapped_cancel_suspended_response_step(response: ModelResponse) -> None:
-            await super(DBOSModel, self).cancel_suspended_response(response)
+            async with self.wrapped.open_session() as model:
+                await model.cancel_suspended_response(response)
 
         self._dbos_wrapped_cancel_suspended_response_step = wrapped_cancel_suspended_response_step
+
+    @property
+    def _model_resources_in_durable_units(self) -> bool:
+        return DBOS.workflow_id is not None and DBOS.step_id is None
+
+    @asynccontextmanager
+    async def open_session(self) -> AsyncGenerator[Model]:
+        # Registered callbacks close over this definition; each step opens its own interaction.
+        yield self
 
     async def request(
         self,
@@ -112,9 +126,12 @@ class DBOSModel(WrapperModel):
     ) -> AsyncGenerator[StreamedResponse]:
         # If not in a workflow (could be in a step), just call the wrapped request_stream method.
         if DBOS.workflow_id is None or DBOS.step_id is not None:
-            async with super().request_stream(
-                messages, model_settings, model_request_parameters, run_context
-            ) as streamed_response:
+            async with (
+                self.wrapped.open_session() as model,
+                model.request_stream(
+                    messages, model_settings, model_request_parameters, run_context
+                ) as streamed_response,
+            ):
                 yield streamed_response
                 return
 

@@ -232,6 +232,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return ()
 
     @property
+    def _model_resources_in_durable_units(self) -> bool:
+        """Whether the execution backend, rather than the run, owns model interactions.
+
+        Internal resource-policy seam: durable containers must retain model definitions for
+        deterministic dispatch, never open their live interactions while replaying the container.
+        """
+        return False
+
+    @property
     def _emits_app_events(self) -> bool:
         """Whether this app-facing capability may emit `CustomEvent`s while dispatching callbacks.
 

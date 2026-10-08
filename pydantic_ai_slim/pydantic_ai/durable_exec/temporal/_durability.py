@@ -651,7 +651,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         if owned:
             assert model_id is not None
             model = infer_model(model_id)
-        async with managed_model_scope(model, owned=owned) as active_model:
+        async with (
+            managed_model_scope(model, owned=owned) as managed_model,
+            managed_model.open_session() as active_model,
+        ):
             await active_model.cancel_suspended_response(response)
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:

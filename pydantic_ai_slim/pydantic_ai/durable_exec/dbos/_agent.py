@@ -17,6 +17,7 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
+from pydantic_ai._session import peek_session
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import (
     AbstractAgent,
@@ -196,8 +197,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         self._toolsets = dbos_toolsets
         DBOSConfiguredInstance.__init__(self, self._name)
 
-        # Wrap the `run` method in a DBOS workflow
-        @DBOS.workflow(name=f'{self._name}.run')
+        # Keep the body available for an explicit Session owned by the caller's workflow.
         async def wrapped_run_workflow(
             user_prompt: str | Sequence[_messages.UserContent] | None = None,
             *,
@@ -250,7 +250,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     spec=spec,
                 )
 
-        self.dbos_wrapped_run_workflow = wrapped_run_workflow
+        self._run_in_session = wrapped_run_workflow
+        self.dbos_wrapped_run_workflow = DBOS.workflow(name=f'{self._name}.run')(wrapped_run_workflow)
 
         # Wrap the `run_sync` method in a DBOS workflow
         @DBOS.workflow(name=f'{self._name}.run_sync')
@@ -527,7 +528,17 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
             )
         self._reject_unsupported_runtime_toolsets(toolsets)
-        return await self.dbos_wrapped_run_workflow(
+        run = self.dbos_wrapped_run_workflow
+        if DBOS.workflow_id is not None and DBOS.step_id is None:
+            target = self.wrapped
+            while isinstance(target, WrapperAgent):
+                target = target.wrapped
+            if peek_session(target, conversation) is not None:
+                # A cached whole-run result cannot restore the caller-owned Session ledger.
+                # Replay its graph in the owning workflow; model/tool effects remain steps.
+                # Ordinary calls retain their existing child workflow and persisted names.
+                run = self._run_in_session
+        return await run(
             user_prompt,
             output_type=output_type,
             conversation=conversation,

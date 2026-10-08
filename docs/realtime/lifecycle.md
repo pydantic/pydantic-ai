@@ -9,6 +9,14 @@ media bridge to the user (see [Connecting a frontend](deployment.md)); a reconne
 recover dropped connections and provider session limits without changing the application event
 loop.
 
+## Multiple runs on one connection
+
+The existing `agent.realtime(...).session()` interface treats the whole connection as one run.
+To keep the connection across explicit runs, enter `agent.session()` and use
+`session.realtime(...).connect()` followed by `live.run()` blocks. Normal run exit drains replies
+and tools without closing the connection; cancellation aborts it. See [Realtime runs](../sessions.md#realtime-runs)
+for the full ownership contract, per-run hooks, and revocable handles.
+
 ## The session lifecycle
 
 ```mermaid

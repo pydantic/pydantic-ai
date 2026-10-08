@@ -10,7 +10,10 @@ tool calls as they arrive. The high-level entry point is
 [`Agent.realtime()`][pydantic_ai.agent.Agent.realtime], followed by
 [`AgentRealtime.session()`][pydantic_ai.agent.AgentRealtime.session], which wires the agent's tools and
 instructions into a session and runs the tool loop for you. See the [Realtime guide](../realtime/overview.md)
-for a walkthrough.
+for a walkthrough. For separate runs on one connection, use
+[`Agent.session()`][pydantic_ai.agent.Agent.session] with
+[`AgentRealtime.connect()`][pydantic_ai.agent.AgentRealtime.connect]; each run exposes a
+[`RealtimeRun`][pydantic_ai.realtime.RealtimeRun]. See [Sessions](../sessions.md#realtime-runs).
 
 The flow of a session:
 

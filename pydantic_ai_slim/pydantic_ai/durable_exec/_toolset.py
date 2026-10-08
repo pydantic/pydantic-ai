@@ -522,6 +522,7 @@ def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_
         ctx,
         pending_messages=EnqueueGuard(enqueue_not_supported_message(unit_noun, container_noun)),
         _cancellation=CancelGuard(cancel_not_supported_message(unit_noun, container_noun)),
+        _steering=None,
     )
 
 
