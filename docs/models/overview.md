@@ -115,7 +115,7 @@ The profile also carries the model's [`context_window`][pydantic_ai.profiles.Mod
 
 ## HTTP Client Lifecycle
 
-When a [`Provider`][pydantic_ai.providers.Provider] creates its own HTTP client (i.e. you don't pass a custom `http_client`), it owns that client's lifecycle. Using the [`Agent`][pydantic_ai.Agent] as an async context manager ensures the HTTP client is closed cleanly on exit:
+When a [`Provider`][pydantic_ai.providers.Provider] creates its own HTTP client (i.e. you don't pass a custom `http_client`), it owns that client's lifecycle. Using the [`Agent`][pydantic_ai.Agent] as an async context manager keeps the HTTP client open across every run inside the block, so the runs reuse its connections, and closes it cleanly on exit:
 
 ```python
 from pydantic_ai import Agent
@@ -131,7 +131,38 @@ async def main():
 
 You can also use a [`Model`][pydantic_ai.models.Model] or [`Provider`][pydantic_ai.providers.Provider] directly as an async context manager for the same effect.
 
-If you provide your own `http_client`, you are responsible for closing it yourself.
+An agent you don't enter this way enters its model for the duration of each run instead. The provider then closes its HTTP client when the run ends and creates a new one for the next run, so no connections are reused between runs. A model name passed to a run, as in `agent.run(..., model='openai:gpt-5.2')`, goes further: it creates a new provider, and with it a new HTTP client, for every run. In a long-lived service such as a web server, enter the agent once when the service starts and run it inside that block, and to switch models per run, pass `Model` instances you created and entered (`async with model:`) once, rather than model names.
+
+Pydantic AI only ever closes an HTTP client it created itself. A client you pass in is yours to close, whether it's an `http_client` or a provider SDK client, such as `openai_client`, `anthropic_client` (including `AsyncAnthropicVertex`), Google's `client`, or `xai_client`.
+
+### Configuring the HTTP client
+
+The HTTP clients Pydantic AI creates have a 600-second timeout with a 5-second connect timeout, and a connection pool of up to 1000 connections, of which up to 100 are kept alive while idle. These are the defaults of the OpenAI and Anthropic SDKs' own clients. To change them, create a client with [`create_async_httpx2_client()`][pydantic_ai.models.create_async_httpx2_client], which keeps the remaining defaults and Pydantic AI's `User-Agent`, and pass it to the provider as `http_client`:
+
+```python {title="configure_http_client.py"}
+import httpx2
+
+from pydantic_ai import Agent
+from pydantic_ai.models import create_async_httpx2_client
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+
+async def main():
+    async with create_async_httpx2_client(
+        timeout=httpx2.Timeout(120, connect=5, pool=10),
+        limits=httpx2.Limits(max_connections=200, max_keepalive_connections=50),
+    ) as http_client:
+        model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(http_client=http_client))
+        agent = Agent(model)
+        result = await agent.run('What is the capital of France?')
+        print(result.output)
+        #> The capital of France is Paris.
+```
+
+Because you created the client, you close it, here by leaving the `async with` block. Passing the same client to several providers makes them share its connection pool.
+
+The Groq, Cohere and GitHub providers take a legacy `httpx.AsyncClient` instead, which you build yourself with the same arguments, for example `httpx.AsyncClient(timeout=httpx.Timeout(120, connect=5), limits=httpx.Limits(max_connections=200, max_keepalive_connections=50))`.
 
 ## Custom Models
 
@@ -379,54 +410,23 @@ The next example demonstrates the exception-handling capabilities of `FallbackMo
 If all models fail, a [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] is raised, which
 contains all the exceptions encountered during the `run` execution.
 
-=== "Python >=3.11"
+```python {title="fallback_model_failure.py" py="3.11"}
+from pydantic_ai import Agent, ModelAPIError
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.openai import OpenAIChatModel
 
-    ```python {title="fallback_model_failure.py" py="3.11"}
-    from pydantic_ai import Agent, ModelAPIError
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.models.fallback import FallbackModel
-    from pydantic_ai.models.openai import OpenAIChatModel
+openai_model = OpenAIChatModel('gpt-5.2')
+anthropic_model = AnthropicModel('claude-sonnet-4-5')
+fallback_model = FallbackModel(openai_model, anthropic_model)
 
-    openai_model = OpenAIChatModel('gpt-5.2')
-    anthropic_model = AnthropicModel('claude-sonnet-4-5')
-    fallback_model = FallbackModel(openai_model, anthropic_model)
-
-    agent = Agent(fallback_model)
-    try:
-        response = agent.run_sync('What is the capital of France?')
-    except* ModelAPIError as exc_group:
-        for exc in exc_group.exceptions:
-            print(exc)
-    ```
-
-=== "Python <3.11"
-
-    Since [`except*`](https://docs.python.org/3/reference/compound_stmts.html#except-star) is only supported
-    in Python 3.11+, we use the [`exceptiongroup`](https://github.com/agronholm/exceptiongroup) backport
-    package for earlier Python versions:
-
-    ```python {title="fallback_model_failure.py" test="skip"}
-    from exceptiongroup import BaseExceptionGroup, catch
-
-    from pydantic_ai import Agent, ModelAPIError
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.models.fallback import FallbackModel
-    from pydantic_ai.models.openai import OpenAIChatModel
-
-
-    def model_status_error_handler(exc_group: BaseExceptionGroup) -> None:
-        for exc in exc_group.exceptions:
-            print(exc)
-
-
-    openai_model = OpenAIChatModel('gpt-5.2')
-    anthropic_model = AnthropicModel('claude-sonnet-4-5')
-    fallback_model = FallbackModel(openai_model, anthropic_model)
-
-    agent = Agent(fallback_model)
-    with catch({ModelAPIError: model_status_error_handler}):
-        response = agent.run_sync('What is the capital of France?')
-    ```
+agent = Agent(fallback_model)
+try:
+    response = agent.run_sync('What is the capital of France?')
+except* ModelAPIError as exc_group:
+    for exc in exc_group.exceptions:
+        print(exc)
+```
 
 By default, the `FallbackModel` only moves on to the next model if the current model raises a
 [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], which includes
@@ -624,59 +624,28 @@ exception groups as well as bare exceptions. Note that `except*` always delivers
 `ExceptionGroup` (even if the original was a bare exception), so re-raising will propagate an `ExceptionGroup`
 rather than the original exception type:
 
-=== "Python >=3.11"
+```python {title="middleware_with_fallback.py" py="3.11"}
+from collections.abc import Callable
+from functools import wraps
+from typing import TypeVar
 
-    ```python {title="middleware_with_fallback.py" py="3.11"}
-    from collections.abc import Callable
-    from functools import wraps
-    from typing import TypeVar
+from pydantic_ai import ModelAPIError
 
-    from pydantic_ai import ModelAPIError
-
-    T = TypeVar('T')
+T = TypeVar('T')
 
 
-    def handle_api_errors(func: Callable[..., T]) -> Callable[..., T]:
-        @wraps(func)
-        def wrapper(*args, **kwargs) -> T:
-            try:
-                return func(*args, **kwargs)
-            except* ModelAPIError as exc_group:
-                for exc in exc_group.exceptions:
-                    print(f'API error: {exc}')
-                raise
+def handle_api_errors(func: Callable[..., T]) -> Callable[..., T]:
+    @wraps(func)
+    def wrapper(*args, **kwargs) -> T:
+        try:
+            return func(*args, **kwargs)
+        except* ModelAPIError as exc_group:
+            for exc in exc_group.exceptions:
+                print(f'API error: {exc}')
+            raise
 
-        return wrapper
-    ```
-
-=== "Python <3.11"
-
-    ```python {title="middleware_with_fallback.py" noqa="F821" test="skip"}
-    from collections.abc import Callable
-    from functools import wraps
-    from typing import TypeVar
-
-    from pydantic_ai import FallbackExceptionGroup, ModelAPIError
-
-    T = TypeVar('T')
-
-
-    def handle_api_errors(func: Callable[..., T]) -> Callable[..., T]:
-        @wraps(func)
-        def wrapper(*args, **kwargs) -> T:
-            try:
-                return func(*args, **kwargs)
-            except FallbackExceptionGroup as exc_group:
-                for exc in exc_group.exceptions:
-                    if isinstance(exc, ModelAPIError):
-                        print(f'API error from fallback: {exc}')
-                raise
-            except ModelAPIError as e:
-                print(f'API error: {e}')
-                raise
-
-        return wrapper
-    ```
+    return wrapper
+```
 
 You can also catch `FallbackExceptionGroup` directly if you want to handle it specifically:
 

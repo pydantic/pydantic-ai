@@ -31,6 +31,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceRef,
     WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
 )
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.memory import (
@@ -1031,9 +1032,9 @@ class _TruncatingBackend(LocalWorkspaceBackend):
 
 
 class _FailingRenameBackend(LocalWorkspaceBackend):
-    """A local workspace whose `mv` fails, either with an exit status or by raising."""
+    """A local workspace whose `mv` fails, either with an exit status or by raising `error`."""
 
-    raises: bool = False
+    error: Exception | None = None
 
     async def run(
         self,
@@ -1043,8 +1044,8 @@ class _FailingRenameBackend(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        if self.raises:
-            raise WorkspaceTimeoutError('mv timed out')
+        if self.error is not None:
+            raise self.error
         return CommandResult(exit_code=1, stdout='', stderr='mv: rename refused')
 
 
@@ -1079,12 +1080,23 @@ async def test_file_store_failed_journal_write_keeps_the_old_journal(tmp_path: P
     assert _staged_files(tmp_path) == []
 
 
-@pytest.mark.parametrize('raises', [False, True])
-async def test_file_store_failed_rename_names_the_target(tmp_path: Path, raises: bool) -> None:
+@pytest.mark.parametrize('error', [None, WorkspaceTimeoutError('mv timed out')])
+async def test_file_store_failed_rename_names_the_target(tmp_path: Path, error: Exception | None) -> None:
     backend = _FailingRenameBackend(tmp_path)
-    backend.raises = raises
+    backend.error = error
     (tmp_path / 'main.md').write_text('old')
     with pytest.raises(WorkspaceError, match=r"Could not replace memory file '.*/main\.md'"):
+        await FileStore('.', workspace=backend).write('main.md', 'new', expected_version=_version('old'))
+    assert (tmp_path / 'main.md').read_text() == 'old'
+    assert _staged_files(tmp_path) == []
+
+
+async def test_file_store_rename_in_a_gone_workspace_reports_it_gone(tmp_path: Path) -> None:
+    # A workspace that is gone is reported as such, not as a memory file that could not be replaced.
+    backend = _FailingRenameBackend(tmp_path)
+    backend.error = WorkspaceUnavailableError('sandbox was destroyed')
+    (tmp_path / 'main.md').write_text('old')
+    with pytest.raises(WorkspaceUnavailableError, match=r'^sandbox was destroyed$'):
         await FileStore('.', workspace=backend).write('main.md', 'new', expected_version=_version('old'))
     assert (tmp_path / 'main.md').read_text() == 'old'
     assert _staged_files(tmp_path) == []

@@ -14,6 +14,7 @@ Run:  uv run --with pytest pytest .github/scripts/test_pydantic_ai_runner.py
 
 import asyncio
 import importlib
+import inspect
 import io
 import json
 import os
@@ -66,8 +67,10 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model as _Model
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, PrefixedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -480,9 +483,9 @@ def test_harness_backed_tools_are_async_and_pin_the_remaining_gaps():
     assert harness_backed.isdisjoint(hand_rolled)
     assert harness_backed | hand_rolled == set(pkg.CLAUDE_CODE_TOOL_NAMES) == set(fn_by_name)
     for name in harness_backed:
-        assert asyncio.iscoroutinefunction(fn_by_name[name]), f'{name} should be harness-backed (async)'
+        assert inspect.iscoroutinefunction(fn_by_name[name]), f'{name} should be harness-backed (async)'
     for name in hand_rolled:
-        assert not asyncio.iscoroutinefunction(fn_by_name[name]), f'{name} has no stable harness equivalent (sync)'
+        assert not inspect.iscoroutinefunction(fn_by_name[name]), f'{name} has no stable harness equivalent (sync)'
 
 
 # --------------------------------------------------------------------------- #
@@ -826,9 +829,7 @@ def test_multi_edit_replace_all(tmp_path: Path):
 
 
 def test_web_fetch_only_enabled_on_real_anthropic(monkeypatch: pytest.MonkeyPatch):
-    """`web_fetch_20250910` is an Anthropic-server-side tool; compat
-    endpoints (MiniMax etc.) reject it with HTTP 400. The capability is
-    gated by `ANTHROPIC_BASE_URL`."""
+    """`web_fetch_20250910` is Anthropic-specific; compatible endpoints may not support it."""
     monkeypatch.delenv('ANTHROPIC_BASE_URL', raising=False)
     caps = shim._anthropic_native_capabilities()  # pyright: ignore[reportPrivateUsage]
     assert len(caps) == 1 and isinstance(caps[0], NativeTool)
@@ -1916,7 +1917,7 @@ _RATE_LIMITED_RESPONSE = {
 
 
 def _rate_limited_client(rate_limited_responses: int, calls: list[int]) -> AsyncAnthropic:
-    """A real `AsyncAnthropic` whose first `rate_limited_responses` requests get a MiniMax 429."""
+    """An `AsyncAnthropic` client whose first requests receive a retryable 429."""
 
     def _handle(_request: httpx2.Request) -> httpx2.Response:
         calls.append(1)
@@ -1955,6 +1956,102 @@ def test_rate_limit_retry_transport_hands_the_last_429_to_the_sdk():
     assert len(calls) == 4
 
 
+@pytest.mark.parametrize(
+    'error_code',
+    [
+        '1308',
+        '1309',
+        '1310',
+        '1316',
+        '1317',
+        '1318',
+        '1319',
+        '1320',
+        '1321',
+        pytest.param(1316, id='numeric-1316'),
+    ],
+)
+def test_rate_limit_retry_transport_does_not_retry_plan_quota_exhaustion(error_code: str | int):
+    calls: list[int] = []
+    quota_response: dict[str, object] = {'error': {'code': error_code, 'message': 'Usage limit reached'}}
+
+    def _handle(_request: httpx2.Request) -> httpx2.Response:
+        calls.append(1)
+        return httpx2.Response(
+            429,
+            headers={'content-type': 'application/json'},
+            stream=httpx2.ByteStream(json.dumps(quota_response).encode()),
+        )
+
+    transport = shim.rate_limit_retry_transport(httpx2.MockTransport(_handle))
+    transport.config['wait'] = wait_none()
+    transport.config['stop'] = stop_after_attempt(4)
+    client = AsyncAnthropic(
+        api_key='x',
+        max_retries=shim._LLM_MAX_RETRIES,  # pyright: ignore[reportPrivateUsage]
+        http_client=httpx2.AsyncClient(transport=transport),
+    )
+
+    async def _request() -> None:
+        async with client:
+            with pytest.raises(RateLimitError) as exc_info:
+                await client.messages.create(
+                    model='glm-5.3-flash', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}]
+                )
+            assert exc_info.value.body == quota_response
+
+    asyncio.run(_request())
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    'error_body',
+    [
+        pytest.param(json.dumps({'error': {'code': '1302', 'message': 'Rate limited'}}).encode(), id='rate-limit-1302'),
+        pytest.param(
+            json.dumps({'error': {'code': '1305', 'message': 'Temporarily overloaded'}}).encode(), id='overloaded-1305'
+        ),
+        pytest.param(json.dumps({'error': {'code': '9999', 'message': 'Unknown'}}).encode(), id='unknown-code'),
+        pytest.param(
+            json.dumps({'error': {'code': '9' * 5000, 'message': 'Unknown'}}).encode(), id='large-numeric-code'
+        ),
+        pytest.param(b'{invalid json', id='malformed-json'),
+    ],
+)
+def test_rate_limit_retry_transport_retries_transient_unknown_and_malformed_429s(error_body: bytes):
+    calls: list[int] = []
+
+    def _handle(_request: httpx2.Request) -> httpx2.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx2.Response(
+                429,
+                headers={'content-type': 'application/json'},
+                stream=httpx2.ByteStream(error_body),
+            )
+        return httpx2.Response(200, json=_MESSAGE_RESPONSE)
+
+    transport = shim.rate_limit_retry_transport(httpx2.MockTransport(_handle))
+    transport.config['wait'] = wait_none()
+    transport.config['stop'] = stop_after_attempt(4)
+    client = AsyncAnthropic(
+        api_key='x',
+        max_retries=shim._LLM_MAX_RETRIES,  # pyright: ignore[reportPrivateUsage]
+        http_client=httpx2.AsyncClient(transport=transport),
+    )
+
+    async def _request() -> None:
+        async with client:
+            message = await client.messages.create(
+                model='glm-5.3-flash', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}]
+            )
+            assert message.content[0].type == 'text'
+            assert message.content[0].text == 'ok'
+
+    asyncio.run(_request())
+    assert len(calls) == 2
+
+
 def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.MonkeyPatch):
     async def _hang(*_a: object, **kw: object) -> int:
         usage = kw['usage']
@@ -1983,6 +2080,30 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
     assert obj['num_turns'] == 2
     assert obj['provider_health']['failure']['kind'] == 'timeout'
     assert obj['provider_health']['run_attempt'] is None
+
+
+@pytest.mark.parametrize('outcome', ['success', 'error', 'timeout'])
+def test_run_with_timeout_closes_anthropic_client(outcome: str, monkeypatch: pytest.MonkeyPatch):
+    client = AsyncAnthropic(api_key='test')
+    model = AnthropicModel('test-model', provider=AnthropicProvider(anthropic_client=client))
+
+    async def _fake_run(*_args: object, **_kwargs: object) -> int:
+        if outcome == 'error':
+            raise RuntimeError('test failure')
+        if outcome == 'timeout':
+            await asyncio.Event().wait()
+        return 0
+
+    monkeypatch.setattr(shim, 'run', _fake_run)
+    monkeypatch.setattr(shim, '_run_timeout_secs', lambda: 0.01 if outcome == 'timeout' else 1)
+    with redirect_stdout(io.StringIO()):
+        rc = asyncio.run(
+            shim._run_with_timeout(  # pyright: ignore[reportPrivateUsage]
+                'p', model, 'lbl', FunctionToolset[object](), [], 'sess-test'
+            )
+        )
+    assert rc == (0 if outcome == 'success' else 1)
+    assert client.is_closed
 
 
 @pytest.mark.parametrize('attempt', [None, '', 'not-an-int', '0', '-2'])
@@ -2218,18 +2339,10 @@ def test_emit_result_error_subtype():
 @pytest.mark.parametrize(
     ('error', 'expected_kind', 'expected_status'),
     [
-        (
-            ModelHTTPError(
-                402,
-                'MiniMax-M3',
-                {'type': 'error', 'error': {'type': 'insufficient_balance_error', 'message': 'balance low'}},
-            ),
-            'balance',
-            402,
-        ),
-        (ModelHTTPError(401, 'MiniMax-M3', {'error': {'type': 'authentication_error'}}), 'authentication', 401),
-        (ModelHTTPError(403, 'MiniMax-M3', {'error': {'type': 'permission_error'}}), 'authentication', 403),
-        (ModelHTTPError(429, 'MiniMax-M3', {'error': {'type': 'rate_limit_error'}}), 'rate_limit', 429),
+        (ModelHTTPError(401, 'test-model', {'error': {'type': 'authentication_error'}}), 'authentication', 401),
+        (ModelHTTPError(403, 'test-model', {'error': {'type': 'permission_error'}}), 'authentication', 403),
+        (ModelHTTPError(429, 'test-model', {'error': {'type': 'rate_limit_error'}}), 'rate_limit', 429),
+        (ModelHTTPError(402, 'test-model', {'error': {'type': 'payment_required_error'}}), 'other', 402),
         (UsageLimitExceeded('request limit'), 'request_limit', None),
         (RuntimeError('provider returned a 402'), 'other', None),
     ],
@@ -2367,21 +2480,34 @@ def test_main_emits_structured_error_on_argparse_rejection(monkeypatch: pytest.M
     not os.environ.get('GH_AW_SHIM_LIVE_API_KEY'),
     reason='set GH_AW_SHIM_LIVE_API_KEY/_BASE_URL/_MODEL to run the live test',
 )
-def test_live_anthropic_compatible_endpoint(monkeypatch: pytest.MonkeyPatch):
-    """End-to-end against a real Anthropic-shape endpoint (api.anthropic.com,
-    MiniMax's /anthropic, etc.). Verifies the shim+endpoint integration —
-    not the model's instruction-following.
-    """
+def test_live_anthropic_compatible_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Verify streamed tool execution and a local safe-output sink against a live Anthropic-shape endpoint."""
     monkeypatch.setenv('ANTHROPIC_API_KEY', os.environ['GH_AW_SHIM_LIVE_API_KEY'])
     monkeypatch.setenv(
         'ANTHROPIC_BASE_URL',
         os.environ.get('GH_AW_SHIM_LIVE_BASE_URL', 'https://api.anthropic.com'),
     )
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+
+    def build_safe_output_toolsets(_args: shim.Args) -> list[AbstractToolset[object]]:
+        return [PrefixedToolset(_safe_outputs_toolset(sink), prefix='mcp__safeoutputs_')]
+
+    monkeypatch.setattr(
+        shim,
+        'build_mcp_servers',
+        build_safe_output_toolsets,
+    )
     model = os.environ.get('GH_AW_SHIM_LIVE_MODEL', 'claude-sonnet-4-6')
     argv = list(GHAW_ARGV)
     i = argv.index('--mcp-config')
     del argv[i : i + 2]  # no MCP gateway outside a gh-aw run
-    argv += ['--model', model, 'Say hi.']
+    argv += [
+        '--model',
+        model,
+        'Call `mcp__safeoutputs__noop` exactly once with the message '
+        '`live Anthropic-compatible runner tool call verified`, then finish.',
+    ]
     monkeypatch.setattr(sys, 'argv', ['pydantic-ai-runner', *argv])
     buf = io.StringIO()
     with redirect_stdout(buf):
@@ -2391,6 +2517,25 @@ def test_live_anthropic_compatible_endpoint(monkeypatch: pytest.MonkeyPatch):
     result = next(x for x in lines if x['type'] == 'result')
     assert result['is_error'] is False
     assert result['result']
+    assert sink.exists()
+    assert [json.loads(line) for line in sink.read_text(encoding='utf-8').splitlines()] == [
+        {'type': 'noop', 'message': 'live Anthropic-compatible runner tool call verified'}
+    ]
+    tool_events: list[dict[str, object]] = [
+        event
+        for line in lines
+        if line.get('type') == 'assistant'
+        and isinstance(line.get('message'), dict)
+        and isinstance(line['message'].get('content'), list)
+        for event in line['message']['content']
+        if event.get('type') == 'tool_use'
+    ]
+    assert len(tool_events) == 1
+    assert tool_events[0]['name'] == 'mcp__safeoutputs__noop'
+    assert any(
+        line.get('type') == 'user' and any(event.get('type') == 'tool_result' for event in line['message']['content'])
+        for line in lines
+    )
     # `input_tokens > 0` proves the prompt round-tripped; `output_tokens > 0`
     # proves the model actually responded.
     assert result['usage']['input_tokens'] > 0

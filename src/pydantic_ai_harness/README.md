@@ -251,7 +251,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Capability Creation](pydantic_ai_harness/capability_creation/) | Harness | The agent writes, validates, and persists *new capabilities* during a run, loaded on the next run: self-extension with typed, inspectable units instead of arbitrary code |
+| [Capability Creation](pydantic_ai_harness/capability_creation/) | Harness | The agent writes, validates, and persists *new capabilities* during a run; the host loads them into a later run via `store.load_active()` and `capabilities=` |
 
 ### Execution runtime
 
@@ -327,7 +327,7 @@ pip:
 pip install pydantic-ai-harness
 ```
 
-This installs [`pydantic-ai-slim`](https://ai.pydantic.dev/install/) with it, so it works on its own; you don't need to install Pydantic AI separately. Model providers and the CLI come via extras that pass through to Pydantic AI: `pydantic-ai-harness[anthropic]`, `[cli]`. Some capabilities need their own extra for optional dependencies; each capability's page gives its exact install line. Requires Python 3.10+.
+This installs [`pydantic-ai-slim`](https://ai.pydantic.dev/install/) with it, so it works on its own; you don't need to install Pydantic AI separately. Model providers and the CLI come via extras that pass through to Pydantic AI: `pydantic-ai-harness[anthropic]`, `[cli]`. Some capabilities need their own extra for optional dependencies; each capability's page gives its exact install line. Requires Python 3.11+.
 
 ## Build your own
 

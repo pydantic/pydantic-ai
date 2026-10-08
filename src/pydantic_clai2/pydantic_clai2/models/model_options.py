@@ -5,17 +5,18 @@ import re
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_clai2.models.model_settings import ModelSettingsForm, model_defaults
+from pydantic_clai2.models.profiles import base_model, provider_of
 
 
 def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
-    """Offer native controls only for the provider that will consume them."""
-    provider, _, name = model.partition(':')
+    """Offer native controls only for the provider that will consume them, whichever profile runs it."""
+    provider, _, name = base_model(model).partition(':')
     name = name.rsplit('/', 1)[-1]
     family_defaults = bool(model_defaults(model=model))
     options: dict[str, tuple[str, ...]] = {key: () for key in ('max_tokens', 'temperature', 'seed', 'custom_params')}
     if provider in ('openai', 'openai-chat', 'openai-responses', 'openai-codex'):
         options = _openai_options(provider=provider, name=name, family_defaults=family_defaults)
-    elif provider == 'anthropic':
+    elif provider in ('anthropic', 'gateway/anthropic', 'claude-code'):
         options = _anthropic_options(name=name)
     elif provider in ('google', 'google-gla', 'google-vertex'):
         options['top_p'] = ()
@@ -38,6 +39,8 @@ def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
 
 def _anthropic_options(*, name: str) -> dict[str, tuple[str, ...]]:
     options: dict[str, tuple[str, ...]] = {key: () for key in ('max_tokens', 'temperature', 'top_p', 'custom_params')}
+    for key in ('anthropic_cache', 'anthropic_cache_instructions', 'anthropic_cache_tool_definitions'):
+        options[key] = ()
     claude = anthropic_model_profile(name) or {}
     adaptive = claude.get('anthropic_supports_adaptive_thinking', False)
     options['anthropic_thinking_mode'] = ('adaptive', 'disabled') if adaptive else ('enabled', 'disabled')
@@ -99,7 +102,7 @@ def validate_model_options(*, model: str, form: ModelSettingsForm) -> None:
             raise ValueError('Thinking budget must be less than max_tokens.')
         if form.temperature not in (None, 1.0) or form.top_p is not None:
             raise ValueError('Classic thinking requires temperature=1 and no top_p override.')
-    if model.startswith('anthropic:'):
+    if provider_of(model) == 'anthropic':
         profile = anthropic_model_profile(model.partition(':')[2]) or {}
         if (
             profile.get('anthropic_disallows_top_effort_when_thinking_disabled', False)
