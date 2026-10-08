@@ -6,10 +6,11 @@ import inspect
 import re
 import threading
 import time
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from traceback import extract_tb
-from typing import Any, cast
+from typing import Any, Self, cast
 
 import anyio
 import pytest
@@ -3668,10 +3669,16 @@ async def test_resolve_model_id_alias_unusable_outside_run() -> None:
     hook, so an alias only a capability can resolve raises an explanation asking for a
     concrete model rather than attempting deps-blind resolution.
     """
-    target = FunctionModel(_resolve_dummy_model_fn, model_name='aliased')
+
+    class ConnectableFunctionModel(FunctionModel):
+        @asynccontextmanager
+        async def connect(self) -> AsyncGenerator[Self, None]:
+            yield self
+
+    target = ConnectableFunctionModel(_resolve_dummy_model_fn, model_name='aliased')
 
     def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
-        return target if model_id == 'alias' else None
+        return target if model_id in {'alias', 'test'} else None
 
     agent = Agent('alias', name='alias_outside_run', capabilities=[ResolveModelId(resolver)])
     with pytest.raises(UserError, match='requires run dependencies and cannot be used for MCP sampling'):
@@ -3680,6 +3687,26 @@ async def test_resolve_model_id_alias_unusable_outside_run() -> None:
     # Inside a run, the alias resolves through the hook as usual.
     result = await agent.run('hi')
     assert result.output == 'ok'
+
+    recognized_agent = Agent('test', capabilities=[ResolveModelId(resolver)])
+    # `test` is a valid inferred model ID too, so this proves the capability's mapping wins.
+    result = await recognized_agent.run('hi')
+    assert result.output == 'ok'
+    assert result.response.model_name == 'aliased'
+
+    with recognized_agent.override(model='test'):
+        with pytest.raises(
+            UserError, match='The configured model ID is resolved by a capability using run dependencies'
+        ):
+            async with recognized_agent.connect():
+                pytest.fail('A capability-resolved model ID needs run dependencies')  # pragma: no cover
+
+    # A concrete model override remains available for callers that know the resolved model.
+    with recognized_agent.override(model=target):
+        async with recognized_agent.connect() as connected_agent:
+            assert connected_agent is recognized_agent
+            result = await connected_agent.run('hi')
+            assert result.response.model_name == 'aliased'
 
 
 # --- ResolveModelId capability tests ---

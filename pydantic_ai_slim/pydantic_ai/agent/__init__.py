@@ -3181,22 +3181,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> models.Model | str:
         """Resolve a configured or static capability model selection where run deps are unavailable."""
         capability = self._effective_root_capability()
-        if model is not None or self._override_model.get() is not None:
+        use_capability_model = model is None and self._override_model.get() is None
+        if not use_capability_model:
             selection = self._pick_raw_model(model)
-            return selection
-        contribution = capability.get_model()
-        if callable(contribution) and not _is_model(contribution):
-            raise exceptions.UserError(
-                'The capability model is dynamic and can only be selected during a run with run dependencies. '
-                'Pass a concrete model explicitly.'
-            )
-        selection = contribution if contribution is not None else self._pick_raw_model(None)
+        else:
+            contribution = capability.get_model()
+            if callable(contribution) and not _is_model(contribution):
+                raise exceptions.UserError(
+                    'The capability model is dynamic and can only be selected during a run with run dependencies. '
+                    'Pass a concrete model explicitly.'
+                )
+            selection = contribution if contribution is not None else self._pick_raw_model(None)
         if isinstance(selection, str) and capability.has_resolve_model_id:
             raise exceptions.UserError(
                 'The configured model ID is resolved by a capability using run dependencies. '
                 'Pass a concrete model explicitly.'
             )
-        if isinstance(selection, str):
+        if use_capability_model and isinstance(selection, str):
             if entered_model := self._entered_models_by_selection.get((id(capability), selection)):
                 return entered_model
         return selection
