@@ -46,8 +46,9 @@ _GUARDED_FIELDS = frozenset(RunContext.__dataclass_fields__) - {'deps', *_NONE_U
 class SerializedRunContext(RunContext[AgentDepsT]):
     """A restricted `RunContext` rebuilt from JSON-shaped durable-operation data.
 
-    Engines can subclass this to attach worker-local state and to customize the error
-    for a field that was not carried. The projection deliberately omits live models,
+    Engines can subclass this to customize the error for a field that was not carried.
+    Pass guarded worker-local fields, such as `model` and `tracer`, as constructor
+    arguments; assigning them afterward does not make them readable. The projection omits live models,
     history, capability objects, and arbitrary validation context. Engine-specific
     fields and legacy payload aliases belong in the engine subclass.
     """

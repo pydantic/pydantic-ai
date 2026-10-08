@@ -45,6 +45,8 @@ def test_serialized_context_rehydrates_json_and_guards_omitted_fields() -> None:
         _ = restored.model
     with pytest.raises(UserError, match="'validation_context' is not available"):
         _ = restored.validation_context
+    worker_context = SerializedRunContext(deps=None, model=source.model, **wire)
+    assert worker_context.model is source.model
 
 
 def test_serialized_context_uses_availability_snapshots_and_old_payload_fallback() -> None:
