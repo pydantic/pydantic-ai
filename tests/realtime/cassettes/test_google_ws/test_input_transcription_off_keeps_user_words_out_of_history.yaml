@@ -2,6 +2,7 @@ version: 1
 interactions:
 - kind: message
   direction: sent
+  at: 0.0
   data:
     setup:
       model: models/gemini-3.8-live
@@ -15,10 +16,19 @@ interactions:
       outputAudioTranscription: {}
 - kind: message
   direction: received
+  at: 0.758
   data:
     setupComplete: {}
 - kind: message
+  direction: received
+  at: 0.759
+  data:
+    sessionResumptionUpdate:
+      newHandle: 63aac836-5063-46a1-a56e-ecec30d714ad
+      resumable: true
+- kind: message
   direction: sent
+  at: 0.76
   data:
     realtime_input:
       audio:
@@ -26,6 +36,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.761
   data:
     realtime_input:
       audio:
@@ -33,6 +44,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.762
   data:
     realtime_input:
       audio:
@@ -40,6 +52,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.763
   data:
     realtime_input:
       audio:
@@ -47,6 +60,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.763
   data:
     realtime_input:
       audio:
@@ -54,6 +68,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.764
   data:
     realtime_input:
       audio:
@@ -61,6 +76,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.764
   data:
     realtime_input:
       audio:
@@ -68,6 +84,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.765
   data:
     realtime_input:
       audio:
@@ -75,6 +92,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.765
   data:
     realtime_input:
       audio:
@@ -82,6 +100,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.765
   data:
     realtime_input:
       audio:
@@ -89,6 +108,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.766
   data:
     realtime_input:
       audio:
@@ -96,6 +116,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.766
   data:
     realtime_input:
       audio:
@@ -103,6 +124,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.766
   data:
     realtime_input:
       audio:
@@ -110,19 +132,15 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.766
   data:
     realtime_input:
       audio:
         data: AgAEAP7__P_7__z__P_7____AAABAAYAAgD__wUAAgAE
         mime_type: audio/pcm;rate=16000
 - kind: message
-  direction: received
-  data:
-    sessionResumptionUpdate:
-      newHandle: ce807c2b-e6bc-41d9-9eae-b5d19b3be0da
-      resumable: true
-- kind: message
   direction: sent
+  at: 0.767
   data:
     realtime_input:
       audio:
@@ -130,6 +148,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.768
   data:
     realtime_input:
       audio:
@@ -137,6 +156,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.768
   data:
     realtime_input:
       audio:
@@ -144,6 +164,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.768
   data:
     realtime_input:
       audio:
@@ -151,6 +172,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.769
   data:
     realtime_input:
       audio:
@@ -158,6 +180,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.769
   data:
     realtime_input:
       audio:
@@ -165,6 +188,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.769
   data:
     realtime_input:
       audio:
@@ -172,6 +196,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.769
   data:
     realtime_input:
       audio:
@@ -179,6 +204,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.77
   data:
     realtime_input:
       audio:
@@ -186,6 +212,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.77
   data:
     realtime_input:
       audio:
@@ -193,6 +220,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.77
   data:
     realtime_input:
       audio:
@@ -200,6 +228,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.77
   data:
     realtime_input:
       audio:
@@ -207,6 +236,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.771
   data:
     realtime_input:
       audio:
@@ -214,6 +244,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.771
   data:
     realtime_input:
       audio:
@@ -221,6 +252,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.771
   data:
     realtime_input:
       audio:
@@ -228,6 +260,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.771
   data:
     realtime_input:
       audio:
@@ -235,6 +268,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.771
   data:
     realtime_input:
       audio:
@@ -242,6 +276,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.772
   data:
     realtime_input:
       audio:
@@ -249,6 +284,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.772
   data:
     realtime_input:
       audio:
@@ -256,6 +292,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.772
   data:
     realtime_input:
       audio:
@@ -263,6 +300,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.772
   data:
     realtime_input:
       audio:
@@ -270,6 +308,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.773
   data:
     realtime_input:
       audio:
@@ -277,6 +316,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.773
   data:
     realtime_input:
       audio:
@@ -284,6 +324,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.773
   data:
     realtime_input:
       audio:
@@ -291,6 +332,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.773
   data:
     realtime_input:
       audio:
@@ -298,6 +340,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.773
   data:
     realtime_input:
       audio:
@@ -305,6 +348,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.774
   data:
     realtime_input:
       audio:
@@ -312,6 +356,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.774
   data:
     realtime_input:
       audio:
@@ -319,6 +364,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.774
   data:
     realtime_input:
       audio:
@@ -326,6 +372,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.774
   data:
     realtime_input:
       audio:
@@ -333,6 +380,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.775
   data:
     realtime_input:
       audio:
@@ -340,6 +388,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.775
   data:
     realtime_input:
       audio:
@@ -347,6 +396,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.775
   data:
     realtime_input:
       audio:
@@ -354,6 +404,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.775
   data:
     realtime_input:
       audio:
@@ -361,6 +412,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.776
   data:
     realtime_input:
       audio:
@@ -368,6 +420,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.776
   data:
     realtime_input:
       audio:
@@ -375,6 +428,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.776
   data:
     realtime_input:
       audio:
@@ -382,6 +436,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.776
   data:
     realtime_input:
       audio:
@@ -389,6 +444,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.777
   data:
     realtime_input:
       audio:
@@ -396,6 +452,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.777
   data:
     realtime_input:
       audio:
@@ -403,6 +460,7 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: sent
+  at: 0.777
   data:
     realtime_input:
       audio:
@@ -410,197 +468,227 @@ interactions:
         mime_type: audio/pcm;rate=16000
 - kind: message
   direction: received
+  at: 1.277
+  data:
+    voiceActivity:
+      type: ACTIVITY_START
+      audioOffset: 1.880s
+- kind: message
+  direction: received
+  at: 2.007
   data:
     serverContent:
       inputTranscription:
         text: Hello, my name is Marcelo.
 - kind: message
   direction: received
+  at: 2.007
+  data:
+    voiceActivity:
+      type: ACTIVITY_END
+      audioOffset: 5s
+- kind: message
+  direction: received
+  at: 2.271
   data: {}
 - kind: message
   direction: received
+  at: 2.271
   data:
     serverContent: {}
 - kind: message
   direction: received
+  at: 2.447
   data: {}
 - kind: message
   direction: received
-  data: {}
-- kind: message
-  direction: received
+  at: 2.448
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: DwARABMAEQAOAA8ADgAMAAwADgAQAAwADgAIAAsACAAQ
+            data: AAA=
         role: model
       outputTranscription:
-        text: 'Hello Marcelo, nice '
+        text: 'Hello, Marcelo. Nice '
 - kind: message
   direction: received
-  data:
-    serverContent:
-      modelTurn:
-        parts:
-        - inlineData:
-            mimeType: audio/pcm;rate=24000
-            data: jf5z/uH+EQDTADABMwGfAO3/4f5+/vL+2//tAMcBUgJz
-        role: model
-- kind: message
-  direction: received
+  at: 2.498
   data: {}
 - kind: message
   direction: received
+  at: 2.509
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: Vezn74r0+vca/MH+sAApBckHLQoODWIP+RGwEUQQyw9F
+            data: DgARABIAFQAWABQAFgAUABMAEQAQAAoABQAEAAMA/v/2
         role: model
 - kind: message
   direction: received
+  at: 2.586
   data: {}
 - kind: message
   direction: received
+  at: 2.596
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: svqa+m/5wvj699z23/b09pX3Dfn3+kD7yfqc+lX56vdt
+            data: SAOvAdUATgD3AOECIAXpB5wJgwqQDA4OQA5bD60OdgwG
         role: model
 - kind: message
   direction: received
+  at: 2.618
   data: {}
 - kind: message
   direction: received
+  at: 2.626
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: sgKCAiUDuwKKArUBaACU/6r+I/7P/Xz9O/2o/Cj8u/vI
+            data: NANsBjsJSwulC0oKMgh1BdQCEQGKAN4AdQK2BKAGOQiX
         role: model
 - kind: message
   direction: received
+  at: 2.64
   data: {}
 - kind: message
   direction: received
+  at: 2.654
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: YPJM8jDy5fKf9AD3Rfl0+x3+vAC2AwIHJgqqDM4OJxFP
+            data: Ig7m+sv4ywt3/vn6fQdCAQz9dwDe/fQFqwBV+7oEFv0r
         role: model
 - kind: message
   direction: received
+  at: 2.667
   data: {}
 - kind: message
   direction: received
+  at: 2.67
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: AAACAAMAAQAAAAAA/v/6//v/+P/6//r/9//5//b/9f/1
+            data: wg2KDocO/A22DT0NSgzIC04LsQqHCaoIEwhUBwwG+wSi
+        role: model
+- kind: message
+  direction: received
+  at: 2.768
+  data: {}
+- kind: message
+  direction: received
+  at: 2.794
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: efsL+9j6zvqo+mr63/pB++/7evwU/YT9QP6A/7AA9wEb
         role: model
       outputTranscription:
-        text: to meet you.
+        text: to meet
 - kind: message
   direction: received
+  at: 2.841
   data: {}
 - kind: message
   direction: received
+  at: 2.846
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: 1gh/CMQHFAdJBgcF7AO1As0BtwC//wH/Av5y/bf8xvvi
+            data: jwQyA6wC9wCD/639QPof+Jr2n/S381nyffCz7vHsKuv3
         role: model
 - kind: message
   direction: received
+  at: 2.882
   data: {}
 - kind: message
   direction: received
+  at: 2.886
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: 5PRj9AT4J/t9+6z4GveR+kj7d/UJ9+r8uftL+sj7/PxF
+            data: PxkGGRoZVRkzGa8YUxj1F0EX8xYEFoQVXRWdFJcTeRLz
         role: model
 - kind: message
   direction: received
+  at: 2.97
   data: {}
 - kind: message
   direction: received
+  at: 2.983
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: VANrBf8GjAh2CVkK2AsWDcMNFA5oDlQO3Q5SDzMPiA7o
+            data: Uv0K/xYBXgN+BWEH2wgcCmgLrgwlDmEPBRB0EHYQURBB
         role: model
 - kind: message
   direction: received
+  at: 2.995
   data: {}
 - kind: message
   direction: received
+  at: 2.997
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: KwJKAk4CRAIMArQBagEoAckAUADu/5v/WP9D/0T/Of9E
+            data: +v/6//f/9v/3//b/9f/2//X/9v/0//f/9v/0//b/9f/x
         role: model
+      outputTranscription:
+        text: ' you.'
 - kind: message
   direction: received
-  data: {}
-- kind: message
-  direction: received
-  data:
-    serverContent:
-      modelTurn:
-        parts:
-        - inlineData:
-            mimeType: audio/pcm;rate=24000
-            data: CAAIAAgACAAHAAUABwAGAAgACAAHAAkACgAIAAgACQAJ
-        role: model
-- kind: message
-  direction: received
+  at: 3.015
   data:
     serverContent:
       generationComplete: true
 - kind: message
   direction: received
+  at: 4.498
   data:
     serverContent:
       turnComplete: true
     usageMetadata:
-      promptTokenCount: 627
-      responseTokenCount: 60
-      totalTokenCount: 687
+      promptTokenCount: 626
+      responseTokenCount: 56
+      totalTokenCount: 682
       promptTokensDetails:
       - modality: TEXT
-        tokenCount: 313
+        tokenCount: 312
       - modality: AUDIO
         tokenCount: 287
       responseTokensDetails:
       - modality: AUDIO
-        tokenCount: 60
-      thoughtsTokenCount: 33
+        tokenCount: 56
+      thoughtsTokenCount: 44

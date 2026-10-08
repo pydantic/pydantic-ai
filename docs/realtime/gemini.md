@@ -235,9 +235,12 @@ drop cut off an exchange the resumed session no longer has (see
 - A text turn sent while a reply is in flight is answered in order on Gemini 2.5. On Gemini 3.1 it
   interrupts the active reply, emits `RealtimeResponseInterruptedEvent`, and records any partial
   reply as interrupted before answering the text turn.
-- Gemini reports response interruption but not user speech-start/end events, so local playback is
-  flushed on `RealtimeResponseInterruptedEvent`, and Gemini sessions record no `user speech` span (see
-  [Logfire instrumentation](observability.md#logfire-instrumentation)).
+- Gemini interrupts a reply server-side rather than on a client signal, so local playback is flushed
+  on `RealtimeResponseInterruptedEvent`. The 3.x Live models also report user speech start and end
+  (`RealtimeInputSpeechStartEvent` / `RealtimeInputSpeechEndEvent`, under automatic VAD), so their
+  sessions record a `user speech` span (see
+  [Logfire instrumentation](observability.md#logfire-instrumentation)); Gemini 2.5 does not, and the
+  profile's `emits_input_speech_events` flag says which is which.
 - When Gemini says why it ended a turn, the response records it the way a
   [`GoogleModel`][pydantic_ai.models.google.GoogleModel] response does: a malformed function call is
   `finish_reason='error'`, refused input or unsafe output is `'content_filter'`, and the raw reason

@@ -136,9 +136,9 @@ class RealtimeModelProfile(TypedDict, total=False):
     [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent].
 
     `emits_` rather than `supports_` because this describes events that appear in the stream, not an
-    operation the session can invoke. The OpenAI-protocol providers (OpenAI, Azure OpenAI, xAI) emit
-    them; Gemini Live does not — a UI that shows a "listening" indicator should read this flag rather
-    than wait for events that will never arrive."""
+    operation the session can invoke. The OpenAI-protocol providers (OpenAI, Azure OpenAI, xAI) and
+    the Gemini 3.x Live models emit them; Gemini 2.5 Live does not — a UI that shows a "listening"
+    indicator should read this flag rather than wait for events that will never arrive."""
     synthesizes_turn_boundary: bool
     """Whether [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] is inferred
     by Pydantic AI rather than reported by the provider.

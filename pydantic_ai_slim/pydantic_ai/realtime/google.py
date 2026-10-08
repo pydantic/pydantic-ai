@@ -63,6 +63,8 @@ from ..messages import (
     NativeToolReturnPart,
     PartEndEvent,
     PartStartEvent,
+    RealtimeInputSpeechEndEvent,
+    RealtimeInputSpeechStartEvent,
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
@@ -819,6 +821,24 @@ def _map_grounding_parts(content: genai_types.LiveServerContent, provider_name: 
     if fetch_call and fetch_return:
         parts += [fetch_call, fetch_return]
     return parts
+
+
+def _map_voice_activity(activity: genai_types.VoiceActivity | None) -> list[RealtimeCodecEvent]:
+    """Translate a message's `voice_activity`, if it carries one, to the shared user speech start/end events.
+
+    The 3.x Live models report when the user starts and stops speaking under automatic VAD, as a message
+    of its own ahead of the input transcript (verified live 2026-09-29 on `gemini-3.1-flash-live-preview`,
+    `gemini-3.8-live` and `gemini-3.8-live-extended-thinking`; the 2.5 models send none, which the profile's
+    `emits_input_speech_events` records). Gemini names no input item, so the events are anonymous, as its
+    transcripts are.
+    """
+    if activity is None:
+        return []
+    if activity.voice_activity_type == genai_types.VoiceActivityType.ACTIVITY_START:
+        return [RealtimeInputSpeechStartEvent()]
+    if activity.voice_activity_type == genai_types.VoiceActivityType.ACTIVITY_END:
+        return [RealtimeInputSpeechEndEvent()]
+    return []
 
 
 def _map_usage(usage: genai_types.UsageMetadata, *, provider_name: str, provider_url: str) -> RequestUsage:
@@ -1945,7 +1965,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         return events
 
     def _map_message(self, message: genai_types.LiveServerMessage) -> list[RealtimeCodecEvent]:
-        events: list[RealtimeCodecEvent] = []
+        events: list[RealtimeCodecEvent] = _map_voice_activity(message.voice_activity)
         if message.server_content is not None:
             events.extend(self._map_server_content(message.server_content))
         if message.tool_call is not None:

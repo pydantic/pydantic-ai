@@ -416,6 +416,12 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     profile['google_text_turns_see_video_frames'] = not model_name.startswith(
         _REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS
     )
+    # Verified live 2026-09-29 by streaming an utterance under automatic VAD, on `v1beta` and `v1alpha`:
+    # `gemini-3.1-flash-live-preview`, `gemini-3.8-live` and `gemini-3.8-live-extended-thinking` each
+    # send one `voice_activity` `ACTIVITY_START` and `ACTIVITY_END` around it, and
+    # `gemini-2.5-flash-native-audio-latest` sends neither. Only the verified families, so a UI reading
+    # the flag on a newer Live model isn't told to wait for events it may never get.
+    profile['emits_input_speech_events'] = model_name.startswith(('gemini-3.1-flash-live', 'gemini-3.8-live'))
     return profile
 
 

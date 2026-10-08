@@ -67,16 +67,51 @@ _MODEL = 'gemini-2.5-flash-native-audio-preview-09-2025'
 _EXTENDED_THINKING_MODEL = 'gemini-3.8-live-extended-thinking'
 
 
+# The spoken-turn event order each recording produced, with runs of one event type collapsed. The 2.5
+# model reports no speech boundaries, so the user's turn is only visible through its transcript; the
+# 3.x models bracket the utterance with `voice_activity` signals, which arrive as the shared speech
+# start/end events (the profile's `emits_input_speech_events`).
+_SPOKEN_TURN_EVENTS: dict[str, list[str]] = {
+    _MODEL: snapshot(
+        [
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'RealtimeTurnCompleteEvent',
+        ]
+    ),
+    'gemini-3.8-live': snapshot(
+        [
+            'RealtimeInputSpeechStartEvent',
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'RealtimeInputSpeechEndEvent',
+            'PartEndEvent',
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'RealtimeTurnCompleteEvent',
+        ]
+    ),
+}
+
+
+@pytest.mark.parametrize('model_name', [_MODEL, 'gemini-3.8-live'])
 async def test_audio_in_server_vad_turn(
-    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, model_name: str
 ) -> None:
     """A spoken user turn (audio in, automatic VAD) is transcribed into a user turn in history.
 
     The default microphone workflow — Gemini transcribes input natively — must land the user's turn in
-    history, not just the assistant's reply (the dropped-user-turn guard).
+    history, not just the assistant's reply (the dropped-user-turn guard). Recorded on a model on each
+    side of `emits_input_speech_events`, so the event order pins that the 3.x speech boundaries reach
+    the consumer and that 2.5's absence of them changes nothing else.
     """
     provider, _ = gemini_ws_cassette
-    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    model = GoogleRealtimeModel(model_name, provider=provider)
     agent = Agent(instructions='Reply in a few words.')
     pcm = assets_path.joinpath('marcelo_16khz.pcm').read_bytes()  # Gemini wants 16 kHz input
 
@@ -90,18 +125,8 @@ async def test_audio_in_server_vad_turn(
                 if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
-    # Pin the spoken-turn event order for this cassette (Gemini streams input transcripts natively).
-    assert collapse_event_types(events) == snapshot(
-        [
-            'PartStartEvent',
-            'PartDeltaEvent',
-            'PartEndEvent',
-            'PartStartEvent',
-            'PartDeltaEvent',
-            'PartEndEvent',
-            'RealtimeTurnCompleteEvent',
-        ]
-    )
+    assert model.profile.get('emits_input_speech_events') is (model_name != _MODEL)
+    assert collapse_event_types(events) == _SPOKEN_TURN_EVENTS[model_name]
 
     messages = session.all_messages()
     # Automatic VAD may split the clip into several short user turns; the invariant is that the spoken

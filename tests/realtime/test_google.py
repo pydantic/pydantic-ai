@@ -57,6 +57,8 @@ from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, Web
 from pydantic_ai.realtime import (
     AsyncToolCallMode,
     RealtimeError,
+    RealtimeInputSpeechEndEvent,
+    RealtimeInputSpeechStartEvent,
     RealtimeModelProfile,
     RealtimeModelProfileSpec,
     RealtimeModelSettings,
@@ -936,6 +938,23 @@ def test_profile_text_turns_see_video_frames(model_name: str, sees_video_frames:
     assert GoogleRealtimeModel(model_name).profile.get('google_text_turns_see_video_frames') is sees_video_frames
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'emits_input_speech_events'),
+    [
+        ('gemini-2.5-flash-native-audio-latest', False),  # sends no `voice_activity`
+        ('gemini-2.5-flash-native-audio-preview-09-2025', False),
+        ('gemini-3.1-flash-live-preview', True),
+        ('gemini-3.8-live', True),
+        ('models/gemini-3.8-live-extended-thinking', True),
+        ('gemini-live-2.5-flash', False),  # not probed
+    ],
+)
+def test_profile_emits_input_speech_events(model_name: str, emits_input_speech_events: bool) -> None:
+    # Verified live by streaming an utterance under automatic VAD: the 3.x models send `voice_activity`
+    # `ACTIVITY_START` and `ACTIVITY_END` around it.
+    assert GoogleRealtimeModel(model_name).profile.get('emits_input_speech_events') is emits_input_speech_events
+
+
 # --- config ------------------------------------------------------------------
 
 
@@ -1587,6 +1606,30 @@ def test_map_interruption_latches_until_turn_complete() -> None:
     ]
     assert conn._map_message(completed) == [ResponseDone(interrupted=True)]  # pyright: ignore[reportPrivateUsage]
     assert conn._map_message(completed) == [ResponseDone(interrupted=False)]  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    ('activity_type', 'events'),
+    [
+        (genai_types.VoiceActivityType.ACTIVITY_START, [RealtimeInputSpeechStartEvent()]),
+        (genai_types.VoiceActivityType.ACTIVITY_END, [RealtimeInputSpeechEndEvent()]),
+        # A signal the SDK knows no meaning for maps to nothing rather than a guessed boundary.
+        (genai_types.VoiceActivityType.TYPE_UNSPECIFIED, []),
+    ],
+)
+def test_map_voice_activity_to_input_speech_events(
+    activity_type: genai_types.VoiceActivityType, events: list[Any]
+) -> None:
+    """A 3.x Live model's `voice_activity` message is the shared speech start/end event, without an item id.
+
+    The cassette-backed spoken-turn test in `test_google_ws.py` proves the events arrive on the wire; this
+    pins the mapping of each signal, including the unspecified one no recording produces.
+    """
+    conn = _conn(_RecordingSession())
+    message = genai_types.LiveServerMessage(
+        voice_activity=genai_types.VoiceActivity(voice_activity_type=activity_type, audio_offset='0.200s')
+    )
+    assert conn._map_message(message) == events  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_interruption_finalizes_session_response_as_interrupted() -> None:

@@ -110,7 +110,7 @@ on ordinary user turns. A reply that has not reached its first audio chunk is st
 speaking over the model's thinking time works like speaking over its voice. Provider differences
 are absorbed: on a model without output truncation
 (xAI) the response is cancelled without a truncation point, and when the provider interrupts
-itself without reporting speech onset (Gemini) only the local flush is performed. The events still
+itself (Gemini) only the local flush is performed. The events still
 reach your iterator, already handled — react to them for UI state or to flush your audio layer's
 own in-flight block, the one buffer the session cannot reach. The truncation point is the last
 chunk boundary the device reached, so it attributes at most one chunk less than was really heard,
@@ -119,11 +119,11 @@ playback position to attribute, and the flag stands down in favour of the manual
 
 As an alternative, handle barge-in yourself. The signals: providers whose profile declares
 [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]
-(OpenAI, Azure OpenAI, and xAI) emit
+(OpenAI, Azure OpenAI, xAI, and the Gemini 3.x Live models) emit
 [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] when user speech begins.
 Gemini emits [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] when it
-interrupts model output instead. Read the flag rather than waiting on an event a provider never
-sends.
+interrupts model output, which on Gemini 2.5 is the only signal. Read the flag rather than waiting on
+an event a provider never sends.
 
 While playback keeps the single device-paced iterator, staying in control of the trigger costs one
 line: the session still tracks the playback position for you, as
@@ -153,7 +153,7 @@ async def conversation(session: RealtimeSession) -> None:
 
 A playback loop that instead buffers ahead of the device makes `played_audio_bytes` read too far —
 count actual device consumption yourself and pass that. This handler covers the providers that
-report speech onset; on Gemini, which interrupts itself and leaves only the local flush to do,
+support interruption; on Gemini, which interrupts itself and leaves only the local flush to do,
 prefer `handle_barge_in=True`, which performs that flush for you.
 
 Interrupting between the provider's speech onset and the start of its next response sends only the
