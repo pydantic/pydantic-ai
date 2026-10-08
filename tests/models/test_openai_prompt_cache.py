@@ -2428,3 +2428,22 @@ async def test_openai_chat_unified_cache_stable_prefix_only_keeps_cache_point(al
     assert kwargs['messages'][1]['content'][0] == snapshot(
         {'type': 'text', 'text': 'Long reference document.', 'prompt_cache_breakpoint': {'mode': 'explicit'}}
     )
+
+
+async def test_openai_responses_explicit_prefix_only_options_win_over_fallback(allow_model_requests: None):
+    """Options a caller sets take precedence over the unified setting, even when they match what it maps to,
+    so the fallback to the implicit breakpoint leaves them alone."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(
+        openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'},
+        openai_cache_instructions=True,
+        openai_previous_response_id='auto',
+        cache={'messages': False},
+    )
+
+    await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
+    assert request['instructions'] == 'Support policies.'

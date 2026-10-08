@@ -1145,14 +1145,18 @@ def _translate_openai_cache(
     # `'30m'` is the only TTL OpenAI accepts, so every retention snaps to it.
     _, messages = split_cache_setting(params.cache)
     translated['openai_prompt_cache_options'] = (
-        {'mode': 'implicit', 'ttl': '30m'} if messages else _PREFIX_ONLY_CACHE_OPTIONS.copy()
+        {'mode': 'implicit', 'ttl': '30m'} if messages else _PREFIX_ONLY_CACHE_OPTIONS
     )
     translated['openai_cache_instructions'] = True
     return translated
 
 
 _PREFIX_ONLY_CACHE_OPTIONS: OpenAIPromptCacheOptions = {'mode': 'explicit', 'ttl': '30m'}
-"""The prompt cache options the unified `cache` setting maps `messages=False` to."""
+"""The prompt cache options the unified `cache` setting maps `messages=False` to.
+
+Never mutated: `_keep_implicit_cache_without_breakpoints` checks for this exact object, so that options a
+caller set with the same values, which take precedence over the unified setting, are left alone.
+"""
 
 
 def _has_prompt_cache_breakpoint(
@@ -1171,7 +1175,6 @@ def _has_prompt_cache_breakpoint(
 
 def _keep_implicit_cache_without_breakpoints(
     settings: OpenAIChatModelSettings,
-    params: ModelRequestParameters,
     items: Sequence[chat.ChatCompletionMessageParam] | Sequence[responses.ResponseInputItemParam],
 ) -> None:
     """Keep OpenAI's implicit breakpoint when caching only the stable prefix leaves the request without a breakpoint.
@@ -1183,11 +1186,8 @@ def _keep_implicit_cache_without_breakpoints(
     instead. Checking the mapped request rather than repeating those gates keeps the two from drifting.
     Mutates `settings`.
     """
-    if (
-        params.cache
-        and not split_cache_setting(params.cache)[1]
-        and settings.get('openai_prompt_cache_options') == _PREFIX_ONLY_CACHE_OPTIONS
-        and not _has_prompt_cache_breakpoint(items)
+    if settings.get('openai_prompt_cache_options') is _PREFIX_ONLY_CACHE_OPTIONS and not _has_prompt_cache_breakpoint(
+        items
     ):
         settings['openai_prompt_cache_options'] = {'mode': 'implicit', 'ttl': '30m'}
 
@@ -1432,7 +1432,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # These helpers mutate the settings they receive.
         model_settings = OpenAIChatModelSettings(**model_settings)
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
-        _keep_implicit_cache_without_breakpoints(model_settings, model_request_parameters, openai_messages)
+        _keep_implicit_cache_without_breakpoints(model_settings, openai_messages)
 
         _drop_unsupported_params(profile, model_settings)
 
@@ -3208,7 +3208,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # These helpers mutate the settings they receive.
         model_settings = self._prepare_responses_settings(messages, OpenAIResponsesModelSettings(**model_settings))
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
-        _keep_implicit_cache_without_breakpoints(model_settings, model_request_parameters, request_params.input)
+        _keep_implicit_cache_without_breakpoints(model_settings, request_params.input)
         _drop_unsupported_params(profile, model_settings)
         store = self._resolve_store(model_settings)
         extra_headers, timeout = self._build_request_options(model_settings)
