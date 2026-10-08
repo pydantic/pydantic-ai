@@ -52,6 +52,7 @@ class FakeLogfire:
     variables_key: Answer = field(
         default_factory=lambda: httpx.Response(200, json={'access_token': 'pylf_v2_us_variables', 'token_type': 'N_A'})
     )
+    query: Answer = field(default_factory=lambda: httpx.Response(200, json={'columns': []}))
     requests: list[httpx.Request] = field(default_factory=list[httpx.Request])
 
     def handle(self, request: httpx.Request) -> httpx.Response:
@@ -67,6 +68,8 @@ class FakeLogfire:
             answer = self.projects
         elif path == '/api/oauth/token':
             answer = self.variables_key
+        elif path == '/v1/query':
+            answer = self.query
         else:
             assert path == '/v1/organizations/pydantic/projects/clai2/write-tokens/'
             answer = self.write_token
@@ -194,6 +197,7 @@ async def test_sign_in_pick_a_project_and_save_its_write_token(configure: Config
         'Sign in to Logfire (new users can sign up there): https://logfire-us.pydantic.dev/auth/dev-123',
         'Saved a personal Logfire API key (project:read_variables).',
         'Gateway not available for your role; using your own model keys.',
+        'Your role cannot query Logfire, so /sessions logfire and resuming from Logfire stay off.',
     ]
     assert harness.opened == ['https://logfire-us.pydantic.dev/auth/dev-123']
     new, *_, me, listed, minted, exchanged = harness.server.requests
@@ -203,7 +207,7 @@ async def test_sign_in_pick_a_project_and_save_its_write_token(configure: Config
     form = dict(httpx.QueryParams(exchanged.content.decode()))
     assert form['subject_token'] == 'user-token'
     assert form['audience'] == f'{US}/pydantic/clai2'
-    assert form['scope'] == 'project:read_variables project:gateway_proxy'
+    assert form['scope'] == 'project:read_variables project:gateway_proxy project:read_otlp'
     assert saved.api_key == KeyReference(name='LOGFIRE_VARIABLES_PYDANTIC_CLAI2')
     assert load_keys()['LOGFIRE_VARIABLES_PYDANTIC_CLAI2'].get_secret_value() == 'pylf_v2_us_variables'
     assert me.url.path == '/v1/account/me'
@@ -427,3 +431,27 @@ def test_the_team_setting_is_prefilled_from_clai2_team_while_unset(monkeypatch: 
 
     assert editor() == 'ai'
     assert editor(team='platform') == ''
+
+
+@pytest.mark.parametrize(('query', 'saved'), [(200, True), (403, False)])
+async def test_a_key_that_can_query_is_preflighted_before_sessions_are_turned_on(
+    configure: Configure, query: int, saved: bool
+) -> None:
+    harness = Harness()
+    harness.server.variables_key = httpx.Response(
+        200,
+        json={
+            'access_token': 'pylf_v2_us_variables',
+            'token_type': 'N_A',
+            'scope': 'project:read_variables project:gateway_proxy project:read_otlp',
+        },
+    )
+    harness.server.query = httpx.Response(query, json={})
+    host = make_host()
+    await configure(host, harness.setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
+    assert host.settings(LogfireSettings).sessions_query is saved
+    [preflight] = [request for request in harness.server.requests if request.url.path == '/v1/query']
+    assert preflight.url.params['sql'] == 'SELECT 1'
+    assert preflight.headers['Authorization'] == 'Bearer pylf_v2_us_variables'
+    stays_off = 'Your role cannot query Logfire, so /sessions logfire and resuming from Logfire stay off.'
+    assert (stays_off in harness.lines) is not saved

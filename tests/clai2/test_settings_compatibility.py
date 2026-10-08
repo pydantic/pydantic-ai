@@ -36,6 +36,7 @@ _FLEET_KEYS = (
     'fleet_env_allow',
     'project',
     'gateway',
+    'sessions_query',
 )
 """Hackathon fleet-control settings, tagged with the `fleet-control` feature."""
 

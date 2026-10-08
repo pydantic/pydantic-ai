@@ -39,7 +39,15 @@ from pydantic_ai_harness.policy import PolicyDecision, PolicyRule, decision_attr
 from pydantic_clai2 import managed, policy_state
 from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer
 from pydantic_clai2.builtin_plugins.fleet import Build, Change, Consent, Fleet, FleetControl, Snapshot
-from pydantic_clai2.builtin_plugins.fleet_memory import PROPOSED, REPO_SCOPE, personal_memory, repo_memory, sha
+from pydantic_clai2.builtin_plugins.fleet_memory import (
+    REPO_SCOPE,
+    PendingNotes,
+    personal_memory,
+    proposed,
+    repo_memory,
+    sha,
+    with_pending,
+)
 from pydantic_clai2.builtin_plugins.fleet_ui import (
     BLOCKED_PREFIX,
     CatalogRow,
@@ -50,6 +58,14 @@ from pydantic_clai2.builtin_plugins.fleet_ui import (
     why_text,
 )
 from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_email, repo_attributes
+from pydantic_clai2.builtin_plugins.logfire_sessions import (
+    ChunkStates,
+    LogfireQuery,
+    LogfireSessions,
+    SessionChunks,
+    privacy_notice,
+    trace_link,
+)
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, run_setup
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
@@ -65,6 +81,8 @@ from pydantic_clai2.plugins import (
     TurnEnd,
     TurnStart,
 )
+from pydantic_clai2.runtime import remote_sessions
+from pydantic_clai2.runtime.remote_sessions import RemoteResume
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow_async
 from pydantic_clai2.ui.menus.menu_worker import run_worker
@@ -140,6 +158,11 @@ class LogfireSettings(BaseModel):
     team: str | None = Field(
         default=None, description='Your team, sent with every span and used for targeting. Unset, CLAI2_TEAM is used.'
     )
+    sessions_query: bool = Field(
+        default=False,
+        description='Set by setup when `api_key` can query Logfire, so `/sessions logfire` and resuming from Logfire '
+        'work. Sessions are written to Logfire whenever message content export is on.',
+    )
     fleet_env_allow: list[str] = Field(
         default_factory=list[str],
         description='Globs over environment variable names that config pushed from Logfire may send, '
@@ -165,6 +188,7 @@ REQUIRES: dict[str, list[str]] = {
             'fleet_env_allow',
             'project',
             'gateway',
+            'sessions_query',
         ),
         ['fleet-control'],
     ),
@@ -245,6 +269,27 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 user=lambda: tracing.email or 'local',
                 scope=lambda: (tracing.team, repo_attributes(Path.cwd()).get('clai2.repo_slug')),
             )
+        self._pending_notes = PendingNotes(config_dir() / 'memory' / 'pending.json')
+        self._chunks: SessionChunks | None = None
+        self._sessions: LogfireSessions | None = None
+        if self.fleet is not None and settings.include_content and send_to_logfire:
+            tracing = self._session_tracing
+            states = ChunkStates(logfire_dir() / 'session_chunks.json')
+            self._chunks = SessionChunks(
+                tracer_provider=self.instance.config.get_tracer_provider(),
+                states=states,
+                session_id=lambda: host.session_id,
+                owner=lambda: tracing.email,
+                attributes=lambda: {'clai2.repo_slug': slug} if (slug := _repo_slug()) else {},
+                warn=self._warn_mcp,
+            )
+            if api_key and settings.sessions_query and settings.project:
+                self._sessions = LogfireSessions(
+                    query=LogfireQuery(base_url=_base_url(settings), key=api_key),
+                    states=states,
+                    owner=lambda: tracing.email,
+                    project=settings.project,
+                )
         # UI records and plugin errors are CLAI's own, so they share the session root's scope.
         self._clai2 = logfire.Logfire(config=self.instance.config, otel_scope=telemetry.SCOPE)
 
@@ -269,9 +314,13 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         fleet = self.fleet
         memory = (
             *personal_memory(config_dir() / 'memory', repo=_repo_slug),
-            repo_memory(lambda: fleet.notes(), propose=self._propose_memory),
+            repo_memory(
+                lambda: with_pending(fleet.notes(), self._pending_notes.for_repo(_repo_slug())),
+                propose=self._propose_memory,
+            ),
         )
-        return (self._session_tracing, self.instrumentation, control, fleet_control, *memory, resilient)
+        chunks = (self._chunks,) if self._chunks is not None else ()
+        return (self._session_tracing, self.instrumentation, control, fleet_control, *memory, *chunks, resilient)
 
     def _propose_memory(self, path: str, content: str, why: str) -> str:
         """Record a proposed repo note as a `memory proposal` span; the fleet miner shows it to admins in Logfire."""
@@ -291,11 +340,14 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             'clai2.memory.why': why,
             'clai2.memory.base_sha': sha(current.content) if current is not None else '',
             'clai2.memory.base_version': snapshot.memory_version or '',
+            'clai2.memory.mode': snapshot.config.shared_memory,
             'clai2.repo_slug': slug,
             **{key: identity[key] for key in ('user.email', 'clai2.team', 'agent_session_id') if key in identity},
         }
         self.instance.log('info', 'memory proposal', attributes)
-        return PROPOSED
+        # Proposer-live: the note works in this user's sessions now, marked pending, until it is published.
+        self._pending_notes.add(repo=slug, path=path, content=content, why=why)
+        return proposed(snapshot.config.shared_memory, slug)
 
     def _warn_mcp(self, message: str) -> None:
         self.host.console.print(message, style=theme.color(theme.WARNING), markup=False)
@@ -350,7 +402,25 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 return fleet.listing()
             return await self._catalog_picker()
 
+        session_commands = (
+            (
+                Command(
+                    name='sessions',
+                    description='Your sessions stored in Logfire (last 30 days): /sessions logfire',
+                    handler=self._sessions_command,
+                    complete=lambda _: ('logfire',),
+                ),
+                Command(
+                    name='share',
+                    description='The Logfire link to this session and the command a teammate runs to continue it',
+                    handler=self._share,
+                ),
+            )
+            if self._chunks is not None
+            else ()
+        )
         return (
+            *session_commands,
             Command(
                 name='catalog',
                 description='What your organization provides, and optional add-ons you can turn on',
@@ -358,6 +428,37 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 complete=lambda _: ('enable', 'disable', 'why'),
             ),
         )
+
+    async def _sessions_command(self, args: list[str]) -> str:
+        if args not in ([], ['logfire']):
+            raise ValueError('Usage: /sessions logfire')
+        if self._sessions is None:
+            return _QueryUnavailable.MESSAGE
+        listed = await self._sessions.listing()
+        if not listed:
+            return f'No sessions of yours in {self.settings.project} in the last 30 days.'
+        lines = [f'Your sessions in {self.settings.project} (last 30 days, newest first):']
+        for session in listed[:30]:
+            repo = f'  {session.repo}' if session.repo else ''
+            prompt = session.first_prompt[:70] or '(no prompt)'
+            lines.append(f'  {session.session_id}  {session.last}  {session.runs} runs{repo}  {prompt}')
+        lines.append('Continue one with /resume ID, here or on another machine.')
+        return '\n'.join(lines)
+
+    async def _share(self, args: list[str]) -> str:
+        if self.host.session_id is None or self._chunks is None:
+            return 'No session to share yet.'
+        state = self._chunks.states.get(self.host.session_id)
+        if state is None or state.next_seq == 0:
+            return 'Nothing stored yet: send a prompt first, then /share.'
+        root = self._session_tracing.root()
+        trace = f'{root.get_span_context().trace_id:032x}' if root is not None else None
+        lines = [f'Shared through {self.settings.project}, which every project member can read (conversation only).']
+        if trace and self.settings.project:
+            lines.append(f'Logfire: {trace_link(_base_url(self.settings), self.settings.project, trace)}')
+        lines.append(f'Continue it: clai2 --resume {self.host.session_id}')
+        lines.append('Someone else continuing it gets a fork; this session is never changed by them.')
+        return '\n'.join(lines)
 
     async def _catalog_picker(self) -> str:
         """Enter toggles an optional add-on and reopens the picker on the same row; Esc closes."""
@@ -491,6 +592,15 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             return
         self._show(build, changes)
         self._announced.clear()
+        self._reconcile_pending(build)
+
+    def _reconcile_pending(self, build: Build) -> None:
+        """Drop this user's pending notes that were published or dismissed, and say once which were dismissed."""
+        assert self.fleet is not None
+        for line in self._pending_notes.reconcile(
+            repo=_repo_slug(), shared=self.fleet.notes(build.snapshot), proposals=self.fleet.proposals()
+        ):
+            self.host.console.print(f'◆ {line}', style=theme.color(theme.WARNING), markup=False)
 
     def _show(self, build: Build, changes: Sequence[Change]) -> None:
         """Print each change and load failure once; the status row keeps the latest change."""
@@ -563,6 +673,12 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 )
             )
         self._print_header()
+        if self._chunks is not None:
+            remote_sessions.install(self._sessions or _QueryUnavailable())
+            if (
+                notice := privacy_notice(logfire_dir() / 'sessions_notice.json', self.settings.project or 'Logfire')
+            ) is not None:
+                self.host.console.print(f'◆ {notice}', style=theme.color(theme.MUTED), markup=False)
         while managed.NOTICES:
             self.host.console.print(f'◆ {managed.NOTICES.pop(0)}', style=theme.color(theme.ACCENT), markup=False)
         self._announce_changes()
@@ -601,6 +717,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 self._clai2.log('info', 'turn {outcome}', attributes={'outcome': event.outcome})
 
     async def on_session_end(self, event: SessionEnd) -> None:
+        remote_sessions.install(None)
         policy_state.install(None)
         policy_state.pushed_model = lambda: None
         if self._watcher is not None:
@@ -674,6 +791,25 @@ def _api_key(settings: LogfireSettings) -> str | None:
         if key is not None:
             return key.get_secret_value()
     return os.getenv('LOGFIRE_CLAI2_API_KEY') or os.getenv('LOGFIRE_API_KEY') or None
+
+
+class _QueryUnavailable:
+    """In place of `LogfireSessions` when sessions are written but this key cannot read them back."""
+
+    MESSAGE = (
+        'Listing and resuming sessions from Logfire needs a key that can query Logfire (`project:read_otlp`), '
+        'which setup did not get: your role may not be allowed to create tokens, or you enrolled before this '
+        'existed. Sessions are still stored. Sign in to Logfire again to turn it on.'
+    )
+
+    async def resume(self, reference: str, *, local: bool) -> RemoteResume | None:
+        if reference.startswith(('http://', 'https://')):
+            raise ValueError(self.MESSAGE)
+        return None
+
+
+def _base_url(settings: LogfireSettings) -> str:
+    return (settings.base_url or 'https://logfire-us.pydantic.dev').rstrip('/')
 
 
 def _repo_slug() -> str | None:
@@ -881,6 +1017,7 @@ async def _configure(host: PluginHost[None], setup: Setup) -> str:
         'send_to_logfire': 'if-token-present',
         'api_key': chosen.variables_key or config.api_key,
         'gateway': chosen.gateway,
+        'sessions_query': chosen.query,
         'project': f'{chosen.project.organization_name}/{chosen.project.project_name}',
         'team': chosen.team,
     }

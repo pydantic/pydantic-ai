@@ -40,6 +40,7 @@ async def enroll(store: SettingsStore, target: ManagedTarget) -> None:
             'send_to_logfire': 'if-token-present',
             'api_key': chosen.variables_key,
             'gateway': chosen.gateway,
+            'sessions_query': chosen.query,
             'project': target.project_label,
             'agent_control': True,
             'agent_control_name': target.agent,

@@ -49,7 +49,7 @@ from pydantic_ai_harness.policy import (
     default_blocked_message,
 )
 from pydantic_clai2 import policy_state
-from pydantic_clai2.builtin_plugins.fleet_memory import MemoryNotes, RepoNote, repo_notes
+from pydantic_clai2.builtin_plugins.fleet_memory import MemoryNotes, MemoryPolicy, RepoNote, SharedMode, repo_notes
 
 if TYPE_CHECKING:
     from pydantic_clai2.builtin_plugins.fleet_ui import CatalogRow
@@ -109,6 +109,12 @@ class FleetMCPServer(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict[str, str])
 
 
+class FleetPolicy(Policy):
+    """The harness policy, plus how this organization publishes shared repo notes."""
+
+    memory: MemoryPolicy = Field(default_factory=MemoryPolicy)
+
+
 class FleetAgentConfig(AgentControlConfig):
     """Agent Control's config (with named added instructions) plus company `skills` and `mcp_servers` sections."""
 
@@ -117,6 +123,12 @@ class FleetAgentConfig(AgentControlConfig):
 
     skills: list[FleetSkill] | None = None
     mcp_servers: list[FleetMCPServer] | None = None
+    policy: FleetPolicy | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    @property
+    def shared_memory(self) -> SharedMode:
+        """How shared repo notes are published: `review` unless the policy says otherwise."""
+        return self.policy.memory.shared if self.policy is not None else 'review'
 
 
 class CatalogItem(BaseModel):
@@ -345,6 +357,7 @@ class Fleet:
     agent_variable: Variable[FleetAgentConfig] = field(init=False)
     catalog_variable: Variable[Catalog] = field(init=False)
     memory_variable: Variable[MemoryNotes] = field(init=False)
+    proposals_variable: Variable[dict[str, Any]] = field(init=False)
     _mcp: dict[str, AbstractToolset[None]] = field(default_factory=dict[str, AbstractToolset[None]], init=False)
     _prepared: Build | None = field(default=None, init=False)
     latest: Snapshot | None = field(default=None, init=False)
@@ -359,6 +372,9 @@ class Fleet:
         )
         self.memory_variable = Variable(
             f'memory__{self.name}', type=MemoryNotes, default=MemoryNotes(), logfire_instance=self.instance
+        )
+        self.proposals_variable = Variable(
+            f'fleet_proposals__{self.name}', type=dict[str, Any], default={}, logfire_instance=self.instance
         )
 
     # Resolution
@@ -400,6 +416,15 @@ class Fleet:
         """The repo notes in force here: scoped to this repo (and team), valid, and within the size limits."""
         snapshot = snapshot or self.latest or self.snapshot()
         return repo_notes(snapshot.memory, self.applies_here)
+
+    def proposals(self) -> list[Mapping[str, Any]]:
+        """The miner's proposals as Logfire last served them, to see which of this user's notes were dismissed."""
+        try:
+            value = self.proposals_variable.get(targeting_key=self.targeting_key(), attributes=self.attributes()).value
+        except Exception:  # noqa: BLE001 -- a missing or unreadable proposals list means nothing was dismissed
+            return []
+        items = value.get('proposals') if isinstance(value, dict) else None
+        return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []  # pyright: ignore[reportUnknownVariableType]
 
     def applies_here(self, scope: AppliesTo | Mapping[str, Any] | None) -> bool:
         """Whether an item's `applies_to` covers this client now."""
@@ -640,7 +665,10 @@ class Fleet:
             item = by_key.get(key)
             details = (item.description, item.provenance) if item is not None else ('', Provenance())
             if (note := notes.get(key)) is not None:
-                details = ('', Provenance(pushed_by=f'accepted by {note.accepted_by}' if note.accepted_by else None))
+                how = f'accepted by {note.accepted_by}' if note.accepted_by else None
+                if how is None and config.shared_memory != 'review':
+                    how = 'auto-published' if config.shared_memory == 'auto' else 'confirmed by teammates'
+                details = ('', Provenance(pushed_by=how))
             if previous is None:
                 changes.append(Change('added', kind, name, tier, *details))
             elif previous != digest:

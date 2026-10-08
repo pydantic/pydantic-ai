@@ -114,8 +114,9 @@ class Chosen:
     variables_key: KeyReference | None = None
     gateway: bool = False
     """Whether that key also has `project:gateway_proxy`, so models run through the Pydantic AI Gateway."""
-    """A read-variables API key exchanged from the same sign-in, for fleet control; `None` if Logfire refused."""
     team: str | None = None
+    query: bool = False
+    """Whether that key also has `project:read_otlp` and a test query worked, so sessions can be read back."""
 
 
 async def run_setup(
@@ -169,12 +170,19 @@ async def run_setup(
         span.set('fleet_control', variables is not None)
         gateway = variables is not None and GATEWAY_SCOPE in (variables.scope or '').split()
         span.set('gateway', gateway)
+        query = variables is not None and QUERY_SCOPE in (variables.scope or '').split()
+        if variables is not None and query:
+            async with setup.http() as http:
+                query = await query_works(http, base_url, variables.access_token)
+        span.set('query', query)
     if variables is None:
         setup.announce('Logfire did not issue a project API key, so company config from Logfire stays off.')
     else:
         setup.announce(f'Saved a personal Logfire API key ({variables.describe()}).')
         if not gateway:
             setup.announce('Gateway not available for your role; using your own model keys.')
+        if not query:
+            setup.announce('Your role cannot query Logfire, so /sessions logfire and resuming from Logfire stay off.')
     chosen_team = await run_worker(lambda: pick_team(setup.runners, current=team))
     return Chosen(
         token=KeyReference(name=name),
@@ -184,6 +192,7 @@ async def run_setup(
         variables_key=KeyReference(name=variables_name) if variables_name else None,
         gateway=gateway,
         team=team if chosen_team is None else chosen_team or None,
+        query=query,
     )
 
 
@@ -329,6 +338,8 @@ API_KEY_TOKEN_TYPE = 'urn:pydantic:logfire:token-type:api-key'
 VARIABLES_SCOPE = 'project:read_variables'
 GATEWAY_SCOPE = 'project:gateway_proxy'
 """Asked for in the same exchange; a role without it drops it silently (RFC 6749), so setup checks what came back."""
+QUERY_SCOPE = 'project:read_otlp'
+"""Lets the key use Logfire's query API (`/v1/query`), to list and resume sessions; needs a role that can make tokens."""
 
 
 class _ExchangedKey(BaseModel):
@@ -359,7 +370,7 @@ async def _variables_key(
                 'subject_token_type': 'urn:ietf:params:oauth:token-type:access_token',
                 'requested_token_type': API_KEY_TOKEN_TYPE,
                 'audience': f'{base_url}/{project.organization_name}/{project.project_name}',
-                'scope': f'{VARIABLES_SCOPE} {GATEWAY_SCOPE}',
+                'scope': f'{VARIABLES_SCOPE} {GATEWAY_SCOPE} {QUERY_SCOPE}',
             },
         )
     except httpx.HTTPError:
@@ -370,6 +381,17 @@ async def _variables_key(
         return _ExchangedKey.model_validate_json(response.content)
     except ValidationError:
         return None
+
+
+async def query_works(http: httpx.AsyncClient, base_url: str, key: str) -> bool:
+    """Preflight the query API with `key`: one trivial query, so a missing scope shows at setup, not at resume."""
+    try:
+        response = await http.get(
+            f'{base_url}/v1/query', params={'sql': 'SELECT 1', 'limit': 1}, headers={'Authorization': f'Bearer {key}'}
+        )
+    except httpx.HTTPError:
+        return False
+    return response.is_success
 
 
 async def _call(request: Awaitable[httpx.Response]) -> httpx.Response:

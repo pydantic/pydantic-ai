@@ -23,6 +23,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import Plugin
+from pydantic_clai2.runtime import remote_sessions
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.imported_sessions import (
     IMPORT_SOURCES,
@@ -33,6 +34,7 @@ from pydantic_clai2.runtime.imported_sessions import (
     merge,
     save_import,
 )
+from pydantic_clai2.runtime.remote_sessions import RemoteResume
 from pydantic_clai2.runtime.session_naming import NamingResult, SessionNamer, generate_name
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -106,9 +108,38 @@ class Sessions(Generic[DepsT, OutputT]):
             args = args[1:]
         if len(args) > 1:
             raise ValueError('Usage: /resume [claude|codex] [SESSION-ID]')
+        if args and source is None and (remote := remote_sessions.current()) is not None:
+            resumed = await remote.resume(args[0], local=await self._saved(args[0]))
+            if resumed is not None:
+                return await self._resume_remote(resumed)
         if args:
             return await self.resume(await self.import_session(source, args[0]) if source else args[0])
         return await self.browse(source)
+
+    async def _saved(self, conversation_id: str) -> bool:
+        try:
+            await self.store.get(conversation_id=conversation_id)
+        except LookupError:
+            return False
+        return True
+
+    async def _resume_remote(self, resumed: RemoteResume) -> str:
+        """Save a remote session's history under its CLAI ID (replacing an older copy), then resume it here."""
+        if resumed.messages is not None:
+            try:
+                await self.store.delete(source=(await self.store.get(conversation_id=resumed.conversation_id)).summary)
+            except LookupError:
+                pass
+            summary = ConversationSummary(
+                id=resumed.conversation_id,
+                workspace=self.session.workspace,
+                title=resumed.title or 'Session from Logfire',
+                subtitle=resumed.subtitle,
+                tags=('logfire',),
+            )
+            await self.store.save(summary=summary, messages=resumed.messages)
+        notice = await self.resume(resumed.conversation_id, allow_other_workspace=True)
+        return f'{resumed.notice} {notice}'.strip()
 
     async def browse(self, source: ImportSource | None) -> str:
         """Pick from CLAI's sessions and not-yet-imported ones, or from one agent's sessions only."""

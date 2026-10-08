@@ -242,3 +242,12 @@ def test_repo_notes_for_this_repo_are_announced_with_who_accepted_them(tmp_path:
         'Repo notes: + other.md (accepted by alice@example.com)',
         'Repo notes: - MEMORY.md',
     ]
+
+
+def test_auto_published_repo_notes_say_so(tmp_path: Path) -> None:
+    memory = {'files': [{'path': 'MEMORY.md', 'content': 'Use make test.'}]}
+    fleet = _fleet(tmp_path, {'policy': {'memory': {'shared': 'auto'}}}, {'items': []}, memory)
+    build = fleet.prepare()
+    assert build.snapshot.config.shared_memory == 'auto'
+    assert [change.describe() for change in fleet.changes(build)] == ['Repo notes: + MEMORY.md (auto-published)']
+    assert _fleet(tmp_path / 'b', {}, {'items': []}).prepare().snapshot.config.shared_memory == 'review'

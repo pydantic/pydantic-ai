@@ -11,14 +11,18 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_clai2.builtin_plugins.fleet_memory import (
     MAX_NOTE_BYTES,
-    PROPOSED,
     MemoryNotes,
+    PendingNotes,
     RepoNote,
     RepoNotesStore,
     personal_memory,
+    proposed,
     repo_memory,
     repo_notes,
+    with_pending,
 )
+
+PROPOSED = 'Proposed.'
 
 NOTE = RepoNote(
     path='MEMORY.md',
@@ -173,3 +177,44 @@ async def test_personal_notebooks_are_per_repository_plus_global(tmp_path: Path)
     await agent.run('hi')
     [dir_notebook] = list((tmp_path / 'dirs').glob('*/personal/MEMORY.md'))
     assert dir_notebook.read_text().strip() == 'dir fact'
+
+
+def test_a_proposal_is_live_for_its_proposer_until_published_or_dismissed(tmp_path: Path) -> None:
+    pending = PendingNotes(tmp_path / 'pending.json')
+    pending.add(repo='acme/widgets', path='testing.md', content='Use pytest -x.', why='speed')
+    pending.add(repo='acme/widgets', path='MEMORY.md', content='- New fact.', why='')
+    pending.add(repo='other/repo', path='MEMORY.md', content='- Elsewhere.', why='')
+    mine = pending.for_repo('acme/widgets')
+    assert [(note.path, note.pending) for note in mine] == [('testing.md', True), ('MEMORY.md', True)]
+    notes = with_pending([NOTE], mine)
+    assert [note.path for note in notes] == [
+        'testing.md',
+        'MEMORY.md',
+    ]  # The pending MEMORY.md replaces the shared one.
+    store = RepoNotesStore(lambda: notes)
+    assert store._files()['repo/testing.md'].endswith('_(pending review: only you see this)_')  # pyright: ignore[reportPrivateUsage]
+
+    # Published (the shared file now has this content) or dismissed (same repo, file and content): dropped.
+    shared = [RepoNote(path='testing.md', content='Use pytest -x.', accepted_by='alice@example.com')]
+    proposals = [
+        {
+            'kind': 'memory',
+            'status': 'dismissed',
+            'repo_slug': 'acme/widgets',
+            'path': 'MEMORY.md',
+            'content': '- New fact.',
+        },
+        {'kind': 'memory', 'status': 'dismissed', 'repo_slug': 'acme/widgets', 'path': 'x.md', 'content': 'other'},
+    ]
+    told = pending.reconcile(repo='acme/widgets', shared=shared, proposals=proposals)
+    assert told == ["Your note MEMORY.md wasn't accepted by your team's admins."]
+    assert pending.for_repo('acme/widgets') == []
+    assert pending.reconcile(repo='acme/widgets', shared=shared, proposals=proposals) == []
+    assert [note.path for note in pending.for_repo('other/repo')] == ['MEMORY.md']
+    assert pending.reconcile(repo=None, shared=[], proposals=[]) == []
+
+
+def test_the_reply_to_a_proposal_says_how_it_will_be_shared() -> None:
+    assert proposed('review', 'acme/widgets').startswith("Proposed to your team's admins in Logfire for review")
+    assert proposed('corroborate', 'acme/widgets').startswith("Proposed; it will be shared once a teammate's agent")
+    assert proposed('auto', 'acme/widgets').startswith('Shared with everyone in acme/widgets')
