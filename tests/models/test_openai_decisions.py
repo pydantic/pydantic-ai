@@ -21,7 +21,7 @@ import anyio
 import httpx2
 import pytest
 from cassetter import Cassette
-from pydantic import BaseModel, Field, JsonValue, WithJsonSchema
+from pydantic import BaseModel, Field, JsonValue, ValidationError, WithJsonSchema
 from pydantic.json_schema import JsonSchemaValue
 
 from pydantic_ai import (
@@ -845,6 +845,60 @@ async def test_invalid_response(response: httpx2.Response, allow_model_requests:
         assert exc_info.value.body == 'not json'
     else:
         assert 'answers' in exc_info.value.body
+
+
+@pytest.mark.parametrize(
+    ('decision_request', 'answers'),
+    [
+        pytest.param(
+            DecisionRequest(state='Review this.', questions={'q': NoulQuestion()}),
+            ({'type': 'predicate', 'name': 'q', 'probability': True},),
+            id='predicate boolean probability',
+        ),
+        pytest.param(
+            DecisionRequest(state='Review this.', questions={'q': NoulQuestion()}),
+            ({'type': 'predicate', 'name': 'q', 'probability': '0.9'},),
+            id='predicate numeric-string probability',
+        ),
+        pytest.param(
+            DecisionRequest(state='Review this.', questions={'area': ChoiceQuestion(criteria={'billing': None})}),
+            ({**AREA, 'confidence': True},),
+            id='choice boolean confidence',
+        ),
+        pytest.param(
+            DecisionRequest(state='Review this.', questions={'area': ChoiceQuestion(criteria={'billing': None})}),
+            ({**AREA, 'confidence': '0.88'},),
+            id='choice numeric-string confidence',
+        ),
+        pytest.param(
+            DecisionRequest(
+                state='Review this.', questions={'score': ScoreQuestion(criteria=['low', 'medium', 'high'])}
+            ),
+            ({**FRUSTRATION, 'name': 'score', 'score': True},),
+            id='score boolean value',
+        ),
+        pytest.param(
+            DecisionRequest(
+                state='Review this.', questions={'score': ScoreQuestion(criteria=['low', 'medium', 'high'])}
+            ),
+            ({**FRUSTRATION, 'name': 'score', 'score': '1.7'},),
+            id='score numeric-string value',
+        ),
+    ],
+)
+async def test_decide_rejects_coerced_numeric_response_fields(
+    decision_request: DecisionRequest, answers: tuple[Mapping[str, object], ...], allow_model_requests: None
+):
+    """Response numbers need their documented JSON numeric type; this exercises the SDK parsing boundary directly."""
+    response = decisions(*answers)
+
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        await mock_model(lambda _: response).decide(decision_request, {})
+
+    assert exc_info.value.message == 'Invalid response from the OpenAI Decisions API'
+    assert exc_info.value.body is not None
+    assert json.loads(exc_info.value.body) == json.loads(response.text)
+    assert isinstance(exc_info.value.__cause__, ValidationError)
 
 
 @pytest.mark.parametrize(

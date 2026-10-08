@@ -227,7 +227,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         # The SDK builds its response models without validating them, so the body is validated here.
         try:
             data = json.loads(response.content)
-            decision = Decision.model_validate(data)
+            decision = Decision.model_validate(data, strict=True)
         except ValueError as e:
             raise UnexpectedModelBehavior('Invalid response from the OpenAI Decisions API', response.text) from e
         by_name = {answer.name: answer for answer in decision.answers if answer.name is not None}
