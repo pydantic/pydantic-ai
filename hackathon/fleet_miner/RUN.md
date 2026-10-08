@@ -68,7 +68,8 @@ Two families of findings, both "never from one developer or one session":
    equivalent content (normalized text, else a cached LLM equivalence check). Publishing writes the file into
    `memory__clai2` (first entry for its path; `source` `auto` or `corroborated`, `accepted_by: auto-publish`,
    `accepted_at`, `proposal_id`, `proposed_by`, `corroborated_by`), verifies the write, then marks the proposal
-   accepted. In these modes a file failing the secret or size check (or the 20-files-per-repo limit) stays pending
+   accepted. A file with a `review_flag` is never published this way: it waits for an admin. In these modes a
+   file failing the secret or size check (or the 20-files-per-repo limit) stays pending
    with the reason, secrets redacted. `--memory-mode` overrides the variable; `--variables-suffix _test` makes every
    variable `<name>_test`, the only way to try publishing live.
 

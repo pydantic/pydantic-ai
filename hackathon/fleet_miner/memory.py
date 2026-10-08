@@ -33,6 +33,8 @@ MAX_BYTES = 8 * 1024
 """Per file, as `memory__clai2` accepts (design decision 2)."""
 MAX_FILES_PER_REPO = 20
 
+WAITING_FOR_ADMIN = 'Waiting for an admin: looks like a personal preference, not a repo fact'
+
 SharedMode = Literal['review', 'corroborate', 'auto']
 """`agent__clai2.policy.memory.shared`: every proposal waits for an admin (`review`), is published once agents of
 2+ developers propose equivalent content (`corroborate`), or is published right away (`auto`)."""
@@ -276,7 +278,10 @@ async def mine_memory(
             )
             review_flag = f'Looks like a personal preference: {review.reason}' if review.personal else None
         proposals.append(_proposal(proposal_id, repo, path, file_spans, base, model, review_flag, max_evidence))
-        if mode == 'auto':
+        if mode != 'review' and review_flag:
+            # Exactly the case a human should decide: never published without an admin.
+            proposals[-1].status_reason = WAITING_FOR_ADMIN
+        elif mode == 'auto':
             publish.append(Publish(proposal_id, 'auto', []))
         elif mode == 'corroborate':
             # The latest proposal of each other developer, checked against the newest content.
