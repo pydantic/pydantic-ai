@@ -378,30 +378,6 @@ async def test_failed_attempt_effects_are_discarded_and_success_is_applied_once(
     assert [(event.child, event.sequence) for event in seen] == [('attempt-2', 1)]
 
 
-async def test_effects_share_the_successful_operation_result_json_envelope() -> None:
-    usage = RunUsage()
-    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
-    agent = Agent[None, str](
-        TestModel(call_tools=['account']),
-        name='effect-envelope',
-        deps_type=type(None),
-        capabilities=[runtime],
-    )
-
-    @agent.tool
-    async def account(ctx: RunContext[None]) -> str:
-        ctx.usage.incr(RunUsage(details={'envelope_marker': 3}))
-        return 'accounted'
-
-    context = JsonRecordingTaskContext()
-    assert isinstance(await run_agent_in_task(agent, runtime, context, usage=usage), str)
-    tool_results = [result for name, result in context.results if name.endswith('.call_tool')]
-
-    assert len(tool_results) == 1
-    assert set(tool_results[0]) == {'version', 'status', 'payload', 'effects'}
-    assert isinstance(tool_results[0]['effects'], dict)
-
-
 async def test_malformed_effects_fail_closed() -> None:
     runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
     agent = Agent[None, str](

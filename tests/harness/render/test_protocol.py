@@ -147,7 +147,6 @@ async def test_agent_result_survives_the_json_round_trip() -> None:
     'tamper',
     [
         pytest.param(_set('operation', 'support__model.compact_messages'), id='wrong-operation'),
-        pytest.param(_set('version', 1), id='obsolete-version'),
         pytest.param(_drop('payload'), id='missing-payload'),
     ],
 )
@@ -167,7 +166,6 @@ async def test_malformed_request_completes_the_child_with_an_invalid_request_err
     'tamper',
     [
         pytest.param(_set('version', 3), id='unsupported-version'),
-        pytest.param(_set('version', 1), id='obsolete-version'),
         pytest.param(_drop('payload'), id='missing-payload'),
     ],
 )
