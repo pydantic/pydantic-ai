@@ -510,9 +510,12 @@ jobs:
             command: "--package pydantic-ai-slim"
           - name: pydantic-evals
             command: "--package pydantic-evals"
-          # The extras its suite always ran with; every other extra is covered by `all-extras`.
+          # Install CLAI 2 alongside the harness to exercise the gh-aw launcher.
           - name: pydantic-ai-harness
-            command: "--package pydantic-ai-harness --extra code-mode --extra coder --extra logfire"
+            command: "--no-sync"
+            sync_command: >-
+              --inexact --package pydantic-ai-harness --package pydantic-clai2
+              --extra code-mode --extra coder --extra logfire
             # Its own suite: the rest of `tests/` is covered by the other cells.
             paths: tests/harness
           - name: pydantic-clai2
@@ -569,6 +572,10 @@ jobs:
           "
 
       - run: uv sync --only-dev
+
+      - name: install harness and CLAI 2 test dependencies
+        if: matrix.install.name == 'pydantic-ai-harness'
+        run: uv sync ${{ matrix.install.sync_command }}
 
       # `-n logical`, not `-n auto`: when `psutil` is importable, xdist's `auto` counts
       # *physical* cores while `logical` counts every vCPU, which is what hyperthreaded
