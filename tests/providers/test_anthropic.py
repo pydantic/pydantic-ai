@@ -139,6 +139,7 @@ def test_anthropic_provider_model_profile_inline_system_prompts(model_name: str,
     [('claude-haiku-5-5', 'by_reference'), ('claude-sonnet-5', None)],
 )
 def test_anthropic_provider_model_profile_tool_availability_delta(model_name: str, expected_mode: str | None):
+    """Haiku 5.5 accepts deferred tool addition; Sonnet 5 does not support the feature."""
     profile = AnthropicProvider.model_profile(model_name)
     assert isinstance(profile, dict)
     assert profile.get('tool_addition_mode') == expected_mode

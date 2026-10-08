@@ -191,7 +191,7 @@ async def test_anthropic_retries_a_stale_thinking_block_with_drop_block(allow_mo
 
     The retried `thinking` object rides in `extra_body`, typed `adaptive` when the request configured
     no thinking: Claude Sonnet 5.5 rejects a `thinking` object without a `type`, and every binding model
-    thinks adaptively when none is given.
+    thinks adaptively when none is given. Anthropic documents Haiku 5.5's adaptive default.
     """
     mock_client = MockAnthropic.create_mock(
         [
