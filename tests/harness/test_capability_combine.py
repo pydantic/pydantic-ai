@@ -387,6 +387,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'CodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
     'BrowserUse': Collides('its toolset registers its browser tools under fixed names'),
+    'ComputerUse': Collides(
+        'its toolset registers `computer` under a fixed name, and two computers is a conflict, '
+        'not one configuration stated twice'
+    ),
     'PlaywrightBrowser': Collides('its toolset registers `click` and friends under fixed names'),
     'ConversationSearch': Collides('its toolset registers `search_conversation_history` under a fixed name'),
     'ExaAgent': Narrows(
