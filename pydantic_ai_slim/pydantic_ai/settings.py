@@ -57,7 +57,9 @@ class CacheConfig(TypedDict, total=False):
 
     With `False`, only the tool definitions and static instructions are cached: useful for many short,
     one-off conversations that share long instructions or tools, where writing each conversation to the
-    cache would cost more than it saves because it's never read back.
+    cache would cost more than it saves because it's never read back. On OpenAI requests that can't carry an
+    instruction breakpoint, such as those continuing server-side state, the conversation is cached as well,
+    as caching only the prefix would cache nothing.
     """
 
 

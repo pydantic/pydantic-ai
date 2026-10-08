@@ -70,7 +70,7 @@ Per provider:
 
 - **Anthropic API and Microsoft Foundry:** automatic caching would breakpoint the end of the conversation, so the instructions and tool definitions get breakpoints instead (`anthropic_cache_instructions` and `anthropic_cache_tool_definitions`).
 - **Anthropic on the Bedrock and Vertex AI SDK clients, Bedrock Converse, and OpenRouter's Anthropic routes:** the instruction and tool definition breakpoints, without the conversation breakpoint. OpenRouter's Gemini routes take no tool definition breakpoint, so they cache the instructions.
-- **OpenAI GPT-5.6 and later:** `openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'}` with the instruction breakpoint. With `mode='explicit'`, OpenAI doesn't create its implicit breakpoint, so only the instructions are written. On requests that continue server-side state (`openai_previous_response_id` or `openai_conversation_id`), the instructions can't carry a breakpoint, so those requests use no prompt caching at all.
+- **OpenAI GPT-5.6 and later:** `openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'}` with the instruction breakpoint. With `mode='explicit'`, OpenAI doesn't create its implicit breakpoint, so only the instructions are written. On requests where the [instruction breakpoint](../models/openai.md#prompt-caching) is skipped, such as those that continue server-side state (`openai_previous_response_id` or `openai_conversation_id`), and no `CachePoint` adds one, `mode='explicit'` would cache nothing, so those requests keep the implicit breakpoint and cache like `Caching()`.
 - **Providers that cache implicitly**, such as Gemini and earlier OpenAI models: no effect.
 
 ## What gets cached
