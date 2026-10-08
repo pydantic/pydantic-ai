@@ -47,6 +47,8 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelHTTPError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -62,6 +64,7 @@ from pydantic_ai.models import (
     infer_model,
     infer_model_profile,
 )
+from pydantic_ai.models.decision import DecisionHandOff, UnsureRoute
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -86,6 +89,7 @@ try:
         PayloadCodec,
         StorageDriver,
     )
+    from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
@@ -107,12 +111,13 @@ try:
         execute_activity as execute_temporal_activity,
     )
     from pydantic_ai.durable_exec.temporal._durability import _RequestParams  # pyright: ignore[reportPrivateUsage]
-    from pydantic_ai.durable_exec.temporal._logfire import (
-        _setup_replay_safe_logfire,  # pyright: ignore[reportPrivateUsage]
-    )
     from pydantic_ai.durable_exec.temporal._model import (
         TemporalModel,
         _CancelParams as _ModelCancelParams,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.durable_exec.temporal._model_errors import (
+        model_errors_as_application_errors,
+        rebuilt_model_errors,
     )
     from pydantic_ai.durable_exec.temporal._replay_safe_tracer_provider import ReplaySafeSDKTracerProvider
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
@@ -409,7 +414,7 @@ async def test_logfire_plugin(client: Client):
     assert isinstance(interceptor, TracingInterceptor)
     if isinstance(interceptor.tracer, ProxyTracer):
         assert interceptor.tracer._instrumenting_module_name == 'temporalio'  # pyright: ignore[reportPrivateUsage] # pragma: lax no cover
-    elif isinstance(interceptor.tracer, _ProxyTracer):
+    elif isinstance(interceptor.tracer, _ProxyTracer):  # pragma: lax no cover
         assert interceptor.tracer.instrumenting_module_name == 'temporalio'  # pragma: lax no cover
     else:
         assert False, f'Unexpected tracer type: {type(interceptor.tracer)}'  # pragma: no cover
@@ -538,7 +543,7 @@ def test_replay_safe_logfire_preserves_instrumentation_settings(
     monkeypatch.setattr(Agent, '_instrument_default', host_settings)
     assert not _is_replay_safe(host_settings.tracer)
 
-    _setup_replay_safe_logfire()
+    LogfirePlugin()._setup_replay_safe_instrumentation()  # pyright: ignore[reportPrivateUsage]
 
     assert Agent._instrument_default is host_settings  # pyright: ignore[reportPrivateUsage]
     assert host_settings.include_content is False
@@ -551,7 +556,7 @@ def test_replay_safe_logfire_instruments_uninstrumented_host(
 ):
     monkeypatch.setattr(Agent, '_instrument_default', False)
 
-    _setup_replay_safe_logfire()
+    LogfirePlugin()._setup_replay_safe_instrumentation()  # pyright: ignore[reportPrivateUsage]
 
     settings = Agent._instrument_default  # pyright: ignore[reportPrivateUsage]
     assert isinstance(settings, InstrumentationSettings)
@@ -571,7 +576,7 @@ def test_replay_safe_logfire_honors_suppressed_scopes(monkeypatch: pytest.Monkey
     for provider in (config.get_tracer_provider(), config.get_meter_provider(), config.get_logger_provider()):
         monkeypatch.setattr(provider, 'suppressed_scopes', set[str]())
     monkeypatch.setattr(Agent, '_instrument_default', False)
-    _setup_replay_safe_logfire()
+    LogfirePlugin()._setup_replay_safe_instrumentation()  # pyright: ignore[reportPrivateUsage]
     logfire.suppress_scopes('pydantic-ai')
 
     Agent(TestModel()).run_sync('A prompt the host does not want exported')
@@ -648,6 +653,71 @@ def test_logfire_plugin_restores_replay_safety_after_reconfigure(
     assert _is_replay_safe(interceptor.tracer)
 
 
+def test_logfire_plugin_makes_custom_setup_replay_safe(
+    client: Client, monkeypatch: pytest.MonkeyPatch, configured_logfire: Logfire
+):
+    """A custom `setup_logfire` callback configures Logfire; the plugin still makes its instance replay-safe.
+
+    The callback is called once even though setup runs at every client, worker and replayer hook, since a callback
+    that calls `logfire.configure()` would otherwise reset Logfire each time. It owns Pydantic AI instrumentation,
+    so the plugin doesn't instrument for it.
+    """
+    monkeypatch.setattr(Agent, '_instrument_default', False)
+    calls: list[Logfire] = []
+
+    def setup_logfire() -> Logfire:
+        calls.append(configured_logfire)
+        return configured_logfire
+
+    plugin = LogfirePlugin(setup_logfire)
+    config = client.config()
+    config['plugins'] = [plugin]
+    Client(**config)
+    worker_config = plugin.configure_worker({'client': client})
+    plugin.configure_replayer({})
+
+    assert calls == [configured_logfire]
+    assert isinstance(configured_logfire.config.get_tracer_provider().provider, ReplaySafeSDKTracerProvider)
+    assert 'interceptors' in worker_config
+    interceptor = worker_config['interceptors'][0]
+    assert isinstance(interceptor, TracingInterceptor)
+    assert _is_replay_safe(interceptor.tracer)
+    assert Agent._instrument_default is False  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_logfire_plugin_replay_safe_false(
+    client: Client, monkeypatch: pytest.MonkeyPatch, configured_logfire: Logfire
+):
+    """`replay_safe=False` leaves Logfire's provider alone and traces Temporal through the global tracer provider.
+
+    A custom `setup_logfire` callback then keeps its previous behavior of running on every connect.
+    """
+    monkeypatch.setattr(Agent, '_instrument_default', False)
+    plugin = LogfirePlugin(replay_safe=False)
+
+    worker_config = plugin.configure_worker({'client': client})
+    plugin.configure_replayer({})
+
+    assert not isinstance(configured_logfire.config.get_tracer_provider().provider, ReplaySafeSDKTracerProvider)
+    assert 'interceptors' in worker_config
+    interceptor = worker_config['interceptors'][0]
+    assert isinstance(interceptor, TracingInterceptor)
+    assert not _is_replay_safe(interceptor.tracer)
+
+    calls: list[Logfire] = []
+
+    def setup_logfire() -> Logfire:
+        calls.append(configured_logfire)
+        return configured_logfire
+
+    plugin = LogfirePlugin(setup_logfire, replay_safe=False)
+    await Client.connect(client.service_client.config.target_host, plugins=[plugin])
+    await Client.connect(client.service_client.config.target_host, plugins=[plugin])
+
+    assert calls == [configured_logfire, configured_logfire]
+    assert not isinstance(configured_logfire.config.get_tracer_provider().provider, ReplaySafeSDKTracerProvider)
+
+
 replay_safe_logfire_agent = Agent(
     TestModel(custom_output_text='replay-safe'),
     name='replay_safe_logfire_agent',
@@ -699,12 +769,27 @@ async def test_logfire_plugin_does_not_emit_spans_during_replay(
     assert len(replayed_spans) == span_count
     assert sum(span['name'].startswith('StartActivity:') for span in replayed_spans) == initial_start_activity_count
 
-    # Control: without replay-safe tracing the same replay does emit duplicate spans. The replay-safe provider is
-    # installed in Logfire's process-wide proxy, so opting out means running with Logfire's plain provider again.
+    # The replay-safe provider is installed in Logfire's process-wide proxy, so put Logfire's plain provider back
+    # before each of the remaining replays: otherwise they'd inherit replay-safety from the one above.
     proxy = logfire.DEFAULT_LOGFIRE_INSTANCE.config.get_tracer_provider()
     replay_safe_provider = proxy.provider
     assert isinstance(replay_safe_provider, ReplaySafeSDKTracerProvider)
-    proxy.set_provider(SDKTracerProvider(active_span_processor=replay_safe_provider._active_span_processor))  # pyright: ignore[reportPrivateUsage]
+
+    def use_plain_provider() -> None:
+        proxy.set_provider(SDKTracerProvider(active_span_processor=replay_safe_provider._active_span_processor))  # pyright: ignore[reportPrivateUsage]
+
+    # A custom `setup_logfire` callback gets replay-safe tracing too.
+    use_plain_provider()
+    await Replayer(
+        workflows=[ReplaySafeLogfireWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+        plugins=[LogfirePlugin(lambda: logfire.DEFAULT_LOGFIRE_INSTANCE)],
+    ).replay_workflow(history)
+    assert len(capfire.exporter.exported_spans_as_dict()) == span_count
+
+    # Control: with `replay_safe=False`, the same replay does emit duplicate spans.
+    use_plain_provider()
 
     def setup_logfire() -> Logfire:
         instance = logfire.DEFAULT_LOGFIRE_INSTANCE
@@ -717,7 +802,7 @@ async def test_logfire_plugin_does_not_emit_spans_during_replay(
         workflows=[ReplaySafeLogfireWorkflow],
         workflow_runner=UnsandboxedWorkflowRunner(),
         data_converter=pydantic_data_converter,
-        plugins=[LogfirePlugin(setup_logfire)],
+        plugins=[LogfirePlugin(setup_logfire, replay_safe=False)],
     ).replay_workflow(history)
     assert len(capfire.exporter.exported_spans_as_dict()) > span_count
 
@@ -2909,3 +2994,183 @@ async def test_pydantic_ai_plugin_rejects_bare_agent_without_durability(client: 
         ):
             # The error is raised before reaching here.
             pass  # pragma: no cover
+
+
+# --- Model errors crossing the activity boundary ---
+
+
+def _activity_error(cause: BaseException) -> ActivityError:
+    """An `ActivityError` caused by `cause`, as workflow code receives it."""
+    error = ActivityError(
+        'Activity task failed',
+        scheduled_event_id=1,
+        started_event_id=2,
+        identity='worker',
+        activity_type='model_request',
+        activity_id='1',
+        retry_state=None,
+    )
+    error.__cause__ = cause
+    return error
+
+
+def _crossed(error: ModelAPIError) -> BaseException:
+    """The error workflow code sees after a model activity raised `error`."""
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    with pytest.raises(BaseException) as rebuilt:
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
+    return rebuilt.value
+
+
+def test_model_http_error_crosses_with_its_fields():
+    error = ModelHTTPError(
+        503,
+        'gpt-test',
+        body={'error': 'overloaded'},
+        headers={'Retry-After': '7'},
+        suggested_model_id='gpt-better',
+    )
+    rebuilt = _crossed(error)
+    assert isinstance(rebuilt, ModelHTTPError)
+    assert (rebuilt.status_code, rebuilt.model_name, rebuilt.body, rebuilt.headers, rebuilt.suggested_model_id) == (
+        503,
+        'gpt-test',
+        {'error': 'overloaded'},
+        {'retry-after': '7'},
+        'gpt-better',
+    )
+    assert rebuilt.retry_after == 7.0
+    assert str(rebuilt) == str(error)
+    assert isinstance(rebuilt.__cause__, ActivityError)
+
+
+def test_model_api_error_crosses_with_its_type():
+    rebuilt = _crossed(ModelAPIError('gpt-test', 'connection reset'))
+    assert type(rebuilt) is ModelAPIError
+    assert (rebuilt.model_name, rebuilt.message) == ('gpt-test', 'connection reset')
+
+
+def test_a_body_that_is_not_json_crosses_as_a_string():
+    class Opaque:
+        def __str__(self) -> str:
+            return 'opaque body'
+
+    rebuilt = _crossed(ModelHTTPError(500, 'gpt-test', body=Opaque()))
+    assert isinstance(rebuilt, ModelHTTPError)
+    assert rebuilt.body == 'opaque body'
+
+
+def test_decision_hand_offs_cross_with_their_fields():
+    rebuilt = _crossed(DecisionHandOff('decider', 'search', 0.4, 'handed off'))
+    assert isinstance(rebuilt, DecisionHandOff)
+    assert (rebuilt.model_name, rebuilt.route, rebuilt.probability, rebuilt.message) == (
+        'decider',
+        'search',
+        0.4,
+        'handed off',
+    )
+
+    unsure = _crossed(UnsureRoute('decider', 'search', {'search': 0.4, 'reply': 0.6}, 0.5))
+    assert isinstance(unsure, UnsureRoute)
+    assert (unsure.probabilities, unsure.threshold) == ({'search': 0.4, 'reply': 0.6}, 0.5)
+
+
+def test_a_subclass_with_plain_reduce_state_crosses_with_it():
+    """State without a custom `__setstate__` is restored by `BaseException.__setstate__`, as pickle restores it."""
+
+    class StatefulModelError(ModelAPIError):
+        extra: int | None = None
+
+        def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:  # pyright: ignore[reportIncompatibleMethodOverride]
+            return self.__class__, (self.model_name, self.message), {'extra': self.extra}
+
+    # Only Pydantic AI's own classes cross, so present this one as one of them.
+    StatefulModelError.__module__ = 'pydantic_ai.exceptions'
+    error = StatefulModelError('gpt-test', 'boom')
+    error.extra = 5
+    rebuilt = _crossed(error)
+    assert isinstance(rebuilt, StatefulModelError)
+    assert rebuilt.extra == 5
+
+
+def test_a_body_that_cannot_be_encoded_is_raised_unchanged():
+    recursive: list[object] = []
+    recursive.append(recursive)
+    with pytest.raises(ModelHTTPError):
+        with model_errors_as_application_errors():
+            raise ModelHTTPError(500, 'gpt-test', body=recursive)
+
+
+def test_the_application_error_keeps_the_type_temporal_retries_on():
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise ModelHTTPError(503, 'gpt-test')
+    assert raised.value.type == 'ModelHTTPError'
+    assert not raised.value.non_retryable
+
+
+def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: pytest.MonkeyPatch):
+    class ApplicationModelError(ModelAPIError):
+        """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
+
+    error = ApplicationModelError('gpt-test', 'boom')
+    with pytest.raises(ApplicationModelError):
+        with model_errors_as_application_errors():
+            raise error
+
+    def reduce_to_a_name(self: ModelAPIError) -> str:
+        return 'not a reduce tuple'
+
+    monkeypatch.setattr(ModelAPIError, '__reduce__', reduce_to_a_name)
+    with pytest.raises(ModelAPIError):
+        with model_errors_as_application_errors():
+            raise ModelAPIError('gpt-test', 'boom')
+
+
+def test_a_subclass_whose_constructor_does_not_match_its_reduce_is_raised_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def reduce_to_wrong_args(self: ModelHTTPError) -> tuple[type[ModelHTTPError], tuple[str, ...]]:
+        return ModelHTTPError, ('too', 'many', 'args', 'here')
+
+    monkeypatch.setattr(ModelHTTPError, '__reduce__', reduce_to_wrong_args)
+    with pytest.raises(ModelHTTPError):
+        with model_errors_as_application_errors():
+            raise ModelHTTPError(503, 'gpt-test')
+
+
+@pytest.mark.parametrize(
+    'details',
+    [
+        pytest.param((), id='no-details'),
+        pytest.param(('text',), id='not-a-dict'),
+        pytest.param(({'other': 1},), id='no-model-error'),
+        pytest.param(({'pydantic_ai_model_error': {'module': 'os', 'qualname': 'error'}},), id='outside-pydantic-ai'),
+        pytest.param(({'pydantic_ai_model_error': {'module': 3, 'qualname': 'error'}},), id='malformed'),
+        pytest.param(
+            ({'pydantic_ai_model_error': {'module': 'pydantic_ai.exceptions', 'qualname': 'Missing'}},),
+            id='missing-class',
+        ),
+        pytest.param(
+            ({'pydantic_ai_model_error': {'module': 'pydantic_ai.exceptions', 'qualname': 'UserError'}},),
+            id='not-a-model-error',
+        ),
+    ],
+)
+def test_other_activity_failures_are_raised_unchanged(details: tuple[object, ...]):
+    activity_error = _activity_error(ApplicationError('failed', *details, type='Whatever'))
+    with pytest.raises(ActivityError) as raised:
+        with rebuilt_model_errors():
+            raise activity_error
+    assert raised.value is activity_error
+
+
+def test_an_activity_failure_without_an_application_error_is_raised_unchanged():
+    activity_error = _activity_error(TimeoutError('timed out'))
+    with pytest.raises(ActivityError) as raised:
+        with rebuilt_model_errors():
+            raise activity_error
+    assert raised.value is activity_error

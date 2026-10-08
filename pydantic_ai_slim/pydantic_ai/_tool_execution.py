@@ -7,9 +7,9 @@ from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Sequence
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, assert_never, cast
 
-from typing_extensions import TypeVar, assert_never
+from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import EventStreamBuffer
 from pydantic_ai._utils import cancel_and_drain

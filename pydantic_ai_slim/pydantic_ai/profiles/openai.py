@@ -384,6 +384,16 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Responses APIs. When disabled, `CachePoint` markers are filtered out.
     """
 
+    openai_responses_supports_prompt_cache_diagnostics: bool
+    """Whether the Responses endpoint serves prompt cache diagnostics for this model. Default: `False`.
+
+    When `True`, requests pass the most recent response from the same provider as
+    `prompt_cache_options.comparison_response_id`, unless the
+    [`openai_prompt_cache_diagnostics`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_diagnostics]
+    setting is `False`. Set by `OpenAIProvider` for GPT-5.6 and later models; OpenAI-compatible Responses
+    endpoints may reject the field (OpenRouter does), so it stays off for them.
+    """
+
     openai_responses_requires_streaming: bool
     """Whether the Responses endpoint serves streaming responses only. Default: `False`.
 
@@ -511,6 +521,8 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         # Speech and delegated work run independently: the Live model can keep the conversation going
         # while the backend works, so a tool call doesn't hold up speech, and there's no mode that waits.
         'async_tool_call_mode': 'always',
+        # The backend runs web search; Live refuses every other native Responses tool (checked live).
+        'supported_native_tools': frozenset({WebSearchTool}),
         # The delegated backend does the reasoning, so `thinking` sets its effort. Whether a given backend
         # reasons at all is its own profile's call, so a backend that doesn't still ignores the setting.
         'supports_thinking': True,
@@ -591,6 +603,9 @@ _TYPE_BEARING_KEYS = ('type', '$ref', 'anyOf', 'oneOf', 'allOf', 'enum', 'const'
 Used to tell whether an array's `items` actually types its elements. A node without any of these
 (e.g. `{}`, `True`, or `{'description': '...'}`) is untyped and rejected by OpenAI strict mode."""
 
+_TOP_LEVEL_DEFINITION_REF = re.compile(r'#/(\$defs|definitions)/[^/]+')
+"""A local `$ref` to a top-level definition, the only JSON pointer other than `#` that OpenAI strict mode resolves."""
+
 _sentinel = object()
 
 
@@ -628,6 +643,11 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         # that the root schema either has type 'object' or is recursive.
         result = super().walk()
 
+        # Draft-07 `definitions` (where zod v4, via the MCP TypeScript SDK, puts a recursive subschema) are referenced
+        # like `$defs`, so their entries need the same handling to be valid in strict mode.
+        if definitions := result.get('definitions'):
+            result['definitions'] = {key: self._handle(value) for key, value in definitions.items()}
+
         # For recursive models, we need to tweak the schema to make it compatible with strict mode.
         # Because the following should never change the semantics of the schema we apply it unconditionally.
         if self.root_ref is not None:
@@ -655,6 +675,14 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         if schema_ref := schema.get('$ref'):
             if schema_ref == self.root_ref:
                 schema['$ref'] = '#'
+            elif (
+                self.strict is None
+                and schema_ref.startswith('#/')
+                and not _TOP_LEVEL_DEFINITION_REF.fullmatch(schema_ref)
+            ):
+                # A pointer elsewhere in the schema, like the `#/properties/from` that `zod-to-json-schema`
+                # (used by the MCP TypeScript SDK) emits for a reused subschema, is rejected in strict mode.
+                self.is_strict_compatible = False
             if len(schema) > 1:
                 # OpenAI Strict mode doesn't support siblings to "$ref", but _does_ allow siblings to "anyOf".
                 # So if there is a "description" field or any other extra info, we move the "$ref" into an "anyOf":

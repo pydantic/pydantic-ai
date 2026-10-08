@@ -95,6 +95,7 @@ class LifecycleChecker:
     _added_inputs: set[int] = field(default_factory=set[int])
     _turns: set[str] = field(default_factory=set[str])
     _open_turns: set[str] = field(default_factory=set[str])
+    _joined_turns: set[str] = field(default_factory=set[str])
 
     def feed(self, event: RealtimeCodecEvent | LifecycleEvent) -> list[ConformanceIssue]:
         position = self.events
@@ -173,10 +174,17 @@ class LifecycleChecker:
                 issue('lifecycle.turn_started_twice', f'spoken turn {event.turn_id!r} started twice')
             self._turns.add(event.turn_id)
             self._open_turns.add(event.turn_id)
-        elif isinstance(event, UserTurnEnded | UserTurnDiscarded):
+        elif isinstance(event, UserTurnEnded):
             if event.turn_id not in self._open_turns:
                 issue('lifecycle.turn_end_without_start', f'spoken turn {event.turn_id!r} ended without starting')
             self._open_turns.discard(event.turn_id)
+            self._joined_turns.add(event.turn_id)
+        elif isinstance(event, UserTurnDiscarded):
+            # A turn can be discarded once it joined, too: it just gets no more audio.
+            if event.turn_id not in self._open_turns and event.turn_id not in self._joined_turns:
+                issue('lifecycle.turn_end_without_start', f'spoken turn {event.turn_id!r} discarded without starting')
+            self._open_turns.discard(event.turn_id)
+            self._joined_turns.discard(event.turn_id)
         elif isinstance(event, InputAdded):
             if event.input_id in self._added_inputs:
                 issue('lifecycle.input_added_twice', f'input {event.input_id} joined the conversation twice')

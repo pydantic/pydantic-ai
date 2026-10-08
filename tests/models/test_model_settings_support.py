@@ -731,9 +731,6 @@ def test_every_api_backed_model_class_is_probed():
         except ImportError:  # pragma: lax no cover
             continue  # an optional provider SDK isn't installed; its classes can't be probed either
         for name, obj in vars(module).items():
-            # A subscripted generic (`dict[str, Any]`) passes `isinstance(_, type)` on Python 3.10 and
-            # then makes `issubclass` raise, so both it and anything merely imported into the module
-            # are screened out before the base-class question is asked.
             if not isinstance(obj, type) or isinstance(obj, types.GenericAlias):
                 continue
             if obj.__module__ != module_info.name or not issubclass(obj, Model):

@@ -906,6 +906,11 @@ navigation:
             slug: "examples/streaming/stream-whales"
             aliases:
               - "examples/stream-whales"
+          - page: "Cancel and Resume"
+            path: "examples/cancellation.md"
+            slug: "examples/streaming/cancellation"
+            aliases:
+              - "examples/cancellation"
       - section: "Realtime"
         slug: ""
         contents:
@@ -1076,6 +1081,11 @@ navigation:
             slug: "api/pydantic-ai/concurrency"
             aliases:
               - "api/concurrency"
+          - page: "conversation"
+            path: "api/conversation.md"
+            slug: "api/pydantic-ai/conversation"
+            aliases:
+              - "api/conversation"
           - page: "direct"
             path: "api/direct.md"
             slug: "api/pydantic-ai/direct"
