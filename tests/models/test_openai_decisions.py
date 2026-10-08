@@ -24,6 +24,7 @@ from pydantic_ai import (
     Agent,
     BinaryContent,
     BoolCriteria,
+    ModelAPIError,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
@@ -63,7 +64,7 @@ from ..conftest import IsDatetime, IsStr, RequestCapture, TestEnv, try_import
 from .test_system_one import Captured, Frustration, Handler, Ticket
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
+    from openai import APIConnectionError, APIError, APIStatusError, AsyncOpenAI
 
     from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel, OpenAIDecisionsModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -558,6 +559,72 @@ async def test_http_error(allow_model_requests: None, openai_api_key: str, reque
     assert request_capture.body('/v1/decisions')['model'] == 'gpt-5'
 
 
+async def test_http_error_preserves_sdk_response_details_and_authorization(allow_model_requests: None):
+    """A fixed 403 pins the authenticated request and the error details retained from the SDK response."""
+    captured_headers: list[str] = []
+    body = {'message': 'Access denied.', 'code': 'permission_denied'}
+
+    def reject(request: httpx2.Request) -> httpx2.Response:
+        captured_headers.append(request.headers['authorization'])
+        return httpx2.Response(403, json=body, headers={'x-request-id': 'req_403', 'x-team': 'support'})
+
+    model = mock_model(reject)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model.decide(DecisionRequest(state='Review this.', questions={'q': NoulQuestion()}), {})
+
+    assert captured_headers == ['Bearer test']
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.body == body
+    assert exc_info.value.headers is not None
+    assert {name: exc_info.value.headers[name] for name in ('content-type', 'x-request-id', 'x-team')} == {
+        'content-type': 'application/json',
+        'x-request-id': 'req_403',
+        'x-team': 'support',
+    }
+    assert isinstance(exc_info.value.__cause__, APIStatusError)
+
+
+@pytest.mark.parametrize('error_kind', ['connection', 'api'])
+async def test_sdk_errors_map_to_model_api_error_with_cause(allow_model_requests: None, error_kind: str):
+    """A transport failure is wrapped by the SDK; a synthetic `APIError` covers its protocol-error branch."""
+    sdk_errors: list[APIError] = []
+    transport_errors: list[httpx2.ConnectError] = []
+
+    def fail(request: httpx2.Request) -> httpx2.Response:
+        if error_kind == 'connection':
+            transport_error = httpx2.ConnectError('connection failed')
+            transport_errors.append(transport_error)
+            raise transport_error
+        sdk_error = APIError('API protocol failed', request, body={'code': 'protocol_error'})
+        sdk_errors.append(sdk_error)
+        raise sdk_error
+
+    model = mock_model(fail)
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.decide(DecisionRequest(state='Review this.', questions={'q': NoulQuestion()}), {})
+
+    assert exc_info.value.model_name == 'gpt-6-luna'
+    assert exc_info.value.message == 'OpenAI Decisions request failed'
+    if error_kind == 'connection':
+        [transport_error] = transport_errors
+        assert isinstance(exc_info.value.__cause__, APIConnectionError)
+        assert exc_info.value.__cause__.__cause__ is transport_error
+    else:
+        [sdk_error] = sdk_errors
+        assert exc_info.value.__cause__ is sdk_error
+
+
+async def test_sdk_status_error_below_400_maps_to_model_api_error(allow_model_requests: None):
+    """A redirect without a `Location` reaches the adapter as a status error below 400."""
+    model = mock_model(lambda _: httpx2.Response(302, headers={'x-request-id': 'req_redirect'}))
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.decide(DecisionRequest(state='Review this.', questions={'q': NoulQuestion()}), {})
+
+    assert exc_info.value.message == 'OpenAI Decisions request failed'
+    assert isinstance(exc_info.value.__cause__, APIStatusError)
+    assert exc_info.value.__cause__.status_code == 302
+
+
 async def test_too_many_routes(allow_model_requests: None):
     """More routes than the API's 255 options are refused before a request is sent, so there is nothing to record."""
     captured = Captured(ticket_answers)
@@ -690,8 +757,16 @@ async def test_decide_rejects_invalid_extra_body_before_a_request(allow_model_re
 async def test_invalid_response(response: httpx2.Response, allow_model_requests: None):
     """The SDK doesn't validate what it parses, so `decide` does. Not recorded: no live model answers like this."""
     agent = Agent(mock_model(lambda request: response), output_type=Ticket)
-    with pytest.raises(UnexpectedModelBehavior, match='Invalid response from the OpenAI Decisions API'):
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
         await agent.run('Charged twice.')
+    assert exc_info.value.message == 'Invalid response from the OpenAI Decisions API'
+    assert exc_info.value.body is not None
+    assert exc_info.value.__cause__ is not None
+    assert str(exc_info.value.__cause__)
+    if response.text == 'not json':
+        assert exc_info.value.body == 'not json'
+    else:
+        assert 'answers' in exc_info.value.body
 
 
 @pytest.mark.parametrize(
@@ -1053,14 +1128,14 @@ async def test_image_urls_in_tool_returns_are_downloaded_and_labeled(allow_model
     agent = Agent(mock_model(captured), output_type=bool, instructions='Does the lookup contain an image?')
 
     with patch(
-        'pydantic_ai.models.openai_decisions.download_item',
+        'pydantic_ai.models.decision.download_item',
         new_callable=AsyncMock,
-        return_value={'data': image_data_uri, 'content_type': 'image/png'},
+        return_value={'data': b'tool-image', 'data_type': 'image/png'},
     ) as download:
         result = await agent.run('Does the lookup contain an image?', message_history=history)
 
     assert result.output is True
-    download.assert_awaited_once_with(image_url, data_format='base64_uri')
+    download.assert_awaited_once_with(image_url, data_format='bytes')
     request_body: JsonValue = json.loads(captured.requests[0].content)
     assert isinstance(request_body, dict)
     request_input_value = request_body['input']
@@ -1213,8 +1288,8 @@ async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: 
     long_prompt = 'The receipt is attached. ' + 'Some detail nobody asked about. ' * 3000
     agent = Agent(mock_model(captured), output_type=[Ticket, Mood])
 
-    with patch('pydantic_ai.models.openai_decisions.download_item', new_callable=AsyncMock) as download:
-        download.return_value = {'data': 'data:image/png;base64,cGljdHVyZQ==', 'content_type': 'image/png'}
+    with patch('pydantic_ai.models.decision.download_item', new_callable=AsyncMock) as download:
+        download.return_value = {'data': b'picture', 'data_type': 'image/png'}
         result = await agent.run([long_prompt, image_url])
 
     download.assert_awaited_once()
@@ -1266,7 +1341,7 @@ async def test_unsupported_files_fail_before_a_decisions_request(
         ]
     captured = Captured(boolean_answers)
 
-    with pytest.raises(UserError, match='OpenAI Decisions supports text and inline images only'):
+    with pytest.raises(UserError, match='Decision models support text and inline images only'):
         await Agent(mock_model(captured), output_type=bool, instructions='Does this contain an image?').run(
             prompt, message_history=history
         )
@@ -1292,7 +1367,7 @@ async def test_unsupported_audio_urls_fail_before_a_decisions_request(
     captured = Captured(boolean_answers)
     agent = Agent(mock_model(captured), output_type=bool, instructions='Does this contain an image?')
 
-    with pytest.raises(UserError, match='OpenAI Decisions supports text and inline images only'):
+    with pytest.raises(UserError, match='Decision models support text and inline images only'):
         await agent.run(prompt, message_history=history)
     assert captured.requests == []
 
@@ -1303,7 +1378,7 @@ async def test_image_download_error_prevents_a_decisions_request(allow_model_req
 
     with (
         patch(
-            'pydantic_ai.models.openai_decisions.download_item',
+            'pydantic_ai.models.decision.download_item',
             new_callable=AsyncMock,
             side_effect=httpx2.ConnectError('image download failed'),
         ),
@@ -1311,6 +1386,27 @@ async def test_image_download_error_prevents_a_decisions_request(allow_model_req
     ):
         await agent.run([ImageUrl('https://example.com/missing.png')])
 
+    assert captured.requests == []
+
+
+async def test_image_url_with_non_image_content_is_rejected_before_a_decisions_request(
+    allow_model_requests: None,
+):
+    image_url = ImageUrl('https://example.com/not-an-image')
+    captured = Captured(boolean_answers)
+    agent = Agent(mock_model(captured), output_type=bool, instructions='Does the input contain an image?')
+
+    with (
+        patch(
+            'pydantic_ai.models.decision.download_item',
+            new_callable=AsyncMock,
+            return_value={'data': b'%PDF', 'data_type': 'application/pdf'},
+        ) as download,
+        pytest.raises(UserError, match='returned content that is not an image'),
+    ):
+        await agent.run([image_url])
+
+    download.assert_awaited_once_with(image_url, data_format='bytes')
     assert captured.requests == []
 
 
@@ -1345,7 +1441,7 @@ async def test_invalid_threshold_prevents_image_download(
 
     with (
         patch(
-            'pydantic_ai.models.openai_decisions.download_item',
+            'pydantic_ai.models.decision.download_item',
             new_callable=AsyncMock,
             side_effect=httpx2.ConnectError('image download failed'),
         ) as download,
@@ -1368,7 +1464,7 @@ async def test_unfillable_output_prevents_image_download(allow_model_requests: N
 
     with (
         patch(
-            'pydantic_ai.models.openai_decisions.download_item',
+            'pydantic_ai.models.decision.download_item',
             new_callable=AsyncMock,
             side_effect=httpx2.ConnectError('image download failed'),
         ) as download,
@@ -1399,7 +1495,7 @@ async def test_route_limit_prevents_image_download(allow_model_requests: None):
 
     with (
         patch(
-            'pydantic_ai.models.openai_decisions.download_item',
+            'pydantic_ai.models.decision.download_item',
             new_callable=AsyncMock,
             side_effect=httpx2.ConnectError('image download failed'),
         ) as download,
@@ -1424,7 +1520,7 @@ async def test_invalid_extra_body_prevents_image_download(allow_model_requests: 
 
     with (
         patch(
-            'pydantic_ai.models.openai_decisions.download_item',
+            'pydantic_ai.models.decision.download_item',
             new_callable=AsyncMock,
             side_effect=httpx2.ConnectError('image download failed'),
         ) as download,
@@ -1460,7 +1556,7 @@ async def test_unfillable_forced_tool_prevents_image_download(allow_model_reques
 
     with (
         patch(
-            'pydantic_ai.models.openai_decisions.download_item',
+            'pydantic_ai.models.decision.download_item',
             new_callable=AsyncMock,
             side_effect=httpx2.ConnectError('image download failed'),
         ) as download,
@@ -1501,7 +1597,7 @@ async def test_forced_argumentless_tool_skips_image_preparation(
     model = mock_model(captured)
 
     with patch(
-        'pydantic_ai.models.openai_decisions.download_item',
+        'pydantic_ai.models.decision.download_item',
         new_callable=AsyncMock,
         side_effect=httpx2.ConnectError('image download failed'),
     ) as download:
@@ -1527,14 +1623,14 @@ async def test_concurrent_image_requests_keep_their_own_inputs(allow_model_reque
     downloads: list[str] = []
     both_downloads_started = anyio.Event()
 
-    async def download(item: ImageUrl, *, data_format: str) -> dict[str, str]:
-        assert data_format == 'base64_uri'
+    async def download(item: ImageUrl, *, data_format: str) -> dict[str, bytes | str]:
+        assert data_format == 'bytes'
         downloads.append(item.url)
         if len(downloads) == 2:
             both_downloads_started.set()
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             await both_downloads_started.wait()
-        return {'data': first_data_uri if item.url == first_url else second_data_uri, 'content_type': 'image/png'}
+        return {'data': b'first' if item.url == first_url else b'second', 'data_type': 'image/png'}
 
     captured = Captured(boolean_answers)
     agent = Agent(mock_model(captured), output_type=bool, instructions='Does the input contain an image?')
@@ -1544,7 +1640,7 @@ async def test_concurrent_image_requests_keep_their_own_inputs(allow_model_reque
         result = await agent.run([prompt, ImageUrl(url)])
         outputs.append(result.output)
 
-    with patch('pydantic_ai.models.openai_decisions.download_item', new_callable=AsyncMock, side_effect=download):
+    with patch('pydantic_ai.models.decision.download_item', new_callable=AsyncMock, side_effect=download):
         async with anyio.create_task_group() as task_group:
             task_group.start_soon(run, 'first concurrent prompt', first_url)
             task_group.start_soon(run, 'second concurrent prompt', second_url)
@@ -1578,6 +1674,55 @@ async def test_direct_decide_keeps_json_state_as_text(allow_model_requests: None
         DecisionRequest(state=state, questions={'q': NoulQuestion(instructions='Is this true?')}), {}
     )
 
-    sent_input = captured.body['input']
+    request_body: JsonValue = json.loads(captured.requests[0].content)
+    assert isinstance(request_body, dict)
+    sent_input = request_body['input']
     assert isinstance(sent_input, str)
     assert json.loads(sent_input) == state
+
+
+async def test_direct_decide_sends_image_evidence_with_ordered_labels(allow_model_requests: None):
+    first_image = BinaryContent(b'first', media_type='image/png')
+    second_image = BinaryContent(b'second', media_type='image/jpeg')
+    state: JsonValue = {'history': [{'user': 'Receipt <image 1>'}], 'text': 'Compare <image 2>.'}
+    captured = Captured(lambda _: decisions({'type': 'predicate', 'name': 'q', 'probability': 0.9}))
+
+    response = await mock_model(captured).decide(
+        DecisionRequest(
+            state=state,
+            questions={'q': NoulQuestion(instructions='Is it a receipt?')},
+            images=(first_image, second_image),
+        ),
+        {},
+    )
+
+    assert response.answers == {'q': NoulAnswer(noul=0.9)}
+    assert captured.body['input'] == [
+        {
+            'role': 'user',
+            'content': [
+                {'type': 'input_text', 'text': json.dumps(state)},
+                {'type': 'input_text', 'text': '<image 1>:'},
+                {'type': 'input_image', 'image_url': first_image.data_uri},
+                {'type': 'input_text', 'text': '<image 2>:'},
+                {'type': 'input_image', 'image_url': second_image.data_uri},
+            ],
+        }
+    ]
+
+
+async def test_direct_decide_rejects_non_image_evidence_before_a_request(allow_model_requests: None):
+    captured = Captured(lambda _: decisions(URGENT))
+    model = mock_model(captured)
+
+    with pytest.raises(UserError, match=r'`request\.images` contains a non-image'):
+        await model.decide(
+            DecisionRequest(
+                state='Review this document.',
+                questions={'q': NoulQuestion()},
+                images=(BinaryContent(b'%PDF', media_type='application/pdf'),),
+            ),
+            {},
+        )
+
+    assert captured.requests == []

@@ -24,14 +24,17 @@ from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
     BaseToolReturnPart,
+    BinaryContent,
     CachePoint,
     CompactionPart,
     FilePart,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
     ModelResponseStreamEvent,
+    MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
@@ -44,6 +47,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    is_multi_modal_content,
 )
 from ..profiles import ModelProfile, merge_profile
 from ..profiles.decision import DecisionModelProfile
@@ -58,6 +62,7 @@ from . import (
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
+    download_item,
 )
 
 __all__ = (
@@ -186,6 +191,12 @@ class DecisionRequest:
     """The text or JSON value to decide about."""
     questions: dict[str, DecisionQuestion]
     """Named questions to answer about the state."""
+    images: tuple[BinaryContent, ...] = ()
+    """Image evidence, in the order of the `<image N>` references in `state`.
+
+    Only image media types are supported. Backends that do not support images must reject a nonempty tuple,
+    including when `decide` is called directly.
+    """
 
 
 @dataclass(kw_only=True)
@@ -393,7 +404,7 @@ class _Limits:
 
 @dataclass(init=False)
 class DecisionModel(Model[InterfaceClient]):
-    """Base class for decision models: models that answer typed questions about a text rather than write text.
+    """Base class for decision models: models that answer typed questions about evidence rather than write text.
 
     A decision model is sent a *state*, the text or JSON value to judge, and a set of named questions of three
     kinds: a yes/no ([`NoulQuestion`][pydantic_ai.models.decision.NoulQuestion]), a pick-one
@@ -429,6 +440,13 @@ class DecisionModel(Model[InterfaceClient]):
     backend's limits, and `requires_instructions` if it refuses a question without `instructions`, or have its
     provider set these per model in a [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile]. See [Decision models](https://pydantic.dev/docs/ai/models/decision/) for the full rules
     and an example.
+    """
+
+    supports_image_input: ClassVar[bool] = False
+    """Whether the backend can receive image evidence in `DecisionRequest.images`.
+
+    Set this on a backend that supports images. The shared history mapper then labels images in the state
+    and resolves image URLs before calling `decide`. This is a transport capability, not a profile default.
     """
 
     max_choice_options: ClassVar[int | None] = None
@@ -478,6 +496,8 @@ class DecisionModel(Model[InterfaceClient]):
         This is called once per request the model makes: once per step, or twice when a route is picked in one
         request and, past the size cutoff for asking every route's fields up front, filled in a second. Every
         question in `request.questions` needs an answer of the matching kind under the same name.
+        Image-capable backends serialize `request.images` as evidence alongside `request.state`; other
+        backends must reject a nonempty tuple, including when this method is called directly.
 
         Raise [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] or
         [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] when the backend fails, so a
@@ -765,7 +785,19 @@ class DecisionModel(Model[InterfaceClient]):
         self, messages: list[ModelMessage], model_settings: DecisionModelSettings, *, turn: bool
     ) -> DecisionRequest:
         """Prepare state shared by every request in this step, without adding questions yet."""
-        return DecisionRequest(state=_map_messages(messages, turn=turn), questions={})
+        image_inputs: list[BinaryContent | ImageUrl] | None = [] if self.supports_image_input else None
+        state = _map_messages(messages, turn=turn, images=image_inputs)
+        images: list[BinaryContent] = []
+        for item in image_inputs or ():
+            if isinstance(item, BinaryContent):
+                images.append(item)
+            else:
+                downloaded = await download_item(item, data_format='bytes')
+                image = BinaryContent(downloaded['data'], media_type=downloaded['data_type'])
+                if not image.is_image:
+                    raise UserError(f'Image URL {item.url!r} returned content that is not an image.')
+                images.append(image)
+        return DecisionRequest(state=state, questions={}, images=tuple(images))
 
     async def _fill(
         self,
@@ -2148,7 +2180,14 @@ def _noul_question(options: dict[bool, str | None], asked: JsonValue | None) -> 
     )
 
 
-def _prompt_text(part: UserPromptPart) -> str:
+def _image_label(item: MultiModalContent, images: list[BinaryContent | ImageUrl], context: str) -> str:
+    if not isinstance(item, (BinaryContent, ImageUrl)) or (isinstance(item, BinaryContent) and not item.is_image):
+        raise UserError(f'Decision models support text and inline images only; {context} contains an unsupported file.')
+    images.append(item)
+    return f'<image {len(images)}>'
+
+
+def _prompt_text(part: UserPromptPart, images: list[BinaryContent | ImageUrl] | None) -> str:
     texts: list[str] = []
     for item in [part.content] if isinstance(part.content, str) else part.content:
         if isinstance(item, str):
@@ -2157,6 +2196,8 @@ def _prompt_text(part: UserPromptPart) -> str:
             texts.append(item.content)
         elif isinstance(item, CachePoint):
             pass  # A marker for models that cache a prompt prefix; there is nothing in it to send.
+        elif images is not None and is_multi_modal_content(item):
+            texts.append(_image_label(item, images, 'A user prompt'))
         else:
             raise UserError(
                 'Files are not supported by this model: it judges text, so images, audio, video and documents '
@@ -2165,23 +2206,28 @@ def _prompt_text(part: UserPromptPart) -> str:
     return '\n\n'.join(texts)
 
 
-def _tool_return_entry(part: BaseToolReturnPart) -> JsonValue:
-    """A tool result as history, or a `UserError` when it carries a file: `model_response_str` would leave it out."""
+def _tool_return_entry(part: BaseToolReturnPart, images: list[BinaryContent | ImageUrl] | None) -> JsonValue:
+    """A tool result as history, preserving file positions and failed-result wrapping."""
     if part.files:
-        raise UserError('Files are not supported by this model: a file in a tool result cannot be sent to it.')
+        if images is None:
+            raise UserError('Files are not supported by this model: a file in a tool result cannot be sent to it.')
+        content: list[str] = []
+        for item in part.content_items(mode='str', wrap_if_error=False):
+            content.append(item if isinstance(item, str) else _image_label(item, images, 'A tool result'))
+        part = dataclasses.replace(part, content=content)
     return {'tool_return': {'name': part.tool_name, 'content': part.model_response_str()}}
 
 
-def _request_entry(part: ModelRequestPart) -> JsonValue:
+def _request_entry(part: ModelRequestPart, images: list[BinaryContent | ImageUrl] | None) -> JsonValue:
     """A request part as a history entry: a user prompt as what the user said, the rest as what they are."""
     if isinstance(part, SystemPromptPart):
         # Whoever wrote it, a system prompt is something that was said in the conversation, so it is
         # material to judge and not a question to ask. What the model is asked comes from `instructions`.
         return {'system': part.content}
     elif isinstance(part, UserPromptPart):
-        return {'user': _prompt_text(part)}
+        return {'user': _prompt_text(part, images)}
     elif isinstance(part, ToolReturnPart):
-        return _tool_return_entry(part)
+        return _tool_return_entry(part, images)
     elif isinstance(part, RetryPromptPart):
         return {'retry': part.model_response()}
     elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
@@ -2193,7 +2239,7 @@ def _request_entry(part: ModelRequestPart) -> JsonValue:
         assert_never(part)
 
 
-def _response_entries(message: ModelResponse) -> list[JsonValue]:
+def _response_entries(message: ModelResponse, images: list[BinaryContent | ImageUrl] | None) -> list[JsonValue]:
     """Map a response to history entries, in the order the model produced them."""
     entries: list[JsonValue] = []
     for part in message.parts:
@@ -2208,14 +2254,16 @@ def _response_entries(message: ModelResponse) -> list[JsonValue]:
         elif isinstance(part, ToolCallPart | NativeToolCallPart):
             entries.append({'tool_call': {'name': part.tool_name, 'args': part.args_as_dict()}})
         elif isinstance(part, NativeToolReturnPart):
-            entries.append(_tool_return_entry(part))
+            entries.append(_tool_return_entry(part, images))
         elif isinstance(part, CompactionPart):
             if part.content:
                 entries.append({'summary': part.content})
         elif isinstance(part, FilePart):
-            raise UserError(
-                'Files are not supported by this model: a file in the message history cannot be sent to it.'
-            )
+            if images is None:
+                raise UserError(
+                    'Files are not supported by this model: a file in the message history cannot be sent to it.'
+                )
+            entries.append({'assistant': _image_label(part.content, images, 'An assistant response')})
         elif isinstance(part, SpeechPart):  # pragma: no cover
             raise _unconverted_speech_part_error()
         else:
@@ -2223,7 +2271,9 @@ def _response_entries(message: ModelResponse) -> list[JsonValue]:
     return entries
 
 
-def _map_messages(messages: list[ModelMessage], *, turn: bool) -> JsonValue:
+def _map_messages(
+    messages: list[ModelMessage], *, turn: bool, images: list[BinaryContent | ImageUrl] | None
+) -> JsonValue:
     """The state to judge.
 
     The latest user text on its own is the whole state, sent as the plain text it is. With a conversation behind
@@ -2236,18 +2286,18 @@ def _map_messages(messages: list[ModelMessage], *, turn: bool) -> JsonValue:
     however the messages arrived: a run's own, or a `message_history` passed in that ends partway through a turn.
     """
     if turn and any(isinstance(part, UserPromptPart) for message in messages for part in message.parts):
-        return _map_turn(messages)
+        return _map_turn(messages, images)
     history: list[JsonValue] = []
     prompt_parts: list[str] = []
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, UserPromptPart) and message is messages[-1]:
-                    prompt_parts.append(_prompt_text(part))
+                    prompt_parts.append(_prompt_text(part, images))
                 else:
-                    history.append(_request_entry(part))
+                    history.append(_request_entry(part, images))
         elif isinstance(message, ModelResponse):
-            history.extend(_response_entries(message))
+            history.extend(_response_entries(message, images))
         else:
             assert_never(message)
 
@@ -2262,7 +2312,7 @@ def _map_messages(messages: list[ModelMessage], *, turn: bool) -> JsonValue:
     return state
 
 
-def _map_turn(messages: list[ModelMessage]) -> JsonValue:
+def _map_turn(messages: list[ModelMessage], images: list[BinaryContent | ImageUrl] | None) -> JsonValue:
     """The state split at the latest user prompt, for `_map_messages`."""
     latest = max(
         index
@@ -2274,19 +2324,19 @@ def _map_turn(messages: list[ModelMessage]) -> JsonValue:
     done: list[JsonValue] = []
     for index, message in enumerate(messages):
         if isinstance(message, ModelResponse):
-            (history if index < latest else done).extend(_response_entries(message))
+            (history if index < latest else done).extend(_response_entries(message, images))
             continue
         assert isinstance(message, ModelRequest)
         if index != latest:
-            (history if index < latest else done).extend(_request_entry(part) for part in message.parts)
+            (history if index < latest else done).extend(_request_entry(part, images) for part in message.parts)
             continue
         # The request holding the latest prompt: what came before its last prompt is the previous turn's, and what
         # came after it is this one's. Its prompts are the text, as they are when it is the last message.
         last_prompt = max(i for i, part in enumerate(message.parts) if isinstance(part, UserPromptPart))
         for i, part in enumerate(message.parts):
             if isinstance(part, UserPromptPart):
-                prompt_parts.append(_prompt_text(part))
+                prompt_parts.append(_prompt_text(part, images))
             else:
-                (history if i < last_prompt else done).append(_request_entry(part))
+                (history if i < last_prompt else done).append(_request_entry(part, images))
     state: dict[str, JsonValue] = {'history': history} if history else {}
     return {**state, 'text': '\n\n'.join(prompt_parts), 'done': done}

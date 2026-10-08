@@ -8,9 +8,10 @@ import httpx2
 import pytest
 from pydantic import BaseModel, Field, WithJsonSchema
 
-from pydantic_ai import Agent, ModelHTTPError, ToolCallPart
+from pydantic_ai import Agent, BinaryContent, ModelHTTPError, ToolCallPart
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import infer_model
+from pydantic_ai.models.decision import DecisionRequest, NoulQuestion
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.system_one import SystemOneModel, SystemOneModelSettings
 from pydantic_ai.models.test import TestModel
@@ -472,6 +473,23 @@ async def test_http_error(allow_model_requests: None):
     assert exc_info.value.status_code == 422
     assert exc_info.value.body == {'detail': "unknown model 'clm-nope'"}
     assert exc_info.value.model_name == 'clm-latest'
+
+
+async def test_decide_rejects_image_evidence_before_a_request(allow_model_requests: None):
+    captured = Captured(ticket_answers)
+    model = mock_model(captured)
+
+    with pytest.raises(UserError, match='System One does not support image input'):
+        await model.decide(
+            DecisionRequest(
+                state='Review this image.',
+                questions={'q': NoulQuestion()},
+                images=(BinaryContent(b'image', media_type='image/png'),),
+            ),
+            {},
+        )
+
+    assert captured.requests == []
 
 
 async def test_http_error_with_a_text_body(allow_model_requests: None):

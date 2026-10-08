@@ -123,6 +123,8 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the `/v1/systemone` endpoint."""
+        if request.images:
+            raise UserError('System One does not support image input.')
         body: dict[str, object] = {
             'state': request.state,
             'model': self._model_name,

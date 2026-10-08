@@ -2,30 +2,14 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
-from typing import ClassVar, Literal, TypeVar, assert_never
+from dataclasses import dataclass, field
+from typing import ClassVar, Literal, assert_never
 
 from pydantic import JsonValue
 
 from .._http import to_httpx2_timeout
-from ..exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
-from ..messages import (
-    BaseToolReturnPart,
-    BinaryContent,
-    FilePart,
-    ImageUrl,
-    ModelMessage,
-    ModelRequest,
-    ModelRequestPart,
-    ModelResponse,
-    ModelResponsePart,
-    NativeToolReturnPart,
-    TextPart,
-    ToolReturnPart,
-    UserContent,
-    UserPromptPart,
-    is_multi_modal_content,
-)
+from ..exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from ..messages import ModelMessage
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
@@ -48,7 +32,7 @@ from .decision import (
 )
 
 try:
-    from openai import NOT_GIVEN, AsyncOpenAI
+    from openai import NOT_GIVEN, APIError, APIStatusError, AsyncOpenAI
     from openai.types import Decision
     from openai.types.decision import (
         AnswerAnswerResourceChoice,
@@ -70,8 +54,6 @@ try:
     from openai.types.decision_input_text_param import DecisionInputTextParam
 
     from ..providers.openai_decisions import OpenAIDecisionsProvider
-    from . import download_item
-    from .openai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the OpenAI Decisions model, '
@@ -93,91 +75,6 @@ class OpenAIDecisionsModelSettings(DecisionModelSettings, total=False):
 
     # ALL FIELDS MUST BE `openai_decisions_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     # This class is a placeholder for any future Decisions API-specific settings.
-
-
-@dataclass(kw_only=True)
-class _OpenAIDecisionRequest(DecisionRequest):
-    input: list[DecisionInputMessageParam]
-
-
-_ToolReturnPartT = TypeVar('_ToolReturnPartT', bound=BaseToolReturnPart)
-
-
-@dataclass
-class _DecisionImagePreparer:
-    images: list[DecisionInputImageParam] = field(default_factory=list[DecisionInputImageParam])
-
-    @staticmethod
-    def _unsupported_file(context: str) -> UserError:
-        return UserError(
-            f'OpenAI Decisions supports text and inline images only; {context} contains an unsupported file.'
-        )
-
-    async def _add_image(self, item: BinaryContent | ImageUrl) -> str:
-        image_url = (
-            item.data_uri
-            if isinstance(item, BinaryContent)
-            else (await download_item(item, data_format='base64_uri'))['data']
-        )
-        label = f'<image {len(self.images) + 1}>'
-        self.images.append(DecisionInputImageParam(type='input_image', image_url=image_url))
-        return label
-
-    async def _prepare_tool_return(self, part: _ToolReturnPartT) -> _ToolReturnPartT:
-        if not part.files:
-            return part
-        content: list[str] = []
-        for item in part.content_items(mode='str', wrap_if_error=False):
-            if isinstance(item, str):
-                content.append(item)
-            elif isinstance(item, BinaryContent):
-                if not item.is_image:
-                    raise self._unsupported_file('A tool result')
-                content.append(await self._add_image(item))
-            elif isinstance(item, ImageUrl):
-                content.append(await self._add_image(item))
-            else:
-                raise self._unsupported_file('A tool result')
-        return replace(part, content=content)
-
-    async def prepare(self, messages: list[ModelMessage]) -> list[ModelMessage]:
-        prepared: list[ModelMessage] = []
-        for message in messages:
-            if isinstance(message, ModelRequest):
-                request_parts: list[ModelRequestPart] = []
-                for part in message.parts:
-                    if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                        content: list[UserContent] = []
-                        for item in part.content:
-                            if isinstance(item, (BinaryContent, ImageUrl)):
-                                if isinstance(item, BinaryContent) and not item.is_image:
-                                    raise self._unsupported_file('A user prompt')
-                                content.append(await self._add_image(item))
-                            elif is_multi_modal_content(item):
-                                raise self._unsupported_file('A user prompt')
-                            else:
-                                content.append(item)
-                        request_parts.append(replace(part, content=content))
-                    elif isinstance(part, ToolReturnPart):
-                        request_parts.append(await self._prepare_tool_return(part))
-                    else:
-                        request_parts.append(part)
-                prepared.append(replace(message, parts=request_parts))
-            elif isinstance(message, ModelResponse):
-                response_parts: list[ModelResponsePart] = []
-                for part in message.parts:
-                    if isinstance(part, FilePart):
-                        if not part.content.is_image:
-                            raise self._unsupported_file('An assistant response')
-                        response_parts.append(TextPart(content=await self._add_image(part.content)))
-                    elif isinstance(part, NativeToolReturnPart):
-                        response_parts.append(await self._prepare_tool_return(part))
-                    else:
-                        response_parts.append(part)
-                prepared.append(replace(message, parts=response_parts))
-            else:
-                assert_never(message)
-        return prepared
 
 
 @dataclass(init=False)
@@ -210,6 +107,8 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
+
+    supports_image_input: ClassVar[bool] = True
 
     max_choice_options: ClassVar[int | None] = 255
     """The API takes at most this many options in one pick-one; a 256th is a 400.
@@ -270,27 +169,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         self, messages: list[ModelMessage], model_settings: DecisionModelSettings, *, turn: bool
     ) -> DecisionRequest:
         _validate_extra_body(model_settings.get('extra_body'))
-        preparer = _DecisionImagePreparer()
-        prepared_messages = await preparer.prepare(messages)
-        if not preparer.images:
-            return await super()._prepare_decision_request(messages, model_settings, turn=turn)
-
-        template = await super()._prepare_decision_request(prepared_messages, model_settings, turn=turn)
-        content: list[DecisionInputPartUnionParam] = [
-            DecisionInputTextParam(type='input_text', text=_text(template.state))
-        ]
-        for index, image in enumerate(preparer.images, start=1):
-            content.extend(
-                (
-                    DecisionInputTextParam(type='input_text', text=f'<image {index}>:'),
-                    image,
-                )
-            )
-        return _OpenAIDecisionRequest(
-            state=template.state,
-            questions={},
-            input=[DecisionInputMessageParam(role='user', content=content)],
-        )
+        return await super()._prepare_decision_request(messages, model_settings, turn=turn)
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the `/v1/decisions` endpoint."""
@@ -298,22 +177,50 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         if all(name.lower() != 'user-agent' for name in extra_headers):
             extra_headers['User-Agent'] = get_user_agent()
         _validate_extra_body(model_settings.get('extra_body'))
-        with _map_api_errors(self._model_name, self._provider.model_id_namespace):
+        decision_input: str | list[DecisionInputMessageParam] = _text(request.state)
+        if request.images:
+            content: list[DecisionInputPartUnionParam] = [
+                DecisionInputTextParam(type='input_text', text=decision_input)
+            ]
+            for index, image in enumerate(request.images, start=1):
+                if not image.is_image:
+                    raise UserError(
+                        'OpenAI Decisions supports image evidence only; `request.images` contains a non-image.'
+                    )
+                content.extend(
+                    (
+                        DecisionInputTextParam(type='input_text', text=f'<image {index}>:'),
+                        DecisionInputImageParam(type='input_image', image_url=image.data_uri),
+                    )
+                )
+            decision_input = [DecisionInputMessageParam(role='user', content=content)]
+        try:
             response = await self.client.decisions.with_raw_response.create(
                 model=self._model_name,
-                input=request.input if isinstance(request, _OpenAIDecisionRequest) else _text(request.state),
+                input=decision_input,
                 questions=[_question(name, question) for name, question in request.questions.items()],
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
                 timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
             )
+        except APIStatusError as e:
+            if e.status_code >= 400:
+                raise ModelHTTPError(
+                    status_code=e.status_code,
+                    model_name=self._model_name,
+                    body=e.body,
+                    headers=dict(e.response.headers),
+                ) from e
+            raise ModelAPIError(model_name=self._model_name, message='OpenAI Decisions request failed') from e
+        except APIError as e:
+            raise ModelAPIError(model_name=self._model_name, message='OpenAI Decisions request failed') from e
 
         # The SDK builds its response models without validating them, so the body is validated here.
         try:
             data = json.loads(response.content)
             decision = Decision.model_validate(data)
         except ValueError as e:
-            raise UnexpectedModelBehavior(f'Invalid response from the OpenAI Decisions API: {e}', response.text) from e
+            raise UnexpectedModelBehavior('Invalid response from the OpenAI Decisions API', response.text) from e
         by_name = {answer.name: answer for answer in decision.answers if answer.name is not None}
         if len(by_name) != len(decision.answers) or by_name.keys() != request.questions.keys():
             raise UnexpectedModelBehavior(
