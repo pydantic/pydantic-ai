@@ -37,7 +37,7 @@ from pydantic_ai_harness.computer_use._computer import ComputerError, MouseButto
 try:
     import mss
     from PIL import Image
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'mss and Pillow are required for LocalComputer. '
         'Install them with: pip install "pydantic-ai-harness[computer-use]"'
