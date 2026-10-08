@@ -284,10 +284,6 @@ missing or duplicate IDs before Render registers the tasks. This requirement als
 by capabilities and to tools you keep in the parent task with `resolve_tool_options`. When writing a custom
 capability, give the toolset returned by `get_toolset()` an ID, such as `FunctionToolset(id='search')`.
 
-The integration registers tasks after Pydantic finishes binding its durable operations. If the Render SDK itself
-fails during registration, the app can still contain a partial set of tasks. Discard that `Workflows` app and
-rebuild it after fixing the error.
-
 ## Sub-agent delegation
 
 Configure the parent's `resolve_tool_options` callback to return `False` for `delegate_task`, as shown in
@@ -320,8 +316,6 @@ For large artifacts, return bounded JSON containing a key into object storage, a
 ## Memory
 
 `Memory` can read and write through Render tasks when its store is accessible to every worker. Use a shared external backend, such as `PostgresMemoryStore`, for hosted runs. `InMemoryStore` and files on an individual worker do not persist across task instances.
-
-Set `max_memory_size` when constructing `Memory`. Changing it in a custom `for_run` override is currently ignored by the shared Memory toolset, including outside Render. Use separate configured agents when different tool read/write size limits are needed.
 
 ## Task options and tool opt-out
 
