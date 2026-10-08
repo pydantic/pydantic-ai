@@ -925,3 +925,29 @@ class TestSqliteDeduplicateMessages:
         with pytest.raises(sqlite3.IntegrityError, match='rejected'):
             await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=second))
         assert _count(db, 'snapshot_messages') == len(first)
+
+    @pytest.mark.parametrize('caller_owned', [False, True])
+    async def test_idempotent_retry_does_not_store_its_messages(self, tmp_path: Path, caller_owned: bool) -> None:
+        db = tmp_path / 'runs.db'
+        conn = sqlite3.connect(db, check_same_thread=False, isolation_level=None) if caller_owned else None
+        try:
+            if conn is not None:
+                store = SqliteStepStore(connection=conn, media_store=None, deduplicate_messages=True)
+            else:
+                store = SqliteStepStore(database=db, media_store=None, deduplicate_messages=True)
+            first, second = _growing_histories(2)
+            await store.save_snapshot(
+                ContinuableSnapshot(run_id='r1', step_index=0, messages=first, idempotency_key='same-key')
+            )
+            await store.save_snapshot(
+                ContinuableSnapshot(run_id='r1', step_index=1, messages=second, idempotency_key='same-key')
+            )
+
+            assert _count(db, 'snapshots') == 1
+            assert _count(db, 'snapshot_messages') == len(first)
+            snap = await store.latest_snapshot(run_id='r1')
+            assert snap is not None
+            assert snap.messages == first
+        finally:
+            if conn is not None:
+                conn.close()

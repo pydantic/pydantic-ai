@@ -357,6 +357,17 @@ def _store_messages(conn: sqlite3.Connection, messages_json: object) -> list[str
     return refs
 
 
+def _snapshot_already_saved(conn: sqlite3.Connection, snapshot: ContinuableSnapshot) -> bool:
+    """Whether the `snapshots_idempotency_ignore` trigger would drop this snapshot's row."""
+    if snapshot.idempotency_key is None:
+        return False
+    row = conn.execute(
+        'SELECT 1 FROM snapshot_idempotency_keys WHERE run_id = ? AND idempotency_key = ?',
+        (snapshot.run_id, snapshot.idempotency_key),
+    ).fetchone()
+    return row is not None
+
+
 def _expand_message_refs(conn: sqlite3.Connection, messages: object) -> object:
     """Rebuild the JSON list a `deduplicate_messages` row references; return any other value as stored.
 
@@ -1300,6 +1311,12 @@ class SqliteStepStore:
             if own_transaction:
                 conn.execute('BEGIN IMMEDIATE')
             if self._deduplicate_messages:
+                # The idempotency trigger's `RAISE(IGNORE)` drops only the snapshot row, so
+                # check first, or a retry's messages would stay behind with nothing referencing them.
+                if _snapshot_already_saved(conn, snapshot):
+                    if own_transaction:
+                        conn.execute('COMMIT')
+                    return
                 messages_json = {'message_refs': _store_messages(conn, messages_json)}
             conn.execute(
                 'INSERT INTO snapshots ('
