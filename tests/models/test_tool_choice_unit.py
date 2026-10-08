@@ -31,7 +31,7 @@ with try_import() as anthropic_available:
         AnthropicModelSettings,
         _support_tool_forcing as anthropic_support_tool_forcing,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+    from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as bedrock_available:
@@ -673,8 +673,9 @@ def test_support_tool_forcing_rejects_unsupported_model_with_adaptive_thinking()
 )
 def test_haiku_5_5_supports_forced_tool_choice_with_adaptive_or_disabled_thinking(settings: AnthropicModelSettings):
     """Haiku 5.5 accepts forced tool choice with either adaptive or disabled thinking."""
-    profile = AnthropicProvider.model_profile('claude-haiku-5-5')
-    assert profile is not None
+    model_profile = anthropic_model_profile('claude-haiku-5-5')
+    assert model_profile is not None
+    profile = AnthropicModelProfile(**model_profile)
     assert (
         anthropic_support_tool_forcing(
             'claude-haiku-5-5', profile, settings, ModelRequestParameters(function_tools=[make_tool('my_tool')])
