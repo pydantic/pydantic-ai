@@ -1422,7 +1422,7 @@ async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: 
         )
 
     captured = Captured(route_and_fill)
-    image_url = ImageUrl('https://example.com/receipt.png')
+    image_url = ImageUrl('https://example.com/receipt.png', vendor_metadata={'detail': 'high'})
     long_prompt = 'The receipt is attached. ' + 'Some detail nobody asked about. ' * 3000
     agent = Agent(mock_model(captured), output_type=[Ticket, Mood])
 
@@ -1436,6 +1436,17 @@ async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: 
     assert len(request_bodies) == 2
     assert request_bodies[0]['input'] == request_bodies[1]['input']
     assert request_bodies[0]['questions'] != request_bodies[1]['questions']
+    request_input: JsonValue = request_bodies[0]['input']
+    assert isinstance(request_input, list)
+    input_message = request_input[0]
+    assert isinstance(input_message, dict)
+    content = input_message['content']
+    assert isinstance(content, list)
+    assert content[-1] == {
+        'type': 'input_image',
+        'image_url': BinaryContent(b'picture', media_type='image/png').data_uri,
+        'detail': 'high',
+    }
     assert [question['name'] for question in request_bodies[0]['questions']] == ['route']
     assert [question['name'] for question in request_bodies[1]['questions']] == ['urgent', 'area']
     assert result.response.provider_details == {
@@ -1901,8 +1912,24 @@ async def test_direct_decide_keeps_json_state_as_text(allow_model_requests: None
     assert json.loads(sent_input) == state
 
 
-async def test_direct_decide_sends_image_evidence_with_ordered_labels(allow_model_requests: None):
-    first_image = BinaryContent(b'first', media_type='image/png')
+@pytest.mark.parametrize(
+    ('vendor_metadata', 'detail_field'),
+    [
+        pytest.param(None, {}, id='without-metadata'),
+        pytest.param({'detail': 'low'}, {'detail': 'low'}, id='low-detail'),
+        pytest.param({'detail': 'high'}, {'detail': 'high'}, id='high-detail'),
+        pytest.param({'detail': 'auto'}, {'detail': 'auto'}, id='auto-detail'),
+        pytest.param({'detail': 'original'}, {'detail': 'original'}, id='original-detail'),
+        pytest.param({'source': 'test'}, {'detail': 'auto'}, id='metadata-defaults-to-auto'),
+        pytest.param({'detail': None}, {'detail': None}, id='explicit-none-detail'),
+    ],
+)
+async def test_direct_decide_sends_image_evidence_with_ordered_labels(
+    allow_model_requests: None,
+    vendor_metadata: dict[str, str | None] | None,
+    detail_field: dict[str, str | None],
+):
+    first_image = BinaryContent(b'first', media_type='image/png', vendor_metadata=vendor_metadata)
     second_image = BinaryContent(b'second', media_type='image/jpeg')
     state: JsonValue = {'history': [{'user': 'Receipt <image 1>'}], 'text': 'Compare <image 2>.'}
     captured = Captured(lambda _: decisions({'type': 'predicate', 'name': 'q', 'probability': 0.9}))
@@ -1923,7 +1950,7 @@ async def test_direct_decide_sends_image_evidence_with_ordered_labels(allow_mode
             'content': [
                 {'type': 'input_text', 'text': json.dumps(state)},
                 {'type': 'input_text', 'text': '<image 1>:'},
-                {'type': 'input_image', 'image_url': first_image.data_uri},
+                {'type': 'input_image', 'image_url': first_image.data_uri, **detail_field},
                 {'type': 'input_text', 'text': '<image 2>:'},
                 {'type': 'input_image', 'image_url': second_image.data_uri},
             ],

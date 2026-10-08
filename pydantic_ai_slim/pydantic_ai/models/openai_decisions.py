@@ -196,10 +196,13 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
                     raise UserError(
                         'OpenAI Decisions supports image evidence only; `request.images` contains a non-image.'
                     )
+                image_input = DecisionInputImageParam(type='input_image', image_url=image.data_uri)
+                if metadata := image.vendor_metadata:
+                    image_input['detail'] = metadata.get('detail', 'auto')
                 content.extend(
                     (
                         DecisionInputTextParam(type='input_text', text=f'<image {index}>:'),
-                        DecisionInputImageParam(type='input_image', image_url=image.data_uri),
+                        image_input,
                     )
                 )
             decision_input = [DecisionInputMessageParam(role='user', content=content)]

@@ -829,7 +829,9 @@ class DecisionModel(Model[InterfaceClient]):
                 images.append(item)
             else:
                 downloaded = await download_item(item, data_format='bytes')
-                image = BinaryContent(downloaded['data'], media_type=downloaded['data_type'])
+                image = BinaryContent(
+                    downloaded['data'], media_type=downloaded['data_type'], vendor_metadata=item.vendor_metadata
+                )
                 if not image.is_image:
                     raise UserError(f'Image URL {item.url!r} returned content that is not an image.')
                 images.append(image)
