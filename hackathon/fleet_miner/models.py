@@ -249,6 +249,8 @@ class Proposal(BaseModel):
     """The file as `memory__clai2` (production) has it now; None for a new file."""
     base_sha: str | None = None
     """What the proposing agent saw as the current file, as it reported it."""
+    base_version: str | None = None
+    """The `memory__clai2` version the latest proposal was made against (the UI warns when the file changed since)."""
     why: str | None = None
     proposed_by: str | None = None
     """Email of whoever proposed the latest content."""

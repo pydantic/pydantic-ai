@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from logfire.query_client import AsyncLogfireQueryClient
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from pydantic_ai import Agent
 
@@ -56,6 +56,7 @@ SELECT r.trace_id, r.span_id, r.start_timestamp,
        r.attributes->>'clai2.memory.content' AS content,
        r.attributes->>'clai2.memory.why' AS why,
        r.attributes->>'clai2.memory.base_sha' AS base_sha,
+       r.attributes->>'clai2.memory.base_version' AS base_version,
        {IDENTITY}
 FROM records r
 LEFT JOIN ({_SESSIONS}) s ON r.trace_id = s.trace_id
@@ -75,12 +76,18 @@ class MemorySpan(BaseModel):
     content: str | None = None
     why: str | None = None
     base_sha: str | None = None
+    base_version: str | None = None
     user_email: str | None = None
     host: str | None = None
     session_id: str | None = None
     team: str | None = None
 
     model_config = {'populate_by_name': True}
+
+    @field_validator('base_version', mode='before')
+    @classmethod
+    def _version_as_text(cls, value: object) -> object:
+        return None if value in (None, '') else str(value)
 
     @property
     def user(self) -> str:
@@ -346,6 +353,7 @@ def _proposal(
         content=latest.content,
         base_content=base,
         base_sha=latest.base_sha,
+        base_version=latest.base_version or None,
         why=latest.why,
         proposed_by=latest.user_email,
         proposal_count=n,
