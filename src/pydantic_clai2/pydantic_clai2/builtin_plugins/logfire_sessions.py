@@ -45,7 +45,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_clai2.runtime.remote_sessions import RemoteResume
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
+from pydantic_clai2.runtime.remote_sessions import RemoteListing, RemoteResume
 
 SPAN_NAME = 'clai2 session chunk'
 PART_CHARS = 4 * 1024 * 1024
@@ -352,13 +353,32 @@ class Loaded:
 
 @dataclass(frozen=True)
 class Listed:
-    """One of your sessions, for `/sessions logfire`."""
+    """One of your sessions stored in Logfire."""
 
     session_id: str
     runs: int
-    last: str
+    last: datetime
     repo: str
     first_prompt: str
+
+    def summary(self, workspace: str) -> ConversationSummary:
+        """How `/sessions` and the `/resume` browser show it."""
+        return ConversationSummary(
+            id=self.session_id,
+            workspace=workspace,
+            updated_at=self.last,
+            title=self.first_prompt[:80] or 'Session from Logfire',
+            subtitle=' · '.join(part for part in ('Logfire · other machine', self.repo, f'{self.runs} runs') if part),
+            tags=('logfire',),
+        )
+
+
+def _timestamp(value: object) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except ValueError:
+        return datetime.now(UTC)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 @dataclass
@@ -371,7 +391,16 @@ class LogfireSessions:
     project: str
     _cache: dict[str, Loaded] = field(default_factory=dict[str, Loaded], init=False)
 
-    async def listing(self) -> list[Listed]:
+    async def listing(self, *, workspace: str) -> RemoteListing:
+        """Your sessions in Logfire for `/sessions` and the `/resume` browser, or why they cannot be listed."""
+        try:
+            listed = await self.listed()
+        except (PermissionError, ValueError, httpx.HTTPError) as error:
+            return RemoteListing(entries=[], unavailable=f'Logfire sessions unavailable: {error}')
+        return RemoteListing(entries=[session.summary(workspace) for session in listed])
+
+    async def listed(self) -> list[Listed]:
+        """Your sessions stored in Logfire in the last 30 days, newest first."""
         owner = self.owner()
         if not owner:
             raise ValueError('Sessions in Logfire are listed by your Logfire account email, which is unknown here.')
@@ -392,7 +421,7 @@ class LogfireSessions:
                 sessions[session_id] = Listed(
                     session_id=session_id,
                     runs=1,
-                    last=str(row.get('start_timestamp') or '')[:16].replace('T', ' '),
+                    last=_timestamp(row.get('start_timestamp')),
                     repo=str(row.get('repo') or ''),
                     first_prompt=str(row.get('first_prompt') or ''),
                 )

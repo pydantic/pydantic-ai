@@ -15,7 +15,7 @@ import os
 import sys
 import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, Self
 
@@ -82,7 +82,7 @@ from pydantic_clai2.plugins import (
     TurnStart,
 )
 from pydantic_clai2.runtime import remote_sessions
-from pydantic_clai2.runtime.remote_sessions import RemoteResume
+from pydantic_clai2.runtime.remote_sessions import RemoteListing, RemoteResume
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow_async
 from pydantic_clai2.ui.menus.menu_worker import run_worker
@@ -405,12 +405,6 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         session_commands = (
             (
                 Command(
-                    name='sessions',
-                    description='Your sessions stored in Logfire (last 30 days): /sessions logfire',
-                    handler=self._sessions_command,
-                    complete=lambda _: ('logfire',),
-                ),
-                Command(
                     name='share',
                     description='The Logfire link to this session and the command a teammate runs to continue it',
                     handler=self._share,
@@ -428,22 +422,6 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 complete=lambda _: ('enable', 'disable', 'why'),
             ),
         )
-
-    async def _sessions_command(self, args: list[str]) -> str:
-        if args not in ([], ['logfire']):
-            raise ValueError('Usage: /sessions logfire')
-        if self._sessions is None:
-            return _QueryUnavailable.MESSAGE
-        listed = await self._sessions.listing()
-        if not listed:
-            return f'No sessions of yours in {self.settings.project} in the last 30 days.'
-        lines = [f'Your sessions in {self.settings.project} (last 30 days, newest first):']
-        for session in listed[:30]:
-            repo = f'  {session.repo}' if session.repo else ''
-            prompt = session.first_prompt[:70] or '(no prompt)'
-            lines.append(f'  {session.session_id}  {session.last}  {session.runs} runs{repo}  {prompt}')
-        lines.append('Continue one with /resume ID, here or on another machine.')
-        return '\n'.join(lines)
 
     async def _share(self, args: list[str]) -> str:
         if self.host.session_id is None or self._chunks is None:
@@ -673,8 +651,11 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 )
             )
         self._print_header()
+        if self.fleet is not None:
+            remote_sessions.install(
+                self._sessions or _Unavailable(NO_QUERY if self._chunks is not None else NO_CONTENT)
+            )
         if self._chunks is not None:
-            remote_sessions.install(self._sessions or _QueryUnavailable())
             if (
                 notice := privacy_notice(logfire_dir() / 'sessions_notice.json', self.settings.project or 'Logfire')
             ) is not None:
@@ -793,19 +774,29 @@ def _api_key(settings: LogfireSettings) -> str | None:
     return os.getenv('LOGFIRE_CLAI2_API_KEY') or os.getenv('LOGFIRE_API_KEY') or None
 
 
-class _QueryUnavailable:
-    """In place of `LogfireSessions` when sessions are written but this key cannot read them back."""
+NO_QUERY = (
+    'Logfire sessions unavailable: listing and resuming them needs a key that can query Logfire '
+    '(`project:read_otlp`), which setup did not get (your role may not create tokens, or you signed in before '
+    'this existed). Your sessions are still stored; sign in to Logfire again to turn this on.'
+)
+NO_CONTENT = (
+    'Logfire sessions unavailable: storing them needs message content export on (/plugins configure observability).'
+)
 
-    MESSAGE = (
-        'Listing and resuming sessions from Logfire needs a key that can query Logfire (`project:read_otlp`), '
-        'which setup did not get: your role may not be allowed to create tokens, or you enrolled before this '
-        'existed. Sessions are still stored. Sign in to Logfire again to turn it on.'
-    )
+
+@dataclass(frozen=True)
+class _Unavailable:
+    """In place of `LogfireSessions` when sessions cannot be read back here, saying why."""
+
+    reason: str
 
     async def resume(self, reference: str, *, local: bool) -> RemoteResume | None:
         if reference.startswith(('http://', 'https://')):
-            raise ValueError(self.MESSAGE)
+            raise ValueError(self.reason)
         return None
+
+    async def listing(self, *, workspace: str) -> RemoteListing:
+        return RemoteListing(entries=[], unavailable=self.reason)
 
 
 def _base_url(settings: LogfireSettings) -> str:

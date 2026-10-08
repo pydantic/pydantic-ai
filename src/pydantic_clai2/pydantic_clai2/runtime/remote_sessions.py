@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from pydantic_ai.messages import ModelMessage
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -26,6 +27,15 @@ class RemoteResume:
     """Said before the usual resume notice, such as where the history came from."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class RemoteListing:
+    """The remote store's sessions for `/sessions` and the `/resume` browser, or why there are none to show."""
+
+    entries: list[ConversationSummary]
+    unavailable: str | None = None
+    """One line saying why remote sessions cannot be listed here, shown in their place."""
+
+
 class RemoteSessions(Protocol):
     """Somewhere sessions live besides this machine's store."""
 
@@ -35,6 +45,10 @@ class RemoteSessions(Protocol):
         `local` says whether this machine has a saved session with that ID. Raises `LookupError` for a link
         it should know but cannot find, and `ValueError` when the stored session is incomplete.
         """
+        ...
+
+    async def listing(self, *, workspace: str) -> RemoteListing:
+        """This user's remote sessions, newest first, as summaries placed in `workspace`."""
         ...
 
 

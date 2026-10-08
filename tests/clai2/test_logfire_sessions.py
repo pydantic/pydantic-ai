@@ -170,7 +170,7 @@ async def test_each_run_writes_its_new_messages_under_the_run_span(
     loaded = await alice.sessions.load(alice.session_id)
     assert loaded is not None and loaded.messages == alice.messages
 
-    [listed] = await alice.sessions.listing()
+    [listed] = await alice.sessions.listed()
     assert (listed.session_id, listed.runs, listed.repo) == (alice.session_id, 3, 'acme/widgets')
     assert await alice.sessions.session_for('not an id!') is None
 
@@ -293,7 +293,7 @@ async def test_resume_saves_a_remote_session_and_continues_it_here(tmp_path: Pat
     from pydantic_clai2.config.settings_store import SettingsStore
     from pydantic_clai2.runtime import remote_sessions
     from pydantic_clai2.runtime._session import Session
-    from pydantic_clai2.runtime.remote_sessions import RemoteResume
+    from pydantic_clai2.runtime.remote_sessions import RemoteListing, RemoteResume
     from pydantic_clai2.runtime.sessions import Sessions
 
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
@@ -318,6 +318,9 @@ async def test_resume_saves_a_remote_session_and_continues_it_here(tmp_path: Pat
             asked.append((reference, local))
             return self.answer
 
+        async def listing(self, *, workspace: str) -> RemoteListing:
+            return RemoteListing(entries=[], unavailable='Logfire sessions unavailable: test.')
+
     fork = RemoteResume(
         conversation_id=str(uuid4()), messages=history, title='Fork: Fix the flaky test', notice='Forked it.'
     )
@@ -335,6 +338,10 @@ async def test_resume_saves_a_remote_session_and_continues_it_here(tmp_path: Pat
         await service.command([fork.conversation_id])
         assert asked[-2:] == [(fork.conversation_id, True), (fork.conversation_id, True)]
 
+        listing = await service.listing_command([])
+        assert f'{fork.conversation_id}' in listing and 'this machine' in listing
+        assert 'Logfire sessions unavailable: test.' in listing
+
         # Unknown to the remote store: the usual local lookup.
         remote_sessions.install(Remote(None))
         with pytest.raises(LookupError):
@@ -342,3 +349,22 @@ async def test_resume_saves_a_remote_session_and_continues_it_here(tmp_path: Pat
     finally:
         remote_sessions.install(None)
     assert remote_sessions.current() is None
+
+
+async def test_logfire_sessions_are_listed_for_sessions_and_resume(
+    tmp_path: Path, provider: TracerProvider, query: SpanQuery
+) -> None:
+    alice = Machine(tmp_path, 'a', ALICE, provider, query)
+    await alice.prompt('Fix the flaky test')
+    listing = await alice.sessions.listing(workspace=str(tmp_path))
+    [entry] = listing.entries
+    assert (entry.id, entry.title, entry.tags) == (alice.session_id, 'Fix the flaky test', ('logfire',))
+    assert entry.subtitle == 'Logfire · other machine · acme/widgets · 1 runs'
+    assert listing.unavailable is None
+
+    class Refused(SpanQuery):
+        async def rows(self, sql: str, *, limit: int = 10_000) -> list[dict[str, Any]]:
+            raise PermissionError('no query scope')
+
+    refused = LogfireSessions(query=Refused(query.exporter), states=alice.states, owner=lambda: ALICE, project='p')
+    assert (await refused.listing(workspace='.')).unavailable == 'Logfire sessions unavailable: no query scope'

@@ -611,6 +611,14 @@ def create_shell(
             during_turn=True,
         )
     )
+    commands.register(
+        Command(
+            name='sessions',
+            description='Saved sessions, from this machine and from Logfire when managed',
+            handler=sessions.listing_command,
+            during_turn=True,
+        )
+    )
     commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command, during_turn=True))
     commands.register(
         Command(
