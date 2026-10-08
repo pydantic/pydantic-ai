@@ -1746,6 +1746,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         The configured model must support [`Model.connect()`][pydantic_ai.models.Model.connect],
         such as [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
         A model selected by a run-dependent capability cannot be connected outside a run.
+        The connection binds the configured model for every run in the context, including runs
+        that pass `model=`. It takes precedence over per-run model arguments and run-dependent
+        model selection; configure the model before entering the context.
 
         Runs use the connected model without an additional `model` argument. The connection
         closes and the previous model selection is restored when the context exits. Each context

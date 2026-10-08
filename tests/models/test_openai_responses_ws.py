@@ -4,7 +4,7 @@ import asyncio
 import sys
 from collections import deque
 from collections.abc import Iterator, Mapping
-from contextlib import nullcontext
+from contextlib import AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -21,9 +21,11 @@ from typing_extensions import Unpack
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
+from pydantic_ai.capabilities import SelectModel
 from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import NativeOutput
@@ -235,6 +237,25 @@ def text_events(text: str = 'ready', response_id: str = 'resp_test') -> list[Fra
     ]
 
 
+def empty_completed_events(response_id: str) -> list[Frame]:
+    response: Frame = {
+        'id': response_id,
+        'model': 'gpt-4o',
+        'object': 'response',
+        'created_at': 1704067200,
+        'status': 'completed',
+        'output': [],
+        'parallel_tool_calls': True,
+        'tool_choice': 'auto',
+        'tools': [],
+        'usage': {'input_tokens': 2, 'output_tokens': 0, 'total_tokens': 2},
+    }
+    return [
+        {'type': 'response.created', 'sequence_number': 0, 'response': {**response, 'status': 'in_progress'}},
+        {'type': 'response.completed', 'sequence_number': 1, 'response': response},
+    ]
+
+
 @dataclass
 class ScriptedSocket:
     """Control interruptions and concurrency beneath the real SDK event parser."""
@@ -339,6 +360,138 @@ async def test_agent_connection_shorthand(
         assert socket.close_count == 0
     assert len(sockets.opened) == 1
     assert len(socket.sent) == 2
+    assert socket.close_count == 1
+
+
+@pytest.mark.parametrize('selection', ['deferred-configured', 'static-select'])
+async def test_agent_connection_reuses_entered_model_client(
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    monkeypatch: pytest.MonkeyPatch,
+    selection: str,
+):
+    """A connection borrows the model client already owned by the entered agent."""
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    if selection == 'deferred-configured':
+        agent = Agent('openai-responses:gpt-4o', defer_model_check=True)
+    else:
+        agent = Agent(capabilities=[SelectModel('openai-responses:gpt-4o')])
+
+    async with agent:
+        async with agent.iter('probe') as run:
+            source_model = run.ctx.deps.model
+            assert isinstance(source_model, OpenAIResponsesModel)
+            source_provider = source_model.provider
+            assert isinstance(source_provider, OpenAIProvider)
+            source_client = source_provider.client
+
+        async with agent.connect():
+            async with agent.iter('probe') as run:
+                connected_model = run.ctx.deps.model
+                assert isinstance(connected_model, OpenAIResponsesModel)
+                connected_provider = connected_model.provider
+                assert isinstance(connected_provider, OpenAIProvider)
+                connected_client = connected_provider.client
+
+            assert connected_client is source_client
+            assert not source_client.is_closed()
+        assert not source_client.is_closed()
+
+    assert source_client.is_closed()
+
+
+async def test_agent_connection_pins_model_and_restores_run_override(
+    allow_model_requests: None, sockets: SocketHarness, monkeypatch: pytest.MonkeyPatch
+):
+    """The connection wins over a run model, then the explicit run model works after exit."""
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    socket = sockets.pending[0]
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    agent = Agent(source)
+    explicit_model = TestModel(custom_output_text='explicit run model')
+
+    async with agent.connect():
+        connected_result = await agent.run('inside', model=explicit_model)
+        assert connected_result.output == 'ready'
+
+    outside_result = await agent.run('outside', model=explicit_model)
+    assert outside_result.output == 'explicit run model'
+    assert len(socket.sent) == 1
+    assert socket.close_count == 1
+
+
+async def test_connected_fallback_models_use_and_close_both_sockets(allow_model_requests: None, sockets: SocketHarness):
+    """A fallback can compose connected children and switch after a socket API error."""
+    first_socket = sockets.pending[0]
+    api_error: Frame = {
+        'type': 'error',
+        'error': {'type': 'invalid_request_error', 'code': 'invalid_test', 'message': 'primary failed'},
+    }
+    first_socket.responses = deque([[api_error]])
+    second_socket = ScriptedSocket()
+    sockets.pending.append(second_socket)
+    primary = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    secondary = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key='test'))
+
+    async with AsyncExitStack() as stack:
+        connected_primary = await stack.enter_async_context(primary.connect())
+        connected_secondary = await stack.enter_async_context(secondary.connect())
+        result = await Agent(FallbackModel(connected_primary, connected_secondary)).run('hello')
+        assert result.output == 'ready'
+
+    assert sockets.opened == [first_socket, second_socket]
+    assert [len(socket.sent) for socket in sockets.opened] == [1, 1]
+    assert [socket.close_count for socket in sockets.opened] == [1, 1]
+
+
+async def test_connected_model_warmup_response_id_continues_agent_run(
+    allow_model_requests: None, sockets: SocketHarness
+):
+    """A low-level empty warmup response ID seeds the next connected agent request."""
+    socket = sockets.pending[0]
+    socket.responses = deque([empty_completed_events('resp_warmup'), text_events('ready after warmup', 'resp_after')])
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    warmup_settings: OpenAIResponsesModelSettings = {'extra_body': {'generate': False}}
+
+    async with source.connect() as connected:
+        warmup = await connected.request(
+            [ModelRequest(parts=[UserPromptPart('Use metric units.')])], warmup_settings, ModelRequestParameters()
+        )
+        assert warmup.parts == []
+        response_id = warmup.provider_response_id
+        assert response_id == 'resp_warmup'
+        continuation_settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': response_id}
+
+        result = await Agent(source).run(
+            'Convert 10 miles to kilometers.',
+            model=connected,
+            model_settings=continuation_settings,
+        )
+        assert result.output == 'ready after warmup'
+
+    assert len(socket.sent) == 2
+    assert socket.sent[0]['generate'] is False
+    assert 'generate' not in socket.sent[1]
+    assert socket.sent[1]['previous_response_id'] == 'resp_warmup'
+    next_input = socket.sent[1]['input']
+    assert next_input == [{'role': 'user', 'content': 'Convert 10 miles to kilometers.'}]
+    assert socket.close_count == 1
+
+
+async def test_agent_run_retries_empty_connected_warmup_response(allow_model_requests: None, sockets: SocketHarness):
+    """An empty warmup response is not a valid agent output and exhausts output retries."""
+    socket = sockets.pending[0]
+    socket.responses = deque([empty_completed_events('resp_empty_1'), empty_completed_events('resp_empty_2')])
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    settings: OpenAIResponsesModelSettings = {'extra_body': {'generate': False}}
+    agent = Agent(source, model_settings=settings)
+
+    async with agent.connect():
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+            await agent.run('warmup')
+
+    assert len(socket.sent) == 2
+    assert all(frame['generate'] is False for frame in socket.sent)
     assert socket.close_count == 1
 
 
