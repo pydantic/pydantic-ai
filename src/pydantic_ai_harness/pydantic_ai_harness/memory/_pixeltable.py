@@ -282,9 +282,7 @@ class PixeltableMemoryStore:
         return metadata['has_default_idxs']
 
     def _file_row(self, t: pxt.Table, path: str) -> dict[str, Any] | None:
-        query = t.where((t.path == path) & (t.kind == _KIND_FILE)).select(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-            t.content, t.version, t.last_operation_id
-        )
+        query = t.where((t.path == path) & (t.kind == _KIND_FILE)).select(t.content, t.version, t.last_operation_id)
         assert isinstance(query, pxt.Query)
         rows = query.collect()
         if len(rows) == 0:
@@ -294,9 +292,7 @@ class PixeltableMemoryStore:
     def _lookup_operation(
         self, t: pxt.Table, operation: MemoryOperation, *, withdraw_unapplied: bool = False
     ) -> MemoryMutation | None:
-        query = t.where(t.path == _receipt_path(operation)).select(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-            t.fingerprint, t.version, t.existed, t.content
-        )
+        query = t.where(t.path == _receipt_path(operation)).select(t.fingerprint, t.version, t.existed, t.content)
         assert isinstance(query, pxt.Query)
         rows = query.collect()
         if len(rows) == 0:
@@ -438,7 +434,7 @@ class PixeltableMemoryStore:
         if max_chars <= 0:
             raise ValueError('max_chars must be positive')
         t = self._ensure_table()
-        query = t.where((t.path == path) & (t.kind == _KIND_FILE)).select(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+        query = t.where((t.path == path) & (t.kind == _KIND_FILE)).select(
             content=t.content.slice(0, max_chars + 1), version=t.version, operation_id=t.last_operation_id
         )
         assert isinstance(query, pxt.Query)
@@ -507,9 +503,9 @@ class PixeltableMemoryStore:
         if prefix:
             pred = pred & (t.path.slice(0, len(prefix)) == prefix)
         columns = {'content': t.content.slice(0, content_chars)} if content_chars else {}
-        query = t.where(pred).order_by(_code_point_order(t.path)).limit(limit)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+        query = t.where(pred).order_by(_code_point_order(t.path)).limit(limit)
         assert isinstance(query, pxt.Query)
-        selected = query.select(t.path, **columns)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+        selected = query.select(t.path, **columns)
         assert isinstance(selected, pxt.Query)
         return list(selected.collect())
 

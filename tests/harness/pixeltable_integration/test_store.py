@@ -168,7 +168,7 @@ class TestPixeltableMemoryStore:
     async def test_table_escape_hatch(self, store: PixeltableMemoryStore) -> None:
         created = await store.write('note.md', 'hello', expected_version=None)
         t = store.table
-        query = t.where(t.kind == 'file').select(t.path, t.content)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+        query = t.where(t.kind == 'file').select(t.path, t.content)
         assert isinstance(query, pxt.Query)
         rows = query.collect()
         assert [(row['path'], row['content']) for row in rows] == [('note.md', 'hello')]

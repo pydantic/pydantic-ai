@@ -314,7 +314,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
             score_name = f'similarity_{score_name}'
         try:
             search = t[column].similarity(string=query, idx=idx)  # pyright: ignore[reportUnknownMemberType]
-            query_obj = self._project(t, selected, metadata, **{score_name: search}).order_by(search, asc=False)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+            query_obj = self._project(t, selected, metadata, **{score_name: search}).order_by(search, asc=False)
             assert isinstance(query_obj, pxt.Query)
             return self._collect(table, query_obj, limit)
         except pxt.Error as exc:
@@ -418,7 +418,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         if pred is None:  # pragma: no cover - `where` is non-empty here
             return query
         try:
-            filtered = query.where(pred)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+            filtered = query.where(pred)
             assert isinstance(filtered, pxt.Query)
             return filtered
         except (pxt.Error, TypeError, ValueError) as exc:
@@ -429,7 +429,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry('limit must be at least 1')
         n = min(limit, self._max_rows)
         try:
-            limited = query.limit(n + 1)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+            limited = query.limit(n + 1)
             assert isinstance(limited, pxt.Query)
             fetched = list(limited.collect())
         except pxt.Error as exc:
