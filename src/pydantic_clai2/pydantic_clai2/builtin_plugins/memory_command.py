@@ -55,6 +55,8 @@ class MemoryCommand:
     """`(text, title)` to the edited text, or `None` when the user cancelled: the shared multi-line editor."""
     link: str | None = None
     """Logfire's Memory tab, where admins edit repo notes."""
+    synced: bool = False
+    """Whether personal notes are synced through Logfire, so they follow the user to other machines."""
 
     async def __call__(self, args: list[str]) -> str:
         if not args:
@@ -81,7 +83,8 @@ class MemoryCommand:
             (f'Personal, {repo or "this directory"}', here),
             ('Personal, every repository', everywhere),
         ):
-            lines.append(f'{title} (only on this machine; /memory edit{"" if folder == here else " global"}):')
+            where = 'synced via Logfire' if self.synced else 'only on this machine'
+            lines.append(f'{title} ({where}; /memory edit{"" if folder == here else " global"}):')
             lines.extend(self._folder(folder) or ['  (empty)'])
         notes = self.notes()
         where = f' Edit them in Logfire: {self.link}' if self.link else ''

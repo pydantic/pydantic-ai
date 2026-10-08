@@ -292,12 +292,12 @@ class LogfireQuery:
     key: str
     http: Callable[[], httpx.AsyncClient] = lambda: httpx.AsyncClient(timeout=httpx.Timeout(30, read=120))
 
-    async def rows(self, sql: str, *, limit: int = 10_000) -> list[dict[str, Any]]:
-        since = (datetime.now(UTC) - WINDOW).isoformat()
+    async def rows(self, sql: str, *, limit: int = 10_000, since: timedelta = WINDOW) -> list[dict[str, Any]]:
+        start = (datetime.now(UTC) - since).isoformat()
         async with self.http() as http:
             response = await http.get(
                 f'{self.base_url}/v1/query',
-                params={'sql': sql, 'min_timestamp': since, 'limit': limit, 'json_rows': 'true'},
+                params={'sql': sql, 'min_timestamp': start, 'limit': limit, 'json_rows': 'true'},
                 headers={'Authorization': f'Bearer {self.key}', 'Accept': 'application/json'},
             )
         if response.status_code in (401, 403):
@@ -309,16 +309,18 @@ class LogfireQuery:
         return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []  # pyright: ignore[reportUnknownVariableType]
 
 
-def _quote(value: str) -> str:
+def sql_quote(value: str) -> str:
+    """`value` as a SQL string literal."""
     return "'" + value.replace("'", "''") + "'"
 
 
-def _attribute(name: str) -> str:
+def sql_attribute(name: str) -> str:
+    """The SQL expression reading span attribute `name` as text."""
     return f"attributes->>'{name}'"
 
 
 _MANIFEST = ', '.join(
-    f'{_attribute(f"clai2.session.{name}")} AS {name}'
+    f'{sql_attribute(f"clai2.session.{name}")} AS {name}'
     for name in (
         'id',
         'seq',
@@ -405,10 +407,10 @@ class LogfireSessions:
         if not owner:
             raise ValueError('Sessions in Logfire are listed by your Logfire account email, which is unknown here.')
         rows = await self.query.rows(
-            f'SELECT {_attribute("clai2.session.id")} AS id, {_attribute("clai2.session.first_prompt")} AS first_prompt, '
-            f'{_attribute("clai2.repo_slug")} AS repo, start_timestamp FROM records '
-            f'WHERE span_name = {_quote(SPAN_NAME)} AND {_attribute("clai2.session.owner")} = {_quote(owner)} '
-            f"AND {_attribute('clai2.session.part')} = '0' ORDER BY start_timestamp DESC",
+            f'SELECT {sql_attribute("clai2.session.id")} AS id, {sql_attribute("clai2.session.first_prompt")} AS first_prompt, '
+            f'{sql_attribute("clai2.repo_slug")} AS repo, start_timestamp FROM records '
+            f'WHERE span_name = {sql_quote(SPAN_NAME)} AND {sql_attribute("clai2.session.owner")} = {sql_quote(owner)} '
+            f"AND {sql_attribute('clai2.session.part')} = '0' ORDER BY start_timestamp DESC",
             limit=2_000,
         )
         sessions: dict[str, Listed] = {}
@@ -437,8 +439,8 @@ class LogfireSessions:
             if trace_id is None:
                 raise LookupError('That Logfire link names no trace; copy the trace link, or use the session ID.')
             rows = await self.query.rows(
-                f'SELECT {_attribute("clai2.session.id")} AS id FROM records WHERE trace_id = {_quote(trace_id)} '
-                f'AND span_name = {_quote(SPAN_NAME)} ORDER BY start_timestamp DESC',
+                f'SELECT {sql_attribute("clai2.session.id")} AS id FROM records WHERE trace_id = {sql_quote(trace_id)} '
+                f'AND span_name = {sql_quote(SPAN_NAME)} ORDER BY start_timestamp DESC',
                 limit=1,
             )
             if not rows:
@@ -450,10 +452,10 @@ class LogfireSessions:
         """The session as stored, checked chunk by chunk; `None` when Logfire has none of it."""
         if depth > _MAX_FORK_DEPTH:
             raise SessionCorrupt(f'Session {session_id} is forked from too many sessions to resume.')
-        bound = f' AND CAST({_attribute("clai2.session.seq")} AS BIGINT) <= {int(upto)}' if upto is not None else ''
+        bound = f' AND CAST({sql_attribute("clai2.session.seq")} AS BIGINT) <= {int(upto)}' if upto is not None else ''
         rows = await self.query.rows(
-            f'SELECT {_MANIFEST}, {_attribute("clai2.session.payload")} AS payload, trace_id FROM records '
-            f'WHERE span_name = {_quote(SPAN_NAME)} AND {_attribute("clai2.session.id")} = {_quote(session_id)}{bound}'
+            f'SELECT {_MANIFEST}, {sql_attribute("clai2.session.payload")} AS payload, trace_id FROM records '
+            f'WHERE span_name = {sql_quote(SPAN_NAME)} AND {sql_attribute("clai2.session.id")} = {sql_quote(session_id)}{bound}'
         )
         if not rows:
             return None
@@ -588,7 +590,7 @@ def trace_from_link(link: str) -> str | None:
 
 def trace_link(base_url: str, project: str, trace_id: str) -> str:
     """The Logfire link to one trace, as the Logfire UI writes it."""
-    return f'{base_url.rstrip("/")}/{project}?q={quote(f"trace_id={_quote(trace_id)}")}&last=30d'
+    return f'{base_url.rstrip("/")}/{project}?q={quote(f"trace_id={sql_quote(trace_id)}")}&last=30d'
 
 
 def privacy_notice(marker: Path, project: str) -> str | None:

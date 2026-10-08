@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, Self
 
 import logfire
-from anyio import CancelScope, to_thread
+from anyio import CancelScope, move_on_after, to_thread
 from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor, HTTPXClientInstrumentor
 from opentelemetry.propagate import get_global_textmap, set_global_textmap
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, ValidationError
@@ -70,6 +70,7 @@ from pydantic_clai2.builtin_plugins.logfire_sessions import (
 )
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, run_setup
 from pydantic_clai2.builtin_plugins.memory_command import MemoryCommand
+from pydantic_clai2.builtin_plugins.memory_sync import NotebookSync, SyncState
 from pydantic_clai2.builtin_plugins.session_search import session_search
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
@@ -277,6 +278,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         self._pending_notes = PendingNotes(config_dir() / 'memory' / 'pending.json')
         self._chunks: SessionChunks | None = None
         self._sessions: LogfireSessions | None = None
+        self._memory_sync: NotebookSync | None = None
         if self.fleet is not None and settings.include_content and send_to_logfire:
             tracing = self._session_tracing
             states = ChunkStates(logfire_dir() / 'session_chunks.json')
@@ -295,6 +297,17 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                     owner=lambda: tracing.email,
                     project=settings.project,
                 )
+            # Personal notes follow the user across machines the same way sessions do.
+            self._memory_sync = NotebookSync(
+                directory=config_dir() / 'memory',
+                tracer_provider=self.instance.config.get_tracer_provider(),
+                state=SyncState(logfire_dir() / 'memory_sync.json'),
+                owner=lambda: tracing.email,
+                query=self._sessions.query if self._sessions is not None else None,
+                warn=lambda message: self.host.console.print(
+                    f'◆ {message}', style=theme.color(theme.MUTED), markup=False
+                ),
+            )
         # UI records and plugin errors are CLAI's own, so they share the session root's scope.
         self._clai2 = logfire.Logfire(config=self.instance.config, otel_scope=telemetry.SCOPE)
 
@@ -342,9 +355,22 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         async def handler(args: list[str]) -> str:
             # Up to date before showing anything: a note may have been published or dismissed since the last turn.
             self._reconcile_pending(await to_thread.run_sync(self.fleet.snapshot) if self.fleet else None)
-            return await memory(args)
+            try:
+                return await memory(args)
+            finally:
+                # `/memory edit` and `forget` change the notebook directly.
+                await self._push_notes()
 
         return handler
+
+    async def _push_notes(self) -> None:
+        """Send personal note changes to Logfire; a failure leaves them for the next attempt."""
+        if self._memory_sync is None:
+            return
+        try:
+            await to_thread.run_sync(self._memory_sync.push_changed)
+        except Exception:  # noqa: BLE001 -- syncing notes must never fail the user's turn
+            pass
 
     def _withdraw_memory(self, note: PendingNote) -> None:
         """Record that this user withdrew a proposal, so the fleet miner can mark it stale."""
@@ -459,6 +485,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             withdraw=self._withdraw_memory,
             edit=lambda text, title: run_worker(lambda: edit_text(text, title=title)),
             link=self._link('#memory'),
+            synced=self._memory_sync is not None,
         )
         return (
             *session_commands,
@@ -705,6 +732,20 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 )
             )
         self._print_header()
+        if self._memory_sync is not None:
+            # Before the first turn, so notes written on another machine are there when the model first reads them.
+            problem: str | None = None
+            with move_on_after(10) as pulling:
+                try:
+                    await self._memory_sync.pull()
+                except Exception as error:  # noqa: BLE001 -- syncing notes must never stop the session starting
+                    problem = type(error).__name__
+            if pulling.cancelled_caught or problem:
+                self.host.console.print(
+                    f'◆ Personal notes not synced from Logfire ({problem or "timed out"}); keeping the notes on this machine.',
+                    style=theme.color(theme.MUTED),
+                    markup=False,
+                )
         if self.fleet is not None:
             remote_sessions.install(
                 self._sessions or _Unavailable(NO_QUERY if self._chunks is not None else NO_CONTENT)
@@ -747,6 +788,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             )
 
     async def on_turn_end(self, event: TurnEnd) -> None:
+        await self._push_notes()
         if self.settings.ui_events:
             with telemetry.parent_span(self._session_tracing.root()):
                 self._clai2.log('info', 'turn {outcome}', attributes={'outcome': event.outcome})
@@ -771,6 +813,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
+        with CancelScope(shield=True):
+            await self._push_notes()
         self._session_tracing.end(event.reason)
         with CancelScope(shield=True):
             finished = await to_thread.run_sync(_shutdown, self.instance)
