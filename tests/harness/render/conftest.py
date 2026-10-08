@@ -15,6 +15,9 @@ from pydantic import TypeAdapter
 
 _render_spec = importlib.util.find_spec('render')
 
+if _render_spec is None and os.environ.get('CI') == 'true':
+    raise pytest.UsageError('Render tests require the `render` SDK in CI. Install the Harness render extra.')
+
 if TYPE_CHECKING:
     from render.workflows import Options, Retry, TaskContext, TaskDefinition, TaskRunMetadata, Workflows
 
