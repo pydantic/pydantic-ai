@@ -77,6 +77,7 @@ from pydantic_ai.models import (
     ModelRequestParameters,
     StreamedResponse,
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
+    _turn_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -1519,10 +1520,19 @@ class BedrockConverseModel(Model[BaseClient]):
             if profile.get('bedrock_supports_prompt_caching', False):
                 last_user_content = self._get_last_user_message_content(processed_messages)
                 if last_user_content is not None:
-                    # Note: `_get_last_user_message_content` ensures content doesn't already end with a `cachePoint`.
-                    _insert_cache_point_before_trailing_documents(
-                        last_user_content, self._get_cache_point(cache_messages)
-                    )
+                    # A turn-scoped prompt ends the request when it's rendered as text (see
+                    # `_turn_scoped_tail_texts`), and the next request won't send it, so the breakpoint goes
+                    # before it. One with nothing ahead of it in the message gets no breakpoint.
+                    turn_scoped_texts = _turn_scoped_tail_texts(messages)
+                    end = len(last_user_content)
+                    while end and last_user_content[end - 1].get('text') in turn_scoped_texts:
+                        end -= 1
+                    lasting_content = last_user_content[:end]
+                    if lasting_content and 'cachePoint' not in lasting_content[-1]:
+                        _insert_cache_point_before_trailing_documents(
+                            lasting_content, self._get_cache_point(cache_messages)
+                        )
+                        last_user_content[:end] = lasting_content
 
         # Bedrock's Converse API requires at least one message, so an empty conversation (only a
         # system prompt/instructions) always needs a synthetic user turn. Beyond that, most model
