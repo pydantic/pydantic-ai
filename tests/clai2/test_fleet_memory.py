@@ -289,3 +289,18 @@ async def test_memory_command_lists_opens_edits_forgets_and_proposes(tmp_path: P
         await command(['nonsense'])
     with pytest.raises(ValueError, match='No memory file'):
         await command(['open', 'missing.md'])
+
+
+async def test_personal_memory_works_on_a_fresh_machine(tmp_path: Path) -> None:
+    """The notebook folder doesn't exist before the first write; searching it must not fail the turn."""
+    directory = tmp_path / 'config/pydantic-clai2/memory'
+    calls = iter([ToolCallPart('search_memory', {'query': 'bits'}, tool_call_id='1')])
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        call = next(calls, None)
+        return ModelResponse(parts=[call] if call else [TextPart('ok')])
+
+    agent = Agent(FunctionModel(model), capabilities=personal_memory(directory, repo=lambda: 'acme/widgets'))
+    result = await agent.run('hi')
+    assert result.output == 'ok'
+    assert directory.is_dir()

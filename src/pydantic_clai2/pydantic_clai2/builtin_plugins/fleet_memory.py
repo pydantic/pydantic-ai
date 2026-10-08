@@ -366,6 +366,8 @@ def personal_memory(directory: Path, *, repo: Callable[[], str | None]) -> list[
 
     Outside a repository with a known slug, the per-repository notebook is keyed by the directory instead.
     """
+    # A fresh machine has no notebook yet; `LocalWorkspaceBackend` refuses a missing root.
+    directory.mkdir(parents=True, exist_ok=True)
     store = FileStore('.', workspace=LocalWorkspaceBackend(directory))
 
     def namespace(ctx: RunContext[None]) -> str:
