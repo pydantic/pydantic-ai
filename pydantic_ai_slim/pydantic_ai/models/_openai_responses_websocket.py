@@ -27,6 +27,12 @@ from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior,
 from . import _suggest_known_model_id_from_provider_error  # pyright: ignore[reportPrivateUsage]
 
 
+class ConnectionOptions(WebSocketConnectionOptions):
+    """Include the opening-handshake timeout omitted by the SDK's options type."""
+
+    open_timeout: None
+
+
 class WebSocketTransportError(ModelAPIError):
     """A transport failure while reading a Responses WebSocket."""
 
@@ -52,10 +58,12 @@ class ResponsesWebSocket:
         timeout: Timeout,
         options: WebSocketConnectionOptions,
     ) -> Self:
+        # The enclosing scope owns the deadline, including an unlimited connect timeout.
+        connection_options: ConnectionOptions = {**options, 'open_timeout': None}
         try:
             with anyio.fail_after(timeout.connect):
                 connection = await client.responses.connect(
-                    extra_headers=headers, websocket_connection_options=options
+                    extra_headers=headers, websocket_connection_options=connection_options
                 ).enter()
         except InvalidStatus as exc:
             if exc.response.status_code < 400:

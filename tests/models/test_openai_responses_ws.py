@@ -21,7 +21,8 @@ from typing_extensions import Unpack
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -38,7 +39,7 @@ from ..realtime.ws_cassettes import (
 )
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
     from openai.types.websocket_connection_options import WebSocketConnectionOptions
     from websockets.asyncio.client import connect as websocket_connect
     from websockets.datastructures import Headers
@@ -47,6 +48,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.models.openai_codex import OpenAICodexModel
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
@@ -706,6 +708,93 @@ async def test_errors(allow_model_requests: None, sockets: SocketHarness, failur
     http_handler.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    'provider_name,error_code', [('azure', 'content_filter'), ('openai', 'content_filter'), ('azure', 'invalid_test')]
+)
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('api', ['agent', 'model'])
+async def test_content_filter(
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    provider_name: str,
+    error_code: str,
+    stream: bool,
+    api: str,
+):
+    """Azure prompt filtering preserves its response metadata and the agent's content-filter exception."""
+    error: Frame = {
+        'type': 'invalid_request_error',
+        'code': error_code,
+        'message': 'The content was filtered.',
+        'innererror': {
+            'code': 'ResponsibleAIPolicyViolation',
+            'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
+        },
+    }
+    socket = sockets.pending[0]
+    socket.responses = deque([[{'type': 'error', 'status': 400, 'error': error}]])
+    http_handler = Mock(return_value=httpx2.Response(401))
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(http_handler))
+    client: AsyncOpenAI
+    provider: AzureProvider | OpenAIProvider
+    if provider_name == 'azure':
+        azure_client = AsyncAzureOpenAI(
+            api_key='test',
+            api_version='2024-12-01-preview',
+            azure_endpoint='https://example.openai.azure.com/',
+            http_client=http_client,
+        )
+        client = azure_client
+        provider = AzureProvider(openai_client=azure_client)
+    else:
+        client = AsyncOpenAI(api_key='test', http_client=http_client)
+        provider = OpenAIProvider(openai_client=client)
+    source = OpenAIResponsesModel('gpt-4o', provider=provider)
+    filtered = provider_name == 'azure' and error_code == 'content_filter'
+    expected_error = (ContentFilterError if api == 'agent' else None) if filtered else ModelHTTPError
+    response: ModelResponse | None = None
+    async with client, source.connect() as connected:
+        with pytest.raises(expected_error) if expected_error is not None else nullcontext() as raised:
+            if api == 'agent':
+                agent = Agent(connected)
+                if stream:
+                    async with agent.run_stream('hello'):
+                        pytest.fail('The rejected request should not produce a stream')  # pragma: no cover
+                else:
+                    await agent.run('hello')
+            else:
+                messages: list[ModelRequest | ModelResponse] = [ModelRequest(parts=[UserPromptPart('hello')])]
+                if stream:
+                    async with connected.request_stream(messages, None, ModelRequestParameters()) as streamed:
+                        async for _ in streamed:
+                            pass
+                        response = streamed.get()
+                else:
+                    response = await connected.request(messages, None, ModelRequestParameters())
+        if filtered:
+            if api == 'agent':
+                assert raised is not None and isinstance(raised.value, ContentFilterError)
+                assert raised.value.body is not None
+                message = ModelMessagesTypeAdapter.validate_json(raised.value.body)[-1]
+                assert isinstance(message, ModelResponse)
+                response = message
+            assert response is not None
+            assert response.parts == []
+            assert response.finish_reason == 'content_filter'
+            assert response.provider_name == 'azure'
+            assert response.provider_details == {
+                'finish_reason': 'content_filter',
+                'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
+            }
+        else:
+            assert raised is not None and isinstance(raised.value, ModelHTTPError)
+            assert raised.value.status_code == 400
+            assert raised.value.body == error
+        assert socket.close_count == 1
+    assert socket.close_count == 1
+    http_handler.assert_not_called()
+
+
 async def test_incomplete_response(allow_model_requests: None, sockets: SocketHarness):
     events = text_events()
     terminal = events[-1]
@@ -726,13 +815,32 @@ async def test_incomplete_response(allow_model_requests: None, sockets: SocketHa
         assert (await Agent(connected).run('next')).output == 'ready'
 
 
-async def test_handshake_timeout(sockets: SocketHarness):
+@pytest.mark.parametrize('timeout_source', ['model', 'client'])
+@pytest.mark.parametrize('connect_timeout', [20, None])
+async def test_handshake_timeout_override(sockets: SocketHarness, timeout_source: str, connect_timeout: float | None):
+    """Long and unlimited connect timeouts are not capped by the transport's ten-second default."""
+    timeout = Timeout(30, connect=connect_timeout)
+    settings: OpenAIResponsesModelSettings = {'timeout': timeout} if timeout_source == 'model' else {}
+    client = AsyncOpenAI(
+        api_key='test', timeout=httpx2.Timeout(30, connect=connect_timeout) if timeout_source == 'client' else 30
+    )
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=client), settings=settings)
+    async with client, source.connect():
+        assert sockets.options[0]['open_timeout'] is None
+    assert sockets.connect_count == 1
+    assert sockets.opened[0].close_count == 1
+
+
+@pytest.mark.parametrize('timeout_source', ['model', 'client'])
+async def test_handshake_timeout(sockets: SocketHarness, timeout_source: str):
     """A stalled handshake honors the model's connect timeout without leaking a connection."""
     before = asyncio.all_tasks()
     sockets.connect_gate = anyio.Event()
-    settings: OpenAIResponsesModelSettings = {'timeout': Timeout(10, connect=0.01)}
-    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'), settings=settings)
-    async with source:
+    timeout = Timeout(10, connect=0.01)
+    settings: OpenAIResponsesModelSettings = {'timeout': timeout} if timeout_source == 'model' else {}
+    client = AsyncOpenAI(api_key='test', timeout=httpx2.Timeout(10, connect=0.01) if timeout_source == 'client' else 30)
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=client), settings=settings)
+    async with client, source:
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             with pytest.raises(ModelAPIError, match='WebSocket connection failed') as raised:
                 async with source.connect():

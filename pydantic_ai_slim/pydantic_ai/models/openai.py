@@ -478,7 +478,7 @@ def _is_azure(client: AsyncOpenAI, system: str) -> bool:
 
 
 def _check_azure_content_filter(
-    e: APIStatusError, client: AsyncOpenAI, system: str, model_name: str
+    e: APIStatusError | ModelHTTPError, client: AsyncOpenAI, system: str, model_name: str
 ) -> ModelResponse | None:
     """Check if the error is an Azure content filter error."""
     # Assign to Any to avoid 'dict[Unknown, Unknown]' inference in strict mode
@@ -2891,13 +2891,22 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         expected_model_name: OpenAIModelName | None = None,
         expected_response_id: str | None = None,
-    ) -> OpenAIResponsesStreamedResponse:
+    ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response: _utils.PeekableAsyncStream[
             responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream
         ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
-            first_chunk = await peekable_response.peek()
+            try:
+                first_chunk = await peekable_response.peek()
+            except ModelHTTPError as exc:
+                if self._websocket is not None and (
+                    model_response := _check_azure_content_filter(exc, self.client, self.system, self.model_name)
+                ):
+                    return _ModelResponseStreamedResponse(
+                        model_request_parameters=model_request_parameters, _model_response=model_response
+                    )
+                raise
         if isinstance(first_chunk, _utils.Unset):
             # Covered by the Codex forced-stream path, which drains empty streams through here.
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
