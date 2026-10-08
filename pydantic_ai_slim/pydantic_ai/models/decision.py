@@ -395,11 +395,13 @@ class _Limits:
     questions can refuse a pick-one the backend would reject before anything is sent, and ask whole numbers with
     more levels than a rubric can have as a pick-one instead. Also whether the model needs `instructions` on every
     question, from the profile's `decision_requires_instructions` or the model's `requires_instructions`.
+    The backend's per-request question cap bounds speculation independently of those model-specific limits.
     """
 
     choice_options: int | None
     score_levels: int | None
     requires_instructions: bool
+    questions: int | None
 
 
 @dataclass(init=False)
@@ -424,8 +426,8 @@ class DecisionModel(Model[InterfaceClient]):
       tool has returned or a retry was sent, what was done since goes along apart from both.
     - With tools attached, or a union of output types, one more pick-one asks which route the text calls for, and
       the likeliest is taken. The fields of every route the model can fill are asked beside it, each on the premise
-      of its route, and only the taken route's answers are read; past a size cutoff, a picked route with fields is
-      filled in a second request instead. A route whose fields the model cannot express, a single output type's
+      of its route, and only the taken route's answers are read; past a size or question-count cutoff, a picked
+      route with fields is filled in a second request instead. A route whose fields the model cannot express, a single output type's
       included, is raised as [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute], for a
       [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to hand to a language model. A pick below
       `decision_route_threshold`, when set, is raised as [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute]
@@ -438,8 +440,10 @@ class DecisionModel(Model[InterfaceClient]):
     To support a backend, subclass this, implement [`decide`][pydantic_ai.models.decision.DecisionModel.decide]
     along with `model_name`, `system` and `base_url`, set `max_choice_options` and `max_score_levels` to the
     backend's limits, and `requires_instructions` if it refuses a question without `instructions`, or have its
-    provider set these per model in a [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile]. See [Decision models](https://pydantic.dev/docs/ai/models/decision/) for the full rules
-    and an example.
+    provider set these per model in a [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile].
+    Set `supports_image_input` if the backend accepts images, and `max_images` and `max_questions` to its
+    per-request transport limits. These caps describe the endpoint, so profiles do not override them.
+    See [Decision models](../../models/decision.md#implementing-a-decision-model) for the full rules and an example.
     """
 
     supports_image_input: ClassVar[bool] = False
@@ -450,14 +454,19 @@ class DecisionModel(Model[InterfaceClient]):
     """
 
     max_images: ClassVar[int | None] = None
-    """The most images the backend accepts in one request, or `None` for no limit.
+    """The most images the endpoint accepts in one request, or `None` for no limit.
+
+    This is a transport limit, independent of the selected model, so profiles do not override it.
 
     An oversized request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] before image URLs
     are downloaded, so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] can take over.
     """
 
     max_questions: ClassVar[int | None] = None
-    """The most questions the backend accepts in one request, or `None` for no limit.
+    """The most questions the endpoint accepts in one request, or `None` for no limit.
+
+    This is a transport limit, independent of the selected model, so profiles do not override it.
+    Speculative route fields that do not fit are filled in a separate request after the route is selected.
 
     An oversized request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] before image URLs
     are downloaded.
@@ -678,6 +687,7 @@ class DecisionModel(Model[InterfaceClient]):
             choice_options=profile.get('decision_max_choice_options', self.max_choice_options),
             score_levels=profile.get('decision_max_score_levels', self.max_score_levels),
             requires_instructions=profile.get('decision_requires_instructions', self.requires_instructions),
+            questions=self.max_questions,
         )
         if forced_tool is not None:
             # Every other route has returned this turn, so the one left is taken without a choice question.
@@ -1382,10 +1392,18 @@ class _Speculation:
         # and all of them when the route taken could be one with nothing asked about it.
         smallest = min(sizes.values()) if len(sizes) == len(routes) else 0
         unpicked = sum(sizes.values()) - smallest
-        if unpicked > _REQUEST_TOKENS + state_tokens or state_tokens + sum(sizes.values()) > _SPECULATION_TOKENS:
+        if (
+            unpicked > _REQUEST_TOKENS + state_tokens
+            or state_tokens + sum(sizes.values()) > _SPECULATION_TOKENS
+            or (
+                limits.questions is not None and 1 + sum(len(ask.questions) for ask in asks.values()) > limits.questions
+            )
+        ):
             asks = {
                 label: ask for label, ask in asks.items() if routes[label] in output_tools and len(output_tools) == 1
             }
+        if limits.questions is not None and 1 + sum(len(ask.questions) for ask in asks.values()) > limits.questions:
+            asks = {}
         keys: dict[str, dict[str, str]] = {}
         taken: set[str] = set()
         for label, ask in asks.items():

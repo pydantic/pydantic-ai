@@ -112,7 +112,19 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
     supports_image_input: ClassVar[bool] = True
 
     max_images: ClassVar[int | None] = 128
+    """The API accepts at most 128 image parts across all input messages; a 129th returns HTTP 400.
+
+    `DecisionInput` in https://github.com/openai/openai-openapi/blob/main/openapi.yaml.
+    An oversized request raises `ModelAPIError` before image URLs are downloaded or the SDK is called.
+    """
+
     max_questions: ClassVar[int | None] = 200
+    """The API accepts at most 200 questions per request; a 201st returns HTTP 400.
+
+    `DecisionRequest.questions.maxItems` in https://github.com/openai/openai-openapi/blob/main/openapi.yaml.
+    The shared planner splits speculative fields into a second request when needed; a request that still
+    exceeds the cap raises `ModelAPIError` before image URLs are downloaded or the SDK is called.
+    """
 
     max_choice_options: ClassVar[int | None] = 255
     """The API takes at most this many options in one pick-one; a 256th is a 400.

@@ -1104,16 +1104,29 @@ async def test_image_only_prompt_streams(
         assert await result.get_output() is True
 
     assert request_capture.paths == ['/v1/decisions']
-    request_body = json.loads(request_capture.raw_bodies[0])
-    input_messages = request_body['input']
-    assert len(input_messages) == 1
-    assert input_messages[0]['role'] == 'user'
-    content = input_messages[0]['content']
-    assert len(content) == 3
-    assert content[0]['type'] == 'input_text'
-    assert '<image 1>' in content[0]['text']
-    assert content[1] == {'type': 'input_text', 'text': '<image 1>:'}
-    assert content[2] == {'type': 'input_image', 'image_url': image_content.data_uri}
+    request_body: JsonValue = json.loads(request_capture.raw_bodies[0])
+    assert request_body == snapshot(
+        {
+            'model': 'gpt-6-luna',
+            'input': [
+                {
+                    'role': 'user',
+                    'content': [
+                        {'type': 'input_text', 'text': '<image 1>'},
+                        {'type': 'input_text', 'text': '<image 1>:'},
+                        {'type': 'input_image', 'image_url': IsStr(regex=r'^data:image/jpeg;base64,.+$')},
+                    ],
+                }
+            ],
+            'questions': [
+                {
+                    'type': 'predicate',
+                    'name': 'response',
+                    'instructions': 'Does the pictured fruit have green flesh and black seeds?',
+                }
+            ],
+        }
+    )
 
 
 @pytest.mark.vcr
@@ -1138,18 +1151,50 @@ async def test_image_in_history_and_text_in_current_prompt(
     ).run('Does the pictured fruit have green flesh and black seeds?', message_history=history)
 
     assert result.output is True
-    request_body = json.loads(request_capture.raw_bodies[0])
+    request_body: JsonValue = json.loads(request_capture.raw_bodies[0])
+    assert request_body == snapshot(
+        {
+            'model': 'gpt-6-luna',
+            'input': [
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': '{"history": [{"user": "<image 1>"}, {"assistant": "This image was attached earlier."}], "text": "Does the pictured fruit have green flesh and black seeds?"}',
+                        },
+                        {'type': 'input_text', 'text': '<image 1>:'},
+                        {'type': 'input_image', 'image_url': IsStr(regex=r'^data:image/jpeg;base64,.+$')},
+                    ],
+                }
+            ],
+            'questions': [
+                {
+                    'type': 'predicate',
+                    'name': 'response',
+                    'instructions': 'Does the pictured fruit have green flesh and black seeds?',
+                }
+            ],
+        }
+    )
+    assert isinstance(request_body, dict)
     input_messages = request_body['input']
-    assert len(input_messages) == 1
-    content = input_messages[0]['content']
-    state = json.loads(content[0]['text'])
-    assert state == {
-        'history': [{'user': '<image 1>'}, {'assistant': 'This image was attached earlier.'}],
-        'text': 'Does the pictured fruit have green flesh and black seeds?',
-    }
-    assert content[1] == {'type': 'input_text', 'text': '<image 1>:'}
-    assert content[2]['type'] == 'input_image'
-    assert content[2]['image_url'].startswith('data:image/')
+    assert isinstance(input_messages, list)
+    input_message = input_messages[0]
+    assert isinstance(input_message, dict)
+    content = input_message['content']
+    assert isinstance(content, list)
+    state_part = content[0]
+    assert isinstance(state_part, dict)
+    state_text = state_part['text']
+    assert isinstance(state_text, str)
+    state: JsonValue = json.loads(state_text)
+    assert state == snapshot(
+        {
+            'history': [{'user': '<image 1>'}, {'assistant': 'This image was attached earlier.'}],
+            'text': 'Does the pictured fruit have green flesh and black seeds?',
+        }
+    )
     assert [(request.method, request.uri) for request in vcr.requests] == [
         ('GET', image_url),
         ('POST', 'https://api.openai.com/v1/decisions'),
@@ -1213,30 +1258,64 @@ async def test_images_from_assistant_and_tool_returns_keep_their_labels_and_orde
     answer_call = response.parts[0]
     assert isinstance(answer_call, ToolCallPart)
     assert answer_call.args == {'value': True}
-    request_input = json.loads(captured.requests[0].content)['input']
-    assert len(request_input) == 1
-    assert request_input[0]['role'] == 'user'
-    content = request_input[0]['content']
-    state_text = content[0]['text']
-    state = json.loads(state_text)
-    assert state['text'] == 'Look up the image.'
-    assert '<image 1>' in json.dumps(state['history'])
-    assert '<image 2>' in json.dumps(state['done'])
-    assert '<image 3>' in json.dumps(state['done'])
-    for before, label, after in [
-        ('assistant before', '<image 1>', 'assistant after'),
-        ('tool before', '<image 2>', 'tool after'),
-        ('native before', '<image 3>', 'native after'),
-    ]:
-        assert state_text.index(before) < state_text.index(label) < state_text.index(after)
-    assert content[1:] == [
-        {'type': 'input_text', 'text': '<image 1>:'},
-        {'type': 'input_image', 'image_url': assistant_image.data_uri},
-        {'type': 'input_text', 'text': '<image 2>:'},
-        {'type': 'input_image', 'image_url': tool_image.data_uri},
-        {'type': 'input_text', 'text': '<image 3>:'},
-        {'type': 'input_image', 'image_url': native_image.data_uri},
-    ]
+    request_body: JsonValue = json.loads(captured.requests[0].content)
+    assert request_body == snapshot(
+        {
+            'model': 'gpt-6-luna',
+            'input': [
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': '{"history": [{"user": "Earlier image question."}, {"assistant": "assistant before"}, {"assistant": "<image 1>"}, {"assistant": "assistant after"}], "text": "Look up the image.", "done": [{"tool_call": {"name": "lookup", "args": {}}}, {"tool_return": {"name": "lookup", "content": "[\\"tool before\\",\\"<image 2>\\",\\"tool after\\"]"}}, {"tool_return": {"name": "native_lookup", "content": "[\\"native before\\",\\"<image 3>\\",\\"native after\\"]"}}]}',
+                        },
+                        {'type': 'input_text', 'text': '<image 1>:'},
+                        {'type': 'input_image', 'image_url': 'data:image/png;base64,YXNzaXN0YW50LWltYWdl'},
+                        {'type': 'input_text', 'text': '<image 2>:'},
+                        {'type': 'input_image', 'image_url': 'data:image/png;base64,dG9vbC1pbWFnZQ=='},
+                        {'type': 'input_text', 'text': '<image 3>:'},
+                        {'type': 'input_image', 'image_url': 'data:image/png;base64,bmF0aXZlLWltYWdl'},
+                    ],
+                }
+            ],
+            'questions': [
+                {
+                    'type': 'predicate',
+                    'name': 'value',
+                    'instructions': '{"field": "value", "question": "Does the input include an image?"}',
+                }
+            ],
+        }
+    )
+    assert isinstance(request_body, dict)
+    input_messages = request_body['input']
+    assert isinstance(input_messages, list)
+    input_message = input_messages[0]
+    assert isinstance(input_message, dict)
+    content = input_message['content']
+    assert isinstance(content, list)
+    state_part = content[0]
+    assert isinstance(state_part, dict)
+    state_text = state_part['text']
+    assert isinstance(state_text, str)
+    state: JsonValue = json.loads(state_text)
+    assert state == snapshot(
+        {
+            'history': [
+                {'user': 'Earlier image question.'},
+                {'assistant': 'assistant before'},
+                {'assistant': '<image 1>'},
+                {'assistant': 'assistant after'},
+            ],
+            'text': 'Look up the image.',
+            'done': [
+                {'tool_call': {'name': 'lookup', 'args': {}}},
+                {'tool_return': {'name': 'lookup', 'content': '["tool before","<image 2>","tool after"]'}},
+                {'tool_return': {'name': 'native_lookup', 'content': '["native before","<image 3>","native after"]'}},
+            ],
+        }
+    )
     assert ModelMessagesTypeAdapter.dump_json(history) == original_history
 
 
@@ -1247,7 +1326,6 @@ async def test_images_from_assistant_and_tool_returns_keep_their_labels_and_orde
 async def test_image_urls_in_tool_returns_are_downloaded_and_labeled(allow_model_requests: None, native: bool):
     """Image URLs in either tool-return form are downloaded and labeled in their original position."""
     image_url = ImageUrl('https://example.com/tool-image.png')
-    image_data_uri = 'data:image/png;base64,dG9vbC1pbWFnZQ=='
     history: list[ModelMessage] = [ModelRequest.user_text_prompt('Look up the image.')]
     if native:
         history.append(
@@ -1275,6 +1353,27 @@ async def test_image_urls_in_tool_returns_are_downloaded_and_labeled(allow_model
     assert result.output is True
     download.assert_awaited_once_with(image_url, data_format='bytes')
     request_body: JsonValue = json.loads(captured.requests[0].content)
+    assert request_body == snapshot(
+        {
+            'model': 'gpt-6-luna',
+            'input': [
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': IsStr(),
+                        },
+                        {'type': 'input_text', 'text': '<image 1>:'},
+                        {'type': 'input_image', 'image_url': 'data:image/png;base64,dG9vbC1pbWFnZQ=='},
+                    ],
+                }
+            ],
+            'questions': [
+                {'type': 'predicate', 'name': 'response', 'instructions': 'Does the lookup contain an image?'}
+            ],
+        }
+    )
     assert isinstance(request_body, dict)
     request_input_value = request_body['input']
     assert isinstance(request_input_value, list)
@@ -1287,13 +1386,27 @@ async def test_image_urls_in_tool_returns_are_downloaded_and_labeled(allow_model
     state_text = state_part['text']
     assert isinstance(state_text, str)
     state: JsonValue = json.loads(state_text)
-    assert isinstance(state, dict)
-    assert state['text'] == 'Does the lookup contain an image?'
-    assert state_text.index('before') < state_text.index('<image 1>') < state_text.index('after')
-    assert content[1:] == [
-        {'type': 'input_text', 'text': '<image 1>:'},
-        {'type': 'input_image', 'image_url': image_data_uri},
-    ]
+    if native:
+        assert state == snapshot(
+            {
+                'history': [
+                    {'user': 'Look up the image.'},
+                    {'tool_return': {'name': 'native_lookup', 'content': '["before","<image 1>","after"]'}},
+                ],
+                'text': 'Does the lookup contain an image?',
+            }
+        )
+    else:
+        assert state == snapshot(
+            {
+                'history': [
+                    {'user': 'Look up the image.'},
+                    {'tool_call': {'name': 'lookup', 'args': {}}},
+                    {'tool_return': {'name': 'lookup', 'content': '["before","<image 1>","after"]'}},
+                ],
+                'text': 'Does the lookup contain an image?',
+            }
+        )
 
 
 @pytest.mark.parametrize(
@@ -1340,6 +1453,27 @@ async def test_failed_tool_return_image_keeps_order_and_one_error_wrapper(allow_
 
     assert result.output is True
     request_body: JsonValue = json.loads(captured.requests[0].content)
+    assert request_body == snapshot(
+        {
+            'model': 'gpt-6-luna',
+            'input': [
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': IsStr(),
+                        },
+                        {'type': 'input_text', 'text': '<image 1>:'},
+                        {'type': 'input_image', 'image_url': 'data:image/png;base64,dG9vbC1pbWFnZQ=='},
+                    ],
+                }
+            ],
+            'questions': [
+                {'type': 'predicate', 'name': 'response', 'instructions': 'Does the failed lookup retain its image?'}
+            ],
+        }
+    )
     assert isinstance(request_body, dict)
     input_messages_value = request_body['input']
     assert isinstance(input_messages_value, list)
@@ -1352,6 +1486,38 @@ async def test_failed_tool_return_image_keeps_order_and_one_error_wrapper(allow_
     state_text = state_part_value['text']
     assert isinstance(state_text, str)
     state: JsonValue = json.loads(state_text)
+    if native:
+        assert state == snapshot(
+            {
+                'history': [
+                    {'user': 'Look up this image.'},
+                    {'tool_call': {'name': 'native_lookup', 'args': {}}},
+                    {
+                        'tool_return': {
+                            'name': 'native_lookup',
+                            'content': '{"error":"[\\"before\\",\\"<image 1>\\",\\"after\\"]"}',
+                        }
+                    },
+                ],
+                'text': 'Does the failed lookup retain its image?',
+            }
+        )
+    else:
+        assert state == snapshot(
+            {
+                'history': [
+                    {'user': 'Look up this image.'},
+                    {'tool_call': {'name': 'lookup', 'args': {}}},
+                    {
+                        'tool_return': {
+                            'name': 'lookup',
+                            'content': '{"error":"[\\"before\\",\\"<image 1>\\",\\"after\\"]"}',
+                        }
+                    },
+                ],
+                'text': 'Does the failed lookup retain its image?',
+            }
+        )
     assert isinstance(state, dict)
     history_entries_value = state['history']
     assert isinstance(history_entries_value, list)
@@ -1370,11 +1536,7 @@ async def test_failed_tool_return_image_keeps_order_and_one_error_wrapper(allow_
     assert set(error_wrapper) == {'error'}
     error_content = error_wrapper['error']
     assert isinstance(error_content, str)
-    assert json.loads(error_content) == ['before', '<image 1>', 'after']
-    assert input_content_value[1:] == [
-        {'type': 'input_text', 'text': '<image 1>:'},
-        {'type': 'input_image', 'image_url': image.data_uri},
-    ]
+    assert json.loads(error_content) == snapshot(['before', '<image 1>', 'after'])
     assert ModelMessagesTypeAdapter.dump_json(history) == original_history
 
 
@@ -1442,11 +1604,22 @@ async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: 
     assert isinstance(input_message, dict)
     content = input_message['content']
     assert isinstance(content, list)
-    assert content[-1] == {
-        'type': 'input_image',
-        'image_url': BinaryContent(b'picture', media_type='image/png').data_uri,
-        'detail': 'high',
-    }
+    assert content == snapshot(
+        [
+            {
+                'type': 'input_text',
+                'text': IsStr(
+                    regex=r'(?s)^The receipt is attached\. (?:Some detail nobody asked about\. ){3000}\s*<image 1>$'
+                ),
+            },
+            {'type': 'input_text', 'text': '<image 1>:'},
+            {
+                'type': 'input_image',
+                'image_url': BinaryContent(b'picture', media_type='image/png').data_uri,
+                'detail': 'high',
+            },
+        ]
+    )
     assert [question['name'] for question in request_bodies[0]['questions']] == ['route']
     assert [question['name'] for question in request_bodies[1]['questions']] == ['urgent', 'area']
     assert result.response.provider_details == {
@@ -1677,30 +1850,209 @@ async def test_route_limit_prevents_image_download(allow_model_requests: None):
     assert captured.requests == []
 
 
-async def test_route_and_fields_over_question_limit_prevent_image_download(allow_model_requests: None):
-    """The route and its speculative fields count toward the limit before image URLs are resolved."""
-    captured = Captured(boolean_answers)
+async def test_overfull_speculation_picks_then_fills_under_question_limit(allow_model_requests: None):
+    """When the speculative questions exceed the cap, a route and its one-field fill can still succeed."""
+
+    class Approve(BaseModel):
+        """Approve this request."""
+
+        approved: bool = Field(description='Can this be approved?')
+
+    class Notify(BaseModel):
+        """Notify the owner."""
+
+        notify: bool = Field(description='Should the owner be notified?')
+
+    def route_and_fill(request: httpx2.Request) -> httpx2.Response:
+        body: JsonValue = json.loads(request.content)
+        assert isinstance(body, dict)
+        questions = body['questions']
+        assert isinstance(questions, list)
+        route_question = next(
+            (question for question in questions if isinstance(question, dict) and question.get('name') == 'route'), None
+        )
+        if route_question is not None:
+            choices = route_question['choices']
+            assert isinstance(choices, list)
+            labels: list[str] = []
+            for choice in choices:
+                assert isinstance(choice, dict)
+                label = choice.get('value')
+                assert isinstance(label, str)
+                labels.append(label)
+            picked = labels[0]
+            return decisions(
+                {
+                    'type': 'choice',
+                    'name': 'route',
+                    'choice': picked,
+                    'probabilities': [
+                        {'value': label, 'probability': 1.0 if label == picked else 0.0} for label in labels
+                    ],
+                    'confidence': 1.0,
+                }
+            )
+
+        [question] = questions
+        assert isinstance(question, dict)
+        question_name = question['name']
+        assert isinstance(question_name, str)
+        return decisions({'type': 'predicate', 'name': question_name, 'probability': 0.9})
+
+    captured = Captured(route_and_fill)
     model = mock_model(captured)
-
-    def inspect_ticket() -> None:
-        """Inspect the ticket."""
-
     image_url = ImageUrl('https://example.com/ticket.png')
-    agent = Agent(model, output_type=Ticket, tools=[inspect_ticket], instructions='Triage this ticket.')
+    agent = Agent(model, output_type=[Approve, Notify], instructions='Choose an action for this request.')
 
     with (
         patch.object(OpenAIDecisionsModel, 'max_questions', 1),
         patch(
             'pydantic_ai.models.decision.download_item',
             new_callable=AsyncMock,
-            side_effect=httpx2.ConnectError('image download should not start'),
+            return_value={'data': b'picture', 'data_type': 'image/png'},
         ) as download,
-        pytest.raises(ModelAPIError, match='accepts at most 1 questions; got 3'),
     ):
-        await agent.run(['Review the ticket.', image_url])
+        result = await agent.run(['Review the ticket.', image_url])
 
-    download.assert_not_awaited()
-    assert captured.requests == []
+    download.assert_awaited_once_with(image_url, data_format='bytes')
+    assert result.output == Approve(approved=True)
+    assert len(captured.requests) == 2
+    request_bodies = [json.loads(request.content) for request in captured.requests]
+    assert [question['name'] for question in request_bodies[0]['questions']] == ['route']
+    assert [question['name'] for question in request_bodies[1]['questions']] == ['approved']
+    assert request_bodies[0]['input'] == request_bodies[1]['input']
+
+
+@pytest.mark.parametrize(
+    ('single_output_with_tool', 'fields_per_output'),
+    [
+        pytest.param(False, 100, id='two-feasible-routes-at-200'),
+        pytest.param(True, 200, id='single-output-with-tool-at-200'),
+    ],
+)
+async def test_exact_question_limit_route_then_fill_stays_under_cap(
+    allow_model_requests: None, single_output_with_tool: bool, fields_per_output: int
+):
+    """Overfull route speculation falls back to a route pick and a feasible fill at the exact question limit.
+
+    Two output routes have enough evidence to fit the existing token heuristic, so the question cap alone splits
+    their 201-question speculative request.
+    """
+    field_names: list[str] = [f'field_{index}' for index in range(fields_per_output)]
+    properties: dict[str, JsonSchemaValue] = {
+        name: {'type': 'boolean', 'description': 'Does this apply?'} for name in field_names
+    }
+    output_schema: ObjectJsonSchema = {'type': 'object', 'properties': properties, 'required': field_names}
+    selected_output = ToolDefinition(
+        name='selected_output',
+        description='Return the answers.',
+        kind='output',
+        parameters_json_schema=output_schema,
+    )
+    output_tools: list[ToolDefinition] = [selected_output]
+    function_tools: list[ToolDefinition] = []
+    if not single_output_with_tool:
+        other_output = ToolDefinition(
+            name='other_output',
+            description='Return the other answers.',
+            kind='output',
+            parameters_json_schema=output_schema,
+        )
+        output_tools.append(other_output)
+    else:
+        function_tools.append(
+            ToolDefinition(
+                name='inspect_ticket',
+                description='Inspect the ticket.',
+                kind='function',
+                parameters_json_schema={'type': 'object', 'properties': {}, 'required': []},
+            )
+        )
+
+    question_names_by_request: list[list[str]] = []
+
+    def route_then_fill(request: httpx2.Request) -> httpx2.Response:
+        request_body: JsonValue = json.loads(request.content)
+        assert isinstance(request_body, dict)
+        questions = request_body['questions']
+        assert isinstance(questions, list)
+        question_names: list[str] = []
+        for question in questions:
+            assert isinstance(question, dict)
+            name = question['name']
+            assert isinstance(name, str)
+            question_names.append(name)
+        question_names_by_request.append(question_names)
+
+        route_question = next(
+            (question for question in questions if isinstance(question, dict) and question['name'] == 'route'), None
+        )
+        if route_question is None:
+            return boolean_answers(request)
+
+        assert isinstance(route_question, dict)
+        choices = route_question['choices']
+        assert isinstance(choices, list)
+        route_labels: list[str] = []
+        for choice in choices:
+            assert isinstance(choice, dict)
+            label = choice['value']
+            assert isinstance(label, str)
+            route_labels.append(label)
+        picked = selected_output.name
+        assert picked in route_labels
+        return decisions(
+            {
+                'type': 'choice',
+                'name': 'route',
+                'choice': picked,
+                'probabilities': [
+                    {'value': label, 'probability': 1.0 if label == picked else 0.0} for label in route_labels
+                ],
+                'confidence': 1.0,
+            }
+        )
+
+    captured = Captured(route_then_fill)
+    model = mock_model(captured)
+    image_url = ImageUrl('https://example.com/ticket.png')
+    review_text = 'Review the ticket.'
+    if not single_output_with_tool:
+        review_text += ' This record includes a payment of $42 and needs careful review.' * 470
+    with (
+        patch.object(OpenAIDecisionsModel, 'max_questions', 200),
+        patch(
+            'pydantic_ai.models.decision.download_item',
+            new_callable=AsyncMock,
+            return_value={'data': b'picture', 'data_type': 'image/png'},
+        ) as download,
+    ):
+        response = await model.request(
+            [ModelRequest(parts=[UserPromptPart([review_text, image_url])])],
+            None,
+            ModelRequestParameters(
+                output_tools=output_tools,
+                function_tools=function_tools,
+                output_mode='tool',
+                allow_text_output=False,
+            ),
+        )
+
+    download.assert_awaited_once_with(image_url, data_format='bytes')
+    [output_call] = [part for part in response.parts if isinstance(part, ToolCallPart)]
+    assert output_call.tool_name == selected_output.name
+    assert output_call.args == {name: True for name in field_names}
+    assert len(captured.requests) == 2
+    request_inputs: list[JsonValue] = []
+    for request in captured.requests:
+        request_body: JsonValue = json.loads(request.content)
+        assert isinstance(request_body, dict)
+        request_inputs.append(request_body['input'])
+    assert request_inputs[0] == request_inputs[1]
+    assert question_names_by_request == [
+        ['route'],
+        field_names,
+    ]
 
 
 async def test_201_questions_prevent_image_download(allow_model_requests: None):
@@ -1944,18 +2296,49 @@ async def test_direct_decide_sends_image_evidence_with_ordered_labels(
     )
 
     assert response.answers == {'q': NoulAnswer(noul=0.9)}
-    assert captured.body['input'] == [
+    request_body: JsonValue = json.loads(captured.requests[0].content)
+    assert isinstance(request_body, dict)
+    request_input = request_body['input']
+    assert isinstance(request_input, list)
+    input_message = request_input[0]
+    assert isinstance(input_message, dict)
+    content = input_message['content']
+    assert isinstance(content, list)
+    first_image_input = content[2]
+    assert isinstance(first_image_input, dict)
+    assert first_image_input.pop('detail', None) == detail_field.get('detail')
+    first_image_input['detail'] = '<expected detail>'
+    assert request_body == snapshot(
         {
-            'role': 'user',
-            'content': [
-                {'type': 'input_text', 'text': json.dumps(state)},
-                {'type': 'input_text', 'text': '<image 1>:'},
-                {'type': 'input_image', 'image_url': first_image.data_uri, **detail_field},
-                {'type': 'input_text', 'text': '<image 2>:'},
-                {'type': 'input_image', 'image_url': second_image.data_uri},
+            'model': 'gpt-6-luna',
+            'input': [
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': '{"history": [{"user": "Receipt <image 1>"}], "text": "Compare <image 2>."}',
+                        },
+                        {'type': 'input_text', 'text': '<image 1>:'},
+                        {
+                            'type': 'input_image',
+                            'image_url': 'data:image/png;base64,Zmlyc3Q=',
+                            'detail': '<expected detail>',
+                        },
+                        {'type': 'input_text', 'text': '<image 2>:'},
+                        {'type': 'input_image', 'image_url': 'data:image/jpeg;base64,c2Vjb25k'},
+                    ],
+                }
             ],
+            'questions': [{'type': 'predicate', 'name': 'q', 'instructions': 'Is it a receipt?'}],
         }
-    ]
+    )
+    state_part = content[0]
+    assert isinstance(state_part, dict)
+    state_text = state_part['text']
+    assert isinstance(state_text, str)
+    state: JsonValue = json.loads(state_text)
+    assert state == snapshot({'history': [{'user': 'Receipt <image 1>'}], 'text': 'Compare <image 2>.'})
 
 
 async def test_direct_decide_rejects_non_image_evidence_before_a_request(allow_model_requests: None):
