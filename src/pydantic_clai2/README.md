@@ -86,7 +86,9 @@ their initialization contributes to startup time.
 An enabled plugin whose module is not installed, such as a built-in saved by another
 CLAI version, is skipped without a message; `/plugins list` shows why. Library
 warnings are hidden so they do not break up the display; pass `-W default` to
-Python or set `PYTHONWARNINGS=default` to see them.
+Python or set `PYTHONWARNINGS=default` to see them. Log messages from Logfire and
+OpenTelemetry, such as export retries and timeouts, never print to the terminal
+either; logging handlers that a plugin configures still receive them.
 `/login` offers both Codex and GitHub Copilot without loading their integrations for
 completion. Copilot requests use your saved login through the lazy provider resolver.
 
