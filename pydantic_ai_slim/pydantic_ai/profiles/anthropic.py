@@ -384,10 +384,11 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         ('claude-fable-5-1', 'claude-mythos-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5')
     )
 
-    # Claude Fable 5.1, Opus 5.5, Sonnet 5.5, and Haiku 5.5 bind thinking blocks to the conversation prefix:
-    # Claude Fable 5, Opus 5, and Sonnet 5 all return 200 for a replayed block under an explicit
-    # `prefix_mismatch_behavior` of `'error'` where Opus 5.5 and Sonnet 5.5 return a 400 once the
-    # `system` prompt changes, and Anthropic documents that Claude Mythos 5.1 "doesn't run this
+    # Claude Fable 5.1, Opus 5.5, Sonnet 5.5, and Haiku 5.5 bind thinking blocks to the conversation prefix.
+    # Anthropic documents this behavior for Haiku 5.5; a live `drop_block` probe returned the expected transformation
+    # after a prefix change, but the explicit `error` behavior was not probed. Claude Fable 5, Opus 5, and Sonnet 5
+    # return 200 for a replayed block under explicit `prefix_mismatch_behavior='error'` where Opus 5.5 and Sonnet 5.5
+    # return a 400 after the `system` prompt changes. Anthropic documents that Claude Mythos 5.1 "doesn't run this
     # check" — the one capability on which it is not Fable 5.1's mirror.
     binds_thinking_blocks = model_name.startswith(
         ('claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5')
