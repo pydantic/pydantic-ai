@@ -14,14 +14,14 @@ from pathlib import Path
 
 import logfire
 
-from . import facets as facets_mod, fetch, impact as impact_mod, patterns as patterns_mod, policy as policy_mod
-from .models import Impact, Proposal, ProposalsDoc, UserPrompt, Window, daily_trend, pseudonymize
+from . import extract as extract_mod, fetch, impact as impact_mod, patterns as patterns_mod, policy as policy_mod
+from .models import Impact, Proposal, ProposalsDoc, UserPrompt, Window, daily_trend, pseudonymize, span_of
 from .llm_cache import CACHE_DIR, USAGE
 from .variables import CONTROL_VARIABLE, VARIABLE, VariablesClient
 
 HERE = Path(__file__).parent
 RECLUSTER_EVERY = timedelta(hours=24)
-FACETS_VERSION = 2
+EXTRACT_VERSION = 1
 VERBOSE = True
 
 
@@ -81,11 +81,26 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--base-url', default=os.environ.get('LOGFIRE_CLAI2_BASE_URL', 'https://logfire-eu.pydantic.info')
     )
-    parser.add_argument('--facet-model', default='gateway/anthropic:claude-sonnet-5-5')
+    gates = parser.add_argument_group('gates for skills and instructions (counted over verified prompts)')
+    gates.add_argument('--min-prompts', type=int, default=3, help='verified prompts a rule needs')
+    gates.add_argument('--min-sessions', type=int, default=2, help='sessions those prompts come from')
+    gates.add_argument('--min-days', type=int, default=2, help='distinct days, unless --min-sessions-one-day is met')
+    gates.add_argument(
+        '--min-sessions-one-day', type=int, default=3, help='sessions that make evidence from a single day enough'
+    )
+    gates.add_argument('--min-confidence', type=float, default=0.8, help="validation confidence (braindump's high)")
+    gates.add_argument('--min-coherence', type=float, default=0.7, help='validation cluster coherence')
+    gates.add_argument('--max-pending', type=int, default=5, help='pending skills and instructions at most')
+    risk = parser.add_argument_group('gates for policy findings')
+    risk.add_argument('--min-policy-sessions', type=int, default=2, help='sessions a flagged risky action needs')
+    risk.add_argument('--max-pending-policy', type=int, default=3, help='pending policy suggestions at most')
+    parser.add_argument('--extract-model', default='gateway/anthropic:claude-sonnet-5-5')
     parser.add_argument('--pattern-model', default='gateway/anthropic:claude-sonnet-5-5')
     parser.add_argument('--recluster', action='store_true', help='cluster everything from scratch (default: daily)')
     parser.add_argument('--watch', type=float, metavar='MINUTES', help='re-run every N minutes, one line per cycle')
-    parser.add_argument('--cache', type=Path, help='facet cache file (default: one per facet model under .cache/)')
+    parser.add_argument(
+        '--cache', type=Path, help='extraction cache file (default: one per extraction model under .cache/)'
+    )
     return parser
 
 
@@ -123,8 +138,11 @@ async def main(args: argparse.Namespace) -> tuple[str, int]:
     existing = [p for p in existing if keep(p)]
     mine_prompts, mine_policy = 'prompts' in args.only, 'policy' in args.only and not args.fixture
     start = min((p.timestamp for p in prompts), default=args.since if isinstance(args.since, datetime) else now)
-    drafted, found = await _mine_prompts(args, prompts, existing, window=(start, now)) if mine_prompts else ([], [])
-    calls = await _fetch_calls(args) if mine_policy else []
+    # Tool calls first: they are policy's input, and the agent's actions before a prompt are context for extraction.
+    calls = await _fetch_calls(args) if not args.fixture else []
+    drafted, found, stale_reasons = (
+        await _mine_prompts(args, prompts, existing, calls, window=(start, now)) if mine_prompts else ([], [], {})
+    )
     identifiers = patterns_mod.personal_identifiers(prompts + _calls_as_prompts(calls))
     if mine_policy:
         # Once someone accepted or dismissed a rule for a risk category, don't re-propose that category with
@@ -132,17 +150,33 @@ async def main(args: argparse.Namespace) -> tuple[str, int]:
         reviewed = {
             p.id.rsplit('-', 1)[0] for p in existing if p.kind == 'policy' and p.status in ('accepted', 'dismissed')
         }
+        result = await policy_mod.mine_policy(
+            calls,
+            prompts=prompts,
+            model=args.pattern_model,
+            gates=policy_mod.PolicyGates(
+                min_users=args.min_users,
+                min_sessions=args.min_policy_sessions,
+                max_pending=args.max_pending_policy,
+            ),
+            identifiers=identifiers,
+            window=(start, now),
+            classes_path=CACHE_DIR / 'call_classes.json',
+        )
+        say('\nRisky tool calls (oversight):')
+        for key, stats in result.oversight.items():
+            say(f'   {key}: {stats}')
         drafted += [
             p
-            for p in await policy_mod.mine_policy(
-                calls,
-                model=args.pattern_model,
-                min_users=args.min_users,
-                identifiers=identifiers,
-                window=(start, now),
-            )
+            for p in result.proposals
             if p.rule is None or p.id.rsplit('-', 1)[0] not in reviewed or any(e.id == p.id for e in existing)
         ]
+        # Policy ids carry the action (`policy-<category>-<action>`); the reasons are per category or per id.
+        for p in existing:
+            if p.kind == 'policy':
+                category = p.id.rsplit('-', 1)[0]
+                if reason := result.stale_reasons.get(p.id) or result.stale_reasons.get(category):
+                    stale_reasons[p.id] = reason
     users_by_span = {p.span_id: p.user or p.span_id for p in prompts} | {c.span_id: c.user for c in calls}
     # Evidence of earlier proposals can point at spans this run didn't fetch: look those up, so developer numbers
     # stay truthful ("2 developers", not one number per unknown span).
@@ -175,16 +209,17 @@ async def main(args: argparse.Namespace) -> tuple[str, int]:
     )
     finish = Finisher(users_by_span, identifiers, dismissals, impacts)
     stale_kinds = ({'skill', 'instruction'} if mine_prompts else set()) | ({'policy'} if mine_policy else set())
-    merged, actions = patterns_mod.merge(existing, drafted, stale_kinds=stale_kinds)
+    merged, actions = patterns_mod.merge(existing, drafted, stale_kinds=stale_kinds, stale_reasons=stale_reasons)
     for proposal in drafted:
-        say(f'\n--- [{actions[proposal.id]}] {proposal.kind} `{proposal.name}` -> {proposal.suggested_tier}')
+        state = 'emerging' if proposal.emerging else actions[proposal.id]
+        say(f'\n--- [{state}] {proposal.kind} `{proposal.name}` -> {proposal.suggested_tier}')
         say(proposal.description)
         say(proposal.text)
-        if proposal.kind == 'policy':
-            say(proposal.rationale)
+        if proposal.value_reason:
+            say(f'Why: {proposal.value_reason}')
     for id_, action in actions.items():
         if action == 'stale':
-            say(f'\n--- [stale] `{id_}` no longer qualifies')
+            say(f'\n--- [stale] `{id_}`: {stale_reasons.get(id_, "no longer found")}')
 
     doc = finish(
         ProposalsDoc(generated_at=now, window=Window(start=start, end=now), min_users=args.min_users, proposals=merged)
@@ -194,8 +229,9 @@ async def main(args: argparse.Namespace) -> tuple[str, int]:
         say(f'\nWrote {args.out}')
     new_count = sum(a == 'new' for a in actions.values())
     summary = (
-        f'{len(prompts)} prompts, {len(users)} users, {len(found)} patterns, '
-        f'{sum(len(p.users) >= args.min_users for p in found)} qualifying, {len(calls)} tool calls, '
+        f'{len(prompts)} prompts, {len(users)} users, {len(found)} clusters, '
+        f'{sum(p.kind != "policy" and not p.emerging for p in drafted)} suggested '
+        f'(+{sum(p.kind != "policy" and p.emerging for p in drafted)} emerging), {len(calls)} tool calls, '
         f'{new_count} new suggestion(s); {USAGE}'
     )
     if args.dry_run:
@@ -207,7 +243,10 @@ async def main(args: argparse.Namespace) -> tuple[str, int]:
     def build(current: ProposalsDoc | None) -> ProposalsDoc:
         # Merge onto what is live right now: statuses written while we were mining win.
         fresh, _ = patterns_mod.merge(
-            [p for p in (current.proposals if current else []) if keep(p)], drafted, stale_kinds=stale_kinds
+            [p for p in (current.proposals if current else []) if keep(p)],
+            drafted,
+            stale_kinds=stale_kinds,
+            stale_reasons=stale_reasons,
         )
         return finish(doc.model_copy(update={'proposals': fresh}))
 
@@ -224,55 +263,91 @@ async def _mine_prompts(
     args: argparse.Namespace,
     prompts: list[UserPrompt],
     existing: list[Proposal],
+    calls: list[policy_mod.ToolCall],
     *,
     window: tuple[datetime, datetime],
-) -> tuple[list[Proposal], list[patterns_mod.Pattern]]:
-    # The version is bumped whenever the facet shape changes, so cached facets are re-extracted (v2: `preferences`).
-    cache_path = args.cache or CACHE_DIR / f'facets-v{FACETS_VERSION}-{re.sub(r"\W+", "_", args.facet_model)}.json'
-    facets = (
-        {}
-        if args.reuse_clusters
-        else await facets_mod.extract_facets(prompts, model=args.facet_model, cache=facets_mod.FacetCache(cache_path))
+) -> tuple[list[Proposal], list[patterns_mod.Pattern], dict[str, str]]:
+    """Extract, cluster, validate, gate, rank and draft. Also returns `status_reason`s for pending ids that fail."""
+    # The version is bumped whenever the extraction shape changes, so cached extractions are redone.
+    model_key = re.sub(r'\W+', '_', args.extract_model)
+    cache_path = args.cache or CACHE_DIR / f'extract-v{EXTRACT_VERSION}-{model_key}.json'
+    extractions = await extract_mod.extract_rules(
+        prompts, model=args.extract_model, cache=extract_mod.ExtractionCache(cache_path), calls=calls
     )
-    if facets:
-        say(
-            f'{sum(1 for f in facets.values() if f.intent)} prompts carry a reusable intent, '
-            f'{sum(len(f.preferences) for f in facets.values())} standing preferences stated in passing'
-        )
-    clusters_path = CACHE_DIR / 'clusters.json'
+    say(f'Extraction: {extract_mod.summary(extractions)}')
+    clusters_path = patterns_mod.CLUSTERS_PATH
     age = datetime.now(UTC).timestamp() - clusters_path.stat().st_mtime if clusters_path.exists() else None
     if args.reuse_clusters:
-        found = patterns_mod.load_patterns(clusters_path, prompts)
+        found = patterns_mod.load_patterns(prompts)
     elif args.recluster or age is None or age > RECLUSTER_EVERY.total_seconds():
         # Full re-clustering (first run, on request, or daily): groups can merge and split as the fleet evolves.
-        found = await patterns_mod.find_patterns(prompts, facets, model=args.pattern_model, existing=existing)
-        patterns_mod.assign_stable_ids(found, existing, prior_spans=patterns_mod.load_prior_spans())
-        patterns_mod.save_clustered_spans(set(patterns_mod.intents_of(prompts, facets)))
-        patterns_mod.save_patterns(clusters_path, found)
+        found = await patterns_mod.find_patterns(prompts, extractions, model=args.pattern_model, existing=existing)
+        patterns_mod.assign_stable_ids(
+            found,
+            existing,
+            prior_spans=patterns_mod.load_prior_spans(),
+            single_rule_spans=patterns_mod.single_rule_spans(extractions),
+        )
+        patterns_mod.save_clustered_spans(set(patterns_mod.items_of(prompts, extractions)))
+        patterns_mod.save_patterns(found)
     else:
-        cached = patterns_mod.load_patterns(clusters_path, prompts)
-        found = await patterns_mod.update_patterns(prompts, facets, cached, model=args.pattern_model, existing=existing)
-        patterns_mod.save_patterns(clusters_path, found)
-    patterns_mod.record_pattern_spans(found)
-    say('\nPatterns (distinct users / sessions / score):')
-    for p in found:
-        mark = '*' if len(p.users) >= args.min_users else ' '
-        say(f' {mark} {len(p.users)}u {len(p.sessions)}s {p.score:.2f}  {p.id}: {p.pattern}')
-    qualifying = [p for p in found if len(p.users) >= args.min_users]
-    if not qualifying:
-        say(f'\nNo pattern reached {args.min_users} distinct users.')
-        return [], found
+        cached = patterns_mod.load_patterns(prompts)
+        found = await patterns_mod.update_patterns(
+            prompts, extractions, cached, model=args.pattern_model, existing=existing
+        )
+        patterns_mod.save_patterns(found)
+    gates = patterns_mod.Gates(
+        min_users=args.min_users,
+        min_prompts=args.min_prompts,
+        min_sessions=args.min_sessions,
+        min_days=args.min_days,
+        min_sessions_one_day=args.min_sessions_one_day,
+        min_confidence=args.min_confidence,
+        min_coherence=args.min_coherence,
+        max_pending=args.max_pending,
+    )
+    candidates = await patterns_mod.validate_patterns(found, extractions, model=args.pattern_model, gates=gates)
+    # Impact and stable ids follow the verified prompts where a cluster was validated.
+    patterns_mod.record_pattern_spans([c.pattern for c in candidates])
+    reviewed = {p.id for p in existing if p.status in ('accepted', 'dismissed')}
+    pending, emerging = patterns_mod.rank_and_cap(candidates, gates, reviewed=reviewed)
+    say('\nClusters (verified developers / sessions / prompts / corrections, score):')
+    order = {id(c): n for n, c in enumerate([*pending, *emerging])}
+    for c in sorted(candidates, key=lambda c: order.get(id(c), len(order))):
+        p = c.pattern
+        state = (
+            'PENDING '
+            if c in pending
+            else 'emerging'
+            if c in emerging
+            else 'reviewed'
+            if c.failure is None
+            else '        '
+        )
+        say(
+            f' {state} {len(p.users)}u {len(p.sessions)}s {len(p.prompts)}p {c.corrections}c {c.score:.2f}  {p.id}: '
+            f'{c.validation.rule if c.validation and c.validation.rule else p.pattern}'
+        )
+        say(f'          {c.failure or (c.validation.value_reason if c.validation else "")}')
+    stale_reasons = {c.pattern.id: c.failure for c in candidates if c.failure}
+    clustered = {c.pattern.id for c in candidates}
+    prior_spans = patterns_mod.load_prior_spans()
+    for p in existing:
+        if p.kind in ('skill', 'instruction') and p.status in ('pending', 'stale') and p.id not in clustered:
+            spans = {span_of(i) for i in prior_spans.get(p.id, set())} | {e.span_id for e in p.evidence}
+            stale_reasons[p.id] = patterns_mod.unmatched_reason(spans, extractions)
     drafted = await patterns_mod.draft_proposals(
-        qualifying,
+        [*pending, *emerging],
         model=args.pattern_model,
+        emerging={c.pattern.id for c in emerging},
         window_teams={p.team for p in prompts if p.team},
         window_repos={p.repo_slug for p in prompts if p.repo_slug},
     )
-    by_id = {p.id: p for p in qualifying}
+    by_id = {c.pattern.id: c.pattern for c in [*pending, *emerging]}
     for proposal in drafted:
         events = ((u.timestamp, u.user or u.span_id) for u in by_id[proposal.id].prompts)
         proposal.trend = daily_trend(events, *window)
-    return drafted, found
+    return drafted, found, stale_reasons
 
 
 async def _fetch_calls(args: argparse.Namespace) -> list[policy_mod.ToolCall]:
@@ -315,8 +390,9 @@ class Finisher:
             }
             if p.id in self.dismissals and p.status in ('pending', 'stale'):
                 update |= {'status': 'dismissed', 'status_reason': self.dismissals[p.id]}
-            if p.scope_reason:
-                update['scope_reason'] = policy_mod.mask_identifiers(p.scope_reason, self.identifiers)
+            for f in ('scope_reason', 'value_reason', 'status_reason', 'suggested_instruction'):
+                if value := getattr(p, f):
+                    update[f] = policy_mod.mask_identifiers(value, self.identifiers)
             if p.status == 'accepted' and p.id in self.impacts:
                 update['impact'] = self.impacts[p.id]
             proposals.append(p.model_copy(update=update, deep=True))

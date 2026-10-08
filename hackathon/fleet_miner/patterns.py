@@ -1,4 +1,10 @@
-"""Stages 2 and 3: group intents across the fleet, then draft a skill or instruction per recurring pattern."""
+"""Stages 2 to 4: cluster the extracted rules across the fleet, validate each cluster, gate and rank, then draft.
+
+braindump's synthesize stage, ported to prompts: potential rules (see `extract.py`) are grouped by an LLM (the gateway
+only serves the miner's Anthropic model, which has no embeddings, so no cosine clustering), each group is validated
+(coherence, one rule, which prompts actually support it, and whether writing it down changes what an agent does),
+then deterministic gates and ranking decide what becomes a suggestion.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +14,9 @@ import json
 import keyword
 import re
 import statistics
+from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -17,38 +25,79 @@ from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
 
 from . import __version__
+from .extract import RULE_KEY, STEERING_ROUTES, PromptExtraction
 from .llm_cache import CACHE_DIR, run_cached
+from .models import Evidence, Proposal, Tier, UserPrompt, span_of, strip_markup
 from .scope import measure_scope
-from .models import PREFERENCE_KEY, Evidence, Facet, Proposal, ProposalKind, Tier, UserPrompt, span_of, strip_markup
 
 CLUSTER_INSTRUCTIONS = """\
-You are given intents extracted from prompts that many developers typed into their coding agents, plus the
-patterns that were proposed in earlier runs. Group intents that express the SAME underlying request, even when
-worded very differently ("babysit the PR until CI is green" and "keep an eye on checks and review comments and
-iterate" are the same pattern). Prefer fewer, broader groups: variants of one workflow (e.g. "iterate on the PR
-until CI is green", "iterate until the review bot is satisfied", "implement it, open a PR and keep iterating
-until green") belong in ONE group. Leave out intents that match nothing else, and leave out throwaway test tasks
-that ask for a specific artifact (e.g. "write FizzBuzz in Rust") rather than describing how the user wants work done.
-Intents marked `preference` are standing preferences a developer stated in passing (e.g. "use British English" inside
-a FizzBuzz request): group them by the preference alone, with each other and with main intents that ask the same.
+You are given potential rules for coding agents, each extracted from a prompt a developer typed into their agent, plus
+the suggestions made in earlier runs. Group rules that express the SAME guidance, even when worded very differently
+("babysit the PR until CI is green" and "keep fixing checks and review comments until they pass" are one rule). Prefer
+fewer, broader groups: variants of one way of working belong together. Leave out rules that match nothing else.
 
-For each group: write the shared pattern as one sentence, give a short kebab-case slug, and if it is the same
-pattern as an earlier proposal, set `existing_id` to that proposal's id exactly as given (so it is not proposed twice); otherwise leave it null.
-`confidence` is how sure you are that this is one coherent, reusable pattern (0-1).
+For each group: write the shared rule as one sentence, give a short kebab-case slug, and if it is the same guidance as
+an earlier suggestion, set `existing_id` to that suggestion's id exactly as given; otherwise leave it null.
+`confidence` is how sure you are that this is one coherent rule (0-1).
+"""
+
+ASSIGN_INSTRUCTIONS = """\
+You keep groups of recurring guidance that developers give their coding agents up to date. You get the existing
+groups (id, the shared rule, size) and potential rules extracted since. Put each new rule in the existing group that
+expresses the SAME guidance, even if worded differently. Leave out rules that match no group.
+"""
+
+UNPLACED_INSTRUCTIONS = """\
+You are given potential rules for coding agents, each extracted from a prompt a developer typed into their agent, that
+fit none of the known groups. Find the ones that express the SAME guidance, even when worded very differently, and
+group them. Leave out rules that match nothing else.
+
+For each group: write the shared rule as one sentence and give a short kebab-case slug. `confidence` is how sure you
+are that this is one coherent rule (0-1).
+"""
+
+VALIDATE_INSTRUCTIONS = """\
+You validate one cluster of potential rules for coding agents. Each was extracted from a prompt a developer typed into
+their coding agent, shown with its source prompt. A validated rule is pushed to every developer's agent in the
+company, so be strict: a vague or useless rule costs everyone.
+
+1. `common_pattern`: what the cluster is about, in one sentence.
+2. `rule`: ONE rule at the level of the pattern: drop the instances (names, features, the task at hand) but keep team
+   conventions and named tools. Merge rephrasings and entity-specific copies into one rule, complementary halves into
+   one rule with its condition, and pick one framing of inverses.
+3. `supporting_ids`: the ids whose SOURCE PROMPT itself expresses this rule. Read each prompt, not only the rule
+   extracted from it: a prompt that is merely near the topic, a one-off task ("fix this", "TF is this"), or a question
+   does not support it. Be strict; few supporting prompts is fine.
+4. `kind`: `instruction` for a rule, preference or convention. `skill` only when the supporting prompts spell out a
+   multi-step procedure that developers had to explain; `steps` is then that procedure, generalized.
+5. `changes_behaviour`: would a capable coding agent (Claude Code or Codex class) already do this unprompted, given
+   the plain request? True only when writing it down changes what the agent does: a preference, a team convention, a
+   specific procedure or tool, or a recurring correction of the agent. False for:
+   - the task itself ("diagnose the screenshot and fix it", "resolve the merge conflicts", "review this PR"),
+   - generic good practice an agent follows anyway,
+   - anything narrow to one subject, feature or conversation thread. Questions about the same topic ("how does code
+     mode work?") are not a shared need for different behaviour; the one exception is knowledge the agent repeatedly
+     lacked and had to be told, shown by the prompts correcting it, and then the rule is that knowledge.
+   `value_reason`: one line, what changes in the agent's behaviour, or why nothing does.
+6. `cluster_coherence` (0-1): how closely the SUPPORTING prompts share this one rule (not the left-out ones).
+   `confidence` (0-1), braindump's scale: high (0.8+) when the supporting prompts clearly converge on this rule;
+   medium (0.5-0.8) when they are related but the right abstraction is uncertain; low (<0.5) when the rule is
+   speculative. Whether it is worth writing down is `changes_behaviour`, not confidence; wording differences (one
+   developer adds an example, another says "only") don't lower it.
+Set `rule` to null and give `rejection_reason` when they are only superficially related, contradict each other, or
+are specific to one task, feature or thread.
 """
 
 DRAFT_INSTRUCTIONS = """\
-Several developers at one company typed the same kind of request into their coding agents. Turn it into something
-pushed to every developer's agent, so nobody has to type it again.
+Several developers at one company had to tell their coding agents the same thing. You get the validated rule, whether
+it is an `instruction` or a `skill` (decided already), and what they typed. Turn it into text pushed to every
+developer's agent, so nobody has to type it again.
 
 Write clear, generalized guidance in your own words; do not copy their phrasing. Use what they typed as the measure
 of how much context it needs: if they got by with one line, yours is about one line, not three paragraphs. You are
 given the median length of their prompts: keep `text` close to that length, and never more than twice as long.
-
-Decide the kind:
-- `skill` when they asked for a sequence of steps: the steps, and at most one stop condition. No headings, no
-  "Purpose" or "When to use" sections, no generic advice they didn't ask for (testing, linting, force-push warnings).
-- `instruction` when it is a standing preference or rule.
+A skill's `text` is its steps, with at most one stop condition: no headings, no "Purpose" or "When to use" sections,
+no generic advice they didn't ask for. An instruction's `text` is the rule.
 
 `name`: a short kebab-case slug.
 `description`: for a skill, this one line is all the agent sees when deciding whether to load the skill, so write it
@@ -56,23 +105,23 @@ as an explicit trigger naming the concrete situation, starting with "Load whenev
 whenever you open or push to a pull request, to keep going until CI and review bots are green."), not a summary.
 For an instruction, one short sentence saying when it applies.
 `suggested_tier`: `required` if nearly everyone would want it, `default_on` if broadly useful, `optional` if niche.
-`rationale`: one or two sentences: how many people asked, and what it saves them.
+`rationale`: one or two sentences: how many people had to ask, and what it saves them.
 
-`scope`: `repo` when the request only makes sense in one codebase (it names a specific repository, its paths,
-modules, scripts, CI jobs, branch conventions or tools unique to it), `organization` when any developer on any
-repository could use it. `scope_reason`: one short sentence saying which detail makes it repo-specific, or null.
-Tools and bots used across many repos (gh, Macroscope, CI in general) do not make it repo-specific.
+`scope`: `repo` when the rule only makes sense in one codebase (it names a specific repository, its paths, modules,
+scripts, CI jobs, branch conventions or tools unique to it), `organization` when any developer on any repository could
+use it. `scope_reason`: one short sentence saying which detail makes it repo-specific, or null. Tools and bots used
+across many repos (gh, Macroscope, CI in general) do not make it repo-specific.
 
 Never include personal identifiers in any field: no people's names, GitHub usernames, handles or emails. Replace a
 person with their role ("the requested reviewer", "the PR author"). Do keep the names of tools, bots and repository
-conventions (e.g. Macroscope, douwebot, `SKIP=typecheck`): they are useful context for an organization-wide skill.
+conventions (e.g. Macroscope, douwebot, `SKIP=typecheck`): they are useful context for an organization-wide rule.
 """
 
 
 class _Group(BaseModel):
     slug: str
     pattern: str
-    span_ids: list[str]
+    member_ids: list[str]
     existing_id: str | None = None
     confidence: float = Field(ge=0, le=1)
 
@@ -81,8 +130,22 @@ class _Groups(BaseModel):
     groups: list[_Group]
 
 
+class _Validation(BaseModel):
+    common_pattern: str
+    rule: str | None
+    kind: Literal['instruction', 'skill'] = 'instruction'
+    steps: list[str] = []
+    supporting_ids: list[str] = []
+    cluster_coherence: float = Field(ge=0, le=1)
+    changes_behaviour: bool
+    value_reason: str
+    confidence: float = Field(ge=0, le=1)
+    rejection_reason: str | None = None
+
+    _strip_markup = field_validator('common_pattern', 'value_reason')(strip_markup)
+
+
 class _Draft(BaseModel):
-    kind: ProposalKind
     name: str
     description: str
     text: str
@@ -95,96 +158,101 @@ class _Draft(BaseModel):
     _strip_markup = field_validator('name', 'description', 'text', 'rationale')(strip_markup)
 
 
+@dataclass(frozen=True)
+class Item:
+    """One thing to cluster: a potential rule extracted from one prompt."""
+
+    id: str
+    span_id: str
+    rule: str
+    motivation: str
+
+    def item(self) -> dict[str, object]:
+        return {'id': self.id, 'rule': self.rule, 'motivation': self.motivation}
+
+
+def items_of(prompts: list[UserPrompt], extractions: dict[str, PromptExtraction]) -> dict[str, Item]:
+    """Every potential rule of every actionable prompt in the window, keyed `<span_id>#r<n>`."""
+    items: dict[str, Item] = {}
+    for p in prompts:
+        if (e := extractions.get(p.span_id)) is None or not e.is_actionable:
+            continue
+        for n, rule in enumerate(e.potential_rules):
+            key = f'{p.span_id}{RULE_KEY}{n}'
+            items[key] = Item(key, p.span_id, rule.generalization, rule.motivation)
+    return items
+
+
 @dataclass
 class Pattern:
     id: str
     pattern: str
     confidence: float
     prompts: list[UserPrompt]
-    """One per prompt span, even when several intents of one prompt are in the group."""
+    """One per prompt span, even when several rules of one prompt are in the group."""
     existing_id: str | None = None
     users: set[str] = field(default_factory=set[str])
     sessions: set[str] = field(default_factory=set[str])
-    intent_ids: list[str] = field(default_factory=list[str])
-    """The grouped intents: span ids for main intents, `<span_id>#pref<n>` for preferences stated in passing."""
+    item_ids: list[str] = field(default_factory=list[str])
+    """The grouped items: `<span_id>#r<n>` rule ids."""
 
     @property
-    def preference(self) -> bool:
-        """Mostly standing preferences stated inside other requests, which lean towards an instruction."""
-        return 2 * sum(PREFERENCE_KEY in i for i in self.intent_ids) > len(self.intent_ids)
+    def days(self) -> set[str]:
+        return {p.timestamp.date().isoformat() for p in self.prompts}
 
     @property
-    def score(self) -> float:
-        # braindump's spread factor, over distinct users instead of distinct PRs.
-        spread = {0: 0.0, 1: 0.6, 2: 0.85, 3: 0.95}.get(len(self.users), 1.0)
-        return round(self.confidence * spread, 3)
+    def latest(self) -> datetime:
+        return max(p.timestamp for p in self.prompts)
 
 
-@dataclass(frozen=True)
-class Intent:
-    """One thing to cluster: a prompt's main intent, or a standing preference it states in passing."""
-
-    id: str
-    span_id: str
-    text: str
-    standing_request: bool
-    preference: bool
-
-    def item(self) -> dict[str, object]:
-        """What the clustering model sees (`span_id` holds the intent id; `preference` only when set)."""
-        item: dict[str, object] = {'span_id': self.id, 'intent': self.text, 'standing_request': self.standing_request}
-        return item | {'preference': True} if self.preference else item
+SPREAD = {0: 0.0, 1: 0.6, 2: 0.85, 3: 0.95}
+"""braindump's spread factor over unique PRs, here over distinct developers (4+ -> 1.0)."""
 
 
-def intents_of(prompts: list[UserPrompt], facets: dict[str, Facet]) -> dict[str, Intent]:
-    """Every intent to cluster: each prompt's main intent plus each standing preference it states in passing."""
-    spans = {p.span_id for p in prompts}
-    intents: dict[str, Intent] = {}
-    for span_id, f in facets.items():
-        if span_id not in spans:
-            continue
-        if f.intent:
-            intents[span_id] = Intent(span_id, span_id, f.intent, f.standing_request, preference=False)
-        for n, text in enumerate(f.preferences):
-            key = f'{span_id}{PREFERENCE_KEY}{n}'
-            intents[key] = Intent(key, span_id, text, standing_request=True, preference=True)
-    return intents
+def _user(p: UserPrompt) -> str:
+    return p.user or f'unknown:{p.session_id or p.trace_id}'
 
 
 def _pattern(
     id: str,
     pattern: str,
     confidence: float,
-    intent_ids: list[str],
+    item_ids: list[str],
     by_span: dict[str, UserPrompt],
     existing_id: str | None = None,
 ) -> Pattern:
-    intent_ids = [i for i in dict.fromkeys(intent_ids) if span_of(i) in by_span]
-    prompts = [by_span[s] for s in dict.fromkeys(span_of(i) for i in intent_ids)]
+    item_ids = [i for i in dict.fromkeys(item_ids) if span_of(i) in by_span]
+    prompts = [by_span[s] for s in dict.fromkeys(span_of(i) for i in item_ids)]
     return Pattern(
         id=id,
         pattern=pattern,
         confidence=confidence,
         prompts=prompts,
         existing_id=existing_id,
-        users={p.user or f'unknown:{p.session_id or p.trace_id}' for p in prompts},
+        users={_user(p) for p in prompts},
         sessions={p.session_id or p.trace_id for p in prompts},
-        intent_ids=intent_ids,
+        item_ids=item_ids,
     )
 
 
+def _by_size(patterns: list[Pattern]) -> list[Pattern]:
+    return sorted(patterns, key=lambda p: (len(p.users), len(p.prompts), p.id), reverse=True)
+
+
 async def find_patterns(
-    prompts: list[UserPrompt], facets: dict[str, Facet], *, model: str, existing: list[Proposal]
+    prompts: list[UserPrompt], extractions: dict[str, PromptExtraction], *, model: str, existing: list[Proposal]
 ) -> list[Pattern]:
     by_span = {p.span_id: p for p in prompts}
-    items = [i.item() for i in intents_of(prompts, facets).values()]
+    items = [i.item() for i in items_of(prompts, extractions).values()]
     if not items:
         return []
-    earlier = [{'id': p.id, 'pattern': p.pattern, 'status': p.status} for p in existing]
+    earlier = [
+        {'id': p.id, 'rule': p.pattern, 'status': p.status} for p in existing if p.kind in ('skill', 'instruction')
+    ]
     agent = Agent(model, output_type=_Groups, instructions=CLUSTER_INSTRUCTIONS, name='fleet_miner_cluster')
     output = await run_cached(
         agent,
-        f'Earlier proposals:\n{json.dumps(earlier, indent=2)}\n\nIntents:\n{json.dumps(items, indent=2)}',
+        f'Earlier suggestions:\n{json.dumps(earlier, indent=2)}\n\nPotential rules:\n{json.dumps(items, indent=2)}',
         output_type=_Groups,
     )
     known_ids = {p.id for p in existing}
@@ -193,11 +261,11 @@ async def find_patterns(
         # Only reuse an id the model was actually shown; anything else is a mangled or invented one.
         existing_id = group.existing_id if group.existing_id in known_ids else None
         pattern = _pattern(
-            existing_id or group.slug, group.pattern, group.confidence, group.span_ids, by_span, existing_id
+            existing_id or group.slug, group.pattern, group.confidence, group.member_ids, by_span, existing_id
         )
         if len(pattern.prompts) >= 2:
             patterns.append(pattern)
-    return sorted(patterns, key=lambda p: (len(p.users), p.score), reverse=True)
+    return _by_size(patterns)
 
 
 def assign_stable_ids(
@@ -205,28 +273,38 @@ def assign_stable_ids(
     existing: list[Proposal],
     *,
     prior_spans: dict[str, set[str]] | None = None,
+    single_rule_spans: set[str] = frozenset(),  # pyright: ignore[reportArgumentType]
     taken: set[str] | None = None,
 ) -> None:
     """Give each cluster the id of the earlier proposal it continues, so a renamed cluster can't resurrect an
     accepted or dismissed pattern under a new id.
 
-    A cluster continues an earlier proposal (of any status) when they share intents: the full intent list cached from
-    the runs that grouped it (`prior_spans`), or, for a proposal with none cached, its evidence spans. Intent ids, not
-    spans, so a preference stated inside a task prompt doesn't tie the preference's group to the task's. Failing that,
-    the clustering model's intent match (`existing_id`) decides. Only a cluster that matches nothing gets a new id,
-    never one already taken.
+    In order: the earlier proposal sharing the most rule ids (`prior_spans` records every item ever grouped under an
+    id); else the clustering model's match (`existing_id`); else, for proposals from before rules were extracted, the
+    one sharing the most prompts, counting only prompts that yield a single rule (`single_rule_spans`: a prompt with
+    four rules says nothing about which of them an old intent was) and needing 2+ of them and half the cluster. Only a
+    cluster that matches nothing gets a new id, never one already taken.
     """
     prior = [p for p in existing if p.kind in ('skill', 'instruction')]
-    spans_of = {p.id: (prior_spans or {}).get(p.id) or {e.span_id for e in p.evidence} for p in prior}
+    items_of_id = {p.id: (prior_spans or {}).get(p.id, set()) for p in prior}
+    spans_of = {p.id: {span_of(i) for i in items_of_id[p.id]} or {e.span_id for e in p.evidence} for p in prior}
     taken = set(taken or ())
+
+    def best(scores: dict[str, int]) -> str | None:
+        top = max(scores, key=lambda pid: (scores[pid], pid), default=None)
+        return top if top is not None and scores[top] > 0 else None
+
     for pattern in sorted(patterns, key=lambda p: len(p.prompts), reverse=True):
-        spans = set(pattern.intent_ids)
-        overlaps = {pid: len(spans & s) for pid, s in spans_of.items() if pid not in taken}
-        best = max(overlaps, key=lambda pid: overlaps[pid], default=None)
-        if best is not None and overlaps[best] > 0:
-            pattern.id = pattern.existing_id = best
-        elif pattern.existing_id in spans_of and pattern.existing_id not in taken:
+        free = [pid for pid in spans_of if pid not in taken]
+        by_items = best({pid: len(set(pattern.item_ids) & items_of_id[pid]) for pid in free})
+        spans = {p.span_id for p in pattern.prompts} & single_rule_spans
+        by_spans = best({pid: len(spans & spans_of[pid]) for pid in free})
+        if by_items is not None:
+            pattern.id = pattern.existing_id = by_items
+        elif pattern.existing_id in free:
             pattern.id = pattern.existing_id
+        elif by_spans is not None and (n := len(spans & spans_of[by_spans])) >= 2 and 2 * n >= len(pattern.prompts):
+            pattern.id = pattern.existing_id = by_spans
         else:
             pattern.existing_id = None
             base, n = pattern.id, 2
@@ -235,10 +313,15 @@ def assign_stable_ids(
         taken.add(pattern.id)
 
 
-SPANS_PATH = CACHE_DIR / 'pattern_spans.json'
-"""Every intent id ever assigned to each proposal id, across runs (clusters.json only has the latest run).
+def single_rule_spans(extractions: dict[str, PromptExtraction]) -> set[str]:
+    return {s for s, e in extractions.items() if len(e.potential_rules) == 1}
 
-Intent ids are prompt span ids, or `<span_id>#pref<n>` for a preference stated in passing (see `span_of`).
+
+SPANS_PATH = CACHE_DIR / 'pattern_spans.json'
+"""Every item id ever assigned to each proposal id, across runs (the clusters file only has the latest run).
+
+Item ids are `<span_id>#r<n>` rule ids, or, from runs before rules were extracted, prompt span ids and
+`<span_id>#pref<n>` (see `span_of`).
 """
 
 
@@ -249,13 +332,17 @@ def load_prior_spans(path: Path = SPANS_PATH) -> dict[str, set[str]]:
 def record_pattern_spans(patterns: list[Pattern], path: Path = SPANS_PATH) -> dict[str, set[str]]:
     spans = load_prior_spans(path)
     for p in patterns:
-        spans.setdefault(p.id, set()).update(p.intent_ids)
+        spans.setdefault(p.id, set()).update(p.item_ids)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({pid: sorted(s) for pid, s in spans.items()}))
     return spans
 
 
-def save_patterns(path: Path, patterns: list[Pattern]) -> None:
+CLUSTERS_PATH = CACHE_DIR / 'rule_clusters.json'
+"""The latest groups of rule ids. (`clusters.json` held intent groups, before rules were extracted.)"""
+
+
+def save_patterns(patterns: list[Pattern], path: Path = CLUSTERS_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = [
         {
@@ -263,60 +350,49 @@ def save_patterns(path: Path, patterns: list[Pattern]) -> None:
             'pattern': p.pattern,
             'confidence': p.confidence,
             'existing_id': p.existing_id,
-            'span_ids': [u.span_id for u in p.prompts],
-            'intent_ids': p.intent_ids,
+            'item_ids': p.item_ids,
         }
         for p in patterns
     ]
     path.write_text(json.dumps(data, indent=2))
 
 
-ASSIGN_INSTRUCTIONS = """\
-You keep groups of recurring requests that developers type into their coding agents up to date. You get the existing
-groups (id, the shared request, size) and intents typed since the groups were made. Put each new intent in the
-existing group that expresses the SAME request (even if worded differently). Leave out intents that match no group.
-Never put a throwaway test task (e.g. "write FizzBuzz in Rust") in a group. Intents marked `preference` are standing
-preferences stated in passing inside another request: place them by the preference alone.
-"""
-
-UNPLACED_INSTRUCTIONS = """\
-You are given intents that developers typed into their coding agents and that fit none of the known groups of
-recurring requests. Find the ones that express the SAME underlying request, even when worded very differently, and
-group them. Leave out intents that match nothing else, and throwaway test tasks that ask for a specific artifact
-(e.g. "write FizzBuzz in Rust") rather than describing how the user wants work done. Intents marked `preference` are
-standing preferences a developer stated in passing (e.g. "use British English" inside a FizzBuzz request): group them
-by the preference alone, with each other and with intents that ask the same.
-
-For each group: write the shared pattern as one sentence and give a short kebab-case slug. `confidence` is how sure
-you are that this is one coherent, reusable pattern (0-1).
-"""
+def load_patterns(prompts: list[UserPrompt], path: Path = CLUSTERS_PATH) -> list[Pattern]:
+    """Rebuild cached groups against the current prompts, so a run can continue without re-clustering."""
+    by_span = {p.span_id: p for p in prompts}
+    return _by_size(
+        [
+            _pattern(item['id'], item['pattern'], item['confidence'], item['item_ids'], by_span, item['existing_id'])
+            for item in json.loads(path.read_text())
+        ]
+    )
 
 
 class _ExistingAssignment(BaseModel):
     group_id: str
-    span_ids: list[str]
+    member_ids: list[str]
 
 
 class _Placements(BaseModel):
     to_existing: list[_ExistingAssignment]
 
 
-CLUSTERED_PATH = CACHE_DIR / 'clustered_spans.json'
-"""Every intent id the incremental step has already offered to the existing groups, placed or not."""
+CLUSTERED_PATH = CACHE_DIR / 'rule_clustered.json'
+"""Every rule id the incremental step has already offered to the existing groups, placed or not."""
 
 
 def load_clustered_spans() -> set[str]:
     return set(json.loads(CLUSTERED_PATH.read_text())) if CLUSTERED_PATH.exists() else set()
 
 
-def save_clustered_spans(spans: set[str]) -> None:
+def save_clustered_spans(ids: set[str]) -> None:
     CLUSTERED_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CLUSTERED_PATH.write_text(json.dumps(sorted(spans)))
+    CLUSTERED_PATH.write_text(json.dumps(sorted(ids)))
 
 
 async def update_patterns(
     prompts: list[UserPrompt],
-    facets: dict[str, Facet],
+    extractions: dict[str, PromptExtraction],
     cached: list[Pattern],
     *,
     model: str,
@@ -325,77 +401,226 @@ async def update_patterns(
 ) -> list[Pattern]:
     """Incremental clustering, so a run costs what is new rather than what is in the window.
 
-    1. Intents never offered before are placed into the cached groups (one call, only when there are any).
-    2. Every intent in no group ("unplaced", new or earlier) is clustered among the unplaced only, so a theme that
-       is new since the last full re-cluster still becomes a pattern. They are few, and the call is cached by its
-       exact input, so an unchanged set costs nothing.
+    1. Rules never offered before are placed into the cached groups (one call, only when there are any).
+    2. Every rule in no group ("unplaced", new or earlier) is clustered among the unplaced only, so a theme that is
+       new since the last full re-cluster still becomes a pattern. They are few, and the call is cached by its exact
+       input, so an unchanged set costs nothing.
     """
     by_span = {p.span_id: p for p in prompts}
     seen = load_clustered_spans()
-    intents = intents_of(prompts, facets)
-    grouped = {i for p in cached for i in p.intent_ids}
-    new = [i for i in intents if i not in seen and i not in grouped]
+    items = items_of(prompts, extractions)
+    grouped = {i for p in cached for i in p.item_ids}
+    new = [i for i in items if i not in seen and i not in grouped]
     by_id = {p.id: p for p in cached}
     if new and cached:
         agent = Agent(model, output_type=_Placements, instructions=ASSIGN_INSTRUCTIONS, name='fleet_miner_assign')
-        groups = [{'id': p.id, 'pattern': p.pattern, 'size': len(p.prompts)} for p in cached]
+        groups = [{'id': p.id, 'rule': p.pattern, 'size': len(p.prompts)} for p in cached]
         output = await run_cached(
             agent,
             f'Existing groups:\n{json.dumps(groups, indent=2)}\n\n'
-            f'New intents:\n{json.dumps([intents[i].item() for i in new], indent=2)}',
+            f'New potential rules:\n{json.dumps([items[i].item() for i in new], indent=2)}',
             output_type=_Placements,
         )
         allowed = set(new)
         for assignment in output.to_existing:
             if (pattern := by_id.get(assignment.group_id)) is None:
                 continue
-            placed = [i for i in assignment.span_ids if i in allowed and i not in grouped]
+            placed = [i for i in assignment.member_ids if i in allowed and i not in grouped]
             grouped.update(placed)
             by_id[pattern.id] = _pattern(
-                pattern.id,
-                pattern.pattern,
-                pattern.confidence,
-                pattern.intent_ids + placed,
-                by_span,
-                pattern.existing_id,
+                pattern.id, pattern.pattern, pattern.confidence, pattern.item_ids + placed, by_span, pattern.existing_id
             )
-    save_clustered_spans(seen | set(intents))
+    save_clustered_spans(seen | set(items))
 
-    unplaced = sorted(
-        (i for i in intents if i not in grouped), key=lambda i: (by_span[intents[i].span_id].timestamp, i)
-    )
+    unplaced = sorted((i for i in items if i not in grouped), key=lambda i: (by_span[items[i].span_id].timestamp, i))
     unplaced = unplaced[-max_unplaced:]
     fresh: list[Pattern] = []
-    if len({intents[i].span_id for i in unplaced}) >= 2:
+    if len({items[i].span_id for i in unplaced}) >= 2:
         agent = Agent(model, output_type=_Groups, instructions=UNPLACED_INSTRUCTIONS, name='fleet_miner_unplaced')
         output = await run_cached(
             agent,
-            f'Intents in no group:\n{json.dumps([intents[i].item() for i in unplaced], indent=2)}',
+            f'Potential rules in no group:\n{json.dumps([items[i].item() for i in unplaced], indent=2)}',
             output_type=_Groups,
         )
         allowed = set(unplaced)
         for group in output.groups:
-            members = [i for i in dict.fromkeys(group.span_ids) if i in allowed and i not in grouped]
+            members = [i for i in dict.fromkeys(group.member_ids) if i in allowed and i not in grouped]
             pattern = _pattern(group.slug, group.pattern, group.confidence, members, by_span)
             if len(pattern.prompts) < 2:
                 continue
             grouped.update(members)
             fresh.append(pattern)
-        assign_stable_ids(fresh, existing, prior_spans=load_prior_spans(), taken=set(by_id))
-    return sorted([*by_id.values(), *fresh], key=lambda p: (len(p.users), p.score), reverse=True)
-
-
-def load_patterns(path: Path, prompts: list[UserPrompt]) -> list[Pattern]:
-    """Rebuild cached groups against the current prompts, so drafting can be re-run without re-clustering."""
-    by_span = {p.span_id: p for p in prompts}
-    patterns: list[Pattern] = []
-    for item in json.loads(path.read_text()):
-        # Files from before preferences were mined only have `span_ids`, which are main-intent ids.
-        intent_ids = item.get('intent_ids', item['span_ids'])
-        patterns.append(
-            _pattern(item['id'], item['pattern'], item['confidence'], intent_ids, by_span, item['existing_id'])
+        assign_stable_ids(
+            fresh,
+            existing,
+            prior_spans=load_prior_spans(),
+            single_rule_spans=single_rule_spans(extractions),
+            taken=set(by_id),
         )
-    return sorted(patterns, key=lambda p: (len(p.users), p.score), reverse=True)
+    return _by_size([*by_id.values(), *fresh])
+
+
+@dataclass(frozen=True)
+class Gates:
+    """What a validated cluster needs to become a suggestion. Counts are over the prompts validation verified."""
+
+    min_users: int = 2
+    min_prompts: int = 3
+    min_sessions: int = 2
+    min_days: int = 2
+    """Evidence from this many distinct days, or else `min_sessions_one_day` sessions: one afternoon of overlapping
+    work in one shared thread is not a recurring need."""
+    min_sessions_one_day: int = 3
+    min_confidence: float = 0.8
+    """braindump's "high" confidence."""
+    min_coherence: float = 0.7
+    max_pending: int = 5
+    """Pending skills and instructions at most; the rest that pass are kept as `emerging`."""
+    correction_bonus: float = 0.05
+    """Added to the score per verified correction (up to 3): the agent had to be told, live."""
+
+    def counting_failure(self, p: Pattern, *, verified: bool = False) -> str | None:
+        """Why these prompts are too few, or None. Applied before validation (to skip the call) and after it."""
+        users, prompts, sessions, days = len(p.users), len(p.prompts), len(p.sessions), len(p.days)
+        v = 'verified ' if verified else ''
+        if users < self.min_users:
+            return f'only {users} {v}developer{"" if users == 1 else "s"}'
+        if prompts < self.min_prompts:
+            return f'only {prompts} {v}prompt{"" if prompts == 1 else "s"}'
+        if sessions < self.min_sessions:
+            return f'only 1 session among the {v}prompts'
+        if days < self.min_days and sessions < self.min_sessions_one_day:
+            return f'all {sessions} sessions of the {v}prompts on one day'
+        return None
+
+
+@dataclass
+class Candidate:
+    """A cluster after validation: verified evidence, the judgement, and whether it passed the gates."""
+
+    pattern: Pattern
+    """Rebuilt from the supporting (verified) prompts only."""
+    validation: _Validation | None
+    """None when the cluster was too small to be worth validating."""
+    corrections: int = 0
+    failure: str | None = None
+    """Why it does not pass, for `status_reason` ("didn't pass: ...")."""
+
+    @property
+    def score(self) -> float:
+        confidence = self.validation.confidence if self.validation else 0.0
+        spread = SPREAD.get(len(self.pattern.users), 1.0)
+        return round(confidence * spread, 3)
+
+    def rank(self, gates: Gates) -> tuple[float, int, datetime]:
+        bonus = gates.correction_bonus * min(self.corrections, 3)
+        return (round(self.score + bonus, 3), len(self.pattern.sessions), self.pattern.latest)
+
+
+def _is_correction(prompt: UserPrompt, extractions: dict[str, PromptExtraction]) -> bool:
+    e = extractions.get(prompt.span_id)
+    return (e is not None and e.kind == 'correction') or prompt.route in STEERING_ROUTES
+
+
+async def validate_patterns(
+    patterns: list[Pattern],
+    extractions: dict[str, PromptExtraction],
+    *,
+    model: str,
+    gates: Gates,
+) -> list[Candidate]:
+    """braindump's cluster analysis, plus evidence verification and the "does it change behaviour" judgement.
+
+    One cached call per cluster that could pass on its raw counts; a cluster whose input is unchanged costs nothing.
+    """
+    agent = Agent(model, output_type=_Validation, instructions=VALIDATE_INSTRUCTIONS, name='fleet_miner_validate')
+    rules = {
+        f'{span_id}{RULE_KEY}{n}': r for span_id, e in extractions.items() for n, r in enumerate(e.potential_rules)
+    }
+
+    async def one(pattern: Pattern) -> Candidate:
+        if failure := gates.counting_failure(pattern):
+            return Candidate(pattern, None, failure=f"didn't pass: {failure}")
+        by_span = {p.span_id: p for p in pattern.prompts}
+        developers = {u: n for n, u in enumerate(dict.fromkeys(_user(p) for p in pattern.prompts), 1)}
+        sessions = {s: n for n, s in enumerate(dict.fromkeys(p.session_id or p.trace_id for p in pattern.prompts), 1)}
+        members: list[dict[str, object]] = []
+        for item_id in pattern.item_ids:
+            p, rule = by_span[span_of(item_id)], rules.get(item_id)
+            if rule is None:
+                continue
+            members.append(
+                {
+                    'id': item_id,
+                    'developer': developers[_user(p)],
+                    'session': sessions[p.session_id or p.trace_id],
+                    'date': p.timestamp.date().isoformat(),
+                    'rule': rule.generalization,
+                    'motivation': rule.motivation,
+                    'kind': extractions[p.span_id].kind,
+                    'typed_mid_run': p.route in STEERING_ROUTES if p.route is not None else None,
+                    'source_prompt': p.text[:600],
+                }
+            )
+        validation = await run_cached(
+            agent,
+            f'Cluster: {pattern.pattern}\n'
+            f'{len(members)} potential rules from {len(developers)} developers in {len(sessions)} sessions.\n'
+            f'{json.dumps(members, indent=2)}',
+            output_type=_Validation,
+        )
+        supported = [i for i in pattern.item_ids if i in set(validation.supporting_ids)]
+        verified = _pattern(
+            pattern.id, validation.rule or pattern.pattern, pattern.confidence, supported, by_span, pattern.existing_id
+        )
+        corrections = sum(_is_correction(p, extractions) for p in verified.prompts)
+        return Candidate(verified, validation, corrections, failure=_failure(validation, verified, gates))
+
+    return list(await asyncio.gather(*(one(p) for p in patterns)))
+
+
+def _failure(v: _Validation, verified: Pattern, gates: Gates) -> str | None:
+    if v.rule is None:
+        reason = v.rejection_reason or 'no single rule'
+    elif not v.changes_behaviour:
+        reason = f"doesn't change what an agent does ({v.value_reason})"
+    elif v.cluster_coherence < gates.min_coherence:
+        reason = f"the prompts don't share one pattern (coherence {v.cluster_coherence:.2f})"
+    elif v.confidence < gates.min_confidence:
+        reason = f'low confidence ({v.confidence:.2f})'
+    elif counting := gates.counting_failure(verified, verified=True):
+        reason = counting
+    else:
+        return None
+    return f"didn't pass: {reason}"
+
+
+def rank_and_cap(
+    candidates: list[Candidate],
+    gates: Gates,
+    *,
+    reviewed: set[str] = frozenset(),  # pyright: ignore[reportArgumentType]
+) -> tuple[list[Candidate], list[Candidate]]:
+    """Passing candidates, best first, split into the `max_pending` suggestions and the emerging rest.
+
+    Ids already accepted or dismissed (`reviewed`) are left out: they are never re-proposed, so they take no slot.
+    """
+    passing = sorted(
+        (c for c in candidates if c.failure is None and c.pattern.id not in reviewed),
+        key=lambda c: c.rank(gates),
+        reverse=True,
+    )
+    return passing[: gates.max_pending], passing[gates.max_pending :]
+
+
+def unmatched_reason(spans: set[str], extractions: dict[str, PromptExtraction]) -> str:
+    """Why an earlier pending suggestion that no cluster continues isn't one any more, from its prompts' extractions."""
+    rejected = Counter(e.rejection.reason for s in spans if (e := extractions.get(s)) and e.rejection)
+    actionable = sum(1 for s in spans if (e := extractions.get(s)) and e.is_actionable)
+    if rejected and sum(rejected.values()) > actionable:
+        kinds = ', '.join(f'{k} {n}' for k, n in rejected.most_common())
+        return f"didn't pass: its prompts are not guidance for the agent ({kinds} of {len(spans)})"
+    return "didn't pass: no longer recurs across 2+ developers"
 
 
 _GENERIC_DOMAINS = {
@@ -532,13 +757,15 @@ def _scope_fields(
 
 
 async def draft_proposals(
-    patterns: list[Pattern],
+    candidates: list[Candidate],
     *,
     model: str,
+    emerging: set[str] = frozenset(),
     max_evidence: int = 5,
     window_teams: set[str] = frozenset(),
     window_repos: set[str] = frozenset(),
 ) -> list[Proposal]:
+    """Draft each passing candidate from its verified prompts; ids in `emerging` are kept `stale` and `emerging`."""
     agent = Agent(
         model,
         deps_type=_DraftDeps,
@@ -563,25 +790,21 @@ async def draft_proposals(
             )
         return draft
 
-    async def one(pattern: Pattern) -> Proposal:
+    async def one(candidate: Candidate) -> Proposal:
+        pattern, validation = candidate.pattern, candidate.validation
+        assert validation is not None and validation.rule is not None
         # The drafter never sees who asked: developers are numbered, not named.
-        numbers = {user: n for n, user in enumerate(dict.fromkeys(p.user for p in pattern.prompts), 1)}
-        examples = [{'developer': numbers[p.user], 'prompt': p.text[:2000]} for p in pattern.prompts[:12]]
+        numbers = {user: n for n, user in enumerate(dict.fromkeys(_user(p) for p in pattern.prompts), 1)}
+        examples = [{'developer': numbers[_user(p)], 'prompt': p.text[:2000]} for p in pattern.prompts[:12]]
         identifiers = personal_identifiers(pattern.prompts)
         target = median_prompt_chars(pattern)
-        in_passing = sum(PREFERENCE_KEY in i for i in pattern.intent_ids)
-        hint = (
-            f'{in_passing} of these {len(pattern.intent_ids)} asks were stated in passing inside other requests: '
-            'draft the shared ask itself, not the tasks around it.'
-            + (' They are standing preferences, so this is most likely an `instruction`.' if pattern.preference else '')
-            + '\n'
-            if in_passing
-            else ''
-        )
+        steps = '\n'.join(f'{n}. {s}' for n, s in enumerate(validation.steps, 1))
         draft = await run_cached(
             agent,
-            f'Pattern: {pattern.pattern}\n{hint}'
-            f'Asked by {len(pattern.users)} distinct developers across {len(pattern.sessions)} sessions.\n'
+            f'Validated rule: {validation.rule}\nKind: {validation.kind}\n'
+            + (f'Steps they spelled out:\n{steps}\n' if validation.kind == 'skill' and steps else '')
+            + f'Asked by {len(pattern.users)} distinct developers across {len(pattern.sessions)} sessions'
+            f'{f", {candidate.corrections} of them correcting the agent" if candidate.corrections else ""}.\n'
             f'Median prompt length: {target} characters. Target for `text`: about {target}, at most {2 * target}.\n'
             f'What they typed:\n{json.dumps(examples, indent=2)}',
             output_type=_Draft,
@@ -590,19 +813,29 @@ async def draft_proposals(
         if leaked := leaked_identifiers(draft, identifiers):  # pragma: no cover - only if retries ran out
             print(f'warning: redacted {len(leaked)} personal identifier(s) from `{pattern.id}`')
             draft = _Draft.model_validate({k: _redact(v, leaked) if isinstance(v, str) else v for k, v in draft})
+        is_emerging = pattern.id in emerging
         return Proposal(
             id=pattern.id,
-            pattern=pattern.pattern,
+            kind=validation.kind,
+            pattern=validation.rule,
             distinct_users=len(pattern.users),
             sessions=len(pattern.sessions),
+            verified_prompts=len(pattern.prompts),
+            corrections=candidate.corrections,
+            value_reason=validation.value_reason,
             evidence=_evidence(pattern, max_evidence),
-            score=pattern.score,
+            score=candidate.score,
+            status='stale' if is_emerging else 'pending',
+            status_reason='Emerging: passes every gate, but ranks below the pending suggestions.'
+            if is_emerging
+            else None,
+            emerging=is_emerging,
             generated_by=f'fleet-miner {__version__} / {model}',
             **draft.model_dump(exclude={'scope', 'scope_reason'}),
             **_scope_fields(pattern, draft, window_teams=window_teams, window_repos=window_repos),
         )
 
-    return list(await asyncio.gather(*(one(p) for p in patterns)))
+    return list(await asyncio.gather(*(one(c) for c in candidates)))
 
 
 def _evidence(pattern: Pattern, limit: int) -> list[Evidence]:
@@ -621,11 +854,16 @@ MergeAction = Literal['new', 'updated', 'skipped', 'stale']
 
 
 def merge(
-    existing: list[Proposal], fresh: list[Proposal], *, stale_kinds: set[str] = frozenset()
+    existing: list[Proposal],
+    fresh: list[Proposal],
+    *,
+    stale_kinds: set[str] = frozenset(),
+    stale_reasons: dict[str, str] | None = None,
 ) -> tuple[list[Proposal], dict[str, MergeAction]]:
-    """Never re-propose an accepted or dismissed id; refresh a pending (or stale) one's evidence and draft.
+    """Never re-propose an accepted or dismissed id; refresh a pending (or stale) one's evidence, draft and status.
 
-    A pending proposal of a kind this run fully re-mined (`stale_kinds`) that it no longer qualifies becomes `stale`.
+    A pending proposal of a kind this run fully re-mined (`stale_kinds`) that it no longer suggests becomes `stale`,
+    with `stale_reasons[id]` (or a generic reason) as its `status_reason`. Accepted and dismissed ones are untouched.
     """
     by_id = {p.id: p for p in existing}
     actions: dict[str, MergeAction] = {}
@@ -641,6 +879,14 @@ def merge(
             actions[proposal.id] = 'skipped'
     for id_, proposal in by_id.items():
         if id_ not in actions and proposal.status == 'pending' and proposal.kind in stale_kinds:
-            by_id[id_] = proposal.model_copy(update={'status': 'stale'})
+            reason = (stale_reasons or {}).get(id_, "didn't pass: no longer found often enough")
+            by_id[id_] = proposal.model_copy(update={'status': 'stale', 'status_reason': reason, 'emerging': False})
             actions[id_] = 'stale'
+        elif (
+            id_ not in actions
+            and proposal.status == 'stale'
+            and proposal.kind in stale_kinds
+            and (reason := (stale_reasons or {}).get(id_))
+        ):
+            by_id[id_] = proposal.model_copy(update={'status_reason': reason, 'emerging': False})
     return list(by_id.values()), actions

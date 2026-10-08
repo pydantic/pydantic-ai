@@ -27,36 +27,72 @@ With `--watch 10` it:
 
 Leave it running in a terminal for the whole demo. Stop it with Ctrl-C.
 
+## What it looks for
+
+Two families of findings, both "never from one developer or one session":
+
+1. **Behaviour gaps** (skills and instructions), braindump's pipeline ported to prompts:
+   - **Extract** (`extract.py`, per prompt, cached by span id): is it actionable guidance (a `correction`, `preference`,
+     `convention` or `procedure`), or rejected as a `question`, a one-off `task`, an `acknowledgment` or `unclear`?
+     Actionable prompts yield generalized rules at braindump's "the pattern" level. Context per prompt: the previous
+     prompt, the agent's last shell/MCP calls before it, and whether it was typed mid-run (clai2's `route`).
+   - **Cluster** the rules (an LLM grouping: the gateway's Anthropic model has no embeddings, so no cosine clustering).
+   - **Validate** each cluster (one cached call): one rule, which prompts actually support it (evidence verification),
+     coherence and confidence, skill only for a spelled-out multi-step procedure, and whether a capable coding agent
+     would already do it unprompted (`value_reason`). Tasks, generic good practice and questions about one subject
+     never pass.
+   - **Gate** over the verified prompts: `--min-users` (2+) developers, 3+ prompts, 2+ sessions, from 2+ days or 3+
+     sessions, confidence 0.8+ (braindump's "high"), coherence 0.7+, and the value judgement.
+   - **Rank** by confidence x spread over developers (braindump's 0.6/0.85/0.95/1.0), plus 0.05 per correction (up to
+     3), then sessions, then recency. At most `--max-pending` (5) are pending.
+2. **Risk and governance** (policy, `policy.py`): risky shell commands are found by pattern (force-push, push to main,
+   hard reset, branch deletion, `rm -rf`, secrets files, `sudo`, remote hosts, skipped hooks/tests, ...), then each
+   call is classified (cached per call): `requested` by the developer that turn or the one before, or `unprompted`;
+   on a `protected` target, the developer's `own` work, or `harmless`. Requested on own work is normal and only counted.
+   The rest is drafted as an advisor note (what agents do, how often, by how many, and the control: `ask` plus a
+   "don't X unless the user asks" instruction for unprompted actions, `deny` for clearly destructive ones on protected
+   targets), re-measured against the flagged calls, and gated on 2+ developers in `--min-policy-sessions` (2+)
+   sessions. At most `--max-pending-policy` (3) are pending.
+
+Statuses: a suggestion that passes but ranks below its cap is `stale` with `emerging: true` (the UI can show these
+collapsed). An earlier pending one that no longer passes becomes `stale` with a `status_reason` ("didn't pass: only 1
+developer", "didn't pass: its prompts are not guidance for the agent (task 3 of 3)", "replaced by ..."). Accepted and
+dismissed ones are never touched.
+
 ## What a run costs
 
 Mining is incremental. Each run queries only records newer than the last one it saw (with a 30-minute overlap for
-late spans), facets only prompts it has never seen, places only new intents into the existing groups, and reuses
-cached LLM output for anything whose input did not change. A full re-clustering happens once a day, or with
-`--recluster`.
+late spans), extracts only prompts and classifies only risky calls it has never seen, places only new rules into the
+existing groups, and reuses cached LLM output for anything whose input did not change. A full re-clustering happens
+once a day, or with `--recluster`.
 
-Measured on the clai2 project (about 170 typed prompts, 3 people, 6,700 tool calls over the week):
+Measured on the clai2 project (164 typed prompts, 3 developers, 3,800 tool calls since 2026-10-06 21:00), all on
+`gateway/anthropic:claude-sonnet-5-5`:
 
 | Run | LLM requests | Tokens in / out |
 |---|---|---|
-| Full run (re-cluster, re-draft everything, policy), warm facets | 18 | 56k / 10.7k |
-| Scheduled run, one new prompt | 1 | 1k / 0.05k |
-| Run now, a few new prompts that formed new groups | 2 | 6k / 2.2k |
+| Re-validate, re-draft policy (extractions and classifications warm) | 7 | 31k / 5.8k |
+| Scheduled run, nothing new | 0 | 0 |
+| Scheduled run, one new risky tool call | 1 | 1.2k / 0.07k |
+| One new actionable prompt (extract, place, policy refresh) | 3 | 5.3k / 0.3k |
 
 ## Useful flags
 
 - `--recluster`: group everything from scratch now instead of incrementally.
 - `--dry-run --out proposals.json`: mine and inspect without writing.
 - `--dismiss ID=REASON`, `--drop ID`: curate the live document by hand.
-- `--min-users N`: how many distinct developers a pattern needs (2 for a small team, 3 by default).
+- `--min-users N`: how many distinct developers a finding needs (2 for a small team, 3 by default).
+- `--min-prompts`, `--min-sessions`, `--min-days`, `--min-sessions-one-day`, `--min-confidence`, `--min-coherence`,
+  `--max-pending`, `--min-policy-sessions`, `--max-pending-policy`: the gates above.
 
 ## Caches
 
 Everything lives in `hackathon/fleet_miner/.cache/` (gitignored), or `$FLEET_MINER_CACHE_DIR`:
 
 - `prompts.json`, `tool_calls.json`: what was fetched, plus per-source watermarks.
-- `facets-<model>.json`: one facet per prompt span.
-- `clusters.json`, `clustered_spans.json`, `pattern_spans.json`: the groups, which intents were already grouped,
-  and every span ever assigned to each proposal id (for stable ids and impact).
+- `extract-v<N>-<model>.json`: one extraction per prompt span. `call_classes.json`: one classification per risky call.
+- `rule_clusters.json`, `rule_clustered.json`, `pattern_spans.json`: the groups of rules, which rules were already
+  offered to them, and every item ever assigned to each proposal id (for stable ids and impact).
 - `llm.json`: LLM outputs keyed by their exact input.
 
 Deleting the directory makes the next run a full, cold one.

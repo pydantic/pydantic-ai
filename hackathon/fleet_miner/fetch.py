@@ -39,7 +39,7 @@ IDENTITY = """coalesce(r.attributes->>'user.email', s.user_email) AS user_email,
                 'process:' || (r.otel_resource_attributes->>'service.instance.id')) AS session_id"""
 
 PROMPTS_SQL = f"""
-SELECT r.trace_id, r.span_id, r.start_timestamp, r.attributes->>'prompt' AS prompt,
+SELECT r.trace_id, r.span_id, r.start_timestamp, r.attributes->>'prompt' AS prompt, r.attributes->>'route' AS route,
        {IDENTITY}
 FROM records r
 LEFT JOIN ({_SESSIONS}) s ON r.trace_id = s.trace_id
@@ -151,6 +151,16 @@ async def fetch_prompts(
             for span_id, user in found.items():
                 if not user.startswith('host:'):
                     store.prompts[span_id].user = user
+        # Prompts stored before the miner read `route` (mid-run steering): look them up once.
+        unrouted = {
+            p.span_id
+            for p in store.prompts.values()
+            if p.route is None and p.source == 'prompt_submitted' and p.timestamp >= since
+        }
+        if unrouted:
+            routes = await _span_routes(client, unrouted, since)
+            for span_id in unrouted:
+                store.prompts[span_id].route = routes.get(span_id) or ''
     prompts = [p.model_copy() for p in store.prompts.values() if p.timestamp >= since]
     store.save(since)
     return _resolve_users(sorted(prompts, key=lambda p: p.timestamp))
@@ -176,6 +186,13 @@ WHERE r.span_id IN ({in_list})
     return {r['span_id']: r.get('user_email') or f'host:{r.get("host")}' for r in rows}
 
 
+async def _span_routes(client: AsyncLogfireQueryClient, span_ids: set[str], since: datetime) -> dict[str, str]:
+    in_list = ', '.join(f"'{s}'" for s in sorted(span_ids) if s.isalnum())
+    sql = f"SELECT r.span_id, r.attributes->>'route' AS route FROM records r WHERE r.span_id IN ({in_list})"
+    rows = (await client.query_json_rows(sql, min_timestamp=since, limit=10_000))['rows']
+    return {r['span_id']: r['route'] for r in rows if r.get('route')}
+
+
 def _resolve_users(prompts: list[UserPrompt]) -> list[UserPrompt]:
     """Name each prompt's user by email, learning which machine is whose from prompts that know both."""
     emails = {p.host: p.user for p in prompts if p.user and p.host}
@@ -195,6 +212,7 @@ def _from_prompt_row(row: dict[str, Any]) -> UserPrompt:
         session_id=row.get('session_id'),
         team=row.get('team'),
         repo_slug=row.get('repo_slug'),
+        route=row.get('route') or '',
     )
 
 

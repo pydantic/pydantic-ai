@@ -12,7 +12,8 @@ from pydantic import BaseModel, Field, field_validator
 Tier = Literal['required', 'default_on', 'optional']
 ProposalKind = Literal['skill', 'instruction', 'policy']
 ProposalStatus = Literal['pending', 'accepted', 'dismissed', 'stale']
-"""`stale`: was pending, but the latest run no longer finds the pattern often enough. Kept, not deleted."""
+"""`stale`: not a current suggestion, with `status_reason` saying why: it was pending but no longer passes the gates,
+or it passes them but ranks below the cap on pending suggestions (then `emerging` is true). Kept, not deleted."""
 
 
 class UserPrompt(BaseModel):
@@ -28,39 +29,15 @@ class UserPrompt(BaseModel):
     team: str | None = None
     repo_slug: str | None = None
     source: Literal['prompt_submitted', 'agent_run'] = 'prompt_submitted'
+    route: str | None = None
+    """clai2's `prompt submitted` route: `queued`/`run now`/`edited queued` were typed while the agent was working.
+    `''` when looked up and absent, `None` when never looked up (prompts stored before the miner read it)."""
 
 
-class Facet(BaseModel):
-    """Stage 1 output for one prompt: the reusable intent behind it, if any."""
-
-    span_id: str
-    intent: str | None = Field(
-        description='The generalized, user- and repo-independent request in one imperative sentence of at most 20 '
-        'words, or null when the prompt is not reusable (task-specific details only, "yes", "continue", a typo fix).'
-    )
-    standing_request: bool = Field(
-        description='True when the user asks for behavior the agent arguably should have done unprompted, '
-        'or that the user likely asks for repeatedly (e.g. "keep watching CI until it passes").'
-    )
-    workflow: bool = Field(
-        description='True when the intent is a multi-step procedure rather than a one-line preference.'
-    )
-    preferences: list[str] = Field(
-        default=[],
-        description='Standing preferences about how the agent should behave in general that the prompt states, even '
-        'in passing inside a one-off task (language or locale, tone, tooling choices, "always run the tests first"), '
-        'each as one generalized imperative sentence of at most 15 words. Empty when there are none. Do not repeat '
-        'the main intent here when the whole prompt is the preference.',
-    )
-
-
-PREFERENCE_KEY = '#pref'
-"""Intent ids: a prompt's main intent is keyed by its span id, its preferences by `<span_id>#pref<n>`."""
-
-
-def span_of(intent_id: str) -> str:
-    """The prompt span an intent id came from: every intent of a prompt carries that prompt as its evidence."""
-    return intent_id.split(PREFERENCE_KEY, 1)[0]
+def span_of(item_id: str) -> str:
+    """The prompt span an item id came from: `<span_id>#r<n>` (a rule extracted from it), or the older
+    `<span_id>#pref<n>`, or the span id itself."""
+    return item_id.split('#', 1)[0]
 
 
 # Tool-call markup a model sometimes leaks into a text field (e.g. a trailing `</parameter> </invoke>`).
@@ -95,8 +72,8 @@ def redact_secrets(value: str) -> str:
     return _HOME.sub(r'\1<user>', value)
 
 
-def clean_text(value: str) -> str:
-    return redact_secrets(strip_markup(value))
+def clean_text[T: str | None](value: T) -> T:
+    return value if value is None else redact_secrets(strip_markup(value))  # pyright: ignore[reportReturnType]
 
 
 class Evidence(BaseModel):
@@ -112,6 +89,10 @@ class Evidence(BaseModel):
     span_id: str
     timestamp: datetime
     developer: int = 0
+    origin: Literal['requested', 'unprompted'] | None = None
+    """Policy evidence: whether the developer asked for this call in that turn or the one before, or the agent chose it."""
+    target: Literal['protected', 'own'] | None = None
+    """Policy evidence: whether the call hit a protected or shared target (main, a remote host, outside the workspace)."""
 
 
 class PolicyMatch(BaseModel):
@@ -204,7 +185,10 @@ class Proposal(BaseModel):
     distinct_users: int
     sessions: int
     matching_calls: int | None = None
-    """Policy proposals: tool calls the rule's glob matched (the UI's measured line reads it)."""
+    """Policy proposals: flagged tool calls (unprompted, or on a protected target) the rule's glob matched."""
+    suggested_instruction: str | None = None
+    """Policy proposals for risky actions agents take unprompted: an instruction to pair with the rule
+    ("Don't force-push unless the user asks")."""
     evidence: list[Evidence]
     status: ProposalStatus = 'pending'
     status_reason: str | None = None
@@ -215,7 +199,16 @@ class Proposal(BaseModel):
     generated_by: str | None = None
     """Miner version and drafting model, e.g. `fleet-miner 0.2 / gateway/anthropic:claude-sonnet-5-5`."""
     score: float | None = None
-    """Hackathon extra: LLM confidence times the distinct-user spread factor (braindump's scoring)."""
+    """LLM confidence times the distinct-user spread factor (braindump's scoring), plus a bonus for corrections."""
+    value_reason: str | None = None
+    """Skills and instructions: one line on why writing it down changes what agents do (or, once stale, why not)."""
+    verified_prompts: int | None = None
+    """Skills and instructions: prompts the validation step confirmed express this rule (users and sessions count
+    only those)."""
+    corrections: int | None = None
+    """Of `verified_prompts`, how many corrected or steered the agent (typed mid-run, or "no, don't...")."""
+    emerging: bool = False
+    """Passes every gate but ranks below the cap on pending suggestions: `status` is `stale`, shown collapsed."""
     scope: Literal['organization', 'team', 'repo'] = 'organization'
     """Who it should apply to, measured from the teams and repos of its evidence (see `scope.py`)."""
     scope_reason: str | None = None
