@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 import anyio
@@ -14,23 +15,30 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import NoOpTracer, Tracer
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import CapabilityOrdering
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapModelRequestHandler
 from pydantic_ai.exceptions import SkipModelRequest, UserError
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     BinaryContent,
+    FinalResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartEndEvent,
+    PartStartEvent,
     TextPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import GuardrailResult, InputBlocked, InputGuardrail
 from pydantic_ai_harness.guardrails._capability import _extract_prompt  # pyright: ignore[reportPrivateUsage]
+
+READINESS_WAIT_TIMEOUT = 10
 
 
 def _recording_tracer() -> tuple[Tracer, InMemorySpanExporter]:
@@ -685,6 +693,228 @@ class TestInputGuardrailStreaming:
         )
         async with agent.run_stream('hello') as result:
             assert (await result.get_output()) == 'nope'
+
+
+@dataclasses.dataclass
+class _StalledModel:
+    """A streaming model that sends one chunk, then stalls until its stream is closed."""
+
+    first_chunk_sent: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
+    closed: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
+
+    async def stream(self, _messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        try:
+            yield 'leaked '
+            self.first_chunk_sent.set()
+            await asyncio.Event().wait()
+            yield 'never'  # pragma: no cover
+        finally:
+            self.closed.set()
+
+    def agent(self, guard: InputGuardrail[Any], *capabilities: AbstractCapability[Any]) -> Agent[None, str]:
+        return Agent(FunctionModel(stream_function=self.stream), capabilities=[guard, *capabilities])
+
+    def blocking_guard(self) -> InputGuardrail[Any]:
+        """A parallel guard that blocks once the first chunk has reached the caller."""
+
+        async def guard(_prompt: str) -> GuardrailResult:
+            await self.first_chunk_sent.wait()
+            return GuardrailResult.block('nope')
+
+        return InputGuardrail(guard=guard, parallel=True)
+
+
+@dataclasses.dataclass
+class _BlockObserver(AbstractCapability[Any]):
+    """Sets `blocked` once the guard it wraps has blocked the request."""
+
+    blocked: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        try:
+            return await handler(request_context)
+        except SkipModelRequest:
+            self.blocked.set()
+            raise
+
+
+def _text_events(events: Sequence[AgentStreamEvent | AgentRunResultEvent[str]]) -> list[object]:
+    """Reduce text stream events to what the caller saw."""
+    seen: list[object] = []
+    for event in events:
+        if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+            seen.append(('start', event.part.content))
+        elif isinstance(event, PartEndEvent) and isinstance(event.part, TextPart):
+            seen.append(('end', event.part.content))
+        elif isinstance(event, FinalResultEvent):
+            seen.append('final result')
+        else:
+            assert isinstance(event, AgentRunResultEvent)
+            seen.append(('output', event.result.output))
+    return seen
+
+
+class TestInputGuardrailParallelStreaming:
+    """A parallel block cancels a streamed model request and ends the run with the block message.
+
+    Regression tests for https://github.com/pydantic/pydantic-ai/issues/9279: the stream used to
+    deliver every model chunk and then raise `SkipModelRequest`. The model stalls after its first
+    chunk, so a stream that is not cancelled hangs until `READINESS_WAIT_TIMEOUT`.
+    """
+
+    async def test_block_cancels_run_stream_events(self):
+        model = _StalledModel()
+        agent = model.agent(model.blocking_guard())
+        current = asyncio.current_task()
+        before = {t for t in asyncio.all_tasks() if t is not current}
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with agent.run_stream_events('hello') as stream:
+                events = [event async for event in stream]
+
+        # Chunks sent before the verdict still reach the caller; the block message then replaces them.
+        assert _text_events(events) == [
+            ('start', 'leaked '),
+            'final result',
+            ('start', 'nope'),
+            'final result',
+            ('end', 'nope'),
+            ('output', 'nope'),
+        ]
+        assert model.closed.is_set()
+        assert stream.result is not None
+        assert stream.result.all_messages()[-1].parts == [TextPart(content='nope')]
+        assert {t for t in asyncio.all_tasks() if t is not current and not t.done()} - before == set()
+
+    async def test_block_cancels_run_stream(self):
+        model = _StalledModel()
+        agent = model.agent(model.blocking_guard())
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with agent.run_stream('hello') as result:
+                deltas = [text async for text in result.stream_text(delta=True, debounce_by=None)]
+                assert await result.get_output() == 'nope'
+
+        assert deltas == ['leaked ', 'nope']
+        assert model.closed.is_set()
+        assert result.all_messages()[-1].parts == [TextPart(content='nope')]
+
+    async def test_block_cancels_node_stream(self):
+        model = _StalledModel()
+        agent = model.agent(model.blocking_guard())
+        events: list[AgentStreamEvent] = []
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with agent.iter('hello') as run:
+                async for node in run:
+                    if Agent.is_model_request_node(node):
+                        async with node.stream(run.ctx) as stream:
+                            events.extend([event async for event in stream])
+
+        assert _text_events(events) == [
+            ('start', 'leaked '),
+            'final result',
+            ('start', 'nope'),
+            'final result',
+            ('end', 'nope'),
+        ]
+        assert model.closed.is_set()
+        assert run.result is not None
+        assert run.result.output == 'nope'
+
+    async def test_block_before_the_first_chunk_skips_the_model_stream(self):
+        """A block that lands after the stream opened but before the caller pulled from it."""
+        model = _StalledModel()
+        release_guard = asyncio.Event()
+
+        async def guard(_prompt: str) -> GuardrailResult:
+            await release_guard.wait()
+            return GuardrailResult.block('nope')
+
+        observer = _BlockObserver()
+        agent = model.agent(InputGuardrail(guard=guard, parallel=True), observer)
+        events: list[AgentStreamEvent] = []
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with agent.iter('hello') as run:
+                async for node in run:
+                    if Agent.is_model_request_node(node):
+                        async with node.stream(run.ctx) as stream:
+                            release_guard.set()
+                            await observer.blocked.wait()
+                            events.extend([event async for event in stream])
+
+        assert _text_events(events) == [('start', 'nope'), 'final result', ('end', 'nope')]
+        assert not model.first_chunk_sent.is_set()
+        assert run.result is not None
+        assert run.result.output == 'nope'
+
+    async def test_guard_error_mid_stream_ends_the_stream_and_raises(self):
+        model = _StalledModel()
+
+        async def guard(_prompt: str) -> GuardrailResult:
+            await model.first_chunk_sent.wait()
+            return GuardrailResult.retry('try again')
+
+        agent = model.agent(InputGuardrail(guard=guard, parallel=True))
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(UserError, match='cannot return'):
+            async with agent.run_stream_events('hello') as stream:
+                async for event in stream:
+                    events.append(event)
+
+        assert _text_events(events) == [('start', 'leaked '), 'final result']
+        assert model.closed.is_set()
+
+    async def test_allow_streams_every_chunk(self):
+        guard_done = asyncio.Event()
+
+        async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+            yield 'one '
+            await guard_done.wait()
+            yield 'two '
+            yield 'three'
+
+        async def guard(_prompt: str) -> bool:
+            guard_done.set()
+            return True
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            capabilities=[InputGuardrail(guard=guard, parallel=True)],
+        )
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with agent.run_stream('hello') as result:
+                deltas = [text async for text in result.stream_text(delta=True, debounce_by=None)]
+                assert await result.get_output() == 'one two three'
+
+        assert deltas == ['one ', 'two ', 'three']
+
+    async def test_block_after_the_whole_response_streamed_still_raises(self):
+        """A block that arrives after the caller received the whole response is not swallowed.
+
+        `run_stream()` has already settled on the model's output by then, so the block cannot
+        replace it and still surfaces as `SkipModelRequest`, as it did before the fix.
+        """
+        release_guard = asyncio.Event()
+
+        async def guard(_prompt: str) -> GuardrailResult:
+            await release_guard.wait()
+            return GuardrailResult.block('nope')
+
+        observer = _BlockObserver()
+        capabilities: list[AbstractCapability[Any]] = [InputGuardrail(guard=guard, parallel=True), observer]
+        agent = Agent(TestModel(custom_output_text='model output'), capabilities=capabilities)
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(SkipModelRequest):
+            async with agent.run_stream('hello') as result:
+                assert await result.get_output() == 'model output'
+                release_guard.set()
+                await observer.blocked.wait()
 
 
 class TestExtractPrompt:
