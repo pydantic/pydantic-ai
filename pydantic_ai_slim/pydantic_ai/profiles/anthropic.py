@@ -98,7 +98,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_disallows_sampling_settings: bool
     """Whether the model rejects sampling settings like `temperature` and `top_p`. Default: `False`.
 
-    Claude Opus 4.7, 4.8, 5, and 5.5 require these settings to be omitted from request payloads.
+    Claude Opus 4.7, 4.8, 5, and 5.5, plus Haiku 5.5, require these settings to be omitted from
+    request payloads.
     """
 
     anthropic_disallows_top_effort_when_thinking_disabled: bool
