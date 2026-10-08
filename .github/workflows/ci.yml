@@ -515,7 +515,7 @@ jobs:
             command: "--no-sync"
             sync_command: >-
               --inexact --package pydantic-ai-harness --package pydantic-clai2
-              --extra code-mode --extra coder --extra logfire
+              --extra code-mode --extra coder --extra logfire --extra render
             # Its own suite: the rest of `tests/` is covered by the other cells.
             paths: tests/harness
           - name: pydantic-clai2
