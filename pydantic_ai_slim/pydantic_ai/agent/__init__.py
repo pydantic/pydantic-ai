@@ -3194,12 +3194,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 'The configured model ID is resolved by a capability using run dependencies. '
                 'Pass a concrete model explicitly.'
             )
-        if _is_model(selection):
-            return selection
         if isinstance(selection, str):
             if entered_model := self._entered_models_by_selection.get((id(capability), selection)):
                 return entered_model
-        return models.infer_model(selection)
+        return selection if _is_model(selection) else models.infer_model(selection)
 
     def _resolve_instrumentation_settings(self) -> InstrumentationSettings | None:
         """Resolve effective `InstrumentationSettings` from `Agent.instrument_all` / `agent.instrument`."""
