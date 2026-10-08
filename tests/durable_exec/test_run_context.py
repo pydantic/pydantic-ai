@@ -48,20 +48,23 @@ def test_serialized_context_rehydrates_json_and_guards_omitted_fields() -> None:
 
 
 def test_serialized_context_uses_availability_snapshots_and_old_payload_fallback() -> None:
-    source = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    source = RunContext(deps=None, model=TestModel(), usage=RunUsage(), discovered_tool_names={'owned'})
     projected = SerializedRunContext.serialize_run_context(source)
     projected['available_tool_names'] = ['visible']
     projected['active_capability_ids'] = ['active']
     projected['_deferred_capability_ids'] = ['deferred']
     restored = SerializedRunContext(deps=None, **projected)
     assert restored.is_tool_available('visible')
-    assert restored.is_tool_available(ToolDefinition(name='owned', capability_id='active'))
+    assert restored.is_tool_available(ToolDefinition(name='owned', capability_id='active', defer_loading=True))
+    assert not restored.is_tool_available(ToolDefinition(name='owned', capability_id='inactive', defer_loading=True))
     assert restored._deferred_capability_ids == {'deferred'}  # pyright: ignore[reportPrivateUsage]
 
     for name in ('available_tool_names', 'active_capability_ids', '_deferred_capability_ids', '_anchored_evidence'):
         projected.pop(name)
     older = SerializedRunContext(deps=None, **projected)
-    assert older.available_tool_names == set()
+    assert older.available_tool_names == {'owned'}
     assert older._anchored_evidence == AnchoredEvidence()  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(UserError, match="'capabilities' is not available"):
         _ = older.active_capability_ids
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        older.is_tool_available(ToolDefinition(name='owned', capability_id='active', defer_loading=True))
