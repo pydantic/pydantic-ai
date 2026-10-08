@@ -128,6 +128,19 @@ JSON-journal engines should set `DurabilityEngineSpec.serialization_failure` to 
 codec failures into the engine's terminal or non-retryable exception type. Such values cannot become
 serializable on retry.
 
+### Run context in another process
+
+For an operation that runs in a separate worker, subclass
+[`SerializedRunContext`][pydantic_ai.durable_exec.SerializedRunContext]. Its
+`serialize_run_context` method projects the run fields shared by remote engines, and its constructor
+rehydrates usage, limits, availability sets, anchored evidence, and workspace references after a JSON
+round trip. An omitted field raises `UserError` when read, so a dataclass default cannot be mistaken
+for the original run value. The worker must still supply dependencies and attach any live state it
+needs, such as its model, agent, tracer, and workspace. Keep engine-specific fields, older payload
+aliases, and event behavior in the engine subclass. The
+[`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] implementation shows
+how to add these pieces.
+
 [`RoleBasedOperationConfig`][pydantic_ai.durable_exec.RoleBasedOperationConfig] supplies one config
 per operation role and accepts an optional `resolve_tool` callback for per-tool overrides. The
 callback receives the complete typed operation ID, tool object, and tool name.
