@@ -567,3 +567,19 @@ async def test_invalid_distribution(answer: dict[str, object]):
     )
     with pytest.raises(UnexpectedModelBehavior, match=r'invalid .* probabilities'):
         await model.decide(DecisionRequest(state='x', questions={'value': question}), {})
+
+
+async def test_zero_mass_distribution():
+    """Rounding tolerance grows with the number of options, but never accepts a distribution summing to zero."""
+    options = [f'option_{index}' for index in range(200)]
+    answer = {
+        'name': 'value',
+        'type': 'choice',
+        'choice': options[0],
+        'confidence': 0,
+        'probabilities': [{'value': option, 'probability': 0} for option in options],
+    }
+    model = mock_model(lambda _: httpx2.Response(200, json={'model': 'gpt-6-luna', 'answers': [answer]}))
+    question = ChoiceQuestion(criteria=dict.fromkeys(options))
+    with pytest.raises(UnexpectedModelBehavior, match='invalid choice probabilities'):
+        await model.decide(DecisionRequest(state='x', questions={'value': question}), {})

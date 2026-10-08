@@ -247,8 +247,10 @@ _response_adapter = TypeAdapter(_Response)
 
 
 def _sums_to_one(probabilities: list[float]) -> bool:
-    # Allow each probability half a unit of two-decimal rounding, as `SystemOneModel` does.
-    return abs(sum(probabilities) - 1) <= 1e-6 + len(probabilities) * 0.005
+    # Allow each probability half a unit of two-decimal rounding, as `SystemOneModel` does. With 200 or more
+    # options that tolerance alone would accept a distribution with no probability mass at all.
+    total = sum(probabilities)
+    return total > 0 and abs(total - 1) <= 1e-6 + len(probabilities) * 0.005
 
 
 def _answer(answer: _PredicateAnswer | _ChoiceAnswer | _ScoreAnswer, question: DecisionQuestion) -> DecisionAnswer:
