@@ -7,7 +7,7 @@ from typing import Self
 
 import anyio
 from httpx2 import Timeout
-from openai import AsyncOpenAI, Omit
+from openai import APIError, AsyncOpenAI, Omit, OpenAIError
 from openai.resources.responses.responses import AsyncResponsesConnection
 from openai.types.responses import (
     ResponseCompletedEvent,
@@ -65,6 +65,13 @@ class ResponsesWebSocket:
                 connection = await client.responses.connect(
                     extra_headers=headers, websocket_connection_options=connection_options
                 ).enter()
+        except APIError:
+            raise
+        except OpenAIError as exc:
+            raise UserError(
+                'The OpenAI SDK could not configure this WebSocket connection: '
+                f'{exc} Use HTTP or supply an SDK client with WebSocket-compatible authentication.'
+            ) from exc
         except InvalidStatus as exc:
             if exc.response.status_code < 400:
                 raise ModelAPIError(

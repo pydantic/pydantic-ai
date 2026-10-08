@@ -319,6 +319,8 @@ The model does not reconnect, retry an interrupted generation, or switch generat
 
 Set handshake headers through the model's default `extra_headers`, `model.connect(extra_headers=...)`, or `AsyncOpenAI(default_headers=...)`. When opening `agent.connect()`, the handshake uses the model and SDK defaults; headers passed through agent or run `model_settings` do not configure it. Per-request headers must match the connection's headers. Headers and transport options configured only on a custom HTTP client are not inherited by the WebSocket connection. The model's default `timeout` controls the handshake; each request's `timeout` controls its send and receive operations. Otherwise, the SDK client's timeouts apply. The model's `connect(websocket_connection_options=...)` accepts the OpenAI SDK's typed socket options, such as `max_size`.
 
+WebSocket authentication must be supported by the OpenAI SDK transport. Unsupported authentication raises [`UserError`][pydantic_ai.exceptions.UserError] with the SDK error as its cause; HTTP requests keep their existing authentication. For Bedrock Mantle, see [its authentication limits](bedrock.md#bedrock-mantle).
+
 OpenAI supports named lanes for parallel work, but this connection API does not implement shared-socket parallelism or native mid-turn steering. Those features require response-event routing and independent cancellation and cache recovery for each lane. Use separate connection contexts for parallel runs. Background responses and persistence of a socket across durable execution steps are also outside this API. Token counting and standalone compaction continue to use their HTTP endpoints. The source model remains available for HTTP requests.
 
 #### Warm up a response without generating output

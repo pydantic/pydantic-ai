@@ -65,7 +65,7 @@ Use `openai_responses_service_tier='ultrafast'` for Ultrafast on supported model
 
 A connection owns one ordered response stream. It does not support parallel responses on one socket or native mid-turn steering. OpenAI named lanes require response-event routing and independent cancellation and cache recovery, so use separate connection contexts for parallel runs. A cancelled or incompletely consumed response closes its socket. Open a new connection after interruption; there is no automatic retry. Resume with the full `message_history`, and pass `OpenAIResponsesModelSettings(openai_previous_response_id=None)` on the recovery run to clear an inherited `'auto'` value from model or agent settings. This sends the full history without a previous response ID. With `openai_store=False`, the prior response may exist only in the old socket's cache.
 
-Set handshake headers before connecting. Do not persist a connected model across durable execution steps. Ordinary tools, structured output, and capability hooks continue through the standard agent loop.
+Set handshake headers before connecting. Use SDK authentication supported by WebSocket handshakes. See [OpenAI Responses WebSocket mode](../../../../../../docs/models/openai.md#websocket-mode) for provider-specific limits. Do not persist a connected model across durable execution steps. Ordinary tools, structured output, and capability hooks continue through the standard agent loop.
 
 ## Correlate Runs with `run_id` and `conversation_id`
 

@@ -2417,6 +2417,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         Handshake headers include `AsyncOpenAI(default_headers=...)`. Headers and transport
         options configured only on a custom HTTP client are not inherited by the WebSocket.
 
+        Authentication must be supported by the OpenAI SDK's WebSocket transport. Unsupported
+        authentication raises [`UserError`][pydantic_ai.exceptions.UserError] with the SDK error as
+        its cause; HTTP requests keep their existing authentication.
+
         Args:
             extra_headers: Headers for the WebSocket handshake, overriding the model's default
                 `extra_headers`. Request headers must match the headers used to open the connection.

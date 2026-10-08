@@ -452,6 +452,9 @@ pip/uv-add "pydantic-ai-slim[bedrock-mantle]"
 
 The [`BedrockMantleProvider`][pydantic_ai.providers.bedrock_mantle.BedrockMantleProvider] authenticates with the same AWS credentials as the [Converse route](#environment-variables) — a bearer token via `AWS_BEARER_TOKEN_BEDROCK`, or AWS access keys / profile via SigV4 — and derives its endpoint from `region_name` (or the `AWS_DEFAULT_REGION` / `AWS_REGION` environment variables).
 
+!!! note
+    The default Bedrock Mantle SDK client cannot authenticate a Responses WebSocket, with either SigV4 credentials or `AWS_BEARER_TOKEN_BEDROCK`; `connect()` raises [`UserError`][pydantic_ai.exceptions.UserError]. For an endpoint that explicitly supports WebSocket mode with bearer authentication, supply a plain `AsyncOpenAI` client via `BedrockMantleProvider(openai_client=...)`. HTTP authentication is unchanged.
+
 The model name determines the endpoint family:
 
 | Model name | Interface |

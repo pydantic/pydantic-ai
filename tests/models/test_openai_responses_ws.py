@@ -41,7 +41,7 @@ from ..realtime.ws_cassettes import (
 )
 
 with try_import() as imports_successful:
-    from openai import AsyncAzureOpenAI, AsyncOpenAI
+    from openai import APIError, AsyncAzureOpenAI, AsyncOpenAI
     from openai.types.websocket_connection_options import WebSocketConnectionOptions
     from websockets.asyncio.client import connect as websocket_connect
     from websockets.datastructures import Headers
@@ -57,6 +57,10 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / webso
 READINESS_WAIT_TIMEOUT = 10
 Frame = dict[str, JsonValue]
 FRAME_ADAPTER = TypeAdapter(Frame)
+
+with try_import() as bedrock_mantle_imports_successful:
+    from pydantic_ai.models.bedrock_mantle import BedrockMantleResponsesModel
+    from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
 
 
 @pytest.fixture
@@ -316,6 +320,7 @@ class SocketHarness:
     opened: list[ScriptedSocket] = field(default_factory=list[ScriptedSocket])
     urls: list[str] = field(default_factory=list[str])
     headers: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
+    authorization_headers: list[str] = field(default_factory=list[str])
     options: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     connecting: anyio.Event = field(default_factory=anyio.Event)
     connect_count: int = 0
@@ -336,7 +341,9 @@ def sockets(monkeypatch: pytest.MonkeyPatch) -> SocketHarness:
             await harness.connect_gate.wait()
         harness.urls.append(uri)
         headers = {key.lower(): value for key, value in additional_headers.items()}
-        assert headers.pop('authorization').startswith('Bearer ')
+        authorization = headers.pop('authorization')
+        assert authorization.startswith('Bearer ')
+        harness.authorization_headers.append(authorization)
         harness.headers.append(headers)
         harness.options.append(options)
         socket = harness.pending.popleft()
@@ -1155,6 +1162,62 @@ async def test_codex_connection_unsupported(sockets: SocketHarness):
                 pytest.fail('Codex connections require conversation-specific headers')  # pragma: no cover
         assert not sockets.connecting.is_set()
         assert not source.client.is_closed()
+    finally:
+        await source.client.close()
+
+
+@pytest.mark.parametrize('auth_mode', ['sigv4', 'native-bearer'])
+@pytest.mark.skipif(not bedrock_mantle_imports_successful(), reason='bedrock-mantle not installed')
+async def test_bedrock_mantle_websocket_auth_requires_compatible_sdk_client(
+    monkeypatch: pytest.MonkeyPatch, sockets: SocketHarness, auth_mode: Literal['sigv4', 'native-bearer']
+):
+    """Mantle's native auth modes fail before opening a socket with guidance for WebSocket auth."""
+    monkeypatch.delenv('AWS_BEARER_TOKEN_BEDROCK', raising=False)
+    if auth_mode == 'sigv4':
+        provider = BedrockMantleProvider(
+            region_name='us-east-1', aws_access_key_id='fake-access-key', aws_secret_access_key='fake-secret-key'
+        )
+    else:
+        provider = BedrockMantleProvider(region_name='us-east-1', api_key='fake-bearer-token')
+    source = BedrockMantleResponsesModel('openai.gpt-5.6-luna', provider=provider)
+
+    async with source:
+        with pytest.raises(UserError) as raised:
+            async with source.connect():
+                pytest.fail('The SDK should reject this authentication before opening a socket')  # pragma: no cover
+
+        message = str(raised.value)
+        assert message.startswith('The OpenAI SDK could not configure this WebSocket connection:')
+        assert 'Use HTTP or supply an SDK client with WebSocket-compatible authentication.' in message
+        assert sockets.connect_count == 0
+        assert sockets.opened == []
+
+
+@pytest.mark.skipif(not bedrock_mantle_imports_successful(), reason='bedrock-mantle not installed')
+async def test_bedrock_mantle_websocket_accepts_compatible_bearer_client(sockets: SocketHarness):
+    """A caller-supplied bearer client preserves the Mantle endpoint and closes its socket once."""
+    client = AsyncOpenAI(api_key='fake-bearer-token', base_url='https://bedrock-mantle.us-east-1.api.aws/openai/v1')
+    provider = BedrockMantleProvider(openai_client=client)
+    source = BedrockMantleResponsesModel('openai.gpt-5.6-luna', provider=provider)
+    socket = sockets.pending[0]
+
+    async with client, source.connect():
+        assert sockets.urls == ['wss://bedrock-mantle.us-east-1.api.aws/openai/v1/responses']
+        assert sockets.authorization_headers == ['Bearer fake-bearer-token']
+        assert socket.close_count == 0
+
+    assert socket.close_count == 1
+
+
+async def test_sdk_api_errors_during_websocket_connection_are_mapped(sockets: SocketHarness):
+    request = httpx2.Request('GET', 'https://api.openai.com/v1/responses')
+    sockets.connect_error = APIError('SDK API failure', request, body=None)
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    try:
+        with pytest.raises(ModelAPIError, match='SDK API failure'):
+            async with source.connect():
+                pytest.fail('The SDK API error should be propagated')  # pragma: no cover
+        assert sockets.connect_count == 1
     finally:
         await source.client.close()
 
