@@ -460,7 +460,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # Explicit prompt cache breakpoints are supported on gpt-5.6 and later models, on both the
     # Chat Completions and Responses APIs. Like the other gates in this function, this enumerates
     # known versions rather than matching open-endedly.
-    # See https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints.
+    # See https://developers.openai.com/api/docs/guides/prompt-caching#choose-a-caching-mode.
     supports_prompt_cache_breakpoints = model_name.startswith(('gpt-5.6', *_GPT_6_MODEL_PREFIXES))
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
