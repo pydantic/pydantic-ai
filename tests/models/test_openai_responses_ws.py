@@ -856,15 +856,29 @@ async def test_incompatible_options(allow_model_requests: None, sockets: SocketH
         pytest.param(
             {'OPENAI-ORGANIZATION': 'org-test', 'x-TENANT': 'tenant-test'}, None, id='case-insensitive-equivalent'
         ),
+        pytest.param(
+            {'openai-organization': 'org-test', 'x-tenant': 'tenant-test', 'x-request-only': b'byte-header-value'},
+            '`x-request-only`',
+            id='bytes-value',
+        ),
+        pytest.param(
+            {'openai-organization': 'org-test', 'x-tenant': 'tenant-test', 'x-request-only': 123},
+            '`x-request-only`',
+            id='int-value',
+        ),
     ],
 )
 async def test_request_header_overrides(
-    allow_model_requests: None, sockets: SocketHarness, request_headers: dict[str, str], differing_headers: str | None
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    request_headers: dict[str, str | bytes | int],
+    differing_headers: str | None,
 ):
     settings: OpenAIResponsesModelSettings = {
         'extra_headers': {'OpenAI-Organization': 'org-test', 'X-Tenant': 'tenant-test'}
     }
-    request_settings: OpenAIResponsesModelSettings = {'extra_headers': request_headers}
+    # Exercise malformed runtime settings outside the declared header type.
+    request_settings: OpenAIResponsesModelSettings = {'extra_headers': request_headers}  # pyright: ignore[reportAssignmentType]
     source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'), settings=settings)
     agent = Agent(source, model_settings=request_settings)
     async with agent.connect():
@@ -878,7 +892,7 @@ async def test_request_header_overrides(
                 await agent.run('hello')
             assert f'Differing headers: {differing_headers}.' in str(raised.value)
             for value in ('org-test', 'tenant-test', *request_headers.values()):
-                assert value not in str(raised.value)
+                assert str(value) not in str(raised.value)
             assert sockets.opened[0].sent == []
 
 

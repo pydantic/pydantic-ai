@@ -80,7 +80,7 @@ class ResponsesWebSocket:
             for header_set in (client.auth_headers, client.default_headers, extra_headers)
             for key, value in header_set.items()
         }
-        return {key: value for key, value in headers.items() if isinstance(value, str)}
+        return {key: value for key, value in headers.items() if not isinstance(value, Omit)}
 
     async def request(self, body: Mapping[str, object], timeout: Timeout) -> ResponsesWebSocketStream:
         if self.closed:
