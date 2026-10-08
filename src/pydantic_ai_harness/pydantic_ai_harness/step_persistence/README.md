@@ -360,7 +360,8 @@ configured retention can delete older snapshots.
 - `SqliteStepStore(database='runs.db')` -- single SQLite file with tables
   `runs`, `events`, `snapshots`, `snapshot_idempotency_keys`, `tool_effects`, and a sibling `media`
   table for externalized blobs (see [Persisting media](#persisting-media)
-  below). WAL mode is enabled; `tool_effects` upserts per
+  below), plus `snapshot_messages` with `deduplicate_messages=True` (see
+  [Storing each message once](#storing-each-message-once)). WAL mode is enabled; `tool_effects` upserts per
   `(run_id, tool_call_id)` so the latest state wins; snapshots use
   `AUTOINCREMENT seq` to mirror `FileStepStore._next_snapshot_seq`.
   Databases created before the snapshot `state` column existed gain it
@@ -550,6 +551,29 @@ only see what is retained. With a tight bound (for example
 the bound as a hard limit on how far back such recovery can reach. Leave the
 bound at `None`, or set it high enough to cover the history you need to recover,
 when historical reconstruction matters.
+
+### Storing each message once
+
+`max_snapshots_per_run` bounds the snapshots within a run, but each run's
+snapshots still repeat the conversation that came before it. A store that keeps
+many runs of one conversation therefore grows with the number of runs times the
+history length. `SqliteStepStore(deduplicate_messages=True)` stores each message
+once in a `snapshot_messages` table, keyed by the SHA-256 of its JSON, and
+writes the snapshot row as the list of those keys. Reads rebuild the full
+history, so `latest_snapshot` and `list_snapshots` return the same messages as
+without the flag.
+
+```python
+from pydantic_ai_harness.step_persistence import SqliteStepStore
+
+store = SqliteStepStore(database='runs.db', max_snapshots_per_run=2, deduplicate_messages=True)
+```
+
+A store reads rows written with or without the flag, so you can turn it on for
+an existing database: earlier rows keep their inline history and new rows
+reference stored messages. Releases from before the flag cannot read rows
+written with it. Like externalized media, a stored message is not deleted when
+the snapshots referencing it are pruned.
 
 ## Persisting media
 
@@ -911,9 +935,10 @@ guarantee.
 - It does not prune events, and by default does not prune snapshots.
   Retention is the caller's responsibility; snapshot growth can be bounded
   opt-in with `max_snapshots_per_run` (see [Bounding snapshot growth](#bounding-snapshot-growth)).
-- It does not garbage-collect externalized media. Pruning a snapshot leaves
-  its content-addressed blobs in place, since they may be shared across
-  snapshots and runs.
+- It does not garbage-collect externalized media or messages stored with
+  `deduplicate_messages=True`. Pruning a snapshot leaves its content-addressed
+  blobs and messages in place, since they may be shared across snapshots and
+  runs.
 - It does not emit OpenTelemetry spans. pydantic_ai's `Instrumentation`
   capability already spans `agent run` / `chat` / `running tool` and
   populates `gen_ai.agent.name`, `gen_ai.agent.call.id`,

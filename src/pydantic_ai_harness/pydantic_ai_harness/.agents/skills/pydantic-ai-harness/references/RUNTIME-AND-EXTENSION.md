@@ -67,7 +67,8 @@ Stores, all in `pydantic_ai_harness.step_persistence`, all async, all accepting
 - `InMemoryStepStore()`: process-local; tests.
 - `FileStepStore(directory)`: `<directory>/<run_id>/` with JSON/JSONL files.
 - `SqliteStepStore(database='runs.db')`, or `connection=` a `sqlite3.Connection` opened with
-  `check_same_thread=False`.
+  `check_same_thread=False`. Pass `deduplicate_messages=True` to store each message once instead of
+  repeating the whole history in every snapshot row.
 - `MongoStepStore(client=AsyncMongoClient | db_url=..., database=...)`: needs `uv add
   "pydantic-ai-harness[mongodb]"`. Exactly one of `client`/`db_url`, and `database` is required. With
   `db_url` the store owns the client, so call `await store.aclose()`. It creates indexes on its first
@@ -123,7 +124,7 @@ Gotchas:
 - A derived `run_id` longer than 200 characters raises `ValueError`, so keep `agent_name` short.
   `FileStepStore` only accepts ids matching `[A-Za-z0-9_.-]{1,200}`.
 - Events are never pruned. Snapshots are pruned only with `max_snapshots_per_run`, and pruning never
-  deletes media blobs.
+  deletes media blobs or messages stored by `deduplicate_messages=True`.
 - Put `StepPersistence` before capabilities whose `after_run` rewrites history. After-hooks run in
   reverse order.
 - The default `id` is `'step_persistence'`, and store writes are durable operations, so it works
