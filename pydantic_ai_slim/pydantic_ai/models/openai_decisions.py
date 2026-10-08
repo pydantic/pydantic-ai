@@ -2,11 +2,10 @@ from __future__ import annotations as _annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Annotated, Literal
+from typing import Annotated, Literal, assert_never
 
 import httpx2
 from pydantic import Field, JsonValue, TypeAdapter, ValidationError
-from typing_extensions import assert_never
 
 from .._http import to_httpx2_timeout
 from ..exceptions import UnexpectedModelBehavior, UserError
