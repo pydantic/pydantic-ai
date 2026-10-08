@@ -788,16 +788,18 @@ class TestInputGuardrailParallelStreaming:
         assert stream.result.all_messages()[-1].parts == [TextPart(content='nope')]
         assert {t for t in asyncio.all_tasks() if t is not current and not t.done()} - before == set()
 
-    async def test_block_cancels_run_stream(self):
+    @pytest.mark.parametrize('delta', [True, False])
+    async def test_block_cancels_run_stream(self, delta: bool):
         model = _StalledModel()
         agent = model.agent(model.blocking_guard())
 
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             async with agent.run_stream('hello') as result:
-                deltas = [text async for text in result.stream_text(delta=True, debounce_by=None)]
+                texts = [text async for text in result.stream_text(delta=delta, debounce_by=None)]
                 assert await result.get_output() == 'nope'
 
-        assert deltas == ['leaked ', 'nope']
+        # The block message replaces the text streamed so far, rather than being appended to it.
+        assert texts == ['leaked ', 'nope']
         assert model.closed.is_set()
         assert result.all_messages()[-1].parts == [TextPart(content='nope')]
 

@@ -420,9 +420,15 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 # a quick benchmark shows it's faster to build up a string with concat when we're
                 # yielding at each step
                 deltas: list[str] = []
+                live_stream = self._raw_stream_response
                 async for text in deltas_iter:
-                    deltas.append(text)
-                    yield ''.join(deltas)
+                    if self._raw_stream_response is live_stream:
+                        deltas.append(text)
+                        yield ''.join(deltas)
+                    else:
+                        # The model stream was replaced mid-stream (see `_abandon_model_stream`), voiding its text.
+                        parts = self.response.parts
+                        yield ''.join(part.content for part in parts if isinstance(part, _messages.TextPart))
 
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
         """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s, interleaving events emitted into the run's event buffer."""
