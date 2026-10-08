@@ -123,7 +123,8 @@ async def test_a_stock_agent_without_plugins_sends_them_from_its_first_request()
     session = Session(create_stock_agent(recording(seen)), deps=None)
     session.instructions = 'Be brief.'
     await session.prompt('hello')
-    assert seen[-1] is not None and seen[-1].endswith('\n\nBe brief.')
+    # Last, after whatever the agent's own instructions are (this branch has none without plugins).
+    assert seen[-1] is not None and seen[-1].split('\n\n')[-1] == 'Be brief.'
 
 
 async def test_arguments_are_refused(tmp_path: Path) -> None:
