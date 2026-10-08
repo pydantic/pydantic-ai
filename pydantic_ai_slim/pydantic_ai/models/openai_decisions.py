@@ -10,7 +10,7 @@ from pydantic import BaseModel, JsonValue
 
 from .._http import to_httpx2_timeout
 from ..exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
-from ..messages import ModelMessage
+from ..messages import BinaryContent, ImageUrl
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
@@ -111,6 +111,9 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 
     supports_image_input: ClassVar[bool] = True
 
+    max_images: ClassVar[int | None] = 128
+    max_questions: ClassVar[int | None] = 200
+
     max_choice_options: ClassVar[int | None] = 255
     """The API takes at most this many options in one pick-one; a 256th is a 400.
 
@@ -167,10 +170,14 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         return self._provider.name
 
     async def _prepare_decision_request(
-        self, messages: list[ModelMessage], model_settings: DecisionModelSettings, *, turn: bool
+        self,
+        state: JsonValue,
+        image_inputs: list[BinaryContent | ImageUrl],
+        questions: dict[str, DecisionQuestion],
+        model_settings: DecisionModelSettings,
     ) -> DecisionRequest:
         _validate_extra_body(model_settings.get('extra_body'))
-        return await super()._prepare_decision_request(messages, model_settings, turn=turn)
+        return await super()._prepare_decision_request(state, image_inputs, questions, model_settings)
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the `/v1/decisions` endpoint."""
@@ -178,6 +185,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         if all(name.lower() != 'user-agent' for name in extra_headers):
             extra_headers['User-Agent'] = get_user_agent()
         _validate_extra_body(model_settings.get('extra_body'))
+        self._check_request_limits(image_count=len(request.images), question_count=len(request.questions))
         decision_input: str | list[DecisionInputMessageParam] = _text(request.state)
         if request.images:
             content: list[DecisionInputPartUnionParam] = [

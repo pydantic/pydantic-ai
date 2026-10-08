@@ -449,6 +449,20 @@ class DecisionModel(Model[InterfaceClient]):
     and resolves image URLs before calling `decide`. This is a transport capability, not a profile default.
     """
 
+    max_images: ClassVar[int | None] = None
+    """The most images the backend accepts in one request, or `None` for no limit.
+
+    An oversized request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] before image URLs
+    are downloaded, so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] can take over.
+    """
+
+    max_questions: ClassVar[int | None] = None
+    """The most questions the backend accepts in one request, or `None` for no limit.
+
+    An oversized request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] before image URLs
+    are downloaded.
+    """
+
     max_choice_options: ClassVar[int | None] = None
     """The most options the backend accepts in one pick-one question, or `None` for no limit.
 
@@ -497,7 +511,8 @@ class DecisionModel(Model[InterfaceClient]):
         request and, past the size cutoff for asking every route's fields up front, filled in a second. Every
         question in `request.questions` needs an answer of the matching kind under the same name.
         Image-capable backends serialize `request.images` as evidence alongside `request.state`; other
-        backends must reject a nonempty tuple, including when this method is called directly.
+        backends must reject a nonempty tuple, including when this method is called directly. Backend request
+        limits also apply to direct calls.
 
         Raise [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] or
         [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] when the backend fails, so a
@@ -695,10 +710,9 @@ class DecisionModel(Model[InterfaceClient]):
                 # a choice question, like the last tool left, and handing it off needs no request either.
                 raise UnfillableRoute(self.model_name, next(iter(routes)), 1.0)
             ask = _Ask.about(output_tool, instructions, limits, label=None)
-            request_template = await self._prepare_decision_request(messages, settings, turn=done)
-            async with self._decide(
-                dataclasses.replace(request_template, questions=ask.questions), settings, fields=True
-            ) as (
+            state, image_inputs = self._map_decision_input(messages, turn=done)
+            request = await self._prepare_decision_request(state, image_inputs, ask.questions, settings)
+            async with self._decide(request, settings, fields=True) as (
                 response,
                 span,
             ):
@@ -708,16 +722,17 @@ class DecisionModel(Model[InterfaceClient]):
 
         route_questions: dict[str, DecisionQuestion] = {}
         route_key = _route_question(route_questions, routes, output_tools, tools, instructions, limits)
-        request_template = await self._prepare_decision_request(messages, settings, turn=done)
-        speculation = _Speculation.about(routes, output_tools, request_template.state, instructions, limits)
+        state, image_inputs = self._map_decision_input(messages, turn=done)
+        speculation = _Speculation.about(routes, output_tools, state, instructions, limits)
         questions = speculation.questions()
         questions.update(route_questions)
+        request_template = await self._prepare_decision_request(state, image_inputs, questions, settings)
 
         # A picked route whose fields are asked in a second request, past the size cutoff: the route, its label and
         # its questions.
         to_fill: tuple[ToolDefinition, str, _Ask] | None = None
         async with self._decide(
-            dataclasses.replace(request_template, questions=questions),
+            request_template,
             settings,
             fields=bool(speculation.asks),
             route_question=route_key,
@@ -783,14 +798,33 @@ class DecisionModel(Model[InterfaceClient]):
             finish_reason='tool_call',
         )
 
+    def _map_decision_input(
+        self, messages: list[ModelMessage], *, turn: bool
+    ) -> tuple[JsonValue, list[BinaryContent | ImageUrl]]:
+        """Map history once, keeping image URLs unresolved until the request passes preflight."""
+        image_inputs: list[BinaryContent | ImageUrl] = []
+        state = _map_messages(messages, turn=turn, images=image_inputs if self.supports_image_input else None)
+        return state, image_inputs
+
+    def _check_request_limits(self, *, image_count: int = 0, question_count: int = 0) -> None:
+        for kind, count, limit in (
+            ('images', image_count, self.max_images),
+            ('questions', question_count, self.max_questions),
+        ):
+            if limit is not None and count > limit:
+                raise ModelAPIError(self.model_name, f'{self.model_name} accepts at most {limit} {kind}; got {count}.')
+
     async def _prepare_decision_request(
-        self, messages: list[ModelMessage], model_settings: DecisionModelSettings, *, turn: bool
+        self,
+        state: JsonValue,
+        image_inputs: list[BinaryContent | ImageUrl],
+        questions: dict[str, DecisionQuestion],
+        model_settings: DecisionModelSettings,
     ) -> DecisionRequest:
-        """Prepare state shared by every request in this step, without adding questions yet."""
-        image_inputs: list[BinaryContent | ImageUrl] | None = [] if self.supports_image_input else None
-        state = _map_messages(messages, turn=turn, images=image_inputs)
+        """Validate a complete request before resolving its image URLs."""
+        self._check_request_limits(image_count=len(image_inputs), question_count=len(questions))
         images: list[BinaryContent] = []
-        for item in image_inputs or ():
+        for item in image_inputs:
             if isinstance(item, BinaryContent):
                 images.append(item)
             else:
@@ -799,7 +833,7 @@ class DecisionModel(Model[InterfaceClient]):
                 if not image.is_image:
                     raise UserError(f'Image URL {item.url!r} returned content that is not an image.')
                 images.append(image)
-        return DecisionRequest(state=state, questions={}, images=tuple(images))
+        return DecisionRequest(state=state, questions=questions, images=tuple(images))
 
     async def _fill(
         self,
@@ -854,7 +888,8 @@ class DecisionModel(Model[InterfaceClient]):
         fill = _Ask.to_fill(tool, instructions, limits, label=label)
         if fill is None:
             raise UnfillableRoute(self.model_name, label, 1.0)
-        request_template = await self._prepare_decision_request(messages, settings, turn=turn)
+        state, image_inputs = self._map_decision_input(messages, turn=turn)
+        request_template = await self._prepare_decision_request(state, image_inputs, fill.questions, settings)
         response, args, details = await self._fill(label, fill, request_template, settings, boolean_threshold)
         details['route'] = _forced_route(label)
         return self._response(tool, args, response.usage, response.model_name, details)

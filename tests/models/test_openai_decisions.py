@@ -15,13 +15,14 @@ from decimal import Decimal
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Annotated, Literal
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, PropertyMock, patch
 
 import anyio
 import httpx2
 import pytest
 from cassetter import Cassette
 from pydantic import BaseModel, Field, JsonValue, WithJsonSchema
+from pydantic.json_schema import JsonSchemaValue
 
 from pydantic_ai import (
     Agent,
@@ -59,7 +60,7 @@ from pydantic_ai.models.decision import (
     UnfillableRoute,
 )
 from pydantic_ai.profiles.decision import DecisionModelProfile
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import ObjectJsonSchema, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
@@ -1559,6 +1560,27 @@ async def test_unfillable_output_prevents_image_download(allow_model_requests: N
     assert captured.requests == []
 
 
+async def test_image_limit_prevents_url_download(allow_model_requests: None):
+    """The provider's image limit is checked before resolving evidence URLs or sending a request."""
+    captured = Captured(boolean_answers)
+    image_urls: list[str | ImageUrl] = ['Review these images.']
+    image_urls.extend(ImageUrl(f'https://example.com/{index}.png') for index in range(129))
+    agent = Agent(mock_model(captured), output_type=bool, instructions='Are these images receipts?')
+
+    with (
+        patch(
+            'pydantic_ai.models.decision.download_item',
+            new_callable=AsyncMock,
+            side_effect=httpx2.ConnectError('image download should not start'),
+        ) as download,
+        pytest.raises(ModelAPIError, match='accepts at most 128 images; got 129'),
+    ):
+        await agent.run(image_urls)
+
+    download.assert_not_awaited()
+    assert captured.requests == []
+
+
 async def test_route_limit_prevents_image_download(allow_model_requests: None):
     """An overfull route question is rejected before downloading an image prompt."""
 
@@ -1585,6 +1607,67 @@ async def test_route_limit_prevents_image_download(allow_model_requests: None):
         pytest.raises(UserError, match='being offered 2 routes'),
     ):
         await agent.run([ImageUrl('https://example.com/missing.png')])
+
+    download.assert_not_awaited()
+    assert captured.requests == []
+
+
+async def test_route_and_fields_over_question_limit_prevent_image_download(allow_model_requests: None):
+    """The route and its speculative fields count toward the limit before image URLs are resolved."""
+    captured = Captured(boolean_answers)
+    model = mock_model(captured)
+
+    def inspect_ticket() -> None:
+        """Inspect the ticket."""
+
+    image_url = ImageUrl('https://example.com/ticket.png')
+    agent = Agent(model, output_type=Ticket, tools=[inspect_ticket], instructions='Triage this ticket.')
+
+    with (
+        patch.object(OpenAIDecisionsModel, 'max_questions', 1),
+        patch(
+            'pydantic_ai.models.decision.download_item',
+            new_callable=AsyncMock,
+            side_effect=httpx2.ConnectError('image download should not start'),
+        ) as download,
+        pytest.raises(ModelAPIError, match='accepts at most 1 questions; got 3'),
+    ):
+        await agent.run(['Review the ticket.', image_url])
+
+    download.assert_not_awaited()
+    assert captured.requests == []
+
+
+async def test_201_questions_prevent_image_download(allow_model_requests: None):
+    """A single-output request with 201 fields is rejected before resolving image URLs or sending it."""
+    captured = Captured(boolean_answers)
+    model = mock_model(captured)
+    properties: dict[str, JsonSchemaValue] = {
+        f'q{index}': {'type': 'boolean', 'description': 'Does this apply?'} for index in range(201)
+    }
+    required: list[str] = list(properties)
+    output_schema: ObjectJsonSchema = {'type': 'object', 'properties': properties, 'required': required}
+    output_tool = ToolDefinition(
+        name='final_result',
+        description='Answer the questions.',
+        kind='output',
+        parameters_json_schema=output_schema,
+    )
+    image_url = ImageUrl('https://example.com/ticket.png')
+
+    with (
+        patch(
+            'pydantic_ai.models.decision.download_item',
+            new_callable=AsyncMock,
+            side_effect=httpx2.ConnectError('image download should not start'),
+        ) as download,
+        pytest.raises(ModelAPIError, match='accepts at most 200 questions; got 201'),
+    ):
+        await model.request(
+            [ModelRequest(parts=[UserPromptPart(['Review the ticket.', image_url])])],
+            None,
+            ModelRequestParameters(output_tools=[output_tool], output_mode='tool', allow_text_output=False),
+        )
 
     download.assert_not_awaited()
     assert captured.requests == []
@@ -1809,3 +1892,50 @@ async def test_direct_decide_rejects_non_image_evidence_before_a_request(allow_m
         )
 
     assert captured.requests == []
+
+
+@pytest.mark.parametrize(
+    ('kind', 'count', 'limit'),
+    [pytest.param('images', 129, 128, id='images'), pytest.param('questions', 201, 200, id='questions')],
+)
+async def test_direct_decide_rejects_requests_over_provider_limits_before_encoding(
+    allow_model_requests: None, kind: str, count: int, limit: int
+):
+    captured = Captured(boolean_answers)
+    model = mock_model(captured)
+    images: tuple[BinaryContent, ...] = ()
+    questions: dict[str, DecisionQuestion] = {'q': NoulQuestion()}
+    if kind == 'images':
+        images = tuple(BinaryContent(b'image', media_type='image/png') for _ in range(count))
+    else:
+        questions = {f'q{index}': NoulQuestion() for index in range(count)}
+
+    with (
+        patch.object(BinaryContent, 'data_uri', new_callable=PropertyMock) as data_uri,
+        pytest.raises(ModelAPIError, match=f'accepts at most {limit} {kind}; got {count}'),
+    ):
+        await model.decide(DecisionRequest(state='Review this.', questions=questions, images=images), {})
+
+    data_uri.assert_not_called()
+    assert captured.requests == []
+
+
+@pytest.mark.parametrize(
+    ('kind', 'count'),
+    [pytest.param('images', 128, id='images'), pytest.param('questions', 200, id='questions')],
+)
+async def test_direct_decide_accepts_requests_at_provider_limits(allow_model_requests: None, kind: str, count: int):
+    captured = Captured(boolean_answers)
+    images: tuple[BinaryContent, ...] = ()
+    questions: dict[str, DecisionQuestion] = {'q': NoulQuestion()}
+    if kind == 'images':
+        images = tuple(BinaryContent(b'image', media_type='image/png') for _ in range(count))
+    else:
+        questions = {f'q{index}': NoulQuestion() for index in range(count)}
+
+    response = await mock_model(captured).decide(
+        DecisionRequest(state='Review this.', questions=questions, images=images), {}
+    )
+
+    assert response.answers.keys() == questions.keys()
+    assert len(captured.requests) == 1

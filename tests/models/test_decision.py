@@ -1434,6 +1434,27 @@ async def test_a_fallback_model_takes_the_unsure_step(allow_model_requests: None
     assert len(decision_model.requests) == 1
 
 
+@pytest.mark.parametrize('limit_kind', ['images', 'questions'])
+async def test_default_fallback_handles_backend_request_limits(allow_model_requests: None, limit_kind: str):
+    """Image and question preflight errors are `ModelAPIError`s, so the default fallback can take over."""
+
+    class LimitedDecisionModel(ImageEnabledDecisionModel):
+        max_images: ClassVar[int | None] = 0
+        max_questions: ClassVar[int | None] = 1
+
+    decision_model = LimitedDecisionModel()
+    model = FallbackModel(decision_model, TestModel(call_tools=[]))
+    if limit_kind == 'images':
+        agent = Agent(model, output_type=bool, instructions='Does the evidence contain a receipt?')
+        result = await agent.run(['Review this image.', BinaryContent(b'image', media_type='image/png')])
+    else:
+        agent = Agent(model, output_type=Triage)
+        result = await agent.run('Triage this ticket.')
+
+    assert result.response.model_name == 'test'
+    assert decision_model.requests == []
+
+
 def approve() -> str:
     """Approve the request as it stands."""
     return 'approved'  # pragma: no cover
