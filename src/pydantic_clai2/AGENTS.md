@@ -207,6 +207,10 @@ one that is not.
   settings are two sources, not two editors. Do not write a third editor.
 - `/set` edits go through `CommandContext.set_setting` / `reset_setting`, the
   same path as the typed command, so validation lives in one place.
+- Multi-line text goes through `text_editor.edit_text`: `$VISUAL` or `$EDITOR`
+  on a temporary file, else (on Windows, unset, or failing to start) a built-in
+  prompt_toolkit editor, since termflow has no multi-line input. Call it from a
+  menu worker between widgets. Do not write another editor.
 - Widget runners are a `Runners` value passed into the loops; tests pass
   scripted ones (`tests/menu_script.py`). Only the real `widget.run()`
   one-liners are `no cover`.
@@ -297,6 +301,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
 | `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext` |
+| `ui/menus/system_prompt_menu.py` | `/system_prompt`: the user's `run.instructions`, which `Session` sends after the agent's and plugins' instructions, and the latest request's full instructions, read-only |
+| `ui/menus/text_editor.py` | multi-line editing for menus: `$VISUAL`/`$EDITOR` (shared with the `/mcp` form), else a built-in prompt_toolkit editor |
 | `ui/menus/model_menu.py` | `/model add`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
 | `ui/menus/model_picker.py` | `/model`: selection, completion, and confirmed deletion of saved models and chains, and `/model chains`; protects the current model and saved default |
 | `ui/menus/chain_menu.py` | The `/model` picker's chain editors: new chain, models and their order (`edit_chain`), and `rename_chain` |
