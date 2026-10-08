@@ -15,7 +15,7 @@ from pydantic import TypeAdapter
 
 _render_spec = importlib.util.find_spec('render')
 
-if _render_spec is None and os.environ.get('CI') == 'true':
+if _render_spec is None and os.environ.get('CI') == 'true':  # pragma: no cover - CI's render extra is installed
     raise pytest.UsageError('Render tests require the `render` SDK in CI. Install the Harness render extra.')
 
 if TYPE_CHECKING:
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPToolset
     from pydantic_ai.usage import RunUsage
     from pydantic_ai_harness import RenderWorkflows
-elif _render_spec is None:
+elif _render_spec is None:  # pragma: no cover - the optional SDK is installed in this test suite
     collect_ignore_glob = ['*.py']
 
     class Workflows:

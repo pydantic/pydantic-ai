@@ -17,7 +17,15 @@ from pydantic_ai.exceptions import (
     ToolFailed,
     UserError,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    PartStartEvent,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import RenderWorkflows
@@ -317,6 +325,43 @@ async def test_foreign_worker_results_reject_invalid_envelope_and_effects(fields
     agent, runtime = build_agent()
     with pytest.raises(ValueError):
         await run_agent_in_task(agent, runtime, TaskBoundary(tamper_result=lambda result: result.update(fields)))
+
+
+@pytest.mark.parametrize(
+    ('effects', 'message'),
+    [
+        pytest.param({}, 'must carry usage, events, or both', id='empty'),
+        pytest.param({'usage': {'requests': 'bad'}}, 'not a run usage delta', id='invalid-usage'),
+        pytest.param(
+            {'usage': {'requests': True, 'details': {'negative': -1}}},
+            'negative counts',
+            id='negative-usage-after-boolean',
+        ),
+        pytest.param({'usage': {'details': [-1]}}, 'negative counts', id='negative-usage-in-list'),
+        pytest.param({'usage': []}, 'must be a JSON object', id='usage-is-not-object'),
+        pytest.param({'events': {}}, 'must be a JSON array', id='events-are-not-array'),
+        pytest.param(
+            {
+                'events': [
+                    TypeAdapter(PartStartEvent).dump_python(
+                        PartStartEvent(index=0, part=TextPart('hello')), mode='json'
+                    )
+                ]
+            },
+            'caller cannot emit',
+            id='model-event-is-not-a-child-effect',
+        ),
+        pytest.param({'events': [], 'unexpected': True}, 'invalid fields', id='unexpected-effect-field'),
+    ],
+)
+async def test_foreign_worker_effects_reject_malformed_or_unowned_values(effects: object, message: str) -> None:
+    agent, runtime = build_agent()
+    with pytest.raises(ValueError, match=message):
+        await run_agent_in_task(
+            agent,
+            runtime,
+            TaskBoundary(tamper_result=lambda result: result.update(effects=effects)),
+        )
 
 
 @pytest.mark.parametrize('error', [{'kind': 'future', 'message': 'x'}, {'kind': 'invalid-result', 'message': 1}])
