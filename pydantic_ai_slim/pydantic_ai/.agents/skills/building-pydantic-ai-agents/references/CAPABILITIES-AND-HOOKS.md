@@ -76,7 +76,7 @@ Cache writes cost more than uncached input (1.25x; 2x for Anthropic's 1-hour cac
 
 Provider-specific cache settings (`anthropic_cache*`, `bedrock_cache_*`, `openrouter_cache_*`, `openai_prompt_cache_options`, `openai_cache_instructions`) take precedence: if any is set, even to `False`, the unified value is ignored entirely. Providers that cache implicitly (OpenAI before GPT-5.6, Gemini, DeepSeek, xAI) ignore the setting. Explicit `CachePoint` markers in the message history still work alongside it.
 
-See [Prompt Caching](https://pydantic.dev/docs/ai/capabilities/caching/) for the per-provider mapping.
+See [Caching](https://pydantic.dev/docs/ai/capabilities/caching/) for the per-provider mapping.
 
 ## Intercept Agent Lifecycle with Hooks
 
