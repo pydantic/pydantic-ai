@@ -114,6 +114,10 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   the model twice. When a built-in takes the id of a row the former harness
   catalog offered, add that old row to `_RETIRED_BUILTINS` in `plugins/loader.py`, so a
   user's saved toggle of it maps to the built-in instead of outranking it.
+- **`open_stock_agent` loads `coder`, `repo_context`, and `compaction` only.** Add a
+  built-in to that list only when it needs no terminal and reads nothing from the
+  user's CLAI configuration directory. Hosts rely on a configuration that the user's
+  saved settings cannot change.
 - **Project declarations rank just above built-ins and start off.**
   `.clai/settings.json` (`project_settings.py`) may declare plugins; the loader
   takes them as `project=`, every one `enabled=False`, because a repository
@@ -203,6 +207,10 @@ one that is not.
   settings are two sources, not two editors. Do not write a third editor.
 - `/set` edits go through `CommandContext.set_setting` / `reset_setting`, the
   same path as the typed command, so validation lives in one place.
+- Multi-line text goes through `text_editor.edit_text`: `$VISUAL` or `$EDITOR`
+  on a temporary file, else (on Windows, unset, or failing to start) a built-in
+  prompt_toolkit editor, since termflow has no multi-line input. Call it from a
+  menu worker between widgets. Do not write another editor.
 - Widget runners are a `Runners` value passed into the loops; tests pass
   scripted ones (`tests/menu_script.py`). Only the real `widget.run()`
   one-liners are `no cover`.
@@ -267,14 +275,19 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `cli/_cli.py` | argument parsing, startup, `--agent` |
 | `cli/agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
 | `cli/self_update.py` | `/update` and the status-row notice: PyPI (`stable`) or the `clai2-bleeding` GitHub release (`main`: sdists built from the `main` branch by `.github/workflows/clai2-bleeding.yml` with `scripts/build_bleeding.sh`, installed with `--overrides`, no git or GitHub API; `CLAI_BLEEDING_URL` points it elsewhere), reinstalled with `uv tool install --force` |
-| `_app.py` | the prompt loop and built-in `/commands` |
-| `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume, plugin snapshots and stock-agent rebuilding |
+| `_app.py` | the prompt loop, built-in `/commands`, and `open_stock_agent`, the stock agent for code outside the terminal |
+| `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume (a session busy in another process resumes as a saved fork), plugin snapshots and stock-agent rebuilding |
 | `runtime/sessions.py` | resume command and background namer ownership; built-in step capture |
+| `runtime/imported_sessions.py` | Claude Code and Codex sessions for `/resume`, `--resume-claude`, and `--resume-codex`: the on-disk catalog, stable CLAI IDs, and copying into the store (re-reading an uncontinued copy on every resume) |
+| `runtime/claude_code_sessions.py`, `runtime/codex_sessions.py` | read each agent's JSON Lines transcripts: headers for the browser, and the history to continue (the last Claude Code branch, Codex's compacted history) |
+| `runtime/imported_history.py` | shared transcript reading and `HistoryBuilder`, which groups parts into requests and responses; core's `repair_messages` pairs the tool calls |
 | `runtime/session_naming.py` | resume-browser naming prompt, `SessionName` card schema, and the bounded `SessionNamer` worker |
 | `runtime/forks.py` | `/fork` and `/forks`: history snapshot, background child sessions, deferred fork output |
 | `ui/menus/session_browser.py` | project/session browser using Termflow layout and terminal primitives |
 | `ui/menus/rewind.py` | double-Esc rewind picker: run boundaries, compaction guard, and durable history replacement before draft restoration |
 | `ui/rendering/_rendering.py` | streaming Markdown and thinking |
+| `ui/rendering/tool_group.py` | `display.tool_calls = grouped`: `ToolCallGroup`, one live line counting consecutive calls by tool, kept as its own transcript item in the live prompt; `finish()` closes it, `_drain()` does not |
+| `ui/menus/tool_calls_preview.py` | the sample of each `display.tool_calls` style shown in the `/set` choice picker (`FieldRow.preview`) |
 | `plugins/__init__.py` | `Plugin`, `PluginHost`, `LoadedPlugin`/`collect`, event dataclasses |
 | `plugins/_factories.py` | resolving a declaration's `factory` to a `Plugin` (module, `module:Class`, capability class) |
 | `plugins/loader.py` | discovery, load, unload, reload; the `/plugins` subcommands |
@@ -288,6 +301,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
 | `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext` |
+| `ui/menus/system_prompt_menu.py` | `/system_prompt`: the user's `run.instructions`, which `Session` sends after the agent's and plugins' instructions, and the latest request's full instructions, read-only |
+| `ui/menus/text_editor.py` | multi-line editing for menus: `$VISUAL`/`$EDITOR` (shared with the `/mcp` form), else a built-in prompt_toolkit editor |
 | `ui/menus/model_menu.py` | `/model add`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
 | `ui/menus/model_picker.py` | `/model`: selection, completion, and confirmed deletion of saved models and chains, and `/model chains`; protects the current model and saved default |
 | `ui/menus/chain_menu.py` | The `/model` picker's chain editors: new chain, models and their order (`edit_chain`), and `rename_chain` |
@@ -318,6 +333,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/prompt/prompt_buffer.py` | pure draft editing, history navigation, search and cell-width wrapping |
 | `ui/prompt/prompt_completion.py` | bounded daemon completion worker; no terminal ownership |
 | `ui/prompt/prompt_keys.py` | prompt-toolkit input attachment and paste, CSI-u, Kitty alternate-key and xterm report normalization; `PromptSurface` enables and releases xterm `CSI >4;1m` and Kitty `CSI >5u`; no prompt-toolkit renderer |
+| `ui/prompt/prompt_selection.py` | SGR mouse report decoding and the left-button drag selection over the transcript's painted cells: highlight and text |
+| `ui/prompt/text_clipboard.py` | copying text out: the local clipboard command on one background worker where the newest copy wins, or OSC 52 over SSH or without one |
 | `config/__init__.py` | `Settings`, `PluginSettings` |
 | `config/theme_names.py` | theme choices shared by settings validation and the picker |
 | `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/`, including saved models and removal of their overrides |
@@ -425,13 +442,17 @@ the input cursor is a painted reverse-video cell. Keep terminal mutations in
 `PromptSurface`, and detach the key reader before a menu owns the screen.
 The prompt-toolkit decoder preserves paste, modified keys, and SGR mouse reports.
 PageUp/PageDown and wheel input scroll the transcript, not the draft.
+Mouse reporting stops most terminals from selecting text, so a left-button drag
+selects painted cells in `PromptSurface` and its release copies them through
+`text_clipboard.copy_text`. Do not drop the drag modes (`?1002h`) or copy-out breaks.
 
 Resize rebuilds from `TranscriptBuffer`, not guessed row coordinates or cursor
 reports. Never send erase-scrollback (CSI 3 J). Preserve the draft and scroll
 anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
 Full-screen menus leave the live panel temporarily. Inline questions borrow it
-with `run_worker(inline=True)`. Streamed text and thinking keep Markdown source
-for width/theme repaint; tool output keeps styled lines, each tagged with the
+with `run_worker(inline=True)` and pin the question text in their rows, not the
+transcript, so output streamed meanwhile cannot push it away. Streamed text and thinking keep Markdown source,
+and a tool-call group its call names, for width/theme repaint; tool output keeps styled lines, each tagged with the
 theme that painted it, and `recolor.py` translates them role by role (`theme.roles`)
 when the theme changes. On exit, `restore`
 prints retained output into native scrollback once, skipping startup output

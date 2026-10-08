@@ -57,8 +57,12 @@ Keep the category label aligned with the PR's purpose (`bug`, `feature`, `docs`,
 Add existing topic labels for every subject materially covered by the final title, body, and diff.
 Ignore incidental references, checklist text, and verification boilerplate when choosing topics.
 Remove topic labels only when the final scope no longer supports those labels.
-Preserve size, package, priority, review, and automation labels. Do not create or rename labels unless the user requests that change.
+Preserve size, priority, review, and automation labels. Do not create or rename labels unless the user requests that change.
 Apply label additions and removals in a batch with the title/body update. Verify the resulting metadata.
+
+Apply exactly one package label: `pkg:core`, `pkg:harness`, `pkg:clai2`, `pkg:evals`, `pkg:graph` or `pkg:clai`.
+Use the catalog descriptions to choose. Tests and docs count toward the package they cover.
+Use `pkg:core` for repository infrastructure. For changes spanning packages, choose the package whose users the change serves.
 
 Labelling needs triage permission on the repo (Pydantic team members and their agents). If it
 fails, quote the actual error rather than concluding you lack permission. Size labels are

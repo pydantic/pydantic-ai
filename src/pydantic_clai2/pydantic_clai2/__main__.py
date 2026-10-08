@@ -44,10 +44,11 @@ def main() -> None:
 
         with warnings.catch_warnings():
             if not sys.warnoptions:
-                # Library `UserWarning`s are advice for the developer who wired the agent, not the person
-                # at the prompt, and stderr output tears through the live display. `-W` or
-                # `PYTHONWARNINGS` restores them.
-                warnings.simplefilter('ignore', UserWarning)
+                # Library warnings are advice for the developer who wired the agent, not the person at the
+                # prompt, and stderr output tears through the live display. Not every one is a `UserWarning`
+                # (Logfire's `InspectArgumentsFailedWarning` subclasses `Warning`). `-W` or `PYTHONWARNINGS`
+                # restores them.
+                warnings.simplefilter('ignore', Warning)
             run(splash=splash)
     finally:
         splash.stop()

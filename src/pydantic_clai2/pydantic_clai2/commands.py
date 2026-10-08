@@ -15,7 +15,13 @@ from termflow.tui.completion import (
 )
 
 from pydantic_ai.models import known_model_names
-from pydantic_clai2.config import SETTING_FIELDS, STRING_SETTINGS, UPDATE_CHANNELS, PluginSettings
+from pydantic_clai2.config import (
+    SETTING_FIELDS,
+    STRING_SETTINGS,
+    TOOL_CALL_DISPLAYS,
+    UPDATE_CHANNELS,
+    PluginSettings,
+)
 from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
 from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_id
 from pydantic_clai2.ui import telemetry
@@ -79,6 +85,13 @@ class Command:
     """
     during_turn_subcommands: tuple[str, ...] = ()
     """Subcommands, like `add` in `/model add`, whose bare form also opens its menu mid-turn."""
+    live: bool = False
+    """Keep the editor live while the handler runs, as it is during a turn.
+
+    The working spinner shows, Esc or Ctrl-C cancels, and Enter queues a follow-up. Only for
+    handlers that may take a while and only print through the console: one that reads keys or
+    opens a menu needs the suspended editor every other command gets.
+    """
 
 
 class Commands(Completer):
@@ -138,6 +151,12 @@ class Commands(Completer):
         if len(words) == 1:
             return command.during_turn
         return command.args_during_turn or (len(words) == 2 and words[1] in command.during_turn_subcommands)
+
+    def runs_live(self, text: str) -> bool:
+        """Whether `text` names an available command that keeps the editor live while it runs."""
+        parts = text.removeprefix('/').split(maxsplit=1)
+        command = self._commands.get(parts[0]) if parts else None
+        return command is not None and command.live and command.available()
 
     async def execute_async(self, text: str) -> str:
         """Await asynchronous plugin commands without blocking the event loop.
@@ -243,6 +262,8 @@ def set_completions(args: list[str], *, plugin_models: Iterable[str] = ()) -> It
         return tuple(dict.fromkeys((*providers, *CODEX_MODELS, *names)))
     if len(args) == 2 and args[0] in ('display.thinking', 'display.splash'):
         return ('true', 'false')
+    if len(args) == 2 and args[0] == 'display.tool_calls':
+        return TOOL_CALL_DISPLAYS
     if len(args) == 2 and args[0] == 'updates.channel':
         return UPDATE_CHANNELS
     return ()

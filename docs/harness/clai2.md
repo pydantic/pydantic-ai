@@ -232,7 +232,7 @@ An empty value resets. `R` resets the highlighted setting. Esc closes. Every
 edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
 an alias of `/set` and accepts the same arguments.
 
-While a turn is running, `/set`, `/settings`, `/model`, `/model add`, `/model settings`,
+While a turn is running, `/set`, `/settings`, `/system_prompt`, `/model`, `/model add`, `/model settings`,
 `/theme`, and `/spinner` typed without further arguments open their menu right
 away instead of queueing.
 The turn keeps running: its output is held while the menu is open
@@ -249,6 +249,13 @@ keeps the tools and hooks it started with, because the agent binds them when a
 run begins; the change reaches the agent on your next prompt, and CLAI says so.
 A plugin turned off mid-turn finishes its cleanup when the turn ends. While a
 delegated task is running, `/plugins` still refuses changes, as between turns.
+
+`/system_prompt` shows the full system prompt sent with the latest request and
+edits your own instructions, the `run.instructions` setting. CLAI sends them after
+its built-in instructions, `AGENTS.md`, and plugin instructions, which stay
+read-only; yours replace none of them, and resetting removes them. Editing opens
+`$VISUAL` or `$EDITOR`; on Windows, when neither is set, or when the editor cannot
+start, a built-in editor opens instead. Changes apply from your next prompt.
 
 ## Models and their settings
 
@@ -319,7 +326,7 @@ Settings are validated before writes. `/set` updates the active settings snapsho
 legacy `/config` writes apply on restart; plugin changes apply on the next prompt.
 `--request-limit` controls the full prompt's model-request budget.
 
-Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/help`, `/clear` (alias `/new`), `/exit`, `/config`, `/plugins`, and `/reload`.
+Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/help`, `/clear` (alias `/new`), `/exit`, `/config`, `/plugins`, and `/reload`.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Path completion inserts a path; it does not attach file contents.
 Unknown slash commands are not sent to the model. Up/down recall prompt history
@@ -349,6 +356,46 @@ Reload ordering follows the modules' existing imports. Restart after changing
 import dependencies, startup code, or the custom agent's construction. `/reload`
 does not rerun the CLI or recursively reload third-party packages. Use
 `/plugins reload NAME` when you only want to reload one plugin.
+
+## The stock agent in your own code
+
+`open_stock_agent` opens CLAI's stock coding agent without the terminal. Use it with
+`agent.run`, `run_stream_events`, `iter`, or anything else that takes an agent:
+
+```python
+import asyncio
+from pathlib import Path
+
+from pydantic_clai2 import open_stock_agent
+
+
+async def main() -> None:
+    async with open_stock_agent(workspace=Path.cwd(), model='anthropic:claude-opus-5-5') as agent:
+        result = await agent.run('Summarize this repository in one paragraph.')
+        print(result.output)
+
+
+asyncio.run(main())
+```
+
+The agent has the `coder`, `repo_context`, and `compaction` built-ins, configured as
+in `clai2`. The file and shell tools work in `workspace`, unless a capability you pass
+supplies a workspace, and `AGENTS.md` or `CLAUDE.md` is read from it. Model names
+resolve as in `clai2`, with CLAI's per-model defaults. Nothing else you saved for
+`clai2` applies: no saved, drop-in, or project plugins, no `.clai/settings.json`, no
+`/model settings`, and no `chain:` fallback chains. `plugin_settings` changes a built-in's
+settings, merged over the stock ones, such as `{'coder': {'agent_folders': []}}`.
+`capabilities` adds your own capabilities, bound beside the built-ins so delegated
+tasks carry them too. Plugins close when the `async with` block exits.
+
+To serve it to an editor, pass the agent to [`run_acp_stdio`](acp.md). Every session
+then works in `workspace`. To follow the folder each client session opens instead,
+return a `workspace` from a `session_config`, as
+[Rooting tools at the workspace](acp.md#rooting-tools-at-the-workspace) shows. With a
+capability that requires approval, such as a `ToolGuardrail` returning
+`GuardrailResult.approve()`, pass `plugin_settings={'coder': {'sub_agents': False}}`:
+a delegated task cannot yet pass an approval up to the client
+([#4302](https://github.com/pydantic/pydantic-ai/issues/4302)).
 
 ## Bring an agent
 
@@ -447,6 +494,15 @@ without a specialized summary list their arguments after the name as `name=value
 muted compact-JSON values. Each value shows at most 40 characters by default; `/set display.tool_arg_chars 80`
 changes the next turn's limit (0 to 1000; zero hides arguments). The whole line is truncated to one terminal row. Completion activity remains in the footer
 rather than adding a separate `Finished:` line to the transcript.
+
+With `/set display.tool_calls grouped`, each call adds to a streak of the same tool on one line instead
+of printing its own: `● shell 4, grep 2, shell 3`. On a terminal the line is redrawn from column zero
+as each call arrives, so the last count is final only once another tool, visible text or thinking, a diff, or a widget follows.
+In the interactive prompt the line keeps counting above anything printed meanwhile, such as a command typed
+mid-turn. A tool that no longer fits the row starts the next line. Elsewhere the line prints once, when it ends.
+The `grouped` style ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell command output.
+`edit_file` and `write_file` calls are not counted: they print their summary and diff as in the `detailed` style.
+`/set` previews both styles when you pick one. The setting applies to the next turn; the default is `detailed`.
 
 ## Grep previews
 

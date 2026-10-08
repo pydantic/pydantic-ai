@@ -326,7 +326,7 @@ there are no background workers to stop.
 
 The built-in `observability` plugin (`pydantic_clai2.builtin_plugins.logfire`) is enabled by default in
 the stock CLI. It registers Pydantic AI's `Instrumentation` capability with an
-isolated Logfire instance, not process-wide instrumentation or custom tracing
+isolated Logfire instance, not process-wide agent instrumentation or custom tracing
 hooks. Agent/model/tool spans include timing, token usage, failures, text content,
 and binary image attachments by default, including retained history used by
 later turns. This may export source code, file contents, and screenshots; verify
@@ -367,7 +367,7 @@ credentials file was found. Scripts can replace the declaration instead:
 ```
 
 Options are `service_name` (default `pydantic-clai2`), `include_content` and
-`include_binary_content` (both default `true`), and `send_to_logfire` (default
+`include_binary_content` (both default `true`), `httpx` (default `false`), and `send_to_logfire` (default
 `"if-token-present"`, or `false`). The explicit plugin option takes precedence
 over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings;
 `token` takes only the name of a `/keys` entry (`{"name": "CLAI2_LOGFIRE_TOKEN"}`),
@@ -375,7 +375,11 @@ whose write token then replaces `LOGFIRE_TOKEN` and the credential file, so its
 project receives the telemetry. If that key is missing, the plugin warns and
 exports nothing rather than falling back to another project.
 Content flags do not suppress all metadata: tool names and definitions may still
-be recorded. Logfire's usual scrubbing is enabled.
+be recorded. Logfire's usual scrubbing is enabled. Set `httpx` to `true` to
+instrument `httpx` and `httpx2` requests process-wide while this plugin is loaded.
+With `include_content=true`, Logfire captures HTTP headers and request and response
+bodies too; with it off, those are not captured. HTTP instrumentation is removed
+on unload unless it was already installed by another owner.
 
 `base_url` (an https origin) is the Logfire to send to; unset, the SDK uses
 `LOGFIRE_BASE_URL`, else the region the token names. The **Logfire project** row
@@ -864,7 +868,7 @@ through this module and are not rewritten.
 Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
 host hooks. The shell keeps plugin resources alive until children settle; `/plugins`
 changes are refused while managed children run. Exit/reload drains them before
-`session_end`. Child questions use `host.full_screen()` and identify the child.
+`session_end`. Child questions use `host.full_screen()` and name the child in the picker's title.
 Typed delegation lifecycle events supply compact transcript rows; raw child events
 update the task inspector rather than entering the parent's transcript. Core hooks
 and guardrails bound to the stock agent still run on general-purpose children.
@@ -910,7 +914,9 @@ so two compaction chains never run together.
 
 `compaction` directly registers harness `FallbackCompaction` with
 `max_fraction=threshold`; harness owns the automatic trigger. `/compact` runs the
-same chain unconditionally. Its optional focus is free text, not shell arguments:
+same chain unconditionally, with the protected tail capped at half the
+conversation, and keeps the history unless the result is smaller. Its optional
+focus is free text, not shell arguments:
 `/compact don't lose the "auth" decisions` preserves the apostrophe and quotes in
 the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 `UsageLimitExceeded` cause summarisation to fall back to truncation; other exceptions
@@ -930,13 +936,15 @@ The second built-in, `ask_user` (`pydantic_clai2.builtin_plugins.ask_user_menu`)
 the model the harness's `AskUser` capability: one tool, `ask_user_question`, for
 asking you one to ten multiple-choice questions when the task is ambiguous. Each
 question appears inline above a compact numbered picker, keeping the conversation
-visible. Up/Down moves the highlight; Enter or an option's number selects it.
+visible. The question is pinned with its choices, so output streamed meanwhile (a
+delegated task's, say) lands above it instead of between it and the picker. Up/Down moves the highlight; Enter or an option's number selects it.
 For multi-select questions, Enter or a number toggles that choice; select `Done`
 to submit at least one choice. The title says `question 2 of 3` when there are
 several. Esc or Ctrl-C declines the whole request and lets the model continue.
-The picker uses `host.full_screen()` only to flush streaming output and suspend
+The plugin's `render` replaces the tool's argument dump with a header that lists
+the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
 the editor's input reader. It keeps the live panel's alternate screen. The draft
-is restored on exit, and your picks are printed to the transcript afterwards.
+is restored on exit, and the question and your picks are printed to the transcript afterwards.
 `/plugins disable ask_user` takes the tool away.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
@@ -1226,9 +1234,12 @@ Tokens are kept out of plugin settings, which are stored in plaintext:
   `mcp-day_ai`), the way `/mcp` signs in to an OAuth server, so later sessions
   reuse and refresh them. Choosing it saves `{"auth": "oauth"}`, which keeps
   using the browser even when `DAY_AI_ACCESS_TOKEN` is saved. If you are not
-  signed in yet, the browser opens when the menu closes. A failed sign-in fails
-  the load, so nothing is added. A headless run that is not signed in fails to
-  load rather than opening a browser.
+  signed in yet, the browser opens right away, behind a waiting screen. Esc
+  cancels it, and a failed sign-in is reported in the menu. Either way Day AI
+  stays signed out and CLAI keeps working. Loading never opens the browser.
+  While browser sign-in is chosen but not finished, the plugin loads without
+  Day AI tools and prints how to sign in, so a sign-in you cannot finish never
+  holds up a session.
 
 Until you choose one, with no `DAY_AI_ACCESS_TOKEN` and no earlier sign-in,
 the plugin loads without Day AI tools and prints how to connect. A key named
@@ -1912,11 +1923,14 @@ Redirected Markdown output does not emit hyperlinks. Destinations longer than
 Built-in tool rendering shows one summary line per call by default, clipped to
 the terminal width and followed by a blank line. Tool names are pink; arguments
 and bullet markers are muted grey. Successful file writes and edits show their
-diffs even in compact mode. Shell output and completion details and grep results
+diffs even with `display.tool_output` off. Shell output and completion details and grep results
 are hidden from the terminal, not from the model. Set `/set display.tool_output true`
 to show those details; `display.shell_lines` and `display.grep_lines` then control
 preview lengths (20 lines each by default). This setting does not suppress file
-diffs, plugin renderers, or interactive questions.
+diffs, plugin renderers, or interactive questions. With `/set display.tool_calls grouped`,
+calls no renderer claims are counted by tool on one line instead, except `edit_file` and
+`write_file`, which still print their summary and diff; `display.tool_output`
+has no effect, and anything a renderer draws ends that line.
 
 CLAI shows unknown tool calls as `● tool_name`, with the name in pink. To show something
 better, return a Rich renderable (a `str` is fine). Return `None` to say "not mine,
@@ -1954,8 +1968,10 @@ editor's input reader, and restores the editor and its draft when the block exit
 The editor remains active during agent turns. Enter queues a separate turn with
 its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter) sends the typed
 draft, or with an empty draft the oldest queued follow-up, to the active run
-through core's `RunContext.enqueue(priority='asap')`, without starting another
-turn or cancelling tools. Each press sends one message. Slash commands, `!` shell
+through core's `RunContext.enqueue(priority='asap')`. Accepted steering messages
+appear immediately in the transcript and are enqueued for the next model request,
+without starting another turn, interrupting the current response, or cancelling
+tools. Each press sends one message. Slash commands, `!` shell
 commands, and exit signals are never steered: such a draft, or any draft the run
 does not accept, is taken as Enter would take it, and such a queued message stays
 queued and is not skipped over. When idle, Enter starts a turn. Shift-Enter inserts
@@ -1984,6 +2000,7 @@ background task, and is hidden while a full-screen interface owns the terminal.
 The editor and transcript share a Termflow live cell buffer on the alternate
 screen. Only changed cells paint. PageUp/PageDown and mouse-wheel input scroll
 output without changing the draft. New output does not move a scrolled view.
+A mouse drag selects painted cells, and releasing it copies them to the clipboard.
 On exit, the retained transcript prints into native terminal scrollback.
 Resize, theme changes, and returning from a menu repaint from the transcript.
 Assistant Markdown renders again at the new width and theme; tool and command
@@ -2260,7 +2277,9 @@ render as compact used/max, such as `128k/1m`; `None` renders as `?`. Only set
 explicit window override, and clears the window when unloaded. A host built
 outside the shell gets an in-memory `Transcript` and a detached `Status`, so
 tests need no special case. The status row itself is CLAI's; a plugin adds to it
-with `get_status_segments`.
+with `get_status_segments`. While the main run waits on a subagent, the row
+shows that subagent's figures instead. These fields keep the main conversation's
+values meanwhile and show again when it settles; segments stay on the row.
 
 The double-Esc rewind menu also uses `commit_messages` between turns. It removes
 the selected prompt and later history, but does not undo plugin state, file
@@ -2364,6 +2383,12 @@ CLAI knows, such as an `AnthropicModel` subclass, set `settings_from='anthropic'
 (or `'openai'`, `'openai-chat'`, `'google'`) on the `ModelProvider` and these
 models get that provider's controls instead, such as Claude's thinking mode and
 effort. Any other value raises `ValueError`.
+
+The built-in `/effort [VALUE|reset]` shortcut uses the active model's
+`/model settings` effort control, including a plugin provider's `settings_from`
+mapping. It saves values under the plugin model identifier, not the mapped provider.
+Custom effort body parameters take precedence; `/effort` identifies these overrides
+and asks you to remove them before saving a native effort value.
 
 ### Add a sign-in to `/login`: `get_logins()`
 
@@ -2830,3 +2855,12 @@ replace it; this does not change those settings. `host.full_screen()` raises in
 headless mode. Plugins must not bypass the host by reading terminal input or
 printing directly to stdout. `--resume SESSION-ID` restores history without a
 browser or tool replay.
+
+## The stock agent from code
+
+`open_stock_agent` loads only the `coder`, `repo_context`, and `compaction` built-ins,
+with `plugin_settings` merged over their stock settings. Saved, drop-in, and project
+plugins never load. Each plugin gets `session_start` when the context opens and
+`session_end` when it closes, with reason `error` if the block raised. No turn hooks
+fire, no `/commands` run, and nothing renders: the host runs the agent. See
+[The stock agent in your own code](README.md#the-stock-agent-in-your-own-code).

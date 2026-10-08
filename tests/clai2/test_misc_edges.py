@@ -55,12 +55,17 @@ def test_splash_broken_stream_and_replaced_output(monkeypatch: pytest.MonkeyPatc
         splash.stop()
 
 
-@pytest.mark.parametrize(('warnoptions', 'shown'), [([], []), (['default'], ['for developers'])])
-def test_entry_point_quiets_user_warnings_unless_requested(
+class LibraryWarning(Warning):
+    """Like Logfire's `InspectArgumentsFailedWarning`: a warning that is not a `UserWarning`."""
+
+
+@pytest.mark.parametrize(('warnoptions', 'shown'), [([], []), (['default'], ['for developers', 'from a library'])])
+def test_entry_point_quiets_warnings_unless_requested(
     monkeypatch: pytest.MonkeyPatch, warnoptions: list[str], shown: list[str]
 ) -> None:
     def run(*, splash: Splash | None = None) -> None:
         warnings.warn('for developers', UserWarning)
+        warnings.warn('from a library', LibraryWarning)
 
     monkeypatch.setenv('PYDANTIC_AI_NO_BANNER', '1')
     monkeypatch.setattr(sys, 'argv', ['clai2', 'config'])
