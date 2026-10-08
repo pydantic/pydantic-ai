@@ -384,16 +384,19 @@ requested or not. Calls a developer asked for on their own branch or workspace w
 You also get the non-built-in (MCP) tool names in use with their user counts.
 
 Propose:
-- `rules`: at most one per category, for risky behaviour worth governing (cover flag variants in one glob, e.g.
-  `*git push*-f*` for `-f` and `--force`). Never turn a requested action into advice to do it.
+- `rules`: for risky behaviour worth governing. Never turn a requested action into advice to do it.
   - Mostly unprompted (the agent does it on its own): `action` `ask`, and an `instruction` for the agents, phrased as
     "Don't X unless the user asks" (or the convention to follow instead).
   - A clearly destructive action on a protected target (force-pushing or hard-resetting the default branch, deleting
     shared branches, `curl | sh`, reading secret files): `deny`. Otherwise `ask`. The organization decides.
-  `command` is a glob over the WHOLE command string (fnmatch: `*` matches anything), e.g. `*git push*--force*`. Make it
-  precise: it must match the flagged examples and not routine commands (`git push origin my-branch` must not match a
-  force-push rule). Generalize paths beyond the spelling in the examples: `~/.ssh/key`, `$HOME/.ssh/key` and
-  `/Users/x/.ssh/key` are the same risk, so match `*.ssh/*`, not `*~/.ssh/*`.
+  `command` is ONE glob a reviewer can read at a glance: plain text and `*` (matches anything) only, never `?`, `[...]`
+  or `{...}`. It is matched against each segment of a compound command (split on `&&`, `||`, `;`, `|`), so start it
+  with the command itself: `git branch -D*`, `git worktree remove*`, `git push*--force*`, `git reset --hard*`. When one
+  category needs several patterns (e.g. `git branch -D*` and `git push*--delete*`), emit one rule per pattern, with the
+  same category and action; never merge them with character-class tricks. Make it precise: it must match the flagged
+  examples and not routine commands (`git push origin my-branch` must not match a force-push rule). Generalize paths
+  beyond the spelling in the examples: `~/.ssh/key`, `$HOME/.ssh/key` and `/Users/x/.ssh/key` are the same risk, so
+  match `*.ssh/*`, not `*~/.ssh/*`.
   Skip categories where the flagged examples are all harmless after all.
 - `mcp_servers`: servers that several developers adopted, worth adding to the company allowlist. Name each server and
   give globs over the tool names it provides.
@@ -520,15 +523,21 @@ async def mine_policy(
     def check(ctx: RunContext[_Deps], drafts: _PolicyDrafts) -> _PolicyDrafts:
         problems: list[str] = []
         for rule in drafts.rules:
-            if not any(matching_segment(c, rule.command) for c in ctx.deps.commands):
+            if unreadable := unreadable_glob(rule.command):
+                problems.append(f'rule `{rule.name}`: glob `{rule.command}` {unreadable}')
+            elif not any(matching_segment(c, rule.command) for c in ctx.deps.commands):
                 problems.append(f'rule `{rule.name}`: glob `{rule.command}` matches none of the commands')
-            elif flagged := ctx.deps.flagged.get(rule.category):
-                covered = sum(1 for c in flagged if matching_segment(c, rule.command))
-                if 2 * covered < len(flagged):
-                    problems.append(
-                        f'rule `{rule.name}`: glob `{rule.command}` matches only {covered} of the {len(flagged)} flagged '
-                        f'`{rule.category}` commands; widen it to cover their variants'
-                    )
+        # Coverage per category, over all its rules together: the rules should cover most of what was flagged.
+        for category, flagged in ctx.deps.flagged.items():
+            globs = [r.command for r in drafts.rules if r.category == category and not unreadable_glob(r.command)]
+            if not globs:
+                continue
+            covered = sum(1 for c in flagged if any(matching_segment(c, g) for g in globs))
+            if 2 * covered < len(flagged):
+                problems.append(
+                    f'the `{category}` rules match only {covered} of its {len(flagged)} flagged commands; add a rule '
+                    'per missing pattern (plain globs only)'
+                )
         text = json.dumps(drafts.model_dump())
         if leaked := leaked_identifiers_in(text, ctx.deps.identifiers):
             problems.append(f'contains personal identifiers ({", ".join(sorted(leaked))}); remove them')
@@ -555,17 +564,30 @@ async def mine_policy(
     generated_by = f'fleet-miner {__version__} / {model}'
     passing: list[tuple[tuple[int, ...], Proposal]] = []
     flagged = [c for c in risky if (k := classes.get(c.span_id)) and k.flagged]
-    for draft in output.rules:
-        # Measure what the glob actually matches among the flagged calls; the LLM's claims don't count.
-        matched = Group(
+
+    def measured(draft: _RuleDraft) -> Group:
+        # What the glob actually matches among the flagged calls; the LLM's claims don't count. Only these calls are
+        # evidence: each has a segment the final glob matches.
+        return Group(
             draft.name,
             list({c.span_id: c for c in flagged if c.command and matching_segment(c.command, draft.command)}.values()),
         )
+
+    rules = [d for d in output.rules if not unreadable_glob(d.command)]  # in case retries ran out
+    # The rule matching the most calls in a category keeps the stable id `policy-<category>-<action>`; further
+    # patterns for the same category and action get the glob's slug appended.
+    rules.sort(key=lambda d: len(measured(d).calls), reverse=True)
+    seen_ids: set[str] = set()
+    for draft in rules:
+        matched = measured(draft)
         users, sessions = len(matched.users), len({c.session_id for c in matched.calls})
         # Keyed by what the rule is about, not the LLM's wording, so reruns update it instead of adding a twin.
         proposal_id = f'policy-{draft.category}-{draft.action}'
-        if any(p.id == proposal_id for _, p in passing):
-            continue  # a second rule for the same category and action: the first one that passed stands
+        if proposal_id in seen_ids:
+            proposal_id = f'{proposal_id}-{_slug(draft.command)}'
+        if proposal_id in seen_ids:
+            continue
+        seen_ids.add(proposal_id)
         if users < gates.min_users or sessions < gates.min_sessions:
             stale_reasons.setdefault(
                 proposal_id,
@@ -655,15 +677,33 @@ async def mine_policy(
     ranked = [p for _, p in sorted(passing, key=lambda kv: kv[0], reverse=True)]
     # An earlier suggestion for a category that now passes with the other action was replaced, not dropped.
     for p in ranked:
-        category, action = p.id.rsplit('-', 1)
-        other = f'{category}-{"ask" if action == "deny" else "deny"}'
-        stale_reasons[other] = f'replaced by `{p.id}`: {p.text.split(". ")[0]}.'
+        if p.rule is not None and (category := risk_category(p)):
+            other = f'policy-{category}-{"ask" if p.rule.action == "deny" else "deny"}'
+            stale_reasons.setdefault(other, f'replaced by `{p.id}`: {p.text.split(". ")[0]}.')
     for p in ranked:
         stale_reasons.pop(p.id, None)
     for p in ranked[gates.max_pending :]:
         p.status, p.emerging = 'stale', True
         p.status_reason = 'Emerging: passes every gate, but ranks below the pending policy suggestions.'
     return PolicyResult(ranked, stale_reasons, stats)
+
+
+def risk_category(proposal: Proposal) -> str | None:
+    """The risk category a policy rule proposal is about (its `pattern` is `<category>: <glob>`), or None."""
+    return proposal.pattern.split(':', 1)[0] if proposal.kind == 'policy' and proposal.rule else None
+
+
+def unreadable_glob(glob: str) -> str | None:
+    """Why a rule glob is not one a reviewer can read at a glance, or None: plain text and `*` only."""
+    if re.search(r'[\[\]?{}]', glob):
+        return 'uses `?`, `[...]` or `{...}`: use plain text and `*` only, one rule per pattern'
+    if max((len(part.strip()) for part in glob.split('*')), default=0) < 4:
+        return 'has no readable literal part: name the command, e.g. `git branch -D*`'
+    return None
+
+
+def _slug(glob: str) -> str:
+    return re.sub(r'[^a-z0-9]+', '-', glob.lower()).strip('-')[:40]
 
 
 def _scope_fields(matched: list[ToolCall], calls: list[ToolCall]) -> dict[str, Any]:

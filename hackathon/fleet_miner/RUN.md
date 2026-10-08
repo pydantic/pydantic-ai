@@ -54,6 +54,14 @@ Two families of findings, both "never from one developer or one session":
    targets), re-measured against the flagged calls, and gated on 2+ developers in `--min-policy-sessions` (2+)
    sessions. At most `--max-pending-policy` (3) are pending.
 
+Rule globs are plain text and `*` only (no `?`, `[...]` or `{...}`), matched per command segment, e.g.
+`git branch -D*`; a category that needs several patterns gets one rule per pattern. Every policy evidence item is a
+call the final glob matches.
+
+Evidence names people: each item carries `email` (when known) next to its `developer` number, and the document's
+`developers` map names every number (`email`, `host`), so traces without `user.email` are labelled the same way.
+Drafted text (what agents get) never names anyone, and nothing in the document carries tokens or credentials.
+
 Statuses: a suggestion that passes but ranks below its cap is `stale` with `emerging: true` (the UI can show these
 collapsed). An earlier pending one that no longer passes becomes `stale` with a `status_reason` ("didn't pass: only 1
 developer", "didn't pass: its prompts are not guidance for the agent (task 3 of 3)", "replaced by ..."). Accepted and

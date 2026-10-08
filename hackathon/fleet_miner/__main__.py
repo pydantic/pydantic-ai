@@ -15,7 +15,7 @@ from pathlib import Path
 import logfire
 
 from . import extract as extract_mod, fetch, impact as impact_mod, patterns as patterns_mod, policy as policy_mod
-from .models import Impact, Proposal, ProposalsDoc, UserPrompt, Window, daily_trend, pseudonymize, span_of
+from .models import Impact, Proposal, ProposalsDoc, UserPrompt, Window, daily_trend, identify_developers, span_of
 from .llm_cache import CACHE_DIR, USAGE
 from .variables import CONTROL_VARIABLE, VARIABLE, VariablesClient
 
@@ -145,11 +145,9 @@ async def main(args: argparse.Namespace) -> tuple[str, int]:
     )
     identifiers = patterns_mod.personal_identifiers(prompts + _calls_as_prompts(calls))
     if mine_policy:
-        # Once someone accepted or dismissed a rule for a risk category, don't re-propose that category with
-        # another action (ids are `policy-<category>-<action>`).
-        reviewed = {
-            p.id.rsplit('-', 1)[0] for p in existing if p.kind == 'policy' and p.status in ('accepted', 'dismissed')
-        }
+        # Once someone accepted or dismissed a rule for a risk category, don't re-propose that category under
+        # another id (another action or pattern); the reviewed id itself still gets its evidence refreshed.
+        reviewed = {policy_mod.risk_category(p) for p in existing if p.rule and p.status in ('accepted', 'dismissed')}
         result = await policy_mod.mine_policy(
             calls,
             prompts=prompts,
@@ -169,13 +167,13 @@ async def main(args: argparse.Namespace) -> tuple[str, int]:
         drafted += [
             p
             for p in result.proposals
-            if p.rule is None or p.id.rsplit('-', 1)[0] not in reviewed or any(e.id == p.id for e in existing)
+            if p.rule is None or policy_mod.risk_category(p) not in reviewed or any(e.id == p.id for e in existing)
         ]
-        # Policy ids carry the action (`policy-<category>-<action>`); the reasons are per category or per id.
+        # The reasons are per id, or per category (`policy-<category>`) when the whole category no longer qualifies.
         for p in existing:
             if p.kind == 'policy':
-                category = p.id.rsplit('-', 1)[0]
-                if reason := result.stale_reasons.get(p.id) or result.stale_reasons.get(category):
+                category = f'policy-{policy_mod.risk_category(p)}' if p.rule else None
+                if reason := result.stale_reasons.get(p.id) or (category and result.stale_reasons.get(category)):
                     stale_reasons[p.id] = reason
     users_by_span = {p.span_id: p.user or p.span_id for p in prompts} | {c.span_id: c.user for c in calls}
     # Evidence of earlier proposals can point at spans this run didn't fetch: look those up, so developer numbers
@@ -207,7 +205,8 @@ async def main(args: argparse.Namespace) -> tuple[str, int]:
         read_token=None if args.fixture else (os.environ.get('LOGFIRE_CLAI2_READ_TOKEN') or api_key),
         base_url=args.base_url,
     )
-    finish = Finisher(users_by_span, identifiers, dismissals, impacts)
+    hosts = {email: host for host, email in emails_by_host.items() if email}
+    finish = Finisher(users_by_span, hosts, identifiers, dismissals, impacts)
     stale_kinds = ({'skill', 'instruction'} if mine_prompts else set()) | ({'policy'} if mine_policy else set())
     merged, actions = patterns_mod.merge(existing, drafted, stale_kinds=stale_kinds, stale_reasons=stale_reasons)
     for proposal in drafted:
@@ -374,9 +373,13 @@ def _calls_as_prompts(calls: list[policy_mod.ToolCall]) -> list[UserPrompt]:
 
 @dataclass
 class Finisher:
-    """Make the document safe to hand to every clai2 process, and attach the numbers that are only known now."""
+    """Make the document safe to hand to every clai2 process, and attach the numbers that are only known now.
+
+    Drafted text never names people (it is pushed to agents); evidence does, for oversight (see `Evidence`).
+    """
 
     users_by_span: dict[str, str]
+    hosts: dict[str, str]
     identifiers: set[str]
     dismissals: dict[str, str]
     impacts: dict[str, Impact]
@@ -397,7 +400,7 @@ class Finisher:
                 update['impact'] = self.impacts[p.id]
             proposals.append(p.model_copy(update=update, deep=True))
         doc = doc.model_copy(update={'proposals': proposals})
-        pseudonymize(doc, self.users_by_span)
+        identify_developers(doc, self.users_by_span, self.hosts)
         return doc
 
 

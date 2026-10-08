@@ -77,18 +77,19 @@ def clean_text[T: str | None](value: T) -> T:
 
 
 class Evidence(BaseModel):
-    """A pointer into the traces, nothing more.
+    """A pointer into the traces, plus who it came from.
 
-    Every clai2 process downloads every variable in the project, so the stored document must not carry who said what:
-    no email, host or excerpt. The UI resolves the user and the text lazily from `trace_id`/`span_id`. `developer`
-    is a pseudonymous number, stable within one document, so the UI can show "3 developers" and group evidence.
-    (Older documents carried `user`, `session_id` and `excerpt`; those keys are dropped on load.)
+    This is oversight for the organization, so people are identified: `email` is the developer's `user.email` when
+    known, and `developer` numbers them consistently within one document (the doc-level `developers` map names each
+    number, also for traces that lack `user.email`). The UI resolves the text lazily from `trace_id`/`span_id`. Never
+    a token, key or credential. (Older documents carried `user`, `session_id` and `excerpt`; dropped on load.)
     """
 
     trace_id: str
     span_id: str
     timestamp: datetime
     developer: int = 0
+    email: str | None = None
     origin: Literal['requested', 'unprompted'] | None = None
     """Policy evidence: whether the developer asked for this call in that turn or the one before, or the agent chose it."""
     target: Literal['protected', 'own'] | None = None
@@ -237,6 +238,13 @@ class Window(BaseModel):
     end: datetime
 
 
+class Developer(BaseModel):
+    """Who a `developer` number in the document is: their `user.email` and machine, as far as either is known."""
+
+    email: str | None = None
+    host: str | None = None
+
+
 class ProposalsDoc(BaseModel):
     """The value of the `fleet_proposals__clai2` managed variable."""
 
@@ -244,14 +252,26 @@ class ProposalsDoc(BaseModel):
     window: Window
     min_users: int | None = None
     """Distinct developers a pattern needed in the run that wrote this document."""
+    developers: dict[str, Developer] = {}
+    """Evidence `developer` number (as a string key) -> who it is, so the UI labels every trace the same way."""
     proposals: list[Proposal] = []
 
 
-def pseudonymize(doc: ProposalsDoc, users_by_span: dict[str, str]) -> None:
-    """Number developers 1, 2, ... in order of first appearance across the whole document, in place."""
+def identify_developers(doc: ProposalsDoc, users_by_span: dict[str, str], hosts: dict[str, str]) -> None:
+    """Number developers 1, 2, ... in order of first appearance across the whole document, name them, in place.
+
+    `users_by_span` maps evidence spans to an email, or `host:<machine>` when no email is linked to it; `hosts` maps
+    emails to their machine.
+    """
     numbers: dict[str, int] = {}
+    developers: dict[str, Developer] = {}
     for proposal in doc.proposals:
         for evidence in proposal.evidence:
             # Evidence whose span is outside this run's window keeps a number of its own rather than a guessed one.
             user = users_by_span.get(evidence.span_id, f'unknown:{evidence.span_id}')
             evidence.developer = numbers.setdefault(user, len(numbers) + 1)
+            email = user if '@' in user and not user.startswith(('host:', 'unknown:')) else None
+            evidence.email = email
+            host = user.removeprefix('host:') if user.startswith('host:') else hosts.get(user)
+            developers[str(evidence.developer)] = Developer(email=email, host=host)
+    doc.developers = developers
