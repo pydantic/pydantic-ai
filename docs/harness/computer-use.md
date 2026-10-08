@@ -171,7 +171,7 @@ layers limit that:
   cannot rule out a mistake or a prompt injection.
 - **Approval**: `require_approval=True` raises `ApprovalRequired` for any call
   that clicks, types, moves, drags, or scrolls. Answer it with core's
-  [`HandleDeferredToolCalls`](/ai/tools-toolsets/deferred-tools/) or
+  [`HandleDeferredToolCalls`](../deferred-tools.md) or
   return `DeferredToolRequests` from the run:
 
   ```python
