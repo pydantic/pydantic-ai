@@ -126,6 +126,44 @@ async def test_openrouter_provider_quantization_and_sort(
     assert request_capture.body()['provider'] == {'quantizations': ['nvfp4'], 'sort': 'exacto'}
 
 
+async def test_openrouter_provider_preferred_min_throughput_wire_payload(allow_model_requests: None) -> None:
+    """`preferred_min_throughput` percentile cutoffs pass through to the provider payload verbatim.
+
+    A mocked client pins the exact request-payload mapping, so this is a unit test rather than a
+    VCR test despite the module-level `vcr` mark; a recording would need a real OpenRouter key.
+    """
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel('z-ai/glm-5.3-flash', provider=OpenRouterProvider(openai_client=mock_client))
+    await Agent(model).run(
+        'Who are you? One sentence.',
+        model_settings=OpenRouterModelSettings(
+            max_tokens=300,
+            openrouter_provider={'preferred_min_throughput': {'p75': 50.0}},
+        ),
+    )
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_body']['provider'] == {
+        'preferred_min_throughput': {'p75': 50.0}
+    }
+
+
+async def test_openrouter_provider_preferred_max_latency_wire_payload(allow_model_requests: None) -> None:
+    """A bare `preferred_max_latency` value passes through to the provider payload verbatim.
+
+    A mocked client pins the exact request-payload mapping, so this is a unit test rather than a
+    VCR test despite the module-level `vcr` mark; a recording would need a real OpenRouter key.
+    """
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel('z-ai/glm-5.3-flash', provider=OpenRouterProvider(openai_client=mock_client))
+    await Agent(model).run(
+        'Who are you? One sentence.',
+        model_settings=OpenRouterModelSettings(
+            max_tokens=300,
+            openrouter_provider={'preferred_max_latency': 0.35},
+        ),
+    )
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_body']['provider'] == {'preferred_max_latency': 0.35}
+
+
 async def test_openrouter_stream_with_native_options(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
