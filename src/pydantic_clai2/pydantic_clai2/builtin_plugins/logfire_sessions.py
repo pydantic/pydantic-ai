@@ -368,7 +368,7 @@ class Listed:
             workspace=workspace,
             updated_at=self.last,
             title=self.first_prompt[:80] or 'Session from Logfire',
-            subtitle=' · '.join(part for part in ('Logfire · other machine', self.repo, f'{self.runs} runs') if part),
+            subtitle=' · '.join(part for part in ('Logfire · other machine', self.repo, _runs(self.runs)) if part),
             tags=('logfire',),
         )
 
@@ -538,7 +538,10 @@ class LogfireSessions:
                 messages=loaded.messages,
                 title=title,
                 subtitle=f'Your session from Logfire ({self.project})',
-                notice=f'Continuing your session from Logfire ({remote_next} runs; conversation only, no files or tool state).',
+                notice=(
+                    f'Continuing your session from Logfire ({_runs(remote_next)}; conversation only, no files or '
+                    'tool state).'
+                ),
             )
         fork_id = str(uuid4())
         self.states.set(
@@ -554,20 +557,24 @@ class LogfireSessions:
             ),
         )
         whose = (
-            'your session, which continued elsewhere'
+            f'your session {session_id[:8]}, which continued on another machine,'
             if loaded.owner == me
-            else f"{loaded.owner or 'someone'}'s session"
+            else f"{loaded.owner or 'someone'}'s session {session_id[:8]}"
         )
         return RemoteResume(
             conversation_id=fork_id,
             messages=loaded.messages,
             title=f'Fork: {title}',
-            subtitle=f'Fork of {whose} {session_id} at run {loaded.last_seq}',
+            subtitle=f'Fork of {session_id} after {_runs(remote_next)} ({loaded.owner or "unknown"})',
             notice=(
-                f'Forked {whose} {session_id[:8]} at run {loaded.last_seq} from Logfire. The original is untouched; '
-                'your turns go to the fork (conversation only, no files or tool state).'
+                f'Forked {whose} after {_runs(remote_next)} from Logfire. The original is untouched; your turns go '
+                'to the fork (conversation only, no files or tool state).'
             ),
         )
+
+
+def _runs(count: int) -> str:
+    return f'{count} run' if count == 1 else f'{count} runs'
 
 
 def trace_from_link(link: str) -> str | None:

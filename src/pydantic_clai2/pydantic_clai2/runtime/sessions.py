@@ -147,13 +147,19 @@ class Sessions(Generic[DepsT, OutputT]):
             raise ValueError('Usage: /sessions (then /resume ID or /resume to pick one)')
         saved = await self.store.listing(limit=30)
         remote = await self._remote_listing()
-        here = {summary.id for summary in saved}
-        entries = merge(saved, remote.entries if remote else [], limit=30)
+        here = {summary.id: summary for summary in saved}
+        remote_entries = remote.entries if remote else []
+        newer = {
+            entry.id for entry in remote_entries if entry.id in here and entry.updated_at > here[entry.id].updated_at
+        }
+        entries = merge(saved, remote_entries, limit=30)
         if not entries and not (remote and remote.unavailable):
             return 'No saved sessions yet.'
         lines = ['Sessions, newest first:']
         for entry in entries:
             where = 'this machine' if entry.id in here else 'Logfire · other machine'
+            if entry.id in newer:
+                where = 'this machine, newer in Logfire'
             when = entry.updated_at.astimezone().strftime('%Y-%m-%d %H:%M')
             lines.append(f'  {entry.id}  {when}  {where:<24} {entry.title[:70]}')
         if remote and remote.unavailable:
