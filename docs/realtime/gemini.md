@@ -192,6 +192,7 @@ facts with [`profile=`](overview.md#provider-support), which resolves like a
 | Manual turns | Unsupported | [Automatic turn detection](turns.md#automatic-turn-detection) is required |
 | Explicit interruption/truncation | Unsupported | Gemini [interrupts server-side](turns.md#barge-in) and emits `RealtimeResponseInterruptedEvent` |
 | Input transcription | Full feature support | Native [transcription](audio.md#input-transcription), enabled by default; no separate model ID |
+| Input speech events | Gemini 3.x Live models | `RealtimeInputSpeechStartEvent` / `RealtimeInputSpeechEndEvent` under automatic VAD; Gemini 2.5 sends none, so a "listening" indicator should read `emits_input_speech_events` rather than wait for events |
 | Native tools | Limited parameter support | Google Search grounding only; URL context and code execution fall back to a [`local=` tool](tools.md#native-tools) (see above) |
 | Usage | Full feature support | Token and modality breakdowns; function-call usage may arrive on a later turn |
 | State-restoring reconnect | Full feature support | Requires [session resumption](#session-resumption) plus a reconnect policy |

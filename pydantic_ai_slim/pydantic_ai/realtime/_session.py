@@ -904,7 +904,7 @@ class RealtimeSession:
         # guards is a property of the response, not of how long the user kept talking. Released
         # when the next response opens, and by a reconnect that discards the one it referred to.
         self._server_cancelled_the_response_on_speech = False
-        # Set once the provider draws its first speech-end boundary. Gemini never does, so its
+        # Set once the provider draws its first speech-end boundary. Gemini 2.5 never does, so its
         # retained input is only ever consumed by a turn, never trimmed at one.
         self._provider_segments_input = False
         self._pending_response_usage = RequestUsage()
@@ -2336,8 +2336,8 @@ class RealtimeSession:
         `interrupt()` flow. Provider differences are absorbed here: a speech start on a truncating
         model gets the full flush-attribute-truncate-cancel treatment; without output truncation
         (xAI) unheard audio is flushed and the response cancelled untruncated; and a
-        provider-initiated interruption (Gemini, which reports no speech start) leaves only the
-        local flush to do.
+        provider-initiated interruption (Gemini, whose speech start on the 3.x models is not an
+        interruption point) leaves only the local flush to do.
         """
         if len(self._audio_taps) != 1:
             return
@@ -2789,8 +2789,8 @@ class RealtimeSession:
 
     def _handle_turn_complete(self, event: ResponseDone) -> list[RealtimeEvent]:
         # Turn boundary for a user turn that wasn't finalized earlier, so history reads user-then-assistant.
-        # Gemini emits neither `RealtimeInputSpeechEndEvent` nor a final (`is_final`) input transcript — it streams
-        # only partial transcripts — so its user turn is finalized here: `_finalize_user` for a
+        # Gemini 2.5 emits neither `RealtimeInputSpeechEndEvent` nor a final (`is_final`) input transcript — it streams
+        # only partial transcripts, as 3.x does — so its user turn is finalized here: `_finalize_user` for a
         # transcript-driven turn, `_finalize_untranscribed_user` otherwise. Both are no-ops
         # when the turn was already finalized (e.g. OpenAI's `is_final` transcript or `commit_audio`).
         events = self._finalize_user()
@@ -2800,7 +2800,7 @@ class RealtimeSession:
             # its input schedule. That tail accumulates after `_segment_input_audio` clears the rolling
             # buffer and must not become the prefix of the next user turn. The completed response is a
             # safe point to discard it unless the user has already started speaking again (barge-in).
-            # Only for a provider that draws speech boundaries at all: Gemini never emits
+            # Only for a provider that draws speech boundaries at all: Gemini 2.5 never emits
             # `RealtimeInputSpeechEndEvent`, so its buffer holds the *next* utterance, not a spent tail.
             self._input_audio.clear()
         events.extend(self._finalize_assistant_part())

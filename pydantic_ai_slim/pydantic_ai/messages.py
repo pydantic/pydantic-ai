@@ -4740,7 +4740,8 @@ class RealtimeInputSpeechStartEvent:
     Useful for barge-in: stop playing any buffered model audio when this arrives, since the model's
     in-progress turn is being interrupted.
 
-    Reported by OpenAI, Azure OpenAI, and xAI. Gemini Live does not report speech onset.
+    Reported by OpenAI, Azure OpenAI, xAI, and the Gemini 3.x Live models; Gemini 2.5 Live does not
+    report speech onset. Read the profile's `emits_input_speech_events` rather than waiting for it.
     """
 
     _: KW_ONLY

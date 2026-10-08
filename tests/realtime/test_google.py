@@ -72,6 +72,7 @@ from pydantic_ai.realtime.codec import (
     InputRejected,
     InputTranscript,
     OutputTranscript,
+    RealtimeCodecEvent,
     ResponseDone,
     SessionUsage,
     TextContext,
@@ -1618,7 +1619,7 @@ def test_map_interruption_latches_until_turn_complete() -> None:
     ],
 )
 def test_map_voice_activity_to_input_speech_events(
-    activity_type: genai_types.VoiceActivityType, events: list[Any]
+    activity_type: genai_types.VoiceActivityType, events: list[RealtimeCodecEvent]
 ) -> None:
     """A 3.x Live model's `voice_activity` message is the shared speech start/end event, without an item id.
 

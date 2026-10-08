@@ -154,7 +154,8 @@ async def conversation(session: RealtimeSession) -> None:
 A playback loop that instead buffers ahead of the device makes `played_audio_bytes` read too far —
 count actual device consumption yourself and pass that. This handler covers the providers that
 support interruption; on Gemini, which interrupts itself and leaves only the local flush to do,
-prefer `handle_barge_in=True`, which performs that flush for you.
+prefer `handle_barge_in=True`, which performs that flush for you — the 3.x models emit the speech
+start event, but `interrupt()` still raises there.
 
 Interrupting between the provider's speech onset and the start of its next response sends only the
 truncation on the models whose own turn detection cancels the response being spoken over (OpenAI
