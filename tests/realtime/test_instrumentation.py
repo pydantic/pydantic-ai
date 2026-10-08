@@ -1057,6 +1057,13 @@ async def test_explicit_capability_settings_win_over_instrument() -> None:
     inst_settings, inst_exporter = _settings()
     agent = _weather_agent(name='assistant', capabilities=[Instrumentation(settings=cap_settings)])
     agent.instrument = inst_settings
+    seen_settings: list[InstrumentationSettings | None] = []
+
+    @agent.instructions
+    def observe_settings(ctx: RunContext[None]) -> str:
+        seen_settings.append(ctx.instrumentation_settings)
+        return ''
+
     conn = _Connection(
         [
             ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
@@ -1072,6 +1079,8 @@ async def test_explicit_capability_settings_win_over_instrument() -> None:
         'execute_tool get_weather',
     }
     assert not inst_exporter.get_finished_spans()
+    assert seen_settings
+    assert all(settings is cap_settings for settings in seen_settings)
 
 
 # --- session + chat spans: hand-managed by `RealtimeSession` --------------------------------------

@@ -2695,6 +2695,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         messages=ctx.state.message_history,
         validation_context=None,
         tracer=ctx.deps.tracer,
+        instrumentation_settings=ctx.deps.instrumentation_settings,
         trace_include_content=ctx.deps.instrumentation_settings is not None
         and ctx.deps.instrumentation_settings.include_content,
         instrumentation_version=ctx.deps.instrumentation_settings.version

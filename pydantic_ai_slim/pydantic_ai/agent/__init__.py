@@ -4639,7 +4639,8 @@ def _raise_for_unresolved_workspace(
 
 
 def _set_run_context_instrumentation(ctx: RunContext[Any], settings: InstrumentationSettings | None) -> None:
-    """Point `ctx`'s tracer, content flag and instrumentation version at `settings`; uninstrumented if `None`."""
+    """Expose `settings` and their derived tracing fields on `ctx`; uninstrumented if `None`."""
+    ctx.instrumentation_settings = settings
     ctx.tracer = settings.tracer if settings is not None else NoOpTracer()
     ctx.trace_include_content = settings is not None and settings.include_content
     ctx.instrumentation_version = settings.version if settings is not None else DEFAULT_INSTRUMENTATION_VERSION

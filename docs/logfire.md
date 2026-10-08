@@ -455,6 +455,14 @@ Agent.instrument_all(instrumentation_settings)
 
 The `gen_ai.tool.definitions` attribute (tool name, description, and parameters) is emitted regardless of this setting, so observability platforms that read the available tools from it are unaffected.
 
+### Reading the run's instrumentation
+
+Tools and capabilities can read the effective [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]
+from [`ctx.instrumentation_settings`][pydantic_ai.tools.RunContext.instrumentation_settings].
+This reflects the resolved run configuration, including capability and run-level overrides, and is `None` when instrumentation is disabled.
+Use it when a nested integration needs to preserve the caller's tracer provider and content-redaction policy, rather than falling back to global defaults.
+Treat the shared settings object as read-only. It is not available inside Temporal activities, since live SDK providers cannot cross the serialization boundary.
+
 ### Decision model spans
 
 A [decision model][pydantic_ai.models.decision.DecisionModel], such as [TypeSafe's Jev](models/typesafe.md), answers typed questions about the conversation instead of generating text. With more than one route on offer, such as a union `output_type` or tools, one request asks which route the text calls for, and asks the fields of every route it can fill beside it. When those questions would cost more than a second request, the route is picked first and its fields are filled in a second request instead. The model request span shows the agent-level request and response, so each request gets a `decide {model}` span of its own underneath it, recording exactly what was asked and answered.

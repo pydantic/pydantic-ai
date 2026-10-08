@@ -3127,7 +3127,15 @@ async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting()
     assert str(exc_info.value) == snapshot(
         "'model_settings' is not available on 'TemporalRunContext' inside a Temporal activity. To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to `TemporalDurability`."
     )
-    for name in ('prompt', 'messages', 'validation_context', 'model', 'tracer', 'capabilities'):
+    for name in (
+        'prompt',
+        'messages',
+        'validation_context',
+        'model',
+        'tracer',
+        'instrumentation_settings',
+        'capabilities',
+    ):
         with pytest.raises(UserError, match=f'{name!r} is not available'):
             getattr(reconstructed, name)
 
