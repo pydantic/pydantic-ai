@@ -147,7 +147,6 @@ def _translate(error: Exception, *, context: str, unavailable: str, path: str | 
             exc.ExecutionError,
             exc.RequestSizeError,
             exc.SandboxFilesystemError,
-            exc.FilesystemExecutionError,
         ),
     ):
         return WorkspaceError(f'{context}: {error}')
@@ -595,6 +594,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         variables: dict[str, str | None] | None = {**self._env, **(env or {})} or None
         # Acquiring the sandbox and probing for setsid have their own bounds; the timeout is the command's alone.
         sandbox = await self.get_sandbox()
+        if sandbox.returncode is not None:
+            raise WorkspaceUnavailableError(_unavailable_message(sandbox.object_id))
         # Without setsid, only the wrapper leader can be signalled, not its descendants.
         isolated = await self._has_setsid(sandbox)
         started_at = time.monotonic()

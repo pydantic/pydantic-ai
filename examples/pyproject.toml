@@ -61,7 +61,7 @@ dependencies = [
     # Floor from #6562 (Dependabot); the `<2` cap was dropped with FastMCP 4 / MCP SDK v2
     # support (#6661) so the workspace lock can fork onto SDK v2 for the `mcp-tasks` extra.
     "mcp[cli]>=1.28.1",
-    "modal>=1.0.4",
+    "modal>=1.6.0",
     "duckdb>=1.4.2",
     "datasets>=4.0.0",
     "pandas>=2.3.3",

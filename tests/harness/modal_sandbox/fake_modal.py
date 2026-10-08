@@ -214,13 +214,12 @@ class FakeSandboxFilesystemIsADirectoryError(FakeSandboxFilesystemError):
 
 
 # The rest of Modal's exceptions the backend classifies, each a direct subclass of `Error` as in
-# Modal 1.5.2 except where the real hierarchy says otherwise.
+# Modal 1.6.0 except where the real hierarchy says otherwise.
 _EXCEPTION_BASES: dict[str, type[Exception]] = {
     'AlreadyExistsError': FakeModalError,
     'AuthError': FakeModalError,
     'ConnectionError': FakeModalError,
     'ExecutionError': FakeModalError,
-    'FilesystemExecutionError': FakeModalError,
     'InternalError': FakeModalError,
     'ImageBuildError': FakeModalError,
     'NotFoundError': FakeModalError,
@@ -432,6 +431,7 @@ class FakeSandbox:
         self.listing: list[FileInfo] = []
         self.fs_error: Exception | None = None
         self.poll_result: int | None = None
+        self.returncode: int | None = None
         self.poll_error: Exception | None = None
         self.shutting_down = False
         # Host commands still running, so `terminate` can kill them.
@@ -584,8 +584,8 @@ class FakeSandbox:
         if self.poll_error is not None:
             raise self.poll_error
         if self.poll_result is not None:
-            return self.poll_result
-        return None
+            self.returncode = self.poll_result
+        return self.returncode
 
 
 class FakeModal:
