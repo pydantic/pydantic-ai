@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import KW_ONLY, dataclass
 from typing import Any
 
-from pydantic_ai.settings import CacheSetting, ModelSettings
+from pydantic_ai.settings import CacheConfig, CacheRetention, ModelSettings
 
 from .abstract import AbstractCapability
 
@@ -19,7 +19,7 @@ class Caching(AbstractCapability[Any]):
     precedence when both are set.
     """
 
-    retention: CacheSetting = True
+    retention: bool | CacheRetention = True
     """The prompt-cache configuration.
 
     - `True`: Enable prompt caching with the provider's default retention.
@@ -30,6 +30,14 @@ class Caching(AbstractCapability[Any]):
 
     _: KW_ONLY
 
+    messages: bool = True
+    """Whether to also cache the growing conversation, not only the stable prompt prefix.
+
+    With `False`, only the tool definitions and static instructions are cached: useful for many short,
+    one-off conversations that share long instructions or tools. See
+    [`CacheConfig.messages`][pydantic_ai.settings.CacheConfig.messages].
+    """
+
     id: str | None = 'caching'
     """One-off: an agent has a single caching configuration, so the id is fixed by default.
 
@@ -38,4 +46,8 @@ class Caching(AbstractCapability[Any]):
     """
 
     def get_model_settings(self) -> ModelSettings | None:
-        return ModelSettings(cache=self.retention)
+        if self.messages or self.retention is False:
+            return ModelSettings(cache=self.retention)
+        if self.retention is True:
+            return ModelSettings(cache=CacheConfig(messages=False))
+        return ModelSettings(cache=CacheConfig(retention=self.retention, messages=False))

@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable, Sequence
 from typing import Literal, TypeVar
 
 from ..exceptions import UserError
-from ..settings import CacheRetention
+from ..settings import CacheConfig, CacheRetention
 
 T = TypeVar('T')
 
@@ -39,6 +39,39 @@ def snap_cache_retention(
     supported_ranks = sorted(CACHE_RETENTION_ORDER.index(tier) for tier in supported)
     shorter = [supported_rank for supported_rank in supported_ranks if supported_rank < rank]
     return CACHE_RETENTION_ORDER[shorter[-1] if shorter else supported_ranks[0]]
+
+
+_CACHE_CONFIG_KEYS = frozenset(CacheConfig.__annotations__)
+
+
+def snap_cache_setting(
+    value: Literal[True] | CacheRetention | CacheConfig, supported: Sequence[CacheRetention]
+) -> Literal[True] | CacheRetention | CacheConfig:
+    """Validate a requested `cache` value and snap its retention to a tier the provider supports.
+
+    A [`CacheConfig`][pydantic_ai.settings.CacheConfig] that still caches the conversation is the same as its
+    retention alone (or `True`), so it's normalized to that; one with `messages=False` keeps the flag.
+    """
+    if not isinstance(value, dict):
+        return snap_cache_retention(value, supported)
+    if unknown := set(value) - _CACHE_CONFIG_KEYS:
+        raise UserError(
+            f'Unknown `cache` option(s) {", ".join(repr(key) for key in sorted(unknown))}. '
+            f'Use {" and ".join(repr(key) for key in sorted(_CACHE_CONFIG_KEYS))}.'
+        )
+    retention = snap_cache_retention(value.get('retention', True), supported)
+    if value.get('messages', True):
+        return retention
+    return CacheConfig(messages=False) if retention is True else CacheConfig(retention=retention, messages=False)
+
+
+def split_cache_setting(
+    value: Literal[True] | CacheRetention | CacheConfig,
+) -> tuple[Literal[True] | CacheRetention, bool]:
+    """A resolved `cache` value's retention (`True` for the provider's default) and whether it caches the conversation."""
+    if isinstance(value, dict):
+        return value.get('retention', True), value.get('messages', True)
+    return value, True
 
 
 def excess_cache_points(

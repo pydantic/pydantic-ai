@@ -39,7 +39,29 @@ the shortest one. On a provider with no retention tier to request, caching uses
 the provider's default retention.
 """
 
-CacheSetting: TypeAlias = bool | CacheRetention
+
+class CacheConfig(TypedDict, total=False):
+    """Detailed prompt-cache configuration, for the [`cache`][pydantic_ai.settings.ModelSettings.cache] setting.
+
+    `{}` is the same as `cache=True`, and `{'retention': '1h'}` the same as `cache='1h'`.
+    """
+
+    retention: CacheRetention
+    """The retention to cache with, snapped to the nearest tier the provider supports.
+
+    When omitted, the provider's default retention is used.
+    """
+
+    messages: bool
+    """Whether to also cache the growing conversation, not only the stable prompt prefix. Default: `True`.
+
+    With `False`, only the tool definitions and static instructions are cached: useful for many short,
+    one-off conversations that share long instructions or tools, where writing each conversation to the
+    cache would cost more than it saves because it's never read back.
+    """
+
+
+CacheSetting: TypeAlias = bool | CacheRetention | CacheConfig
 """Type alias for prompt-cache configuration values.
 
 See [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] for the value semantics.
@@ -514,6 +536,9 @@ class ModelSettings(TypedDict, total=False):
       still apply, and providers that cache implicitly (e.g. OpenAI, Gemini) still do.
     - `'5m'`/`'30m'`/`'1h'`: Cache with a specific retention, snapped to the nearest tier the
       provider supports (down where a shorter tier exists).
+    - A [`CacheConfig`][pydantic_ai.settings.CacheConfig]: Cache with an optional `retention`, and with
+      `messages=False` cache only the stable prefix (tool definitions and static instructions), not the
+      conversation: useful for many one-off conversations that share long instructions or tools.
 
     Explicit `CachePoint` markers in the message history can be combined with this setting; when
     a request would exceed the provider's maximum number of cache breakpoints, the oldest message

@@ -44,6 +44,35 @@ These are the same values accepted by the underlying `cache` model setting, whic
 
 `cache=False` disables caching that Pydantic AI manages. [`CachePoint`][pydantic_ai.messages.CachePoint] markers you add to the message history and provider-specific cache settings still apply, and providers that cache implicitly still do.
 
+### Caching only the stable prefix
+
+By default, caching covers the tool definitions, the static instructions, and the conversation. When an agent handles many short, one-off conversations that share long instructions or tools, writing each conversation to the cache costs more than it saves, because it's never read back. Pass `messages=False` to cache only the stable prefix:
+
+```python {title="caching_stable_prefix.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
+
+agent = Agent('anthropic:claude-opus-4-7', capabilities=[Caching(messages=False)])
+```
+
+The `cache` model setting takes the same option as a [`CacheConfig`][pydantic_ai.settings.CacheConfig], together with an optional retention:
+
+```python {title="unified_cache_stable_prefix.py"}
+from pydantic_ai import Agent
+
+agent = Agent(
+    'anthropic:claude-opus-4-7',
+    model_settings={'cache': {'retention': '1h', 'messages': False}},
+)
+```
+
+Per provider:
+
+- **Anthropic API and Microsoft Foundry:** automatic caching would breakpoint the end of the conversation, so the instructions and tool definitions get breakpoints instead (`anthropic_cache_instructions` and `anthropic_cache_tool_definitions`).
+- **Anthropic on the Bedrock and Vertex AI SDK clients, Bedrock Converse, and OpenRouter's Anthropic routes:** the instruction and tool definition breakpoints, without the conversation breakpoint. OpenRouter's Gemini routes take no tool definition breakpoint, so they cache the instructions.
+- **OpenAI GPT-5.6 and later:** `openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'}` with the instruction breakpoint. With `mode='explicit'`, OpenAI doesn't create its implicit breakpoint, so only the instructions are written. On requests that continue server-side state (`openai_previous_response_id` or `openai_conversation_id`), the instructions can't carry a breakpoint, so those requests use no prompt caching at all.
+- **Providers that cache implicitly**, such as Gemini and earlier OpenAI models: no effect.
+
 ## What gets cached
 
 Where the provider has a server-managed caching mode, it's used: Anthropic's [automatic caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#automatic-caching) places the cache breakpoint on the last cacheable block itself and moves it forward as the conversation grows. Elsewhere, Pydantic AI places explicit cache breakpoints at the end of the tool definitions, the static instructions, and the conversation, so the stable prefix is shared between conversations and each request reads back everything the previous one cached.

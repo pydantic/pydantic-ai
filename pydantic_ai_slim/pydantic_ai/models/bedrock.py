@@ -82,7 +82,7 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
-from pydantic_ai.models._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint
+from pydantic_ai.models._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
 from pydantic_ai.models._tool_choice import (
     FORCING_UNSUPPORTED_REASON,
     resolve_tool_choice,
@@ -100,7 +100,14 @@ from pydantic_ai.profiles.anthropic import (
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
-from pydantic_ai.settings import CacheRetention, CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
+from pydantic_ai.settings import (
+    CacheConfig,
+    CacheRetention,
+    CacheSetting,
+    ModelSettings,
+    ThinkingLevel,
+    merge_model_settings,
+)
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -814,22 +821,25 @@ class BedrockConverseModel(Model[BaseClient]):
             )
 
     def _translate_cache(
-        self, model_settings: BedrockModelSettings, cache: Literal[True] | CacheRetention
+        self, model_settings: BedrockModelSettings, cache: Literal[True] | CacheRetention | CacheConfig
     ) -> BedrockModelSettings:
         """Map the unified `cache` setting onto Bedrock cache settings.
 
         Only called when no explicit `bedrock_cache_*` setting is present (those take precedence
         in `prepare_request`). The Converse API has no automatic caching mode, so the library
         places breakpoints at the end of the tool definitions, the static instructions and the
-        conversation; the per-boundary profile gates still apply when the settings are consumed.
+        conversation (unless only the stable prefix is cached, with `messages=False`); the per-boundary
+        profile gates still apply when the settings are consumed.
         """
+        retention, messages = split_cache_setting(cache)
         # `True` stays `True` so no explicit `ttl` reaches the wire, matching what
         # `bedrock_cache_instructions=True` sends; only a requested retention is forwarded.
-        value: Literal[True, '5m', '1h'] = cache if cache in ('5m', '1h') else True
+        value: Literal[True, '5m', '1h'] = retention if retention in ('5m', '1h') else True
         translated = model_settings.copy()
         translated['bedrock_cache_instructions'] = value
         translated['bedrock_cache_tool_definitions'] = value
-        translated['bedrock_cache_messages'] = value
+        if messages:
+            translated['bedrock_cache_messages'] = value
         return translated
 
     @property

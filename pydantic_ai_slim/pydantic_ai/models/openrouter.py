@@ -27,7 +27,7 @@ from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 from ..settings import CacheSetting, ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
-from ._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint
+from ._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
 from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
 from ._tool_choice import support_tool_forcing, tool_forcing_unavailable_reason
 
@@ -670,13 +670,15 @@ def _openrouter_settings_to_openai_settings(
 
     # Fall back to unified cache; explicit openrouter_cache_* settings take precedence. OpenRouter has
     # no automatic caching mode, so the library places breakpoints at the end of the tool definitions,
-    # the static instructions and the conversation; the downstream-provider profile gates still apply
-    # when these settings are consumed.
+    # the static instructions and the conversation (unless only the stable prefix is cached, with
+    # `messages=False`); the downstream-provider profile gates still apply when these settings are consumed.
     if (cache := model_request_parameters.cache) and not any(key in model_settings for key in _CACHE_SETTINGS_KEYS):
-        ttl: Literal['5m', '1h'] = cache if cache in ('5m', '1h') else '5m'
+        retention, messages = split_cache_setting(cache)
+        ttl: Literal['5m', '1h'] = retention if retention in ('5m', '1h') else '5m'
         model_settings['openrouter_cache_instructions'] = ttl
         model_settings['openrouter_cache_tool_definitions'] = ttl
-        model_settings['openrouter_cache_messages'] = ttl
+        if messages:
+            model_settings['openrouter_cache_messages'] = ttl
 
     if reasoning := model_settings.get('openrouter_reasoning'):
         extra_body['reasoning'] = reasoning

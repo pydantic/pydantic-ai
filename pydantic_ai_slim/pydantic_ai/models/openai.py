@@ -126,6 +126,7 @@ from . import (
     get_user_agent,
 )
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
+from ._prompt_cache import split_cache_setting
 from ._tool_choice import (
     resolve_tool_choice,
     support_tool_forcing,
@@ -1129,6 +1130,9 @@ def _translate_openai_cache(
     Only applies to models with explicit prompt cache breakpoints, and only when no explicit OpenAI
     cache setting (`_CACHE_SETTINGS_KEYS`) is present, since those take precedence. `openai_cache_instructions`
     keeps its own gates, so requests that continue server-side state still get no instruction breakpoint.
+
+    Caching only the stable prefix (`messages=False`) uses `mode='explicit'`, so OpenAI creates no implicit
+    breakpoint and writes only the instruction breakpoint.
     """
     if (
         not params.cache
@@ -1138,7 +1142,8 @@ def _translate_openai_cache(
         return model_settings
     translated = cast(OpenAIChatModelSettings, {**(model_settings or {})})
     # `'30m'` is the only TTL OpenAI accepts, so every retention snaps to it.
-    translated['openai_prompt_cache_options'] = {'mode': 'implicit', 'ttl': '30m'}
+    _, messages = split_cache_setting(params.cache)
+    translated['openai_prompt_cache_options'] = {'mode': 'implicit' if messages else 'explicit', 'ttl': '30m'}
     translated['openai_cache_instructions'] = True
     return translated
 

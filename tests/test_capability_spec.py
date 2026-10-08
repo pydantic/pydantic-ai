@@ -2039,6 +2039,7 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [{'type': 'boolean'}, {'enum': ['5m', '30m', '1h'], 'type': 'string'}],
                             'title': 'Retention',
                         },
+                        'messages': {'title': 'Messages', 'type': 'boolean'},
                     },
                     'title': 'spec_params_Caching',
                     'type': 'object',

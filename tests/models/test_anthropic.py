@@ -2114,6 +2114,29 @@ async def test_automatic_caching_yields_to_explicit_breakpoint_on_last_block(
     }
 
 
+async def test_unified_cache_stable_prefix_only(allow_model_requests: None):
+    """`cache={'messages': False}` breakpoints the instructions and tool definitions instead of using automatic
+    caching, which would breakpoint the end of the conversation."""
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, instructions='System instructions.', model_settings={'cache': {'messages': False}})
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    await agent.run('User message')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['cache_control'] is OMIT
+    assert completion_kwargs['system'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+    assert completion_kwargs['tools'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+    assert not any(
+        'cache_control' in block for message in completion_kwargs['messages'] for block in message['content']
+    )
+
+
 async def test_limit_cache_points_with_cache(allow_model_requests: None):
     """Test that automatic caching reduces explicit cache point budget from 4 to 3."""
     c = completion_message(

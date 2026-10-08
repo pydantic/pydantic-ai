@@ -98,7 +98,7 @@ from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
 from ._known_model_names import KnownModelName as KnownModelName
-from ._prompt_cache import snap_cache_retention
+from ._prompt_cache import snap_cache_setting, split_cache_setting
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -583,10 +583,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         settings return those instead when any is present, since they take precedence over the unified one.
         """
         cache = self._resolved_cache_setting(merged_settings.get('cache'))
-        if cache is True and (tiers := self.profile.get('supported_cache_retentions', ())):
+        if not cache:
+            return (cache,)
+        retention, _ = split_cache_setting(cache)
+        if retention is True and (tiers := self.profile.get('supported_cache_retentions', ())):
             # The provider's default retention is its shortest tier.
-            cache = tiers[0]
-        return (cache,)
+            retention = tiers[0]
+        return (retention,)
 
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         """Whether these (merged) settings include a provider-specific cache setting, which takes precedence."""
@@ -627,7 +630,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             return None
         if cache is False:
             return False
-        return snap_cache_retention(cache, self.profile.get('supported_cache_retentions', ()))
+        return snap_cache_setting(cache, self.profile.get('supported_cache_retentions', ()))
 
     @deprecated(
         '`resolve_prompt_cache_retention` is deprecated, use `resolve_cache_retention` instead.',

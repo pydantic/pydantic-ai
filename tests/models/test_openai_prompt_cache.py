@@ -2340,3 +2340,18 @@ async def test_openai_responses_unified_cache_e2e(allow_model_requests: None, op
         )
     )
     _assert_cache_usage(first.usage, second.usage)
+
+
+async def test_openai_responses_unified_cache_stable_prefix_only(allow_model_requests: None):
+    """`cache={'messages': False}` writes only the instruction breakpoint: `mode='explicit'` stops OpenAI from
+    creating its implicit breakpoint at the end of the conversation."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(model, instructions='Support policies.', model_settings={'cache': {'messages': False}}).run(
+        'Where is order 1234?'
+    )
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
+    assert request['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}

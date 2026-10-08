@@ -82,7 +82,7 @@ from ..profiles.anthropic import (
 from ..providers import Provider, infer_provider
 from ..providers._bedrock_model_names import bedrock_claude_cache_retentions
 from ..providers.anthropic import AsyncAnthropicClient
-from ..settings import CacheRetention, CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import CacheConfig, CacheRetention, CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from ..toolsets._tool_search import discovered_tool_names_in_order
 from . import (
@@ -100,7 +100,7 @@ from . import (
 )
 from ._anthropic_containers import is_tool_result_only as _is_tool_result_only
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
-from ._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint
+from ._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
 from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
@@ -2857,23 +2857,27 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
 
     def _translate_cache(
-        self, model_settings: AnthropicModelSettings, cache: Literal[True] | CacheRetention
+        self, model_settings: AnthropicModelSettings, cache: Literal[True] | CacheRetention | CacheConfig
     ) -> AnthropicModelSettings:
         """Map the unified `cache` setting onto Anthropic cache settings.
 
         Only called when no explicit `anthropic_cache*` setting is present (those take
         precedence in `prepare_request`). Uses automatic caching where the client supports it;
         on Bedrock and Vertex the library places breakpoints at the end of the static
-        instructions, the tool definitions and the conversation instead.
+        instructions, the tool definitions and the conversation instead. Automatic caching
+        breakpoints the end of the conversation, so caching only the stable prefix
+        (`messages=False`) uses the instruction and tool definition breakpoints everywhere.
         """
-        ttl: Literal['5m', '1h'] = cache if cache in ('5m', '1h') else '5m'
+        retention, messages = split_cache_setting(cache)
+        ttl: Literal['5m', '1h'] = retention if retention in ('5m', '1h') else '5m'
         translated = model_settings.copy()
-        if self.profile.get('supports_auto_cache', False):
+        if messages and self.profile.get('supports_auto_cache', False):
             translated['anthropic_cache'] = ttl
         else:
             translated['anthropic_cache_instructions'] = ttl
             translated['anthropic_cache_tool_definitions'] = ttl
-            translated['anthropic_cache_messages'] = ttl
+            if messages:
+                translated['anthropic_cache_messages'] = ttl
         return translated
 
     def _build_automatic_cache_control(

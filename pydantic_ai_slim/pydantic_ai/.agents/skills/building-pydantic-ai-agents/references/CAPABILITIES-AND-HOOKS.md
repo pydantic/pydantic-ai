@@ -70,6 +70,7 @@ Accepted values (the same for `model_settings={'cache': ...}`):
 - `True` (the capability's default): cache the tool definitions, static instructions and conversation with the provider's default retention, using its automatic caching mode where one exists and placing breakpoints elsewhere
 - `False`: disable library-managed caching (the same as unset, but overrides a model-level default); explicit `CachePoint`s and provider-specific settings still apply, and implicitly caching providers still cache
 - `'5m'`, `'30m'`, `'1h'`: cache with a specific retention, snapped to the nearest tier the provider supports (down where a shorter tier exists)
+- `Caching(messages=False)` / `{'retention': ..., 'messages': False}`: cache only the stable prefix (tool definitions and static instructions), not the conversation, for many one-off conversations sharing long instructions or tools
 
 Cache writes cost more than uncached input (1.25x; 2x for Anthropic's 1-hour cache) while reads cost about 0.1x, so a 1.25x write breaks even after one read and Anthropic's 2x 1-hour write after two; one-shot requests only pay the premium.
 

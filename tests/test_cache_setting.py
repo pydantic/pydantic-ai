@@ -1,6 +1,6 @@
 """Tests for the unified `cache` prompt-caching setting.
 
-Tests the base `Model.prepare_request()` cache resolution (on by default) and retention snap-down,
+Tests the base `Model.prepare_request()` cache resolution and retention snap-down,
 the per-provider translation onto provider-specific cache settings, the shared cache-point
 budget and lookback helpers, the retention resolver, and the `Caching` capability.
 """
@@ -9,7 +9,7 @@ budget and lookback helpers, the retention resolver, and the `Caching` capabilit
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -23,12 +23,13 @@ from pydantic_ai.models._prompt_cache import (
     excess_cache_points,
     previous_tail_needing_breakpoint,
     snap_cache_retention,
+    snap_cache_setting,
 )
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.settings import CacheRetention, CacheSetting, ModelSettings
+from pydantic_ai.settings import CacheConfig, CacheRetention, CacheSetting, ModelSettings
 
 from .conftest import try_import
 
@@ -606,3 +607,121 @@ class TestCachingNotEnabled:
         model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=OpenRouterProvider(api_key='test'))
         assert model._caching_not_enabled(None)
         assert not model._caching_not_enabled(OpenRouterModelSettings(openrouter_cache_messages=False))
+
+
+class TestStablePrefixOnly:
+    """`cache={'messages': False}` / `Caching(messages=False)` caches only the tool definitions and static instructions."""
+
+    @pytest.mark.parametrize(
+        ('value', 'supported', 'expected'),
+        [
+            # A config that still caches the conversation is the same as its retention alone.
+            ({}, ('5m', '1h'), True),
+            ({'retention': '1h'}, ('5m', '1h'), '1h'),
+            ({'messages': True}, ('5m',), True),
+            ({'messages': False}, ('5m', '1h'), {'messages': False}),
+            ({'retention': '1h', 'messages': False}, ('5m',), {'retention': '5m', 'messages': False}),
+            # No retention tier to request: the provider's default.
+            ({'retention': '1h', 'messages': False}, (), {'messages': False}),
+        ],
+    )
+    def test_snap(self, value: CacheConfig, supported: tuple[CacheRetention, ...], expected: CacheSetting):
+        assert snap_cache_setting(value, supported) == expected
+
+    def test_unknown_option_raises_user_error(self):
+        with pytest.raises(
+            UserError, match=r"Unknown `cache` option\(s\) 'history'\. Use 'messages' and 'retention'\."
+        ):
+            snap_cache_setting({'history': False}, ('5m',))  # type: ignore[typeddict-unknown-key]
+
+    def test_unknown_retention_raises_user_error(self):
+        with pytest.raises(UserError, match="Unknown `cache` retention '24h'"):
+            snap_cache_setting({'retention': '24h'}, ('5m',))  # type: ignore[typeddict-item]
+
+    def test_base_resolution_and_retention(self):
+        model = _make_model(supports_cache=True, supported_cache_retentions=('5m', '1h'))
+        _, cache = _resolve_cache(model, CacheConfig(retention='1h', messages=False))
+        assert cache == {'retention': '1h', 'messages': False}
+        assert model.resolve_cache_retention(ModelSettings(cache=CacheConfig(messages=False))) == timedelta(minutes=5)
+        assert model.resolve_cache_retention(
+            ModelSettings(cache=CacheConfig(retention='1h', messages=False))
+        ) == timedelta(hours=1)
+        # A config counts as configured, so it's never reported as caching not enabled.
+        assert not model._caching_not_enabled(ModelSettings(cache=CacheConfig(messages=False)))
+
+    def test_messages_true_is_the_same_as_plain_value(self):
+        model = _make_model(supports_cache=True, supported_cache_retentions=('5m', '1h'))
+        assert _resolve_cache(model, CacheConfig(retention='1h', messages=True)) == _resolve_cache(model, '1h')
+        assert _resolve_cache(model, CacheConfig()) == _resolve_cache(model, True)
+
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    def test_anthropic_uses_breakpoints_instead_of_automatic_caching(self):
+        """Automatic caching breakpoints the end of the conversation, so the stable prefix is breakpointed instead."""
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
+        settings, _ = model.prepare_request(
+            ModelSettings(cache=CacheConfig(retention='1h', messages=False)), ModelRequestParameters()
+        )
+        assert settings == {'anthropic_cache_instructions': '1h', 'anthropic_cache_tool_definitions': '1h'}
+
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    def test_anthropic_bedrock_client_has_no_message_breakpoint(self):
+        client = AsyncAnthropicBedrock(aws_access_key='x', aws_secret_key='y', aws_region='us-east-1')
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+        settings, _ = model.prepare_request(ModelSettings(cache=CacheConfig(messages=False)), ModelRequestParameters())
+        assert settings == {'anthropic_cache_instructions': '5m', 'anthropic_cache_tool_definitions': '5m'}
+
+    @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+    def test_bedrock_has_no_message_breakpoint(self, bedrock_provider: BedrockProvider):
+        model = BedrockConverseModel('anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+        settings, _ = model.prepare_request(ModelSettings(cache=CacheConfig(messages=False)), ModelRequestParameters())
+        assert settings == {'bedrock_cache_instructions': True, 'bedrock_cache_tool_definitions': True}
+
+    @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+    def test_openrouter_has_no_message_breakpoint(self):
+        model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=OpenRouterProvider(api_key='test'))
+        settings, _ = model.prepare_request(
+            ModelSettings(cache=CacheConfig(retention='1h', messages=False)), ModelRequestParameters()
+        )
+        assert settings == snapshot(
+            {'openrouter_cache_instructions': '1h', 'openrouter_cache_tool_definitions': '1h', 'extra_body': {}}
+        )
+
+    @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+    def test_openai_uses_explicit_mode(self):
+        """`mode='explicit'` stops OpenAI from creating its implicit breakpoint, so only the instructions are written."""
+        model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(api_key='test'))
+        settings, _ = model.prepare_request(ModelSettings(cache=CacheConfig(messages=False)), ModelRequestParameters())
+        openai_settings = cast(OpenAIChatModelSettings, settings or {})
+        assert openai_settings.get('openai_prompt_cache_options') == {'mode': 'explicit', 'ttl': '30m'}
+        assert openai_settings.get('openai_cache_instructions') is True
+
+    @pytest.mark.parametrize(
+        ('caching', 'expected'),
+        [
+            (Caching(), {'cache': True}),
+            (Caching('1h'), {'cache': '1h'}),
+            (Caching(messages=False), {'cache': {'messages': False}}),
+            (Caching('1h', messages=False), {'cache': {'retention': '1h', 'messages': False}}),
+            (Caching(False, messages=False), {'cache': False}),
+        ],
+    )
+    def test_capability(self, caching: Caching, expected: ModelSettings):
+        assert caching.get_model_settings() == expected
+
+    async def test_fallback_model_snaps_per_wrapped_model(self):
+        def _fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelHTTPError(status_code=500, model_name='primary')
+
+        primary = _RecordingFunctionModel(
+            _fail, profile=ModelProfile(supports_cache=True, supported_cache_retentions=('5m', '1h'))
+        )
+        primary.recorded_cache = []
+        secondary = _RecordingFunctionModel(
+            _echo, profile=ModelProfile(supports_cache=True, supported_cache_retentions=('5m',))
+        )
+        secondary.recorded_cache = []
+
+        await Agent(FallbackModel(primary, secondary), capabilities=[Caching('1h', messages=False)]).run('hi')
+
+        assert primary.recorded_cache[0] == {'retention': '1h', 'messages': False}
+        assert secondary.recorded_cache[0] == {'retention': '5m', 'messages': False}
