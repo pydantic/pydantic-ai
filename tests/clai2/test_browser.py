@@ -4,8 +4,8 @@ The openers here are real shell scripts run through `$BROWSER`, as VS Code's rem
 what is under test is which of CLAI's file descriptors the opener process inherits.
 """
 
+import os
 import sys
-import time
 import webbrowser
 from pathlib import Path
 
@@ -56,11 +56,10 @@ def test_opener_output_stays_off_the_terminal(
 def test_background_opener_output_stays_off_the_terminal(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, opened: Path, capfd: pytest.CaptureFixture[str]
 ) -> None:
+    # A FIFO: reading it waits until the opener, having printed its noise, writes the URL.
+    os.mkfifo(opened)
     use_opener(monkeypatch, tmp_path, f'{NOISE}\necho "$1" > {opened}\nexec sleep 1', background=True)
     assert open_browser(URL) is True
-    deadline = time.monotonic() + 10
-    while not opened.exists() and time.monotonic() < deadline:
-        time.sleep(0.01)
     assert opened.read_text(encoding='utf-8') == f'{URL}\n'
     assert capfd.readouterr() == ('', '')
 
