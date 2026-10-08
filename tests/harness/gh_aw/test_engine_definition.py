@@ -24,13 +24,21 @@ import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from types import ModuleType
+from typing import Literal
 
 import pytest
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from pydantic_ai import Agent, ModelMessage, RunContext, ToolReturnPart
-from pydantic_ai.messages import PartEndEvent, TextPart
+from pydantic_ai import Agent, ModelMessage, NativeToolCallPart, NativeToolReturnPart, RunContext, ToolReturnPart
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+    TextPart,
+    ToolCallPartDelta,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -955,6 +963,97 @@ async def test_output_tool_arguments_and_results_are_tool_events(
         'output': 'Final result processed.',
         'sourceType': 'output_tool',
     }
+
+
+@pytest.mark.parametrize(('outcome', 'success'), [('success', True), ('failed', False)])
+async def test_native_tool_calls_and_returns_are_tool_events(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: Literal['success', 'failed'],
+    success: bool,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    (workspace / 'native_agent.py').write_text(
+        'from pydantic_ai import Agent\nagent = Agent(name="native")\n',
+        encoding='utf-8',
+    )
+    invocation = launch(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'native_agent:agent'})
+    event_output = io.StringIO()
+    monkeypatch.setattr(sys, '__stdout__', event_output)
+    module = import_generated_agent(invocation, monkeypatch)
+    agent: Agent[None, str] = module.agent
+    observed_call_counts: list[tuple[str, int]] = []
+    prefix = f'\x1eGH-AW-SESSION/{invocation.frame_key} '
+
+    def observe_call_lifecycle(_ctx: RunContext[None], event: AgentStreamEvent) -> None:
+        if (
+            isinstance(event, (PartStartEvent, PartEndEvent))
+            and isinstance(event.part, NativeToolCallPart)
+            or isinstance(event, PartDeltaEvent)
+            and isinstance(event.delta, ToolCallPartDelta)
+        ):
+            events = [
+                _CanonicalEvent.model_validate_json(line.removeprefix(prefix))
+                for line in event_output.getvalue().split('\n')
+                if line.startswith(prefix)
+            ]
+            starts = [event for event in events if event.type == 'tool.execution_start']
+            observed_call_counts.append((type(event).__name__, len(starts)))
+
+    agent.on_event(observe_call_lifecycle)
+
+    async def stream(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls | dict[int, NativeToolCallPart | NativeToolReturnPart]]:
+        yield {
+            0: NativeToolCallPart(
+                provider_name='function', tool_name='web_search', tool_call_id='native-id', args='{"query":'
+            )
+        }
+        yield {0: DeltaToolCall(json_args='"Pydantic"}')}
+        yield {
+            1: NativeToolReturnPart(
+                provider_name='function',
+                tool_name='web_search',
+                tool_call_id='native-id',
+                content={'results': ['Pydantic docs']},
+                outcome=outcome,
+            )
+        }
+        yield 'answer'
+
+    async with agent.run_stream_events('search', model=FunctionModel(stream_function=stream)) as events:
+        _ = [type(event).__name__ async for event in events]
+    module._recorder.finish(exit_code=0)
+
+    records = [
+        _CanonicalEvent.model_validate_json(line.removeprefix(prefix))
+        for line in event_output.getvalue().split('\n')
+        if line.startswith(prefix)
+    ]
+    starts = [event.data for event in records if event.type == 'tool.execution_start']
+    completions = [event.data for event in records if event.type == 'tool.execution_complete']
+    assert observed_call_counts == [('PartStartEvent', 0), ('PartDeltaEvent', 0), ('PartEndEvent', 1)]
+    assert starts == [
+        {
+            'toolCallId': 'native-id',
+            'toolName': 'web_search',
+            'input': {'query': 'Pydantic'},
+            'sourceType': 'native_tool',
+        }
+    ]
+    assert completions == [
+        {
+            'toolCallId': 'native-id',
+            'toolName': 'web_search',
+            'success': success,
+            'status': outcome,
+            'output': {'results': ['Pydantic docs']},
+            **({} if success else {'error': {'results': ['Pydantic docs']}}),
+            'sourceType': 'native_tool',
+        }
+    ]
 
 
 async def test_tool_event_inputs_preserve_json_scalars_arrays_null_and_malformed_text(

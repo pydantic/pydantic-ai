@@ -543,8 +543,9 @@ activity. These artifacts complement the Actions summary and run logs.
 
 The agent step starts `clai2 -a <target> -m <provider:model> -p <prompt>` with the
 generated `Coder` agent or the `PAI_AGENT` target resolved by the engine. The recorder
-emits canonical typed events during the run. The inline parser selects the framed records
-from captured engine stdio rather than reconstructing a transcript from terminal output.
+captures assistant messages, reasoning, tool calls and results (including native tools),
+and usage. The inline parser selects the framed records from captured engine stdio rather
+than reconstructing a transcript from terminal output.
 
 The gh-aw conclusion step gathers the agent session and usage into `aw_session.jsonl` and
 includes gateway and safe-output activity. The gh-aw usage artifact can be downloaded with

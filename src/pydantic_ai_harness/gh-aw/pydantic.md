@@ -107,6 +107,8 @@ engine:
           AgentStreamEvent,
           FunctionToolCallEvent,
           FunctionToolResultEvent,
+          NativeToolCallPart,
+          NativeToolReturnPart,
           OutputToolCallEvent,
           OutputToolResultEvent,
           PartDeltaEvent,
@@ -181,7 +183,68 @@ engine:
                       _emit('user.message', {'content': _json_value(ctx.prompt)})
                   _started = True
 
-              if isinstance(event, PartStartEvent):
+              if isinstance(event, (FunctionToolCallEvent, OutputToolCallEvent)) or (
+                  isinstance(event, PartEndEvent) and isinstance(event.part, NativeToolCallPart)
+              ):
+                  native = isinstance(event, PartEndEvent)
+                  if native:
+                      _partial.pop(event.index, None)
+                      part = event.part
+                      tool_call_id = part.tool_call_id
+                  else:
+                      part = event.part
+                      tool_call_id = event.tool_call_id
+                  input_value = _json_value(part.args)
+                  if isinstance(part.args, str):
+                      try:
+                          input_value = json.loads(part.args)
+                      except json.JSONDecodeError:
+                          pass
+                  data: dict[str, object] = {
+                      'toolCallId': tool_call_id,
+                      'toolName': part.tool_name,
+                      'input': input_value,
+                  }
+                  if isinstance(event, OutputToolCallEvent):
+                      data['sourceType'] = 'output_tool'
+                  elif native:
+                      data['sourceType'] = 'native_tool'
+                  _emit('tool.execution_start', data)
+              elif isinstance(event, (FunctionToolResultEvent, OutputToolResultEvent)) or (
+                  isinstance(event, PartStartEvent) and isinstance(event.part, NativeToolReturnPart)
+              ):
+                  native = isinstance(event, PartStartEvent)
+                  if native:
+                      _partial.pop(event.index, None)
+                  part = event.part
+                  if isinstance(part, RetryPromptPart):
+                      success = False
+                      status = 'retry'
+                      output = None
+                      error = _json_value(part.content)
+                      tool_name = part.tool_name
+                  else:
+                      success = part.outcome == 'success'
+                      status = part.outcome
+                      output = _json_value(part.content)
+                      error = None if success else _json_value(part.content)
+                      tool_name = part.tool_name
+                  data: dict[str, object] = {
+                      'toolCallId': part.tool_call_id if native else event.tool_call_id,
+                      'toolName': tool_name,
+                      'success': success,
+                      'status': status,
+                  }
+                  if not isinstance(part, RetryPromptPart):
+                      data['output'] = output
+                  if error is not None:
+                      data['error'] = error
+                  if isinstance(event, OutputToolResultEvent):
+                      data['sourceType'] = 'output_tool'
+                  elif native:
+                      data['sourceType'] = 'native_tool'
+                  _emit('tool.execution_complete', data)
+              elif isinstance(event, PartStartEvent):
                   if isinstance(event.part, TextPart):
                       _partial[event.index] = ('assistant.message', event.part.content)
                   elif isinstance(event.part, ThinkingPart):
@@ -207,48 +270,6 @@ engine:
                       _emit('assistant.message', {'content': event.part.content})
                   elif isinstance(event.part, ThinkingPart):
                       _emit('assistant.reasoning', {'content': event.part.content})
-              elif isinstance(event, (FunctionToolCallEvent, OutputToolCallEvent)):
-                  input_value = _json_value(event.part.args)
-                  if isinstance(event.part.args, str):
-                      try:
-                          input_value = json.loads(event.part.args)
-                      except json.JSONDecodeError:
-                          pass
-                  data: dict[str, object] = {
-                      'toolCallId': event.tool_call_id,
-                      'toolName': event.part.tool_name,
-                      'input': input_value,
-                  }
-                  if isinstance(event, OutputToolCallEvent):
-                      data['sourceType'] = 'output_tool'
-                  _emit('tool.execution_start', data)
-              elif isinstance(event, (FunctionToolResultEvent, OutputToolResultEvent)):
-                  part = event.part
-                  if isinstance(part, RetryPromptPart):
-                      success = False
-                      status = 'retry'
-                      output = None
-                      error = _json_value(part.content)
-                      tool_name = part.tool_name
-                  else:
-                      success = part.outcome == 'success'
-                      status = part.outcome
-                      output = _json_value(part.content)
-                      error = None if success else _json_value(part.content)
-                      tool_name = part.tool_name
-                  data: dict[str, object] = {
-                      'toolCallId': event.tool_call_id,
-                      'toolName': tool_name,
-                      'success': success,
-                      'status': status,
-                  }
-                  if not isinstance(part, RetryPromptPart):
-                      data['output'] = output
-                  if error is not None:
-                      data['error'] = error
-                  if isinstance(event, OutputToolResultEvent):
-                      data['sourceType'] = 'output_tool'
-                  _emit('tool.execution_complete', data)
 
           def finish(self, exit_code: int) -> None:
               global _finished
@@ -750,8 +771,8 @@ resolves `PAI_AGENT` once from an imported Agent or JSON/YAML spec. Gateway MCP
 tools are added alongside existing tools. The workflow's model and proxy routing
 apply to all target forms.
 
-The recorder captures typed assistant, reasoning, tool-call, tool-result, and
-usage events. The parser selects its framed records; gh-aw writes
+The recorder captures assistant messages, reasoning, tool calls and results (including
+native tools), and usage. The parser selects its framed records; gh-aw writes
 `agent-session.jsonl` and collects `usage/aw_session.jsonl`. Import failures and
 interrupted runs keep their actual failure outcome, without inferred turns or
 tool completions. See `README.md` for setup, credentials, and observability.
