@@ -170,4 +170,6 @@ def _remove(worktree: Worktree, *, unchanged: bool) -> bool:
 
 
 def _git(*args: str) -> str:
-    return subprocess.run(['git', *args], check=True, capture_output=True, text=True).stdout.removesuffix('\n')
+    return subprocess.run(
+        ['git', *args], check=True, capture_output=True, text=True, encoding='utf-8'
+    ).stdout.removesuffix('\n')

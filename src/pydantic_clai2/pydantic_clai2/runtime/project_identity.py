@@ -35,6 +35,7 @@ def project_identity(workspace: str) -> ProjectIdentity:
             ['git', '-C', workspace, 'symbolic-ref', '--quiet', '--short', 'HEAD'],
             capture_output=True,
             text=True,
+            encoding='utf-8',
             timeout=2,
             check=False,
         ).stdout.strip()
@@ -55,5 +56,6 @@ def _git_path(*, workspace: str, option: str) -> str:
         check=True,
         capture_output=True,
         text=True,
+        encoding='utf-8',
         timeout=2,
     ).stdout.removesuffix('\n')
