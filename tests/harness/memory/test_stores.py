@@ -91,6 +91,16 @@ _VERSION_INDEXES = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _pixeltable_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give Pixeltable a temporary home for this test only, unless the run already chose one.
+
+    `monkeypatch` restores the variable afterwards; `os.environ.get` keeps a home set by the
+    Pixeltable integration conftest without adding a branch that one environment cannot cover.
+    """
+    monkeypatch.setenv('PIXELTABLE_HOME', os.environ.get('PIXELTABLE_HOME', str(tmp_path / 'pixeltable')))
+
+
 def _local_store(tmp_path: Path, index: int) -> Store:
     if index == 0:
         return InMemoryStore()
@@ -98,7 +108,6 @@ def _local_store(tmp_path: Path, index: int) -> Store:
         return FileStore('files', workspace=LocalWorkspaceBackend(tmp_path))
     if index == 2:
         return SqliteMemoryStore(database=tmp_path / 'memory.sqlite3')
-    os.environ.setdefault('PIXELTABLE_HOME', str(tmp_path / 'pixeltable'))
     from pydantic_ai_harness.memory import PixeltableMemoryStore
 
     return PixeltableMemoryStore(table_name=f'harness_contract_{uuid.uuid4().hex[:8]}.memory')

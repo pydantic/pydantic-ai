@@ -46,8 +46,7 @@ An agent that searches it and keeps notes across runs:
 
 ```python {test="skip" py="3.11"}
 from pydantic_ai import Agent
-from pydantic_ai_harness import Memory
-from pydantic_ai_harness.pixeltable import Pixeltable
+from pydantic_ai_harness import Memory, Pixeltable
 from pydantic_ai_harness.memory import PixeltableMemoryStore
 
 agent = Agent(
@@ -83,7 +82,7 @@ recalls it in a second run without the first run's chat history.
 | `list_tables` | The allowed table and view paths. |
 | `describe_table` | Kind, comment, columns (type, `is_computed`, `is_stored`), and indexes. |
 | `query_table` | Rows matching equality filters (`{"status": "open"}`); timestamp, date, and UUID values are ISO strings. |
-| `similarity_search` | Nearest rows by `column.similarity(string=query)`, with a similarity score in the result. |
+| `similarity_search` | Nearest rows by `column.similarity(string=query)`, with a similarity score in the result. Each call embeds the query with the index's embedding function, which may be a paid provider call. |
 
 - `tables` requires table paths or directory prefixes; `['*']` allows the whole catalog, including
   memory tables. Allowed views expose their base table's columns. Version handles (`'dir.tbl:3'`)
@@ -115,6 +114,12 @@ recalls it in a second run without the first run's chat history.
   rows. Route writes and deletes through the store to preserve versions and receipts.
 - Pixeltable keeps old row versions for every update and delete, and receipts are not pruned, so the
   table grows with history.
+- Deleted or overwritten memories stay readable through earlier table versions (for example
+  `pxt.get_table('hr.memory:3')`), and a journaled write's content also remains in the history of its
+  receipt row. Pixeltable has no API to prune history, so the only way to purge a memory is to drop
+  the table. Do not store data in it that must be erasable.
+- Each insert prints a status line such as `Inserted 1 row with 0 errors`; set
+  `PIXELTABLE_VERBOSITY=0` to silence it in CLIs and TUIs.
 
 ## Multiple instances
 
@@ -141,7 +146,7 @@ capabilities:
 
 ```python {test="skip" py="3.11"}
 from pydantic_ai import Agent
-from pydantic_ai_harness.pixeltable import Pixeltable
+from pydantic_ai_harness import Pixeltable
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Pixeltable])
 ```

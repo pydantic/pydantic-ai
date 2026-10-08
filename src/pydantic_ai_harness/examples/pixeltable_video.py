@@ -9,6 +9,7 @@ Insertion calls OpenAI for transcription, captions, and embeddings. Searches emb
 their queries and retrieve stored text and timestamps.
 """
 
+import os
 import sys
 
 try:
@@ -25,8 +26,10 @@ from pydantic_ai.models import Model
 from pydantic_ai_harness import Memory, Pixeltable
 from pydantic_ai_harness.memory import PixeltableMemoryStore
 
+DEFAULT_MODEL = os.environ.get('PYDANTIC_AI_MODEL', 'openai:gpt-5.6-sol')
 
-def build_agent(model: Model | str = 'openai:gpt-5.6-sol') -> Agent[None, str]:
+
+def build_agent(model: Model | str = DEFAULT_MODEL) -> Agent[None, str]:
     """Build an agent over stored training material with persistent memory."""
     return Agent(
         model,
@@ -93,7 +96,9 @@ def main(video_path: str) -> None:
     )
     frames.add_embedding_index('caption', embedding=embedding, if_exists='ignore')
 
-    videos.insert([{'title': 'Expense policy', 'video': video_path}])  # pyright: ignore[reportUnknownMemberType]
+    # Re-running the example reuses the stored video instead of paying for transcription and captions again.
+    if videos.where(videos.title == 'Expense policy').count() == 0:
+        videos.insert([{'title': 'Expense policy', 'video': video_path}])  # pyright: ignore[reportUnknownMemberType]
     agent = build_agent()
     print(
         agent.run_sync(

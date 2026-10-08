@@ -40,7 +40,7 @@ only).
 | `FileStore(directory, *, workspace=None)` | Markdown files in the run's workspace | Needs a workspace or `workspace=` backend; one writer per directory |
 | `SqliteMemoryStore(database=... or connection=...)` | Durable, single host | A shared `connection` needs `check_same_thread=False` and must be dedicated to the store |
 | `PostgresMemoryStore(pool, *, table='agent_memory')` | Durable, shared | Driver-neutral `PostgresPool` protocol (for example an `asyncpg` pool); you own the pool lifecycle; no harness extra |
-| `PixeltableMemoryStore(table_name='harness.memory')` | Durable, shared Pixeltable catalog | Install `[pixeltable]` on Python 3.11+; creates the table on first use |
+| `PixeltableMemoryStore(table_name='harness.memory')` | Durable, shared (Pixeltable catalog) | Install `[pixeltable]` on Python 3.11+; creates the table on first use |
 
 ```python
 from pydantic_ai import Agent

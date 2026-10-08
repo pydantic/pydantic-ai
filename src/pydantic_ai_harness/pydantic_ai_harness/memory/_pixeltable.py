@@ -200,6 +200,8 @@ class PixeltableMemoryStore:
                 return fn()
             except pxt.NotFoundError:
                 # The cached handle goes stale if the table was dropped; recreate and retry once.
+                # The retry is safe: the drop discarded every file and receipt, so the operation runs
+                # again against the new, empty table exactly as a fresh call would.
                 self._table = None
                 return fn()
 
