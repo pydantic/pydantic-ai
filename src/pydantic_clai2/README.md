@@ -85,8 +85,10 @@ for the rest of those imports. Enabled plugins still load before the first promp
 their initialization contributes to startup time.
 An enabled plugin whose module is not installed, such as a built-in saved by another
 CLAI version, is skipped without a message; `/plugins list` shows why. Library
-`UserWarning`s are hidden so they do not break up the display; pass `-W default` to
-Python or set `PYTHONWARNINGS=default` to see them.
+warnings are hidden so they do not break up the display; pass `-W default` to
+Python or set `PYTHONWARNINGS=default` to see them. Log messages from Logfire and
+OpenTelemetry, such as export retries and timeouts, never print to the terminal
+either; logging handlers that a plugin configures still receive them.
 `/login` offers both Codex and GitHub Copilot without loading their integrations for
 completion. Copilot requests use your saved login through the lazy provider resolver.
 
@@ -850,7 +852,7 @@ An empty value resets. `R` resets the highlighted setting. Esc closes. Every
 edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
 an alias of `/set` and accepts the same arguments.
 
-While a turn is running, `/set`, `/settings`, `/model`, `/model add`, `/model settings`,
+While a turn is running, `/set`, `/settings`, `/system_prompt`, `/model`, `/model add`, `/model settings`,
 `/model chains`, `/accounts`, `/theme`, `/spinner`, `/tasks`, `/keys`, `/login`, `/resume`, and the
 `/google_workspace`, `/grain`, and `/pylon` settings menus typed without further
 arguments open right away instead of queueing.
@@ -876,6 +878,40 @@ delegated task is running, `/plugins` still refuses changes, as between turns.
 Use a non-negative integer; `0` disables retries. Changes apply to the next turn.
 Explicit per-tool or per-toolset retry limits take precedence. This setting does
 not change output-validation or HTTP transport retries.
+
+## Your instructions: `/system_prompt`
+
+```text
+/system_prompt
+```
+
+`/system_prompt` shows what the model is told and lets you add instructions of
+your own. CLAI builds the system prompt from its built-in coding instructions,
+the repository's `AGENTS.md` or `CLAUDE.md`, and the instructions of the plugins
+you turned on. The menu shows those parts but cannot change them; turn a plugin
+off or configure it in `/plugins` instead. Your instructions are sent after them
+and replace none of them.
+
+| Row | What it does |
+| --- | --- |
+| Edit your instructions | Opens your instructions in an editor. Saving an empty text removes them. |
+| Append to your instructions | Opens an empty editor; what you write is added as a new paragraph. |
+| Reset: remove your instructions | Removes them, so only CLAI's defaults are sent. Greyed out when you have none. |
+| View the full system prompt | The instructions sent with the conversation's latest request, yours included. Enter opens them in a scrollable view. |
+
+Editing opens `$VISUAL`, or `$EDITOR` when `$VISUAL` is unset, on a temporary
+Markdown file. Save and quit the editor to keep your changes. Unchanged text
+changes nothing, and an editor that exits with an error, such as Vim's `:cq`,
+cancels. A graphical editor must wait for its window to close, for example
+`code --wait`. On Windows, when neither variable is set, or when the editor
+cannot start, a built-in editor opens instead: Ctrl-S saves, Esc cancels.
+
+Your instructions are the `run.instructions` setting, saved with your other
+preferences, so later sessions and `/fork` use them too. They apply from your
+next prompt. During a turn, `/system_prompt` opens right away, and the running
+turn keeps the instructions it started with. `/set run.instructions TEXT` sets
+them in one go; `/set` on its own leaves them to `/system_prompt`, which keeps
+their line breaks.
 
 ## Models and their settings
 
@@ -1156,7 +1192,7 @@ the project file. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](PLUGINS.md#the-built-in-plugins) for its settings.
 
-Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
+Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. While
@@ -1194,8 +1230,9 @@ suggestions for a prefix you type take Up/down as before. Esc closes the
 suggestions, and Tab brings them back.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
 To steer the active run instead, press Alt+Enter (Option+Enter). With a typed
-draft, this sends the draft to the run at its next opportunity, without
-cancelling in-flight tools. Messages already queued stay queued. With an empty
+draft, this immediately shows the message in the transcript and enqueues it for
+the run's next model request. It does not interrupt the current response or
+cancel in-flight tools. Messages already queued stay queued. With an empty
 draft, it sends the oldest queued follow-up instead. Each Alt+Enter sends one
 message. Slash commands, `!` shell commands, and exit signals are never steered.
 A draft that cannot steer, including any draft while idle, is taken as if you
@@ -1433,6 +1470,11 @@ contain secrets. Do not share the database between machines. An unfinished run
 whose recorded process is still alive is treated as busy; revision checks reject
 stale writers instead of overwriting another process's work.
 
+Resuming a busy session does not wait for it or take it over. CLAI copies its
+newest saved state, including the latest step checkpoint, into a new saved
+session titled with `(fork)`, and continues that copy. The original keeps
+running in its own process and may still change files; no tools are replayed.
+
 The built-in `persistence` plugin records additional Harness checkpoints before
 model requests, after model responses, and at settled tool-cycle boundaries.
 `/plugins disable persistence` disables that extra step capture, not conversation
@@ -1484,12 +1526,15 @@ to the current model unless `summarization_model` selects another.
 
 The chain runs automatically before requests above `threshold` (85% of the context
 window by default). `/compact` runs the same chain between turns regardless of that
-threshold. Add free text to say what the summary must keep, for example
+threshold, but it protects at most half the conversation, so it always has older
+messages to summarise. Add free text to say what the summary must keep, for example
 `/compact don't lose the "auth" decisions`. The focus is passed to the summariser
 as written, including quotes, backslashes, and line breaks; no shell escaping is needed.
-You get one line with the message counts before and after and an estimate of the tokens saved.
-An empty conversation, or one that fits inside the protected tail, says so and
-sends nothing.
+You get one line with the message counts before and after and an estimate of the
+tokens saved out of the total. When compacting would not make the conversation
+smaller, for example because the summary is longer than what it replaces, the
+conversation is left as it was and you are told so. An empty or one-message
+conversation sends nothing.
 
 The window comes from genai-prices, the same catalog the `/model add` menu shows
 context sizes from. A model it does not list (`test`, a local endpoint) is
@@ -2107,13 +2152,15 @@ or choose browser sign-in. See [PLUGINS.md](PLUGINS.md#linear-issues-and-project
 
 When the task is ambiguous, the model can call `ask_user_question` instead of
 guessing. Questions appear inline, with the conversation still visible above a
-compact numbered picker. Use Up/Down and Enter, or press an option's number to
+compact numbered picker. The question stays pinned above its choices, so output that
+streams meanwhile, from a delegated task for instance, scrolls past above it instead
+of pushing it away. A delegated task's question names the task in its title. Use Up/Down and Enter, or press an option's number to
 select it. For multiple selections, Enter or a number toggles a choice; select
 `Done` to submit. At least one choice is required. Esc or Ctrl-C declines the
 whole request, which the model is told so it can make a stated choice and carry
 on. Several questions show progress in the title. The tool's transcript line
 names the questions by header, not their raw JSON. The editor's draft is
-preserved, and your picks are printed to the transcript afterwards.
+preserved, and the question and your picks are printed to the transcript afterwards.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for

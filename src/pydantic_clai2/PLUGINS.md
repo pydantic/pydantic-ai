@@ -346,7 +346,9 @@ directory too. Repository-local configuration/credentials and the SDK's
 `XDG_CONFIG_HOME` values fall back to `~/.config`. A checkout cannot select the
 telemetry destination through its own files. Without credentials the default
 `if-token-present` mode does not export to Logfire or start interactive setup. Console logging is disabled. Other SDK configuration,
-such as explicit OTLP exporters, still applies.
+such as explicit OTLP exporters, still applies. The SDKs' own log messages, such as
+failed or retried exports, never print to the terminal; a logging handler that a
+plugin configures still receives them.
 
 Previously named `logfire`, this plugin keeps existing enabled/disabled choices,
 settings, and saved token references. No reconfiguration is needed. Old commands
@@ -868,7 +870,7 @@ through this module and are not rewritten.
 Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
 host hooks. The shell keeps plugin resources alive until children settle; `/plugins`
 changes are refused while managed children run. Exit/reload drains them before
-`session_end`. Child questions use `host.full_screen()` and identify the child.
+`session_end`. Child questions use `host.full_screen()` and name the child in the picker's title.
 Typed delegation lifecycle events supply compact transcript rows; raw child events
 update the task inspector rather than entering the parent's transcript. Core hooks
 and guardrails bound to the stock agent still run on general-purpose children.
@@ -914,7 +916,9 @@ so two compaction chains never run together.
 
 `compaction` directly registers harness `FallbackCompaction` with
 `max_fraction=threshold`; harness owns the automatic trigger. `/compact` runs the
-same chain unconditionally. Its optional focus is free text, not shell arguments:
+same chain unconditionally, with the protected tail capped at half the
+conversation, and keeps the history unless the result is smaller. Its optional
+focus is free text, not shell arguments:
 `/compact don't lose the "auth" decisions` preserves the apostrophe and quotes in
 the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 `UsageLimitExceeded` cause summarisation to fall back to truncation; other exceptions
@@ -934,14 +938,15 @@ The second built-in, `ask_user` (`pydantic_clai2.builtin_plugins.ask_user_menu`)
 the model the harness's `AskUser` capability: one tool, `ask_user_question`, for
 asking you one to ten multiple-choice questions when the task is ambiguous. Each
 question appears inline above a compact numbered picker, keeping the conversation
-visible. Up/Down moves the highlight; Enter or an option's number selects it.
+visible. The question is pinned with its choices, so output streamed meanwhile (a
+delegated task's, say) lands above it instead of between it and the picker. Up/Down moves the highlight; Enter or an option's number selects it.
 For multi-select questions, Enter or a number toggles that choice; select `Done`
 to submit at least one choice. The title says `question 2 of 3` when there are
 several. Esc or Ctrl-C declines the whole request and lets the model continue.
 The plugin's `render` replaces the tool's argument dump with a header that lists
 the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
 the editor's input reader. It keeps the live panel's alternate screen. The draft
-is restored on exit, and your picks are printed to the transcript afterwards.
+is restored on exit, and the question and your picks are printed to the transcript afterwards.
 `/plugins disable ask_user` takes the tool away.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
@@ -1965,8 +1970,10 @@ editor's input reader, and restores the editor and its draft when the block exit
 The editor remains active during agent turns. Enter queues a separate turn with
 its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter) sends the typed
 draft, or with an empty draft the oldest queued follow-up, to the active run
-through core's `RunContext.enqueue(priority='asap')`, without starting another
-turn or cancelling tools. Each press sends one message. Slash commands, `!` shell
+through core's `RunContext.enqueue(priority='asap')`. Accepted steering messages
+appear immediately in the transcript and are enqueued for the next model request,
+without starting another turn, interrupting the current response, or cancelling
+tools. Each press sends one message. Slash commands, `!` shell
 commands, and exit signals are never steered: such a draft, or any draft the run
 does not accept, is taken as Enter would take it, and such a queued message stays
 queued and is not skipped over. When idle, Enter starts a turn. Shift-Enter inserts

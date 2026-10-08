@@ -101,6 +101,9 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 token=token,
                 service_name=settings.service_name,
                 console=False,
+                # CLAI passes attributes, never f-strings. Inspecting the caller's source fails once that file
+                # changes on disk mid-session, and the warning it prints to stderr tears through the live display.
+                inspect_arguments=False,
                 config_dir=private_dir,
                 data_dir=private_dir,
                 # UI events name settings and keys, such as `sessions.naming` or `OPENAI_API_KEY`, that look like secrets.

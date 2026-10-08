@@ -1102,7 +1102,7 @@ print(outlook)
 
 A `'cold'` outlook is the signal to flush pending maintenance for free; `'warm'` means the mutation would sacrifice a live cache hit, so defer it if it can wait; `'unknown'` (no documented retention, or a history without timestamps) should be treated like `'warm'` — never mutate on a guess.
 
-Retention you request through model settings, such as `anthropic_cache='1h'` or `openai_prompt_cache_retention='24h'` on OpenAI models before GPT-5.6, replaces the provider's default. [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention] works it out from the settings a request is made with, returning `None` when they don't ask for anything, so passing its result as `retention=` keeps the profile's default in that case. A [`before_model_request`](hooks.md) hook has both the model and the request's settings at hand, so it can decide whether to do the expensive work this turn:
+Retention you request through model settings, such as the unified [`cache='1h'`][pydantic_ai.settings.ModelSettings.cache], `anthropic_cache='1h'` or `openai_prompt_cache_retention='24h'` on OpenAI models before GPT-5.6, replaces the provider's default. [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention] works it out from the settings a request is made with, returning `None` when they don't ask for anything, so passing its result as `retention=` keeps the profile's default in that case. A [`before_model_request`](hooks.md) hook has both the model and the request's settings at hand, so it can decide whether to do the expensive work this turn:
 
 ```python {title="cache_cold_hook.py"}
 from pydantic_ai import Agent, ModelRequestContext, RunContext
@@ -1138,7 +1138,7 @@ agent = Agent(
 
 1. With the 1-hour cache requested, the outlook only turns `'cold'` after an hour of idleness rather than Anthropic's default 5 minutes.
 
-`CachePoint(ttl='1h')` markers in history extend the boundary in the same way, when the provider supports them. Azure and providers without a single documented default leave the field `None`, producing `'unknown'` unless the settings request a retention or you pass one explicitly.
+`CachePoint(ttl='1h')` markers in history extend the boundary in the same way, when the provider supports that retention (one of the profile's [`supported_cache_retentions`][pydantic_ai.profiles.ModelProfile.supported_cache_retentions]): OpenAI ignores `CachePoint.ttl`, so a `'1h'` marker doesn't extend GPT-5.6's 30 minutes. Azure and providers without a single documented default leave the field `None`, producing `'unknown'` unless the settings request a retention or you pass one explicitly.
 
 ### Testing History Processors
 

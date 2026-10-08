@@ -43,7 +43,7 @@ genai-prices = false
 pydantic-monty = false
 termflow-md = "2026-10-02T15:05:25Z"
 anthropic = "2026-09-28T18:04:04Z"
-openai = "2026-09-23T00:08:49Z"
+openai = "2026-10-06T21:31:20Z"
 google-genai = "2026-09-22T17:23:02Z"
 
 [manifest]
@@ -4493,7 +4493,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "3.19.0"
+version = "3.26.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -4503,9 +4503,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e5/87/563fce6df3a12bbb5274b1432559c7cf267d1603d85d8a959b5c286d0d22/openai-3.19.0.tar.gz", hash = "sha256:890174cae80a47357035477532b6eabbc3d31220f021896dcc2640943e87b78d", size = 1714573, upload-time = "2026-09-23T00:08:48.075Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b4/07/cd478a4595282ac72e31090531bb37f8a1b6fd9cb45c1da6d6215078a4d9/openai-3.26.0.tar.gz", hash = "sha256:73b470c09cf2171dce930e36af01c6632241adda0120ad84302ad229f9130a5a", size = 1820994, upload-time = "2026-10-06T21:31:19.019Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/78/0a/45e7073e637f3586eaa5af23a3de58776d5c322d12b77bdba7e2be09ca7a/openai-3.19.0-py3-none-any.whl", hash = "sha256:eaa59585332e54abf71c8011d9bfdb3b4aecead73a0aad977e979756756d42df", size = 2070187, upload-time = "2026-09-23T00:08:45.884Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/37/08c6d71d542b079364221fcbaee863ead900b53cd89db17f4bd0ec83f41a/openai-3.26.0-py3-none-any.whl", hash = "sha256:050597ff71ff4025177405a41fa4019d4f9feae5826645b63b8e35b6e9a3c88b", size = 2164504, upload-time = "2026-10-06T21:31:16.415Z" },
 ]
 
 [[package]]
@@ -6161,15 +6161,15 @@ requires-dist = [
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.39.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.9.2" },
-    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.26.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'logfire'", specifier = ">=0.65b0" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.7.5" },
@@ -6223,6 +6223,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "rich" },
     { name = "termflow-md" },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -6247,6 +6248,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "rich", specifier = ">=14" },
     { name = "termflow-md", specifier = ">=1.0.0,<2" },
+    { name = "websockets", specifier = ">=13.0" },
 ]
 provides-extras = ["typesafe"]
 
