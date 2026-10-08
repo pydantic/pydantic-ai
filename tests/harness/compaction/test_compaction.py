@@ -2502,6 +2502,15 @@ class TestPublicPath:
         self, summary_text: str, request_limit: int, fallback_on_usage_limit: bool
     ):
         summary_calls = 0
+        summary_errors: list[type[Exception]] = []
+
+        class RecordingSummarizingCompaction(SummarizingCompaction[None]):
+            async def compact(self, messages: list[ModelMessage], ctx: RunContext[None]) -> list[ModelMessage]:
+                try:
+                    return await super().compact(messages, ctx)
+                except Exception as error:
+                    summary_errors.append(type(error))
+                    raise
 
         def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             nonlocal summary_calls
@@ -2519,10 +2528,11 @@ class TestPublicPath:
         )
         agent = Agent(
             FunctionModel(respond),
+            deps_type=None,
             capabilities=[
                 FallbackCompaction(
                     fallback_chain=[
-                        SummarizingCompaction(
+                        RecordingSummarizingCompaction(
                             FunctionModel(summarize), max_messages=4, keep_messages=1, preserve_first_user_message=False
                         ),
                         SlidingWindowCompaction(
@@ -2558,6 +2568,9 @@ class TestPublicPath:
             assert prompt.content == 'next'
             assert usage.requests == request_limit
 
+        # The summary agent defaults to one output retry. With one request reserved for
+        # the parent, limit 2 exhausts usage first; limit 3 exhausts output retries.
+        assert summary_errors == [UsageLimitExceeded if request_limit == 2 else UnexpectedModelBehavior]
         assert summary_calls == request_limit - 1
 
     async def test_capabilities_wired_into_agent(self):
