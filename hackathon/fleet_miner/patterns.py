@@ -870,6 +870,9 @@ def merge(
     actions: dict[str, MergeAction] = {}
     for proposal in fresh:
         old = by_id.get(proposal.id)
+        if old is not None and old.held:
+            actions[proposal.id] = 'skipped'
+            continue
         if old is None:
             by_id[proposal.id] = proposal
             actions[proposal.id] = 'new'
@@ -879,6 +882,8 @@ def merge(
         else:
             actions[proposal.id] = 'skipped'
     for id_, proposal in by_id.items():
+        if proposal.held:
+            continue
         explicit = id_ in (stale_reasons or {})
         if id_ not in actions and proposal.status == 'pending' and (proposal.kind in stale_kinds or explicit):
             reason = (stale_reasons or {}).get(id_, "didn't pass: no longer found often enough")

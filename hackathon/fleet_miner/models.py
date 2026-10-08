@@ -257,6 +257,8 @@ class Proposal(BaseModel):
     proposal_count: int | None = None
     """How many `memory proposal` spans this file collected (all of them are evidence)."""
     review_flag: str | None = None
+    held: bool = False
+    """Pinned by a human (e.g. resurfaced for a demo): the miner never restales or overwrites it."""
     """Set when a light check thinks this is a personal preference rather than a repo fact. Flags, never drops."""
 
     _clean = field_validator('id', 'name', 'description', 'text', 'rationale', 'pattern')(clean_text)
