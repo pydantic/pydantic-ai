@@ -618,7 +618,7 @@ While adaptive thinking is on, an explicit forcing `tool_choice` is still sent, 
 - a [dynamic instructions](../agent.md#instructions) function whose text differs between runs, and
 - a [filtered toolset](../toolsets.md#filtering-tools) that advertises a new tool mid-conversation, unless the tool uses [deferred loading](../toolsets.md#deferred-loading).
 
-Both are the same instability that costs you a provider's prompt cache: a request prefix that changes between turns. The thinking block turns it into a 400 you can see; the cache turns it into a bill you can't — every request after the change re-sends the whole conversation at uncached rates, silently. Where the prefix can be held stable, that is worth more than handling the rejection.
+Both are the same instability that [costs you a provider's prompt cache](../capabilities/caching.md#what-invalidates-a-cache): a request prefix that changes between turns. The thinking block turns it into a 400 you can see; the cache turns it into a bill you can't — every request after the change re-sends the whole conversation at uncached rates, silently. Where the prefix can be held stable, that is worth more than handling the rejection.
 
 Anthropic enforces the check for accounts created on or after 31 August 2026. For an older account it records the mismatch but acts on it only if the request sets `thinking.block_binding.prefix_mismatch_behavior`.
 

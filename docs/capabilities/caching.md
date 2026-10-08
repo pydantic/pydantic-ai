@@ -129,6 +129,8 @@ Pydantic AI makes the following guarantees about the prompt prefix it sends to p
 - History processors that rewrite already-sent messages on every request.
 - Switching models or providers during a conversation. Each provider maintains a separate cache.
 
+On Anthropic models that bind thinking blocks to the prefix that produced them (Claude Fable 5.1, Claude Opus 5.5 and Claude Sonnet 5.5), the same changes mid-conversation cause a 400 error, not just a cache miss: see [Thinking block binding](../models/anthropic.md#thinking-block-binding).
+
 ### Provider retention
 
 Provider caches expire after idle gaps. This is unavoidable, but it creates a useful opportunity: schedule history-mutating maintenance for [cache-cold windows](../message-history.md#scheduling-maintenance-into-cache-cold-windows), when the next request would pay the full input price anyway. Each provider's documented default retention is recorded as [`ModelProfile.default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention], a longer retention requested through settings is resolved by [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention], and [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] takes either to predict whether the next request will find the cache cold.
