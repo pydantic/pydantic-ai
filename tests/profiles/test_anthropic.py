@@ -626,31 +626,16 @@ def test_model_profile_sonnet_5_5():
 
 
 def test_model_profile_haiku_5_5():
-    """Claude Haiku 5.5 supports adaptive thinking, forced tools, and the current Anthropic tool set."""
+    """Claude Haiku 5.5 supports adaptive thinking and tool forcing, and binds thinking blocks to their context."""
     profile = anthropic_model_profile('claude-haiku-5-5')
+    opus_5 = anthropic_model_profile('claude-opus-5')
     assert profile is not None
-    assert profile.get('supports_json_schema_output') is True
-    assert profile.get('anthropic_supports_adaptive_thinking') is True
-    assert profile.get('anthropic_supports_effort') is True
-    assert profile.get('anthropic_supports_xhigh_effort') is True
-    assert profile.get('anthropic_disallows_budget_thinking') is True
-    assert profile.get('anthropic_disallows_sampling_settings') is True
-    assert profile.get('anthropic_disallows_top_effort_when_thinking_disabled') is True
-    assert profile.get('thinking_enabled_by_default') is True
-    assert profile.get('thinking_always_enabled') is False
-    assert profile.get('supports_forced_tool_choice') is True
-    assert profile.get('anthropic_binds_thinking_blocks') is True
-    assert profile.get('anthropic_supports_dynamic_filtering') is True
-    assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
-    assert profile.get('anthropic_supported_code_execution_tool_versions') == ('20250825', '20260120')
-    assert profile.get('anthropic_supports_task_budgets') is True
-    assert profile.get('anthropic_max_output_tokens') == 128_000
-    supported_native_tools = profile.get('supported_native_tools', frozenset())
-    assert ToolSearchTool in supported_native_tools
-    assert AdvisorTool in supported_native_tools
-    assert CodeExecutionTool in supported_native_tools
-    assert WebSearchTool in supported_native_tools
-    assert WebFetchTool in supported_native_tools
+    assert opus_5 is not None
+    assert profile == {
+        **opus_5,
+        'anthropic_supports_fast_speed': False,
+        'anthropic_binds_thinking_blocks': True,
+    }
 
 
 @pytest.mark.parametrize(

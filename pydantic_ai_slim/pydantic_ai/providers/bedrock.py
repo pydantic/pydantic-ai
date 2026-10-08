@@ -264,7 +264,6 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
         'claude-opus-4-8',
         'claude-opus-5',
         'claude-sonnet-5',
-        'claude-sonnet-5-5',
         'claude-haiku-5-5',
         'claude-fable-5',
     )

@@ -673,11 +673,8 @@ def test_support_tool_forcing_rejects_unsupported_model_with_adaptive_thinking()
 )
 def test_haiku_5_5_supports_forced_tool_choice_with_adaptive_or_disabled_thinking(settings: AnthropicModelSettings):
     """Haiku 5.5 accepts forced tool choice with either adaptive or disabled thinking."""
-    profile = AnthropicModelProfile(
-        supports_forced_tool_choice=True,
-        forced_tool_choice_disables_thinking=True,
-        anthropic_supports_adaptive_thinking=True,
-    )
+    profile = AnthropicProvider.model_profile('claude-haiku-5-5')
+    assert profile is not None
     assert (
         anthropic_support_tool_forcing(
             'claude-haiku-5-5', profile, settings, ModelRequestParameters(function_tools=[make_tool('my_tool')])
