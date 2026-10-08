@@ -256,6 +256,11 @@ def empty_completed_events(response_id: str) -> list[Frame]:
     ]
 
 
+class StaticModelCapability(AbstractCapability[None]):
+    def get_model(self) -> str:
+        return 'openai-responses:gpt-4o'
+
+
 @dataclass
 class ScriptedSocket:
     """Control interruptions and concurrency beneath the real SDK event parser."""
@@ -375,11 +380,6 @@ async def test_agent_connection_reuses_entered_model_client(
     if selection == 'deferred-configured':
         agent = Agent('openai-responses:gpt-4o', defer_model_check=True)
     else:
-
-        class StaticModelCapability(AbstractCapability[None]):
-            def get_model(self) -> str:
-                return 'openai-responses:gpt-4o'
-
         agent = Agent(capabilities=[StaticModelCapability()], deps_type=type(None))
 
     async with agent:
@@ -403,6 +403,46 @@ async def test_agent_connection_reuses_entered_model_client(
         assert not source_client.is_closed()
 
     assert source_client.is_closed()
+
+
+@pytest.mark.parametrize('selection', ['deferred-configured', 'static-capability'])
+async def test_agent_connection_closes_inferred_provider_after_count_tokens(
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    monkeypatch: pytest.MonkeyPatch,
+    selection: str,
+):
+    """The connection owns an inferred provider needed for HTTP token counting."""
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    requests: list[httpx2.Request] = []
+
+    def http_handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json={'input_tokens': 7})
+
+    socket = sockets.pending[0]
+    if selection == 'deferred-configured':
+        agent = Agent('openai-responses:gpt-4o', defer_model_check=True)
+    else:
+        agent = Agent(capabilities=[StaticModelCapability()], deps_type=type(None))
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(http_handler)) as http_client:
+        monkeypatch.setattr('pydantic_ai.providers._openai_compatible.create_async_httpx2_client', lambda: http_client)
+        async with agent.connect():
+            async with agent.iter('count this') as run:
+                model = run.ctx.deps.model
+                assert isinstance(model, OpenAIResponsesModel)
+            usage = await model.count_tokens(
+                [ModelRequest(parts=[UserPromptPart('count this')])], None, ModelRequestParameters()
+            )
+            assert usage.input_tokens == 7
+            assert len(requests) == 1
+            assert requests[0].url.path == '/v1/responses/input_tokens'
+            assert not http_client.is_closed
+            assert socket.close_count == 0
+
+        assert http_client.is_closed
+        assert socket.close_count == 1
 
 
 async def test_agent_connection_pins_model_and_restores_run_override(

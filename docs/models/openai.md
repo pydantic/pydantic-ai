@@ -285,7 +285,7 @@ async def main():
 
 The connection binds the model configured on the agent for every run in the context. It takes precedence over `run(model=...)` and run-dependent model selection, so choose a concrete model before connecting.
 
-Each connection owns one ordered response stream and supports **one active response at a time**. Concurrent tasks can open separate `agent.connect()` contexts on the same agent. Finishing a response leaves the socket open; cancelling a request, leaving a stream before completion, or losing the transport closes it. Further requests in that context raise an error. Exiting restores the agent's previous model selection, so an ordinary Responses agent uses HTTP again. Opening or closing an `Agent` context inside `connect()` does not close the socket.
+Each connection owns one ordered response stream and supports **one active response at a time**. Concurrent tasks can open separate `agent.connect()` contexts on the same agent. Finishing a response leaves the socket open; cancelling a request, leaving a stream before completion, or losing the transport closes it. Further requests in that context raise an error. `Agent.connect()` owns the provider client of a temporary model created for the connection; existing model instances and agent tools retain their lifetimes. Exiting restores the agent's previous model selection, so an ordinary Responses agent uses HTTP again. Opening or closing an `Agent` context inside `connect()` does not close the socket.
 
 For direct model use, [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] yields an independent connected model. Pass that model to an `Agent` or a run's `model` argument. The source model continues to use HTTP, and the connected model cannot be used after its connection context exits. The [Codex subscription model](openai-codex.md#limitations) does not support this connection API.
 
@@ -354,7 +354,7 @@ async def main():
 
 The warmup input is sent directly to the model and is not added to Pydantic AI message history. Keep its content and response ID with the application state that owns the continuation. Do not use `Agent.run()` for warmup: it treats the empty warmup response as invalid output and can exhaust output retries.
 
-The connection context manages only the WebSocket. To close the HTTP client used by token counting or standalone compaction, manage the source model or provider in its own async context.
+Direct model connections leave the source model's HTTP client with its existing owner; manage that source model or provider separately when token counting or standalone compaction is needed. An agent connection owns the provider client of a temporary model created for the connection. Existing model instances and agent tools retain their lifetimes.
 
 #### Ultrafast
 

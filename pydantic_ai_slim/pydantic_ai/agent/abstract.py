@@ -13,7 +13,7 @@ from collections.abc import (
     Sequence,
 )
 from concurrent.futures import Executor
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from types import FrameType, TracebackType
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeAlias, cast, overload
@@ -1755,8 +1755,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         opens an independent connection; concurrent tasks can open their own contexts on the same agent.
         The model's connection context defines request concurrency and interruption behavior.
 
-        This context manages the model connection. The agent's toolsets and the source model's
-        HTTP client retain their existing lifetimes.
+        This context also manages the HTTP client for a source model created for the connection
+        from a model ID. Existing model instances and the agent's toolsets retain their lifetimes.
 
         ```python {test="skip"}
         from pydantic_ai import Agent
@@ -1769,13 +1769,21 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 print(result.output)
         ```
         """
-        model = self._get_model_outside_run()
-        async with model.connect() as connected:
-            with self.override(model=connected):
-                yield self
+        selection = self._get_model_selection_outside_run()
+        async with AsyncExitStack() as stack:
+            if isinstance(selection, str):
+                model = models.infer_model(selection)
+                await stack.enter_async_context(model)
+            else:
+                model = selection
+            async with model.connect() as connected:
+                with self.override(model=connected):
+                    yield self
 
-    def _get_model_outside_run(self, model: models.Model | models.KnownModelName | str | None = None) -> models.Model:
-        """Resolve the configured model for operations that do not have run dependencies."""
+    def _get_model_selection_outside_run(
+        self, model: models.Model | models.KnownModelName | str | None = None
+    ) -> models.Model | str:
+        """Resolve the configured model selection for operations that do not have run dependencies."""
         raise NotImplementedError
 
     @contextmanager

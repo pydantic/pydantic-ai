@@ -55,7 +55,7 @@ Use `async with agent.connect():` on an agent configured with an OpenAI Response
 
 The connection binds the configured model for every run, including a run that passes `model=`. It takes precedence over run-dependent model selection, so configure a concrete model before connecting.
 
-Keep the connection context open for the whole tool loop. Run one response at a time per connection. Concurrent tasks can open separate contexts on the same agent. Context exit restores the agent's previous model selection.
+Keep the connection context open for the whole tool loop. Run one response at a time per connection. Concurrent tasks can open separate contexts on the same agent. An agent connection owns the provider client of a temporary model created for the connection; existing model instances and agent tools keep their lifetimes. Context exit restores the agent's previous model selection.
 
 For direct model use or connection options, open `async with model.connect() as connected` on an `OpenAIResponsesModel`. Pass `connected` to an `Agent` or a run's `model` argument. The source model continues to use HTTP. To use a `FallbackModel`, connect each concrete `OpenAIResponsesModel` with an `AsyncExitStack` first, then construct the fallback from those connected models; other fallback models can keep using HTTP.
 

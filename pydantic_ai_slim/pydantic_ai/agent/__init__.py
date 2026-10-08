@@ -3176,12 +3176,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 'that model explicitly to `run(model=...)` when resuming.'
             )
 
-    def _get_model_outside_run(self, model: models.Model | models.KnownModelName | str | None = None) -> models.Model:
-        """Resolve a configured or static capability model where run deps are unavailable."""
+    def _get_model_selection_outside_run(
+        self, model: models.Model | models.KnownModelName | str | None = None
+    ) -> models.Model | str:
+        """Resolve a configured or static capability model selection where run deps are unavailable."""
         capability = self._effective_root_capability()
         if model is not None or self._override_model.get() is not None:
             selection = self._pick_raw_model(model)
-            return selection if _is_model(selection) else models.infer_model(selection)
+            return selection
         contribution = capability.get_model()
         if callable(contribution) and not _is_model(contribution):
             raise exceptions.UserError(
@@ -3197,7 +3199,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if isinstance(selection, str):
             if entered_model := self._entered_models_by_selection.get((id(capability), selection)):
                 return entered_model
-        return selection if _is_model(selection) else models.infer_model(selection)
+        return selection
 
     def _resolve_instrumentation_settings(self) -> InstrumentationSettings | None:
         """Resolve effective `InstrumentationSettings` from `Agent.instrument_all` / `agent.instrument`."""
@@ -4205,7 +4207,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         If no sampling model is provided, the agent's model will be used.
         """
         try:
-            sampling_model = models.infer_model(model) if model else self._get_model_outside_run()
+            selection = model or self._get_model_selection_outside_run()
+            sampling_model = models.infer_model(selection)
         except exceptions.UserError as e:
             capability = self._effective_root_capability()
             if model is None and (callable(capability.get_model()) or capability.has_resolve_model_id):
