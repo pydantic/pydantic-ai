@@ -44,7 +44,7 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 
 | Provider | `Thinking()` / `Thinking(effort=True)` | `Thinking(effort='high')` | Notes |
 |---|---|---|---|
-| Anthropic (Opus 4.6+ and Haiku 5.5) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | Claude Opus 4.7, 4.8, 5, 5.5, Sonnet 5 and 5.5, and Haiku 5.5 also support `effort='xhigh'` |
+| Anthropic (adaptive thinking) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | Claude Opus 4.7, 4.8, 5, 5.5, Sonnet 5 and 5.5, and Haiku 5.5 also support `effort='xhigh'` |
 | Anthropic (older) | `anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000}` | `budget_tokens=16384` | Budget-based; `'low'` → 2048 tokens |
 | OpenAI | `reasoning_effort='medium'` | `reasoning_effort='high'` | GPT-5.6 maps unified `'minimal'` to `'low'` |
 | Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | Unified efforts snap to the nearest documented level — e.g. `gemini-3.1-flash-lite-image` (levels: `minimal`, `high`) maps `'low'` to `'MINIMAL'` and `'medium'`/`'xhigh'` to `'HIGH'` — and models without `minimal` map unified `'minimal'` to `'LOW'`; `gemini-3.1-flash-image` applies its `minimal, high` set only on the Gemini API (see [Google](../models/google.md#configure-thinking)) |
