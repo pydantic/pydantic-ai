@@ -467,11 +467,17 @@ async def test_transport_error_and_fallback(allow_model_requests: None):
     assert isinstance(result.output, Ticket)
 
 
-@pytest.mark.parametrize('extra_body', [['not', 'a', 'mapping'], {'bad': object()}])
-async def test_invalid_request_body(extra_body: object):
+@pytest.mark.parametrize(
+    ('extra_body', 'message'),
+    [
+        (['not', 'a', 'mapping'], '`extra_body` must be a dictionary'),
+        ({'bad': object()}, 'Could not send this request'),
+    ],
+)
+async def test_invalid_request_body(extra_body: object, message: str):
     handler = Mock(side_effect=AssertionError('Invalid JSON must not be sent'))
     model = mock_model(handler)
-    with pytest.raises(UserError, match='Could not send this request'):
+    with pytest.raises(UserError, match=message):
         await model.decide(DecisionRequest(state='x', questions={}), {'extra_body': extra_body})
     handler.assert_not_called()
 
@@ -565,8 +571,9 @@ async def test_invalid_distribution(answer: dict[str, object]):
     model = mock_model(
         lambda _: httpx2.Response(200, json={'model': 'gpt-6-luna', 'answers': [{'name': 'value', **answer}]})
     )
-    with pytest.raises(UnexpectedModelBehavior, match=r'invalid .* probabilities'):
+    with pytest.raises(UnexpectedModelBehavior, match='Invalid response from the OpenAI Decisions API') as exc_info:
         await model.decide(DecisionRequest(state='x', questions={'value': question}), {})
+    assert str(exc_info.value.__cause__) == f"invalid {answer['type']} probabilities for 'value'"
 
 
 async def test_zero_mass_distribution():
@@ -581,5 +588,6 @@ async def test_zero_mass_distribution():
     }
     model = mock_model(lambda _: httpx2.Response(200, json={'model': 'gpt-6-luna', 'answers': [answer]}))
     question = ChoiceQuestion(criteria=dict.fromkeys(options))
-    with pytest.raises(UnexpectedModelBehavior, match='invalid choice probabilities'):
+    with pytest.raises(UnexpectedModelBehavior, match='Invalid response from the OpenAI Decisions API') as exc_info:
         await model.decide(DecisionRequest(state='x', questions={'value': question}), {})
+    assert str(exc_info.value.__cause__) == "invalid choice probabilities for 'value'"

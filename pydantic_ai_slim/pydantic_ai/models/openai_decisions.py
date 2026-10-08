@@ -7,8 +7,9 @@ from typing import Annotated, Literal, assert_never
 import httpx2
 from pydantic import Field, JsonValue, TypeAdapter, ValidationError
 
+from .. import _utils
 from .._http import to_httpx2_timeout
-from ..exceptions import UnexpectedModelBehavior, UserError
+from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openai import OpenAIProvider
@@ -28,11 +29,9 @@ from .decision import (
     ScoreAnswer,
     ScoreQuestion,
 )
-from .openai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
 
 try:
-    from openai import NOT_GIVEN, AsyncOpenAI
-    from openai._base_client import make_request_options
+    from openai import APIConnectionError, APIStatusError, AsyncOpenAI
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI Decisions model, '
@@ -96,25 +95,33 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to OpenAI's Decisions API."""
-        body = {
+        body: dict[str, object] = {
             'model': self._model_name,
             'input': _text(request.state),
             'questions': [_question(name, question) for name, question in request.questions.items()],
         }
-        with _map_api_errors(self._model_name):
-            try:
-                response = await self.client.post(
-                    '/decisions',
-                    cast_to=httpx2.Response,
-                    body=body,
-                    options=make_request_options(
-                        timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
-                        extra_headers=model_settings.get('extra_headers'),
-                        extra_body=model_settings.get('extra_body'),
-                    ),
-                )
-            except (TypeError, ValueError) as e:
-                raise UserError(f'Could not send this request to the OpenAI Decisions API: {e}') from e
+        if (extra_body := model_settings.get('extra_body')) is not None:
+            if not _utils.is_str_dict(extra_body):
+                raise UserError('`extra_body` must be a dictionary to send it to the OpenAI Decisions API')
+            body |= extra_body
+        client = self.client
+        if (timeout := model_settings.get('timeout')) is not None:
+            client = client.with_options(timeout=to_httpx2_timeout(timeout))
+        try:
+            response = await client.post(
+                '/decisions',
+                cast_to=httpx2.Response,
+                body=body,
+                options={'headers': model_settings.get('extra_headers', {})},
+            )
+        except APIStatusError as e:
+            raise ModelHTTPError(
+                status_code=e.status_code, model_name=self._model_name, body=e.body, headers=dict(e.response.headers)
+            ) from e
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self._model_name, message=e.message) from e
+        except (TypeError, ValueError) as e:
+            raise UserError('Could not send this request to the OpenAI Decisions API') from e
 
         try:
             parsed = _response_adapter.validate_json(response.content)
@@ -125,7 +132,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
                 raise ValueError('answer names do not match the questions')
             answers = {answer.name: _answer(answer, request.questions[answer.name]) for answer in parsed.answers}
         except (ValidationError, ValueError) as e:
-            raise UnexpectedModelBehavior(f'Invalid response from the OpenAI Decisions API: {e}', response.text) from e
+            raise UnexpectedModelBehavior('Invalid response from the OpenAI Decisions API', response.text) from e
 
         usage = RequestUsage()
         if parsed.usage is not None:
