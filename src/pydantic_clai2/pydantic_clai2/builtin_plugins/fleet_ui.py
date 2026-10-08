@@ -35,7 +35,7 @@ def notice_panel(changes: Sequence[Change], *, snapshot: Snapshot, source: str, 
     for action in ('added', 'updated', 'removed'):
         groups: dict[str, list[str]] = {}
         for change in changes:
-            if change.action != action:
+            if change.action != action or change.kind == 'memory':
                 continue
             if change.kind == 'instructions':
                 groups.setdefault('instructions', []).append('company instructions')
@@ -53,9 +53,19 @@ def notice_panel(changes: Sequence[Change], *, snapshot: Snapshot, source: str, 
             line.append(f'{group} ', style=theme.color(theme.MUTED))
             line.append(', '.join(names), style='bold')
         lines.append(line)
-    tiers = {change.tier for change in changes}
+    for change in changes:
+        if change.kind == 'memory':
+            # One line per note, with who accepted it: shared notes enter every teammate's prompt.
+            line = Text(change.describe().partition(': ')[0] + ': ', style=theme.color(theme.ACCENT))
+            line.append(change.describe().partition(': ')[2], style='bold')
+            lines.append(line)
+    tiers = {change.tier for change in changes if change.kind != 'memory'}
     unknown = '' in tiers  # A removal no longer says where it came from.
-    versions = snapshot.versions(config='company' in tiers or unknown, catalog='catalog' in tiers or unknown)
+    versions = snapshot.versions(
+        config='company' in tiers or unknown,
+        catalog='catalog' in tiers or unknown,
+        memory=any(change.kind == 'memory' for change in changes),
+    )
     footer = Text(' · '.join(part for part in (versions, '/catalog to browse', link or '') if part))
     footer.stylize(theme.color(theme.MUTED))
     lines.append(footer)

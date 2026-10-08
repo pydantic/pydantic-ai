@@ -39,6 +39,7 @@ from pydantic_ai_harness.policy import PolicyDecision, PolicyRule, decision_attr
 from pydantic_clai2 import managed, policy_state
 from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer
 from pydantic_clai2.builtin_plugins.fleet import Build, Change, Consent, Fleet, FleetControl, Snapshot
+from pydantic_clai2.builtin_plugins.fleet_memory import PROPOSED, REPO_SCOPE, personal_memory, repo_memory, sha
 from pydantic_clai2.builtin_plugins.fleet_ui import (
     BLOCKED_PREFIX,
     CatalogRow,
@@ -52,6 +53,7 @@ from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_e
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, run_setup
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
+from pydantic_clai2.config.settings_store import config_dir
 from pydantic_clai2.managed import managed_target
 from pydantic_clai2.mcp._resilient import ResilientMCP
 from pydantic_clai2.plugins import (
@@ -260,11 +262,40 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             self.fleet.agent_variable,
             targeting_key=lambda _: tracing.email or self._install_id,
             attributes=lambda _: tracing.identity(),
-            client_features=('catalog', 'policy', 'applies_to'),
+            client_features=('catalog', 'policy', 'applies_to', 'memory'),
             applies=self.fleet.applies_here,
         )
         fleet_control = FleetControl(fleet=self.fleet, approver=self._approve, blocked_message=self._blocked_message)
-        return (self._session_tracing, self.instrumentation, control, fleet_control, resilient)
+        fleet = self.fleet
+        memory = (
+            *personal_memory(config_dir() / 'memory', repo=_repo_slug),
+            repo_memory(lambda: fleet.notes(), propose=self._propose_memory),
+        )
+        return (self._session_tracing, self.instrumentation, control, fleet_control, *memory, resilient)
+
+    def _propose_memory(self, path: str, content: str, why: str) -> str:
+        """Record a proposed repo note as a `memory proposal` span; the fleet miner shows it to admins in Logfire."""
+        assert self.fleet is not None
+        slug = _repo_slug()
+        if slug is None:
+            return 'Repo notes need a repository whose origin is on GitHub or GitLab; this one has none.'
+        if not self.settings.include_content:
+            return 'Proposals carry the note itself, so they need message content export on (/plugins configure observability).'
+        snapshot = self.fleet.latest or self.fleet.snapshot()
+        current = next((note for note in self.fleet.notes(snapshot) if note.path == path), None)
+        identity = self._session_tracing.identity()
+        attributes = {
+            'clai2.memory.scope': REPO_SCOPE,
+            'clai2.memory.path': path,
+            'clai2.memory.content': content,
+            'clai2.memory.why': why,
+            'clai2.memory.base_sha': sha(current.content) if current is not None else '',
+            'clai2.memory.base_version': snapshot.memory_version or '',
+            'clai2.repo_slug': slug,
+            **{key: identity[key] for key in ('user.email', 'clai2.team', 'agent_session_id') if key in identity},
+        }
+        self.instance.log('info', 'memory proposal', attributes)
+        return PROPOSED
 
     def _warn_mcp(self, message: str) -> None:
         self.host.console.print(message, style=theme.color(theme.WARNING), markup=False)
@@ -389,6 +420,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             f'◆ Managed by {source} through Logfire',
             *([project] if project and project != source else []),
             '/catalog',
+            'memory: personal + repo',
         ]
         link = self._link()
         style = Style.parse(theme.color(theme.ACCENT)) + Style(link=link)
@@ -642,6 +674,11 @@ def _api_key(settings: LogfireSettings) -> str | None:
         if key is not None:
             return key.get_secret_value()
     return os.getenv('LOGFIRE_CLAI2_API_KEY') or os.getenv('LOGFIRE_API_KEY') or None
+
+
+def _repo_slug() -> str | None:
+    """The current repository's `owner/repo`, when its origin is on GitHub or GitLab."""
+    return repo_attributes(Path.cwd()).get('clai2.repo_slug')
 
 
 def logfire_dir() -> Path:

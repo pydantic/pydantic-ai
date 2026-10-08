@@ -14,7 +14,9 @@ from pydantic_clai2 import policy_state
 from pydantic_clai2.builtin_plugins.fleet import Fleet
 
 
-def _fleet(tmp_path: Path, agent: dict[str, Any], catalog: dict[str, Any]) -> Fleet:
+def _fleet(
+    tmp_path: Path, agent: dict[str, Any], catalog: dict[str, Any], memory: dict[str, Any] | None = None
+) -> Fleet:
     def var(name: str, value: dict[str, Any]) -> dict[str, Any]:
         label = {'version': 1, 'serialized_value': json.dumps(value)}
         return {
@@ -25,7 +27,13 @@ def _fleet(tmp_path: Path, agent: dict[str, Any], catalog: dict[str, Any]) -> Fl
         }
 
     config = VariablesConfig.model_validate(
-        {'variables': {'agent__clai2': var('agent__clai2', agent), 'catalog__clai2': var('catalog__clai2', catalog)}}
+        {
+            'variables': {
+                'agent__clai2': var('agent__clai2', agent),
+                'catalog__clai2': var('catalog__clai2', catalog),
+                **({'memory__clai2': var('memory__clai2', memory)} if memory is not None else {}),
+            }
+        }
     )
     instance = logfire.configure(
         local=True, send_to_logfire=False, console=False, variables=logfire.LocalVariablesOptions(config=config)
@@ -195,11 +203,42 @@ def test_the_launch_header_says_who_manages_clai2_and_links_to_logfire(tmp_path:
 
     eu = {'base_url': 'https://logfire-eu.pydantic.info', 'project': 'logfire/clai2'}
     assert header({'display_name': 'Pydantic'}, eu) == (
-        '◆ Managed by Pydantic through Logfire · logfire/clai2 · /catalog\n'
+        '◆ Managed by Pydantic through Logfire · logfire/clai2 · /catalog · memory: personal + repo\n'
     )
-    assert header({}, eu) == '◆ Managed by logfire/clai2 through Logfire · /catalog\n'
-    assert header({}) == '◆ Managed by Logfire through Logfire · /catalog\n'
+    assert header({}, eu) == '◆ Managed by logfire/clai2 through Logfire · /catalog · memory: personal + repo\n'
+    assert header({}) == '◆ Managed by Logfire through Logfire · /catalog · memory: personal + repo\n'
     # A terminal that understands links gets the agent's configuration page.
     linked = header({'display_name': 'Pydantic'}, eu, terminal=True)
     assert '\x1b]8;' in linked
     assert 'https://logfire-eu.pydantic.info/logfire/clai2/agents/clai2/configure/edit' in linked
+
+
+def test_repo_notes_for_this_repo_are_announced_with_who_accepted_them(tmp_path: Path) -> None:
+    from rich.console import Console
+
+    from pydantic_clai2.builtin_plugins.fleet_ui import notice_panel
+
+    note = {'path': 'MEMORY.md', 'content': 'Use make test.', 'accepted_by': 'alice@example.com'}
+    memory = {
+        'files': [
+            {**note, 'applies_to': {'repos': ['acme/*']}},
+            {**note, 'path': 'other.md', 'applies_to': {'repos': ['other/*']}},
+        ]
+    }
+    fleet = _fleet(tmp_path, {}, {'items': []}, memory)
+    fleet.scope = lambda: (None, 'acme/widgets')
+    build = fleet.prepare()
+    assert [note.path for note in fleet.notes()] == ['MEMORY.md']
+    changes = fleet.changes(build)
+    assert [change.describe() for change in changes] == ['Repo notes: + MEMORY.md (accepted by alice@example.com)']
+    console = Console(width=120, record=True)
+    console.print(notice_panel(changes, snapshot=build.snapshot, source='Pydantic', link=None))
+    text = console.export_text()
+    assert 'Repo notes: + MEMORY.md (accepted by alice@example.com)' in text
+    assert 'memory v1' in text
+    assert fleet.changes(fleet.build()) == []
+    fleet.scope = lambda: (None, 'other/thing')
+    assert [change.describe() for change in fleet.changes(fleet.build())] == [
+        'Repo notes: + other.md (accepted by alice@example.com)',
+        'Repo notes: - MEMORY.md',
+    ]

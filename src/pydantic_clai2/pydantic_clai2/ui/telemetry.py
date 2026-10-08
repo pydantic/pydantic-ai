@@ -177,7 +177,7 @@ def operation_name(operation: object) -> str:
     return f'{prefix}:{path}' if prefix else path
 
 
-FLEET_PREFIXES = ('clai2.fleet.', 'clai2.policy.')
+FLEET_PREFIXES = ('clai2.fleet.', 'clai2.policy.', 'clai2.memory.', 'clai2.session.')
 
 
 def keep_names(match: logfire.ScrubMatch) -> object:

@@ -49,6 +49,7 @@ from pydantic_ai_harness.policy import (
     default_blocked_message,
 )
 from pydantic_clai2 import policy_state
+from pydantic_clai2.builtin_plugins.fleet_memory import MemoryNotes, RepoNote, repo_notes
 
 if TYPE_CHECKING:
     from pydantic_clai2.builtin_plugins.fleet_ui import CatalogRow
@@ -247,12 +248,16 @@ class Snapshot:
     """The `agent__` (company config) version."""
     catalog: Catalog
     catalog_version: str | None = None
+    memory: MemoryNotes = field(default_factory=MemoryNotes)
+    """The `memory__` variable: repo notes admins accepted."""
+    memory_version: str | None = None
 
-    def versions(self, *, config: bool = True, catalog: bool = True) -> str:
-        """`config v12 · catalog v3`, naming only what was asked for and is known."""
+    def versions(self, *, config: bool = True, catalog: bool = True, memory: bool = False) -> str:
+        """`config v12 · catalog v3 · memory v2`, naming only what was asked for and is known."""
         parts = [
             *([f'config v{self.version}'] if config and self.version else []),
             *([f'catalog v{self.catalog_version}'] if catalog and self.catalog_version else []),
+            *([f'memory v{self.memory_version}'] if memory and self.memory_version else []),
         ]
         return ' · '.join(parts)
 
@@ -308,6 +313,10 @@ class Change:
 
     def describe(self) -> str:
         verb = {'added': 'New', 'updated': 'Updated', 'removed': 'Removed'}[self.action]
+        if self.kind == 'memory':
+            sign = {'added': '+', 'updated': '~', 'removed': '-'}[self.action]
+            accepted = f' ({self.provenance.pushed_by})' if self.provenance.pushed_by else ''
+            return f'Repo notes: {sign} {self.name}{accepted}'
         if self.kind == 'instructions':
             return f'{verb} company instructions from Logfire'
         if self.kind == 'instruction':
@@ -335,6 +344,7 @@ class Fleet:
     user: Callable[[], str] = lambda: 'local'
     agent_variable: Variable[FleetAgentConfig] = field(init=False)
     catalog_variable: Variable[Catalog] = field(init=False)
+    memory_variable: Variable[MemoryNotes] = field(init=False)
     _mcp: dict[str, AbstractToolset[None]] = field(default_factory=dict[str, AbstractToolset[None]], init=False)
     _prepared: Build | None = field(default=None, init=False)
     latest: Snapshot | None = field(default=None, init=False)
@@ -347,6 +357,9 @@ class Fleet:
         self.catalog_variable = Variable(
             f'catalog__{self.name}', type=Catalog, default=Catalog(), logfire_instance=self.instance
         )
+        self.memory_variable = Variable(
+            f'memory__{self.name}', type=MemoryNotes, default=MemoryNotes(), logfire_instance=self.instance
+        )
 
     # Resolution
 
@@ -358,11 +371,15 @@ class Fleet:
         catalog_resolved = self.catalog_variable.get(targeting_key=targeting_key, attributes=attributes)
         catalog_version = getattr(catalog_resolved, 'version', None)
         catalog = catalog_resolved.value
+        memory_resolved = self.memory_variable.get(targeting_key=targeting_key, attributes=attributes)
+        memory_version = getattr(memory_resolved, 'version', None)
         self.latest = Snapshot(
             config=resolved.value,
             version=None if version is None else str(version),
             catalog=catalog,
             catalog_version=None if catalog_version is None else str(catalog_version),
+            memory=memory_resolved.value,
+            memory_version=None if memory_version is None else str(memory_version),
         )
         return self.latest
 
@@ -372,12 +389,17 @@ class Fleet:
         targeting_key, attributes = self.targeting_key(), self.attributes()
         return tuple(
             provider.get_serialized_value(variable.name, targeting_key, attributes).value
-            for variable in (self.agent_variable, self.catalog_variable)
+            for variable in (self.agent_variable, self.catalog_variable, self.memory_variable)
         )
 
     def current_policy(self) -> Policy | None:
         """The policy as last resolved, for decisions outside a run."""
         return (self.latest or self.snapshot()).policy
+
+    def notes(self, snapshot: Snapshot | None = None) -> list[RepoNote]:
+        """The repo notes in force here: scoped to this repo (and team), valid, and within the size limits."""
+        snapshot = snapshot or self.latest or self.snapshot()
+        return repo_notes(snapshot.memory, self.applies_here)
 
     def applies_here(self, scope: AppliesTo | Mapping[str, Any] | None) -> bool:
         """Whether an item's `applies_to` covers this client now."""
@@ -607,6 +629,9 @@ class Fleet:
         if added_instructions:
             digest = _digest([_dump_block(block) for block in added_instructions])
             current['instructions:company'] = ('instructions', 'company instructions', 'company', digest)
+        notes = {_key('memory', note.path): note for note in self.notes(build.snapshot)}
+        for key, note in notes.items():
+            current[key] = ('memory', note.path, 'repo', _digest(note.content))
         state = self._load()
         user = state.users.setdefault(self.user(), _UserState())
         changes: list[Change] = []
@@ -614,6 +639,8 @@ class Fleet:
             previous = user.seen.get(key)
             item = by_key.get(key)
             details = (item.description, item.provenance) if item is not None else ('', Provenance())
+            if (note := notes.get(key)) is not None:
+                details = ('', Provenance(pushed_by=f'accepted by {note.accepted_by}' if note.accepted_by else None))
             if previous is None:
                 changes.append(Change('added', kind, name, tier, *details))
             elif previous != digest:
