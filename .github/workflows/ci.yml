@@ -1352,6 +1352,7 @@ jobs:
     env:
       REDIS_REQUIRE_LIVE: "1"
       REDIS_TEST_URL: redis://127.0.0.1:6379
+      REDIS_CLUSTER_TEST_URL: redis://127.0.0.1:6380
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -1362,6 +1363,19 @@ jobs:
           python-version: "3.14"
           enable-cache: true
           cache-suffix: harness-redis
+
+      # One node in cluster mode that owns every slot: enough for the server to refuse a script
+      # whose keys span slots with `CROSSSLOT`, which the standalone service above never does. A
+      # step rather than a service because a service cannot pass `redis-server` its arguments or
+      # assign the slots once it is up.
+      - name: Start a single-node Redis Cluster
+        timeout-minutes: 2
+        run: |
+          docker run -d --name redis-cluster -p 6380:6380 redis:8 \
+            redis-server --port 6380 --cluster-enabled yes --cluster-announce-ip 127.0.0.1
+          until docker exec redis-cluster redis-cli -p 6380 ping; do sleep 1; done
+          docker exec redis-cluster redis-cli -p 6380 cluster addslotsrange 0 16383
+          until docker exec redis-cluster redis-cli -p 6380 cluster info | grep -q cluster_state:ok; do sleep 1; done
 
       - run: make integration-redis
 
