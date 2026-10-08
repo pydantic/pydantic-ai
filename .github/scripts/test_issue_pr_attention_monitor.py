@@ -16,8 +16,8 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent))
 import issue_pr_attention_monitor as monitor
 
-NOW = dt.datetime(2026, 7, 20, tzinfo=dt.timezone.utc)
-TRIAGE_NOW = dt.datetime(2026, 8, 25, tzinfo=dt.timezone.utc)
+NOW = dt.datetime(2026, 7, 20, tzinfo=dt.UTC)
+TRIAGE_NOW = dt.datetime(2026, 8, 25, tzinfo=dt.UTC)
 TRIAGE_OWNERS = monitor.MAINTAINER_OWNERS
 OLD = '2026-07-16T00:00:00Z'
 
@@ -72,6 +72,7 @@ class FakeClient(monitor.GitHubClient):
         self.reviews: dict[int, list[dict[str, Any]]] = {}
         self.truncated: set[int] = set()
         self.timelines: dict[int, list[dict[str, Any]]] = {}
+        self.label_descriptions: dict[str, str] = {}
 
     def get(self, path: str) -> Any:
         self.calls.append(('GET', path, None))
@@ -108,7 +109,8 @@ class FakeClient(monitor.GitHubClient):
             start = (page - 1) * per_page
             return {'total_count': len(values), 'items': values[start : start + per_page]}
         if '/labels/' in path:
-            return {'name': path.rsplit('/', 1)[-1]}
+            name = urllib.parse.unquote(path.rsplit('/', 1)[-1])
+            return {'name': name, 'description': self.label_descriptions.get(name, monitor._LABELS[name][1])}
         if '/issues?state=' in path and 'labels=' in path:
             requested = urllib.parse.unquote(path.split('labels=')[1].split('&')[0])
             state = path.split('/issues?state=')[1].split('&')[0]
@@ -148,6 +150,10 @@ class FakeClient(monitor.GitHubClient):
             existing = {str(value['name']) for value in self.items[number]['labels']}
             labels = [str(label) for label in payload['labels']]
             self.items[number]['labels'].extend({'name': label} for label in labels if label not in existing)
+        return {}
+
+    def patch(self, path: str, payload: object) -> Any:
+        self.calls.append(('PATCH', path, payload))
         return {}
 
     def delete(self, path: str, payload: object | None = None) -> None:
@@ -322,6 +328,59 @@ def test_snapshot_skips_active_recent_and_escalated_items():
     )
     candidates = monitor.build_snapshot(client, 'pydantic/pydantic-ai', now=NOW)['candidates']
     assert [candidate['number'] for candidate in candidates] == [2]
+
+
+def test_snapshot_skips_signed_operational_incidents_but_keeps_human_items_and_bot_prs():
+    incident = item(9, labels=['agentic-workflows', 'pydanty:meta'])
+    incident['body'] = (
+        '<!-- pydantic-ai-provider-health:v1 '
+        '{"version":1,"scope":"provider","key":"minimax","kind":"balance",'
+        '"run_id":"123","reset_at":null} -->'
+    )
+    human_issue = item(10, labels=['pydanty:meta'])
+    bot_pr = {
+        **item(11, labels=['agentic-workflows', 'pydanty:meta']),
+        'pull_request': {'url': 'https://api.github.test/pulls/11'},
+    }
+    client = SnapshotClient({9: incident, 10: human_issue, 11: bot_pr})
+
+    candidates = monitor.build_snapshot(client, 'pydantic/pydantic-ai', now=NOW)['candidates']
+
+    assert [candidate['number'] for candidate in candidates] == [10, 11]
+    assert [candidate['kind'] for candidate in candidates] == ['issue', 'pull_request']
+
+
+@pytest.mark.parametrize(
+    'marker',
+    [
+        '{"version":true,"scope":"provider","key":"minimax","kind":"balance"}',
+        '{"version":1.0,"scope":"provider","key":"minimax","kind":"balance"}',
+        '{"version":2,"scope":"provider","key":"minimax","kind":"balance"}',
+        '{"version":1,"scope":"provider","key":"minimax"}',
+        '{"version":1,"scope":"provider","key":"minimax","kind":"balance","reset_at":"2026-08-25T00:00:00"}',
+    ],
+)
+def test_operational_labels_without_a_valid_controller_marker_are_not_filtered(marker: str):
+    issue = item(9, labels=['agentic-workflows', 'pydanty:meta'])
+    issue['body'] = f'<!-- pydantic-ai-provider-health:v1 {marker} -->'
+
+    assert not monitor._is_provider_health_incident(issue)
+    snapshot = monitor.build_snapshot(SnapshotClient({9: issue}), 'pydantic/pydantic-ai', now=NOW)
+    assert [candidate['number'] for candidate in snapshot['candidates']] == [9]
+
+
+def test_deeply_nested_operational_marker_does_not_abort_snapshot():
+    nested = '[' * 10_000 + '0' + ']' * 10_000
+    issue = item(9, labels=['agentic-workflows', 'pydanty:meta'])
+    issue['body'] = (
+        '<!-- pydantic-ai-provider-health:v1 '
+        '{"version":1,"scope":"provider","key":"minimax","kind":"balance",'
+        f'"extra":{nested}}} -->'
+    )
+
+    snapshot = monitor.build_snapshot(SnapshotClient({9: issue}), 'pydantic/pydantic-ai', now=NOW)
+
+    assert [candidate['number'] for candidate in snapshot['candidates']] == [9]
 
 
 def test_candidate_search_covers_recent_activity_and_the_backlog():
@@ -696,6 +755,19 @@ def test_apply_pings_all_assigned_maintainers_without_reassigning(tmp_path: Path
         '#7: requested maintainer attention from @alice @bob'
     ]
     assert not any(call[1].endswith('/assignees') for call in client.calls)
+
+
+def test_ensure_labels_updates_a_stale_description_but_not_the_color():
+    client = FakeClient()
+    client.label_descriptions[monitor.COMMUNITY_LABEL] = 'An outdated description'
+
+    monitor.ensure_labels(client, 'r')
+
+    patches = [call for call in client.calls if call[0] == 'PATCH']
+    assert patches == [
+        ('PATCH', '/repos/r/labels/community-backed', {'description': monitor._LABELS[monitor.COMMUNITY_LABEL][1]})
+    ]
+    assert not any(call[0] == 'POST' for call in client.calls)
 
 
 def test_apply_restarts_a_prior_terminal_escalation(tmp_path: Path):
@@ -2805,10 +2877,7 @@ def test_compiled_lock_keeps_agent_read_only_and_stable_artifact_name():
     assert 'workflow_call:' in text
     assert "github.repository == 'pydantic/pydantic-ai-harness'" in text
     source_checkouts = [
-        step
-        for job in jobs.values()
-        for step in job.get('steps', [])
-        if step.get('uses', '').startswith('actions/checkout@de0fac2e')
+        step for step in jobs['agent'].get('steps', []) if step.get('uses', '').startswith('actions/checkout@de0fac2e')
     ]
     assert source_checkouts
     assert all(step['with']['repository'] == '${{ job.workflow_repository }}' for step in source_checkouts)

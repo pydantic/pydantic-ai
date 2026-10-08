@@ -31,7 +31,6 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -45,7 +44,7 @@ classifiers = [
     "Framework :: Pydantic",
     "Framework :: Pydantic :: 2",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
@@ -101,6 +100,8 @@ pydantic-ai-slim = { workspace = true }
 pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
+pydantic-ai-harness = { workspace = true }
+pydantic-clai2 = { workspace = true }
 
 [tool.uv.workspace]
 members = [
@@ -109,6 +110,8 @@ members = [
     "pydantic_graph",
     "clai",
     "examples",
+    "src/pydantic_ai_harness",
+    "src/pydantic_clai2",
 ]
 
 [tool.uv]
@@ -130,6 +133,15 @@ conflicts = [
     [
         { package = "pydantic-ai", extra = "mcp-tasks" },
         { group = "dev" },
+    ],
+    # `pydantic-ai-harness[stackone]` needs FastMCP 3.
+    [
+        { package = "pydantic-ai-slim", extra = "mcp-tasks" },
+        { package = "pydantic-ai-harness", extra = "stackone" },
+    ],
+    [
+        { package = "pydantic-ai", extra = "mcp-tasks" },
+        { package = "pydantic-ai-harness", extra = "stackone" },
     ],
 ]
 constraint-dependencies = [
@@ -156,7 +168,6 @@ constraint-dependencies = [
     "joserfc>=1.6.7",
     "pydantic-settings>=2.14.2",
     "setuptools>=83.0.0",
-    "vcrpy>=8.2.1",
     "starlette>=1.3.1",
     "aiohttp>=3.14.1",
     "python-multipart>=0.0.31",
@@ -164,6 +175,11 @@ constraint-dependencies = [
     "torch>=2.13.0",
     "transformers>=5.5.0",
 ]
+# `browser-use` pins every one of its dependencies exactly (anyio, openai, anthropic, groq, pillow, ...),
+# so resolving `pydantic-ai-harness[browser-use]` here would hold the whole workspace to those versions.
+# The extra stays in the published metadata; this lock leaves it out, and the `harness browser-use`
+# CI job installs it on its own to run and type-check `BrowserUse` against the versions users get.
+exclude-dependencies = ["browser-use"]
 build-constraint-dependencies = [
     # hatchling 1.32.0 (2026-08-11) bumped its default core metadata version to 2.5,
     # which the pinned gh-action-pypi-publish validator rejects as "not a valid
@@ -176,31 +192,39 @@ build-constraint-dependencies = [
 
 [tool.uv.exclude-newer-package]
 # These are our own packages, not worth defending from supply chain attacks on them.
-# `listentome` is maintained by a Pydantic team member and counts as one of ours.
+# `listentome` and `cassetter` are maintained by a Pydantic team member and count as ours.
 listentome = false
+cassetter = false
 pydantic = false
 pydantic-core = false
 pydantic-extra-types = false
 pydantic-settings = false
 pydantic-handlebars = false
+pydantic-monty = false
+pydantic-monty-client = false
+pydantic-monty-runtime = false
 genai-prices = false
-# `typesafe-sdk>=0.6.0` (the first release on `httpx2`, which `pydantic-ai-slim[typesafe]` needs) was
-# published on 2026-09-15, inside the 7-day window above.
-# TODO(adtyavrdhn): Remove after 2026-09-22.
-typesafe-sdk = false
+pydantic-ai-harness = false
 logfire = false
 logfire-api = false
-# Anthropic 1.3.0 is the first release listing `claude-fable-5-1` and `claude-mythos-5-1`.
-# TODO(dsfaccini): Remove after 2026-09-08 17:37 UTC. https://github.com/pydantic/pydantic-ai/issues/7985
-# This admits only the reviewed 1.3.0 artifacts; later Anthropic artifacts remain quarantined.
-anthropic = "2026-09-01T17:37:11Z"
-# OpenAI 3.8.0 is the first release listing `gpt-6-astra` in `ChatModel`/`ReasoningEffort('max')`.
-# TODO(dsfaccini): Remove after 2026-09-10 19:51 UTC.
-openai = "2026-09-03T19:51:09Z"
+# Admit termflow-md 1.0.0 for CLAI2's live panel (`termflow.live`); later releases stay quarantined.
+# TODO: Remove after 2026-10-09 15:06 UTC.
+termflow-md = "2026-10-02T15:05:25Z"
+# Anthropic 1.9.0 is the first release listing `claude-sonnet-5-5` and the `between_tools` thinking type.
+# TODO(dsfaccini): Remove after 2026-10-05 18:04 UTC. https://github.com/pydantic/pydantic-ai/issues/8972
+# This admits only the reviewed 1.9.0 artifacts; later Anthropic artifacts remain quarantined.
+anthropic = "2026-09-28T18:04:04Z"
+# OpenAI 3.26.0 is the first release with `client.decisions`, and the `openai` floor.
+# TODO(dsfaccini): Remove after 2026-10-13 21:32 UTC.
+openai = "2026-10-06T21:31:20Z"
+# google-genai 2.25.0 is the `google-genai` floor: it sends Gemini blob fields as `mime_type`/`file_uri`.
+# TODO(adtyavrdhn): Remove after 2026-09-29 17:24 UTC.
+google-genai = "2026-09-22T17:23:02Z"
 
 [dependency-groups]
 dev = [
-    "anyio>=4.7.0",
+    # `anyio_mode = "auto"` (pytest plugin) was added in 4.11.0.
+    "anyio>=4.11.0",
     "trio>=0.34.0",
     "asgi-lifespan>=2.1.0",
     "httpx>=0.27",
@@ -214,10 +238,10 @@ dev = [
     "markdownify>=1.2",
     "inline-snapshot>=0.32.5",
     "pytest>=9.0.3",
+    "pytest-codspeed>=4.1.1",
     "pytest-examples>=0.0.18",
     "pytest-mock>=3.14.0",
     "pytest-pretty>=1.3.0",
-    "pytest-recording>=0.13.2",
     "boto3-stubs[bedrock-runtime]>=1.42.63",
     "pytest-xdist>=3.6.1",
     "pytest-split>=0.11.0",
@@ -238,7 +262,18 @@ dev = [
     # the compat readers' field-name pairs against the real v2 models while running against v1.
     "mcp-types>=2.0.0",
     # BlockBuster minor releases may add breaking detection rules; keep this test detector on 1.5.x.
-    "blockbuster>=1.5.26,<1.6",
+    "blockbuster>=1.5.28,<1.6",
+    "sqlparse>=0.6.0",
+    "nest-asyncio>=1.6.0",
+    "azure-identity>=1.25.3",
+    # Storage backends `pydantic-ai-harness` supports, faked or run against a live server.
+    "mongomock-motor>=0.0.36",
+    "redis>=8.1.0",
+    # Records and replays provider traffic: its pytest plugin owns `@pytest.mark.vcr` and the `vcr` fixture.
+    "cassetter>=0.13.0",
+    # Drives the deterministic realtime session simulator in `tests/realtime/simulation/`: randomized
+    # interleavings of client operations and provider events, shrunk to a minimal failing trace.
+    "hypothesis>=6.153.2",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
@@ -253,7 +288,7 @@ coverage = [
 lint = [
     "griffecli>=2.1.0,<3",
     "mypy>=1.11.2",
-    "pyright>=1.1.408",
+    "pyright>=1.1.414",
     "ruff>=0.14.14",
 ]
 [tool.hatch.build.targets.wheel]
@@ -268,13 +303,15 @@ exclude = ["/tests"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 include = [
     "pydantic_ai_slim/**/*.py",
     "pydantic_evals/**/*.py",
     "pydantic_graph/**/*.py",
     "examples/**/*.py",
     "clai/**/*.py",
+    "src/pydantic_ai_harness/**/*.py",
+    "src/pydantic_clai2/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
     "scripts/typecheck_changed.py",
@@ -301,6 +338,7 @@ include = [
     ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
+    ".github/scripts/test_ci_content_classifier.py",
 ]
 
 [tool.ruff.lint]
@@ -319,6 +357,7 @@ extend-select = [
     "TID251",
     "PLW1514", # https://docs.astral.sh/ruff/rules/unspecified-encoding/
     "PGH003", # https://docs.astral.sh/ruff/rules/blanket-type-ignore/
+    "BLE001", # https://docs.astral.sh/ruff/rules/blind-except/
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 mccabe = { max-complexity = 15 }
@@ -332,14 +371,13 @@ ignore = [
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
-known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph"]
+known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph", "pydantic_ai_harness", "pydantic_clai2"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
-"typing.assert_never".msg = "Use typing_extensions.assert_never instead."
 "asyncio.Lock".msg = "Use anyio.Lock instead."
 
 [tool.ruff.format]
@@ -365,11 +403,12 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
-".github/scripts/test_check_harness_navigation.py" = ["D"]
+".github/scripts/test_ci_content_classifier.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
+"!src/pydantic_clai2/**/*.py" = ["BLE001"]
 
 [tool.pyright]
-pythonVersion = "3.10"
+pythonVersion = "3.11"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
@@ -382,35 +421,20 @@ include = [
     "tests",
     "examples",
     "clai",
+    "src/pydantic_ai_harness",
+    "src/pydantic_clai2",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
-    ".github/scripts/ci_duration.py",
-    ".github/scripts/check_api_compatibility.py",
-    ".github/scripts/test_ci_duration.py",
-    ".github/scripts/test_check_api_compatibility.py",
-    ".github/scripts/pydantic_ai_gh_aw_shim",
-    ".github/scripts/test_pydantic_ai_runner.py",
-    ".github/scripts/issue_pr_attention_monitor.py",
-    ".github/scripts/semantic_owner_router.py",
-    ".github/scripts/community_demand.py",
-    ".github/scripts/triage_telemetry.py",
-    ".github/scripts/feature_digest.py",
 ]
-# The monitor policy tests deliberately exercise private helpers and loose GitHub
-# webhook dictionaries through monkeypatching; pytest covers them, while the
-# production policy module above remains under strict Pyright.
+# Pyright always skips paths under a dot directory, even ones named here or on its command line, so
+# `.github/scripts` is its own project: `.github/scripts/pyrightconfig.json` extends this one, and
+# `make typecheck-pyright` runs both.
 venvPath = '.'
 venv = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
 executionEnvironments = [
     { root = "tests", extraPaths = ["examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
-    # `extraPaths` lets pyright resolve the shim package (which sits next to
-    # the test file, not under the project root) the same way the runtime
-    # `sys.path.insert(...)` at the top of the test does.
-    { root = ".github/scripts/test_ci_duration.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
-    { root = ".github/scripts/test_check_api_compatibility.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
-    { root = ".github/scripts/test_pydantic_ai_runner.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     # `scripts/typecheck_changed.py` reads `tomllib`, which is 3.11+. These two are
     # developer tooling rather than shipped code, and the script falls back to the full
     # type check on an older interpreter, so they are analysed above the library's floor.
@@ -418,6 +442,9 @@ executionEnvironments = [
     { root = "scripts/test_typecheck_changed.py", extraPaths = ["scripts"], pythonVersion = "3.11", reportUnusedFunction = false, reportPrivateImportUsage = false },
 ]
 exclude = [
+    # Need `browser-use`, which the workspace lock excludes; the `harness browser-use` CI job checks them.
+    "src/pydantic_ai_harness/pydantic_ai_harness/browser_use",
+    "tests/harness/browser_use",
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
     "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",   # voyageai package has no type stubs
 ]
@@ -427,10 +454,29 @@ files = "tests/typed_agent.py"
 strict = true
 
 [tool.pytest.ini_options]
+# Every `async def` test runs via anyio; no `@pytest.mark.anyio` needed.
+anyio_mode = "auto"
 testpaths = ["tests", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
+markers = [
+    "modal_live: runs against a real Modal control plane; needs credentials",
+    "e2b_live: runs against a real E2B sandbox; needs credentials",
+    "sprites_live: runs against a real Sprites control plane; needs credentials",
+    "temporal: starts or connects to a local Temporal dev server",
+]
 filterwarnings = [
     "error",
+    # anyio 4.14+ intentionally leaves a task's coroutine unawaited when the task is cancelled natively
+    # (`asyncio.wait_for`, `Task.cancel()`, Temporal evicting a workflow) before its first step, and the
+    # garbage collector then warns in whatever test is running.
+    # TODO: Replace native cancellation in harness code (e.g. `asyncio.wait_for` in `SubAgents`) with
+    # anyio cancel scopes, which only cancel started tasks: https://github.com/pydantic/pydantic-ai/issues/8824
+    "ignore:coroutine '.*' was never awaited:RuntimeWarning",
+    # Experimental harness capabilities warn on import by design; tests assert it where it matters.
+    # Matched by message: the warning class lives in a package some install cells do not have.
+    "ignore:`pydantic_ai_harness\\.experimental\\.[a-z_.]+` is experimental:UserWarning",
+    # browser-use's observability decorators call it at import time.
+    "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:browser_use",
     # boto3
     "ignore::DeprecationWarning:botocore.*",
     "ignore::RuntimeWarning:pydantic_ai.mcp",
@@ -477,6 +523,12 @@ filterwarnings = [
     # TODO: Drop once starlette moves to `anyio.from_thread.BlockingPortal`.
     # https://github.com/Kludex/starlette/issues/3497
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning:starlette.testclient",
+    # `anthropic` 1.11.0 warns on every request for `claude-sonnet-4-5`, which reaches end of life on
+    # 2026-11-30. Recordings across the suite were made against it and replay offline, so the warning
+    # carries no signal here; users still get it from the SDK.
+    # TODO: Move these tests to a current model; the API stops serving this one on 2026-11-30, so any
+    # re-recording after that date needs the move first.
+    "ignore:The model 'claude-sonnet-4-5(-20250929)?' is deprecated and will reach end-of-life:DeprecationWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
@@ -490,6 +542,7 @@ include = [
     "pydantic_ai_slim/**/*.py",
     "pydantic_evals/**/*.py",
     "pydantic_graph/**/*.py",
+    "src/pydantic_ai_harness/pydantic_ai_harness/**/*.py",
     "tests/**/*.py",
 ]
 omit = [
@@ -499,6 +552,7 @@ omit = [
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
     "tests/kw_only_walker.py",  # pauses coverage while importing modules with excluded dependency guards
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
+    "tests/harness/**/*_live.py",  # live sandbox tiers; run only with provider credentials
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:
@@ -558,7 +612,7 @@ snap = ["create"]
 
 [tool.codespell]
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file
-skip = '.git*,*.svg,*.lock,*.css,*.yaml'
+skip = '.git*,*.svg,*.lock,*.css,*.yaml,tests/harness/absurd/fixtures/absurd.sql'
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'

@@ -5,7 +5,7 @@ This file exists as a compatibility index for older links into `COMMON-TASKS.md`
 Prefer the narrower task-family guides below so the agent loads only the material it needs:
 
 - [AGENTS-CORE.md](./AGENTS-CORE.md) — agent creation, output, deps, specs, models, run methods
-- [CAPABILITIES-AND-HOOKS.md](./CAPABILITIES-AND-HOOKS.md) — `Thinking`, `WebSearch`, `Hooks`, custom capabilities
+- [CAPABILITIES-AND-HOOKS.md](./CAPABILITIES-AND-HOOKS.md) — `Thinking`, prompt caching, `WebSearch`, `Hooks`, custom capabilities
 - [ON-DEMAND-CAPABILITIES.md](./ON-DEMAND-CAPABILITIES.md) — progressive disclosure, deferred capabilities, capabilities on demand, `load_capability`
 - [TOOLS-CORE.md](./TOOLS-CORE.md) — `@agent.tool`, `Tool`, toolsets, MCP, common search tools
 - [NATIVE-TOOLS.md](./NATIVE-TOOLS.md) — provider-native tools like `WebSearchTool` and `CodeExecutionTool`
@@ -33,6 +33,10 @@ Read [Define Agents Declaratively with Specs](./AGENTS-CORE.md#define-agents-dec
 ## Enable Thinking Across Providers
 
 Read [Enable Thinking Across Providers](./CAPABILITIES-AND-HOOKS.md#enable-thinking-across-providers).
+
+## Configure Prompt Caching Across Providers
+
+Read [Configure Prompt Caching Across Providers](./CAPABILITIES-AND-HOOKS.md#configure-prompt-caching-across-providers).
 
 ## Use MCP Servers
 
@@ -89,6 +93,18 @@ Read [Build Multi-Step Workflows with Graphs](./ORCHESTRATION-AND-INTEGRATIONS.m
 ## Debug and Validate Agent Behavior
 
 Read [Debug and Validate Agent Behavior](./TESTING-AND-DEBUGGING.md#debug-and-validate-agent-behavior).
+
+## Create a Basic Agent
+
+Read [Create a Basic Agent](./AGENTS-CORE.md#create-a-basic-agent). The starter includes `logfire.configure()` and `logfire.instrument_pydantic_ai()`, so the first run is already traced in Logfire.
+
+## Set Up Observability with Logfire
+
+Read [Set Up Observability and Model Access](../SKILL.md#set-up-observability-and-model-access), then [Debug and Validate Agent Behavior](./TESTING-AND-DEBUGGING.md#debug-and-validate-agent-behavior).
+
+## Reach Every Model with One Key
+
+Read [Choose or Configure Models](./AGENTS-CORE.md#choose-or-configure-models) for `gateway/` model strings through the Pydantic AI Gateway.
 
 ## Advanced and Less Common Features
 

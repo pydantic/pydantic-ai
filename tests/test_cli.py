@@ -388,7 +388,6 @@ def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
 
 
-@pytest.mark.anyio
 async def test_streaming_with_tool_calls():
     """The streaming CLI render loop interleaves streamed model text with tool-call indicators.
 
@@ -449,7 +448,6 @@ def live_frames(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return frames
 
 
-@pytest.mark.anyio
 async def test_streaming_with_concurrent_tool_calls(live_frames: list[str]):
     """Every in-flight tool call keeps its own indicator until its own result arrives.
 
@@ -511,7 +509,6 @@ class _City:
     name: str
 
 
-@pytest.mark.anyio
 async def test_streaming_ignores_output_tool_calls():
     """The internal output tool is not reported as a tool call.
 
@@ -530,7 +527,6 @@ async def test_streaming_ignores_output_tool_calls():
     assert 'Called tool' not in rendered
 
 
-@pytest.mark.anyio
 async def test_streaming_clears_indicator_for_retried_tool(live_frames: list[str]):
     """A call that comes back as a retry drops its in-flight indicator instead of pinning it.
 
@@ -596,7 +592,6 @@ class _LifetimeToolset(WrapperToolset[Any]):
         return result
 
 
-@pytest.mark.anyio
 async def test_chat_holds_toolsets_open_for_the_session(mocker: MockerFixture, env: TestEnv, tmp_path: Path):
     """Run-scoped toolsets survive between turns instead of being torn down after each one.
 
@@ -623,7 +618,6 @@ async def test_chat_holds_toolsets_open_for_the_session(mocker: MockerFixture, e
     assert toolset.full_releases == snapshot(1)
 
 
-@pytest.mark.anyio
 async def test_chat_keeps_toolsets_open_after_failed_turn(mocker: MockerFixture, env: TestEnv, tmp_path: Path):
     """A failed turn is reported without releasing session toolsets or ending the REPL."""
     env.set('OPENAI_API_KEY', 'test')
@@ -867,7 +861,6 @@ def test_handle_slash_command_usage_not_a_flag():
     assert io.getvalue() == snapshot('Unknown command `/usagejson`\n')
 
 
-@pytest.mark.anyio
 async def test_ask_agent_accumulates_usage(env: TestEnv):
     # `ask_agent` increments the shared session usage on both the streaming and non-streaming paths,
     # including tool calls, and threading a turn's history into the next must not re-count prior usage.
@@ -891,7 +884,6 @@ async def test_ask_agent_accumulates_usage(env: TestEnv):
     assert session_usage == snapshot(RunUsage(input_tokens=156, output_tokens=14, requests=3, tool_calls=1))
 
 
-@pytest.mark.anyio
 async def test_ask_agent_counts_usage_on_failed_turn(env: TestEnv):
     # A turn that makes a billed request and then raises must still be counted, so a later `/usage`
     # does not under-report tokens that were actually spent. The merge happens in `ask_agent`'s `finally`.
@@ -957,7 +949,6 @@ def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
     )
 
 
-@pytest.mark.anyio
 async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
@@ -976,7 +967,6 @@ async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
     )
 
 
-@pytest.mark.anyio
 async def test_agent_to_cli_with_message_history(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
@@ -1402,7 +1392,6 @@ def test_agent_to_cli_sync_with_model(mocker: MockerFixture, env: TestEnv):
     )
 
 
-@pytest.mark.anyio
 async def test_agent_to_cli_async_with_args(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
@@ -1426,7 +1415,6 @@ async def test_agent_to_cli_async_with_args(mocker: MockerFixture, env: TestEnv)
     )
 
 
-@pytest.mark.anyio
 async def test_agent_to_cli_async_with_model(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
@@ -1447,7 +1435,6 @@ async def test_agent_to_cli_async_with_model(mocker: MockerFixture, env: TestEnv
     )
 
 
-@pytest.mark.anyio
 async def test_ask_agent_non_stream_forwards_run_kwargs(mocker: MockerFixture):
     from pydantic_ai._cli import ask_agent
 

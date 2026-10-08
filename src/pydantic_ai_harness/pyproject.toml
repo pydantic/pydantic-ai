@@ -1,0 +1,103 @@
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+# Harness stays on 0.x and follows pydantic-ai's minor and patch: pydantic-ai 2.51.0 ships
+# pydantic-ai-harness 0.51.0. The dependency templates below pin `pydantic-ai-slim` to the release
+# it was built with, spelled out rather than `{{ version }}`, which ignores `bump` once `format-jinja`
+# is set and would not match slim's own off-tag version.
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+bump = true
+format-jinja = "0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"
+
+[project]
+name = "pydantic-ai-harness"
+dynamic = ["version", "dependencies", "optional-dependencies"]
+description = "The official capability library and harness for Pydantic AI"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Douwe Maan", email = "douwe@pydantic.dev" },
+    { name = "David SF", email = "david.sanchez@pydantic.dev" },
+    { name = "Aditya Vardhan", email = "aditya@pydantic.dev" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning]
+dependencies = ["genai-prices>=0.0.71", "httpx>=0.28.1", "json-repair>=0.58.0", "pydantic-ai-slim=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
+anthropic = ["pydantic-ai-slim[anthropic]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+cli = ["pydantic-ai-slim[cli]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+code-mode = ["pydantic-ai-slim[duckduckgo]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}", "pydantic-monty>=1.0.0,<2"]
+# Extras metadata has no native redirect syntax, so aliases are represented as duplicate extras.
+codemode = ["pydantic-ai-slim[duckduckgo]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}", "pydantic-monty>=1.0.0,<2"]
+researcher = ["pydantic-ai-slim[duckduckgo,web-fetch]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+temporal = ["pydantic-ai-slim[temporal]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+dbos = ["pydantic-ai-slim[dbos]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+# `logfire.variables` needs `pydantic_handlebars.extract_dependencies` (0.2.1), which logfire does not require.
+logfire = ["logfire>=4.31.0", "pydantic-ai-slim[spec]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}", "pydantic-handlebars>=0.2.1"]
+modal = ["modal>=1.5.2"]
+e2b = ["e2b>=2.48.0"]
+sprites = ["sprites-py>=0.7.0,<0.8"]
+dynamic-workflow = ["pydantic-monty>=1.0.0,<2"]
+# The SDK breaks across minors, so cap per minor.
+acp = ["agent-client-protocol>=0.11,<0.12"]
+exa = ["exa-py>=2.16.0"]
+# 2.0 changed tool-result serialization in a way the durable bridge does not handle yet.
+aws-lambda = ["aws-durable-execution-sdk-python>=1.7.0,<2 ; python_full_version >= '3.11'"]
+absurd = ["absurd-sdk>=0.5.0,<1"]
+# 3.2 types `page_age` as `datetime | str`, and the toolset formats it as a `datetime`.
+youdotcom = ["youdotcom>=3.1.2,<3.2"]
+mongodb = ["pymongo>=4.17.0"]
+skills = ["pyyaml>=6.0.2"]
+browser-use = ["browser-use>=0.13.6,<0.14 ; python_full_version >= '3.11'"]
+playwright = ["idna>=3.4", "playwright>=1.61.0"]
+stackone = ["fastmcp>=3.4.5,<4", "pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+ordinal = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+grain = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+day-ai = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+posthog = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+pylon = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+prompt-injection-defender = ["stackone-defender>=0.7.3,<0.8 ; python_full_version >= '3.11'"]
+prompt-injection-defender-ml = ["stackone-defender[onnx]>=0.7.3,<0.8 ; python_full_version >= '3.11'"]
+github = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+slack = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+coder = ["ripgrep==14.1.0 ; sys_platform != 'android'"]
+logfire-mcp = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+linear = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+notion = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+google-workspace = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+
+[project.urls]
+Homepage = "https://pydantic.dev/docs/ai/harness/"
+Source = "https://github.com/pydantic/pydantic-ai"
+Documentation = "https://pydantic.dev/docs/ai/harness/"
+Changelog = "https://github.com/pydantic/pydantic-ai/releases"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pydantic_ai_harness"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/pydantic_ai_harness", "/README.md", "/LICENSE"]
+
+[tool.uv.sources]
+pydantic-ai-slim = { workspace = true }

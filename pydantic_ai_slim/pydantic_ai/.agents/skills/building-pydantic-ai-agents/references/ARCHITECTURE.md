@@ -146,7 +146,7 @@ Need deterministic, fast tests?
 └── Need specific tool call behavior?
     ├── Yes → Use FunctionModel
     └── Testing against real API (integration)?
-        └── Yes → Use pytest-recording with VCR cassettes
+        └── Yes → Use cassetter with recorded cassettes
 ```
 
 ## Comparison Tables
@@ -172,6 +172,7 @@ Need deterministic, fast tests?
 | Mistral | `mistral:` | `mistral:mistral-large-latest` |
 | Cohere | `cohere:` | `cohere:command-r-plus-08-2024` |
 | TypeSafe (Jev, structured output only) | `typesafe:` | `typesafe:jev-latest` |
+| Decision models on the `/v1/systemone` API (CLM, Laya; structured output only; needs `SYSTEM_ONE_BASE_URL`) | `system-one:` | `system-one:clm-latest` |
 | AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-6` |
 | AWS Bedrock Mantle | `bedrock-mantle:` | `bedrock-mantle:openai.gpt-oss-120b` |
 | Azure | `azure:` | `azure:gpt-5.2` |
@@ -182,7 +183,6 @@ Need deterministic, fast tests?
 | Together | `together:` | `together:meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo` |
 | Ollama (local) | `ollama:` | `ollama:llama3.2` |
 | vLLM (local or remote) | `vllm:` | `vllm:Qwen/Qwen3.8-27B` |
-| GitHub Models (retired) | `github:` | `github:openai/gpt-5.2` |
 | GitHub Copilot | `github-copilot:` | `github-copilot:claude-haiku-4.5` |
 | Hugging Face | `huggingface:` | `huggingface:meta-llama/Llama-3.3-70B-Instruct` |
 | Cerebras | `cerebras:` | `cerebras:llama-4-scout-17b-16e-instruct` |
@@ -190,7 +190,9 @@ Need deterministic, fast tests?
 | Snowflake Cortex | `snowflake:` | `snowflake:claude-sonnet-4-6` |
 | Crusoe | `crusoe:` | `crusoe:zai/GLM-5.2` |
 
-**Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For any other OpenAI-compatible endpoint, point `OpenAIChatModel` at it with `provider=OpenAIProvider(base_url=..., api_key=...)`. For anything that isn't OpenAI-compatible, subclass `Model`.
+**Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For any other OpenAI-compatible endpoint, point `OpenAIChatModel` at it with `provider=OpenAIProvider(base_url=..., api_key=...)`. For anything that isn't OpenAI-compatible, subclass `Model`. For a backend that answers typed yes/no, pick-one and rubric questions rather than writing text, like TypeSafe's Jev, subclass `DecisionModel` from `pydantic_ai.models.decision` and implement `decide`; see the [Decision models guide](https://pydantic.dev/docs/ai/models/decision/).
+
+For GitHub Copilot device login, use `GitHubCopilotOAuthFlow(client_id=...)` from `pydantic_ai.providers.github_copilot`. Call `start()`, display the returned `verification_uri` and `user_code`, then await `wait_for_authorization()`. Pass its `access_token` to `GitHubCopilotProvider(api_key=...)`. The application must have device flow enabled; GitHub authorization does not establish Copilot entitlement or acceptance of that application's token. Browser opening, credential storage, and renewal stay application-owned. See the [Copilot provider guide](https://pydantic.dev/docs/ai/models/github-copilot/#device-login).
 
 ### Tool Decorator Comparison
 
@@ -211,6 +213,7 @@ Need deterministic, fast tests?
 | `WebFetch` | URL fetching — native when supported, custom fallback | Yes |
 | `ImageGeneration` | Image generation — native when supported, direct fallback via an image model name or `ImageGenerator` | Yes |
 | `MCP` | MCP server — native when supported, direct connection | Yes |
+| `LocalWorkspace` | A `ctx.workspace` on this machine (host subprocesses and files, no isolation); `read_only=True` refuses commands and changes | Yes |
 | `PrepareTools` | Filters or modifies tool definitions per step | No |
 | `PrefixTools` | Wraps a capability and prefixes its tool names | Yes |
 | `NativeTool` | Registers a provider-native tool with the agent | Yes |
@@ -250,7 +253,7 @@ See [Run Methods and Streaming](./AGENTS-CORE.md#run-methods-and-streaming) for 
 
 **Capabilities** are the primary extension point — they bundle tools, lifecycle hooks, instructions, and model settings into reusable units. Built-in capabilities include `Thinking`, `WebSearch`, `WebFetch`, `Hooks`, `MCP`, and more.
 
-**Lifecycle hooks** (via `Hooks` or `AbstractCapability`) intercept every stage: `before_run` → `before_model_request` → `before_tool_execute` → `after_tool_execute` → `after_model_request` → `after_run`
+**Lifecycle hooks** (via `Hooks` or `AbstractCapability`) intercept every stage. Each stage follows `wrap_X(handler: before_X → core operation / on_X_error recovery → after_X)`: `wrap_X` is outermost, and a wrapper that does not call its handler skips the inner lifecycle. `agent.run_stream()` is the node-hook exception: it fires `before_node_run` before streaming, wraps only later graph advancement for non-final nodes, and skips `wrap_node_run`/`after_node_run` for the final streamed `ModelRequestNode`.
 
 **Model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5.2"`, `"anthropic:claude-sonnet-4-6"`, `"google:gemini-3-pro-preview"`)
 
