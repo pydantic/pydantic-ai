@@ -1,6 +1,7 @@
 """Storage and public API error boundaries."""
 
 import io
+import logging
 import sqlite3
 import sys
 import warnings
@@ -77,3 +78,19 @@ def test_entry_point_quiets_warnings_unless_requested(
         pydantic_clai2.__main__.main()
         assert warnings.filters == filters
     assert [str(warning.message) for warning in caught] == shown
+
+
+def test_entry_point_keeps_unhandled_log_records_off_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Records with no handler, like OpenTelemetry's export failures, would otherwise print over the display."""
+    last_resort = logging.lastResort
+    during: list[logging.Handler | None] = []
+
+    def run(*, splash: Splash | None = None) -> None:
+        during.append(logging.lastResort)
+
+    monkeypatch.setenv('PYDANTIC_AI_NO_BANNER', '1')
+    monkeypatch.setattr(sys, 'argv', ['clai2', 'config'])
+    monkeypatch.setattr(pydantic_clai2.cli._cli, 'run', run)
+    pydantic_clai2.__main__.main()
+    assert [type(handler) for handler in during] == [logging.NullHandler]
+    assert logging.lastResort is last_resort

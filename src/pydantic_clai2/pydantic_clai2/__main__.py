@@ -1,6 +1,7 @@
 """Import-light entry point: animate before loading the agent/UI dependencies."""
 
 import json
+import logging
 import os
 import sqlite3
 import sys
@@ -39,6 +40,10 @@ def main() -> None:
             enabled = False
     splash = Splash(enabled=bool(enabled))
     splash.start()
+    # With no handler configured, library log records (such as OpenTelemetry's "Failed to export" when Logfire
+    # is unreachable) fall through to `logging.lastResort`, which writes them to stderr over the live display.
+    last_resort = logging.lastResort
+    logging.lastResort = logging.NullHandler()
     try:
         from pydantic_clai2.cli._cli import run
 
@@ -51,6 +56,7 @@ def main() -> None:
                 warnings.simplefilter('ignore', Warning)
             run(splash=splash)
     finally:
+        logging.lastResort = last_resort
         splash.stop()
 
 
