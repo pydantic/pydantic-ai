@@ -218,3 +218,74 @@ def test_the_reply_to_a_proposal_says_how_it_will_be_shared() -> None:
     assert proposed('review', 'acme/widgets').startswith("Proposed to your team's admins in Logfire for review")
     assert proposed('corroborate', 'acme/widgets').startswith("Proposed; it will be shared once a teammate's agent")
     assert proposed('auto', 'acme/widgets').startswith('Shared with everyone in acme/widgets')
+
+
+async def test_memory_command_lists_opens_edits_forgets_and_proposes(tmp_path: Path) -> None:
+    from pydantic_clai2.builtin_plugins.fleet_memory import PendingNote, personal_dirs
+    from pydantic_clai2.builtin_plugins.memory_command import MemoryCommand
+
+    pending = PendingNotes(tmp_path / 'pending.json')
+    proposals: list[tuple[str, str, str]] = []
+    withdrawn: list[PendingNote] = []
+    edited: list[Path] = []
+
+    def propose(path: str, content: str, why: str) -> str:
+        proposals.append((path, content, why))
+        pending.add(repo='acme/widgets', path=path, content=content, why=why)
+        return 'Proposed.'
+
+    async def edit(path: Path) -> bool:
+        edited.append(path)
+        path.write_text('- Prefer uv.\n', encoding='utf-8')
+        return True
+
+    command = MemoryCommand(
+        directory=tmp_path / 'memory',
+        repo=lambda: 'acme/widgets',
+        notes=lambda: [NOTE],
+        mode=lambda: 'review',
+        pending=pending,
+        propose=propose,
+        withdraw=withdrawn.append,
+        edit=edit,
+        link='https://logfire.example/acme/clai2/agents/clai2/configure/edit#memory',
+    )
+    here, everywhere = personal_dirs(tmp_path / 'memory', 'acme/widgets')
+    assert await command(['edit']) == f'Saved {here / "MEMORY.md"}. The agent sees it from the next model request.'
+    await command(['edit', 'global'])
+    assert edited == [here / 'MEMORY.md', everywhere / 'MEMORY.md']
+    (here / 'testing.md').write_text('Use pytest -x.\n', encoding='utf-8')
+
+    overview = await command([])
+    assert 'Shared notes are published by review' in overview
+    assert 'Personal, acme/widgets' in overview and 'testing.md  15 B' in overview
+    assert '- Prefer uv.' in overview
+    assert 'accepted by alice@example.com on 2026-10-08, proposed by bob@example.com' in overview
+    assert 'Edit them in Logfire: https://logfire.example/acme/clai2/agents/clai2/configure/edit#memory' in overview
+
+    assert (await command(['open', 'testing.md'])).endswith('Use pytest -x.\n')
+    assert (await command(['open', 'global/MEMORY.md'])).endswith('- Prefer uv.\n')
+    assert (await command(['open', 'MEMORY.md'])).startswith(str(here / 'MEMORY.md'))
+
+    assert await command(['propose', 'testing.md']) == 'Proposed.'
+    assert proposals[0][:2] == ('testing.md', 'Use pytest -x.\n')
+    assert 'Pending, only you see these' in await command([])
+    assert (await command(['open', 'testing.md'])).startswith(str(here))  # Personal first.
+
+    assert (
+        await command(['forget', 'testing.md'])
+        == 'Withdrew your proposal testing.md; it no longer applies to your sessions.'
+    )
+    assert [note.path for note in withdrawn] == ['testing.md']
+    assert (await command(['forget', 'testing.md'])) == f'Deleted {here / "testing.md"}.'
+    command.notes = lambda: [RepoNote(path='shared.md', content='x')]
+    with pytest.raises(ValueError, match='shared repo note'):
+        await command(['forget', 'shared.md'])
+    with pytest.raises(ValueError, match='No personal memory file or pending note'):
+        await command(['forget', 'missing.md'])
+    with pytest.raises(ValueError, match='No personal memory file'):
+        await command(['propose', 'missing.md'])
+    with pytest.raises(ValueError, match='Usage: /memory'):
+        await command(['nonsense'])
+    with pytest.raises(ValueError, match='No memory file'):
+        await command(['open', 'missing.md'])

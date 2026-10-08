@@ -157,6 +157,18 @@ class PendingNotes:
         )
         self._save(notes)
 
+    def pending(self, repo: str | None) -> list[PendingNote]:
+        """This user's pending proposals for `repo`."""
+        return [note for note in self._load() if note.repo == repo]
+
+    def withdraw(self, *, repo: str, path: str) -> PendingNote | None:
+        """Forget a pending proposal; returns it, or `None` when there was none."""
+        notes = self._load()
+        found = next((note for note in notes if (note.repo, note.path) == (repo, path)), None)
+        if found is not None:
+            self._save([note for note in notes if note is not found])
+        return found
+
     def for_repo(self, repo: str | None) -> list[RepoNote]:
         """This user's pending notes for `repo`, as repo notes marked pending."""
         return [
@@ -209,6 +221,27 @@ def with_pending(shared: Sequence[RepoNote], pending: Sequence[RepoNote]) -> lis
     """The shared notes, with this user's pending version of a file in place of the shared one."""
     mine = {note.path: note for note in pending}
     return [*(note for note in shared if note.path not in mine), *mine.values()]
+
+
+def note_problem(path: str, content: str) -> str | None:
+    """Why `content` cannot be proposed as repo note `path`, or `None`."""
+    if not _valid_name(path):
+        return 'Use a plain file name ending in .md, such as MEMORY.md or testing.md.'
+    if len(content.encode()) > MAX_NOTE_BYTES:
+        return f'Keep a note under {MAX_NOTE_BYTES:,} bytes; split it or trim it.'
+    return None
+
+
+def personal_dirs(directory: Path, repo: str | None) -> tuple[Path, Path]:
+    """Where this repository's personal notebook and the every-repository one keep their files."""
+    return directory / personal_namespace(repo) / 'personal', directory / 'global' / 'personal'
+
+
+def personal_namespace(repo: str | None) -> str:
+    """The personal notebook's namespace: by repository slug, else by directory."""
+    if repo:
+        return 'repos/' + '/'.join(_segment(part) for part in repo.split('/'))
+    return f'dirs/{hashlib.sha256(str(Path.cwd()).encode()).hexdigest()[:16]}'
 
 
 def _valid_name(path: str) -> bool:
@@ -301,11 +334,7 @@ class RepoMemory(Memory[None]):
                 content: The whole proposed file, in Markdown; at most 8,000 bytes.
                 why: One sentence on why every teammate's agent should know this.
             """
-            if not _valid_name(path):
-                return 'Use a plain file name ending in .md, such as MEMORY.md or testing.md.'
-            if len(content.encode()) > MAX_NOTE_BYTES:
-                return f'Keep a note under {MAX_NOTE_BYTES:,} bytes; split it or trim it.'
-            return propose(path, content, why)
+            return note_problem(path, content) or propose(path, content, why)
 
         hidden = {'write_memory', 'delete_memory'}
         notebook = self._memory_toolset.filtered(lambda ctx, tool: tool.name not in hidden)
@@ -335,10 +364,7 @@ def personal_memory(directory: Path, *, repo: Callable[[], str | None]) -> list[
     store = FileStore('.', workspace=LocalWorkspaceBackend(directory))
 
     def namespace(ctx: RunContext[None]) -> str:
-        slug = repo()
-        if slug:
-            return 'repos/' + '/'.join(_segment(part) for part in slug.split('/'))
-        return f'dirs/{hashlib.sha256(str(Path.cwd()).encode()).hexdigest()[:16]}'
+        return personal_namespace(repo())
 
     return [
         Memory[None](

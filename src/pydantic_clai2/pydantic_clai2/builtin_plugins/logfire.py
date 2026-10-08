@@ -41,6 +41,7 @@ from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer
 from pydantic_clai2.builtin_plugins.fleet import Build, Change, Consent, Fleet, FleetControl, Snapshot
 from pydantic_clai2.builtin_plugins.fleet_memory import (
     REPO_SCOPE,
+    PendingNote,
     PendingNotes,
     personal_memory,
     proposed,
@@ -67,6 +68,7 @@ from pydantic_clai2.builtin_plugins.logfire_sessions import (
     trace_link,
 )
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, run_setup
+from pydantic_clai2.builtin_plugins.memory_command import MemoryCommand, run_editor
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
 from pydantic_clai2.config.settings_store import config_dir
@@ -322,6 +324,18 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         chunks = (self._chunks,) if self._chunks is not None else ()
         return (self._session_tracing, self.instrumentation, control, fleet_control, *memory, *chunks, resilient)
 
+    def _withdraw_memory(self, note: PendingNote) -> None:
+        """Record that this user withdrew a proposal, so the fleet miner can mark it stale."""
+        identity = self._session_tracing.identity()
+        attributes = {
+            'clai2.memory.scope': REPO_SCOPE,
+            'clai2.memory.path': note.path,
+            'clai2.memory.content_sha': sha(note.content),
+            'clai2.repo_slug': note.repo,
+            **{key: identity[key] for key in ('user.email', 'clai2.team', 'agent_session_id') if key in identity},
+        }
+        self.instance.log('info', 'memory withdrawal', attributes)
+
     def _propose_memory(self, path: str, content: str, why: str) -> str:
         """Record a proposed repo note as a `memory proposal` span; the fleet miner shows it to admins in Logfire."""
         assert self.fleet is not None
@@ -413,8 +427,25 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             if self._chunks is not None
             else ()
         )
+        memory = MemoryCommand(
+            directory=config_dir() / 'memory',
+            repo=_repo_slug,
+            notes=lambda: fleet.notes(),
+            mode=lambda: (fleet.latest or fleet.snapshot()).config.shared_memory,
+            pending=self._pending_notes,
+            propose=self._propose_memory,
+            withdraw=self._withdraw_memory,
+            edit=lambda path: run_worker(lambda: run_editor(path)),
+            link=self._link('#memory'),
+        )
         return (
             *session_commands,
+            Command(
+                name='memory',
+                description='What the agent remembers here: personal notebooks, repo notes from Logfire, pending proposals',
+                handler=memory,
+                complete=lambda args: ('open', 'edit', 'forget', 'propose') if len(args) <= 1 else (),
+            ),
             Command(
                 name='catalog',
                 description='What your organization provides, and optional add-ons you can turn on',

@@ -22,8 +22,8 @@ What happens:
   - traces to logfire/clai2;
   - a personal API key that reads the company config and uses the AI Gateway (90 days);
   - an optional team (pre-filled from `CLAI2_TEAM`).
-- **Header.** Every launch shows `◆ Managed by Pydantic through Logfire · logfire/clai2 · /catalog` under the
-  banner, linked to the agent's configuration page in Logfire.
+- **Header.** Every launch shows `◆ Managed by Pydantic through Logfire · logfire/clai2 · /catalog · memory:
+  personal + repo` under the banner, linked to the agent's configuration page in Logfire.
 - **Logfire MCP.** If you use the `logfire_mcp` plugin, its own sign-in (it is a separate OAuth client, often in
   another region) starts at launch in the background; a prompt sent before you approve waits for it rather than
   showing a second code.
@@ -34,6 +34,31 @@ What happens:
 - **Instead of the env var,** IT can drop `url = "…"` in `/Library/Application Support/clai2/managed.toml`
   (macOS) or `/etc/clai2/managed.toml` (Linux). The file wins over the env var. An optional `agent` key or
   `?agent=` query parameter picks the Agent Control name (default `clai2`).
+
+**Memory.** On by default when managed, with no setup. The agent keeps personal notes on your machine, one
+notebook per repository plus one for every repository (under `~/.config/pydantic-clai2/memory/`), and reads your
+team's repo notes from Logfire (`memory__clai2`), which admins curate in the Logfire Memory tab. The agent can't
+change repo notes; when it learns a convention everyone should know, it calls `repo_propose_memory`, which records
+a `memory proposal` span. Your proposal applies to your own sessions right away, marked "pending review: only you
+see this", until it is published, or you're told once that it wasn't accepted. How notes are published is the
+organization's choice in `policy.memory.shared`: `review` (an admin accepts each, the default), `corroborate` (a
+teammate's agent confirms it), or `auto`. Accepted notes reach everyone's running clai2 live ("Repo notes: +
+testing.md (accepted by …)"). `/memory` shows every notebook in use with sizes, provenance, pending proposals and
+the mode; `/memory open FILE`, `/memory edit [global]` (in `$EDITOR`), `/memory forget FILE` (also withdraws a
+pending proposal), and `/memory propose FILE` (share one of your personal files through the same review).
+
+**Sessions.** Also on by default when managed and message content export is on: each run's part of the
+conversation is stored in a `clai2 session chunk` span in logfire/clai2, so it can be continued on another
+machine. `/sessions` lists sessions from this machine and from Logfire together, newest first; the `/resume`
+browser shows both too. `/resume ID`, `/resume LINK` and `clai2 --resume ID|LINK` take a session ID or any
+Logfire link to one of its runs (including the UI's "Continue in clai2"). Your own session continues where it
+left off; someone else's, or yours that moved on elsewhere since this machine saw it, is resumed as a fork that
+records where it came from, and the original is never changed. `/share` prints the Logfire link and the
+`clai2 --resume` command for a teammate. It's a conversation resume: attachments, tool state and workspace files
+aren't stored, and a missing or damaged run fails loudly instead of resuming part of a conversation. Sessions in
+logfire/clai2 are visible to every member of the project (clai2 says so once). Listing and resuming need the
+`project:read_otlp` query scope that sign-in now requests; if your role can't get it, or you signed in before
+this existed, `/sessions` says so and shows this machine's sessions only.
 
 This branch (`control-plane`) is `main` plus Agent Control (#9066), and it lets clai2 take company config from
 Logfire managed variables:
