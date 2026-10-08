@@ -14,7 +14,14 @@ from pathlib import Path
 
 import logfire
 
-from . import extract as extract_mod, fetch, impact as impact_mod, patterns as patterns_mod, policy as policy_mod
+from . import (
+    extract as extract_mod,
+    fetch,
+    impact as impact_mod,
+    memory as memory_mod,
+    patterns as patterns_mod,
+    policy as policy_mod,
+)
 from .models import Impact, Proposal, ProposalsDoc, UserPrompt, Window, daily_trend, identify_developers, span_of
 from .llm_cache import CACHE_DIR, USAGE
 from .variables import CONTROL_VARIABLE, VARIABLE, VariablesClient
@@ -66,7 +73,17 @@ def _parser() -> argparse.ArgumentParser:
         '--reuse-clusters', action='store_true', help='re-draft from the cached groups, skip clustering'
     )
     parser.add_argument(
-        '--only', nargs='+', choices=['prompts', 'policy'], default=['prompts', 'policy'], help='what to mine'
+        '--only',
+        nargs='+',
+        choices=['prompts', 'policy', 'memory'],
+        default=['prompts', 'policy', 'memory'],
+        help='what to mine',
+    )
+    parser.add_argument(
+        '--memory-fixture', type=Path, help='also read `memory proposal` spans from this JSON (dry runs only)'
+    )
+    parser.add_argument(
+        '--no-memory-check', action='store_true', help='skip the LLM check that flags personal preferences'
     )
     parser.add_argument(
         '--drop-unreviewed-policy',
@@ -107,7 +124,7 @@ def _parser() -> argparse.ArgumentParser:
 async def main(args: argparse.Namespace) -> tuple[str, int]:
     """One mining run: returns a one-line summary and the number of new suggestions."""
     USAGE.reset()
-    if args.fixture and not args.dry_run:
+    if (args.fixture or args.memory_fixture) and not args.dry_run:
         # Fixture output must never reach the live variable.
         raise SystemExit('--fixture runs are offline: add --dry-run (and --out to keep the result).')
     now = datetime.now(UTC)
@@ -175,7 +192,35 @@ async def main(args: argparse.Namespace) -> tuple[str, int]:
                 category = f'policy-{policy_mod.risk_category(p)}' if p.rule else None
                 if reason := result.stale_reasons.get(p.id) or (category and result.stale_reasons.get(category)):
                     stale_reasons[p.id] = reason
-    users_by_span = {p.span_id: p.user or p.span_id for p in prompts} | {c.span_id: c.user for c in calls}
+    memory_spans: list[memory_mod.MemorySpan] = []
+    if 'memory' in args.only:
+        if not args.fixture:
+            memory_spans = await memory_mod.fetch_memory_spans(
+                os.environ.get('LOGFIRE_CLAI2_READ_TOKEN') or os.environ['LOGFIRE_CLAI2_API_KEY'],
+                base_url=args.base_url,
+                since=args.since,
+                store_path=CACHE_DIR / 'memory_spans.json',
+            )
+        if args.memory_fixture:
+            memory_spans += memory_mod.load_fixture(args.memory_fixture)
+        shared = await client.read_json(memory_mod.MEMORY_VARIABLE) if client else None
+        result_memory = await memory_mod.mine_memory(
+            memory_spans,
+            current=memory_mod.shared_files(shared),
+            existing=existing,
+            model=None if args.no_memory_check else args.pattern_model,
+        )
+        say(
+            f'\n{len(memory_spans)} memory proposal spans -> {len(result_memory.proposals)} files'
+            + (f'; dropped: {result_memory.dropped}' if result_memory.dropped else '')
+        )
+        drafted += result_memory.proposals
+        stale_reasons |= result_memory.stale_reasons
+    users_by_span = (
+        {p.span_id: p.user or p.span_id for p in prompts}
+        | {c.span_id: c.user for c in calls}
+        | {s.span_id: s.user for s in memory_spans}
+    )
     # Evidence of earlier proposals can point at spans this run didn't fetch: look those up, so developer numbers
     # stay truthful ("2 developers", not one number per unknown span).
     if not args.fixture and existing:
@@ -188,7 +233,9 @@ async def main(args: argparse.Namespace) -> tuple[str, int]:
                 since=min(e.timestamp for e in earlier) - timedelta(hours=1),
             )
     # Unify machines with emails where any record links them, as for the prompts themselves.
-    emails_by_host = {p.host: p.user for p in prompts if p.host and p.user and not p.user.startswith('host:')}
+    emails_by_host = {p.host: p.user for p in prompts if p.host and p.user and not p.user.startswith('host:')} | {
+        s.host: s.user_email for s in memory_spans if s.host and s.user_email
+    }
     users_by_span = {
         span: emails_by_host.get(user.removeprefix('host:'), user) if user.startswith('host:') else user
         for span, user in users_by_span.items()
@@ -229,8 +276,9 @@ async def main(args: argparse.Namespace) -> tuple[str, int]:
     new_count = sum(a == 'new' for a in actions.values())
     summary = (
         f'{len(prompts)} prompts, {len(users)} users, {len(found)} clusters, '
-        f'{sum(p.kind != "policy" and not p.emerging for p in drafted)} suggested '
-        f'(+{sum(p.kind != "policy" and p.emerging for p in drafted)} emerging), {len(calls)} tool calls, '
+        f'{sum(p.kind in ("skill", "instruction") and not p.emerging for p in drafted)} suggested '
+        f'(+{sum(p.kind in ("skill", "instruction") and p.emerging for p in drafted)} emerging), {len(calls)} tool calls, '
+        f'{sum(p.kind == "memory" for p in drafted)} memory files, '
         f'{new_count} new suggestion(s); {USAGE}'
     )
     if args.dry_run:
@@ -387,6 +435,12 @@ class Finisher:
     def __call__(self, doc: ProposalsDoc) -> ProposalsDoc:
         proposals: list[Proposal] = []
         for p in doc.proposals:
+            if p.kind == 'memory':
+                # Verbatim proposed file content for a human to review; credentials were dropped when mining.
+                if p.id in self.dismissals and p.status in ('pending', 'stale'):
+                    p = p.model_copy(update={'status': 'dismissed', 'status_reason': self.dismissals[p.id]})
+                proposals.append(p)
+                continue
             update: dict[str, object] = {
                 f: policy_mod.mask_identifiers(getattr(p, f), self.identifiers)
                 for f in ('name', 'description', 'text', 'rationale', 'pattern')

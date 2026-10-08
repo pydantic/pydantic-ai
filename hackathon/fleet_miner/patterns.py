@@ -863,7 +863,8 @@ def merge(
     """Never re-propose an accepted or dismissed id; refresh a pending (or stale) one's evidence, draft and status.
 
     A pending proposal of a kind this run fully re-mined (`stale_kinds`) that it no longer suggests becomes `stale`,
-    with `stale_reasons[id]` (or a generic reason) as its `status_reason`. Accepted and dismissed ones are untouched.
+    with `stale_reasons[id]` (or a generic reason) as its `status_reason`; so does any pending one with an explicit
+    reason (e.g. a memory file the shared memory now has verbatim). Accepted and dismissed ones are untouched.
     """
     by_id = {p.id: p for p in existing}
     actions: dict[str, MergeAction] = {}
@@ -878,7 +879,8 @@ def merge(
         else:
             actions[proposal.id] = 'skipped'
     for id_, proposal in by_id.items():
-        if id_ not in actions and proposal.status == 'pending' and proposal.kind in stale_kinds:
+        explicit = id_ in (stale_reasons or {})
+        if id_ not in actions and proposal.status == 'pending' and (proposal.kind in stale_kinds or explicit):
             reason = (stale_reasons or {}).get(id_, "didn't pass: no longer found often enough")
             by_id[id_] = proposal.model_copy(update={'status': 'stale', 'status_reason': reason, 'emerging': False})
             actions[id_] = 'stale'

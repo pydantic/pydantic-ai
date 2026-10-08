@@ -54,6 +54,15 @@ Two families of findings, both "never from one developer or one session":
    targets), re-measured against the flagged calls, and gated on 2+ developers in `--min-policy-sessions` (2+)
    sessions. At most `--max-pending-policy` (3) are pending.
 
+3. **Repo memory** (`memory.py`): `memory proposal` spans from clai2's `repo_propose_memory` (fetched incrementally,
+   test traffic excluded) become one `kind: memory` proposal per (repo, file): the latest `content` next to the
+   current shared file (`base_content`, from `memory__clai2` production), `why`, `proposed_by`, `proposal_count`,
+   and every proposing span as evidence. No developer gate (a human reviews each), but exact duplicates of the shared
+   file, anything that looks like a credential and files over 8 KB are dropped. A light cached check sets
+   `review_flag` when it reads like a personal preference rather than a repo fact (it flags, never drops;
+   `--no-memory-check` skips it). A file proposed again after its proposal was accepted or dismissed becomes a new
+   revision (`<id>-r2`). Offline: `--memory-fixture spans.json --dry-run`.
+
 Rule globs are plain text and `*` only (no `?`, `[...]` or `{...}`), matched per command segment, e.g.
 `git branch -D*`; a category that needs several patterns gets one rule per pattern. Every policy evidence item is a
 call the final glob matches.

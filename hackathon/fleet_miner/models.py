@@ -10,7 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 Tier = Literal['required', 'default_on', 'optional']
-ProposalKind = Literal['skill', 'instruction', 'policy']
+ProposalKind = Literal['skill', 'instruction', 'policy', 'memory']
 ProposalStatus = Literal['pending', 'accepted', 'dismissed', 'stale']
 """`stale`: not a current suggestion, with `status_reason` saying why: it was pending but no longer passes the gates,
 or it passes them but ranks below the cap on pending suggestions (then `emerging` is true). Kept, not deleted."""
@@ -70,6 +70,14 @@ def redact_secrets(value: str) -> str:
         value = pattern.sub('<redacted>', value)
     value = _SECRET_ASSIGNMENT.sub(lambda m: m[0] if '<redacted>' in m[0] else f'{m[1]}{m[2]}<redacted>', value)
     return _HOME.sub(r'\1<user>', value)
+
+
+def contains_secrets(value: str) -> bool:
+    """Whether text looks like it carries a credential (the patterns `redact_secrets` replaces, minus home paths and
+    commit-sha-like hex, which are fine in a repo memory file)."""
+    if any(p.search(value) for p in _SECRETS[:-1]) or _SECRET_ASSIGNMENT.search(value):
+        return True
+    return any(not re.fullmatch(r'[A-Fa-f0-9]+', m) for m in re.findall(r'\b[A-Za-z0-9+/]{48,}={0,2}', value))
 
 
 def clean_text[T: str | None](value: T) -> T:
@@ -229,6 +237,23 @@ class Proposal(BaseModel):
     rule: PolicyRule | None = None
     """Set on `kind: 'policy'` proposals; always `mode: 'observe'` from the miner."""
     mcp: McpAllow | None = None
+    # `kind: 'memory'`: a repo memory file a developer's agent proposed (`memory proposal` spans), written into
+    # `memory__clai2` on accept. `text` holds the same content.
+    repo_slug: str | None = None
+    path: str | None = None
+    content: str | None = None
+    """The latest proposed full file content."""
+    base_content: str | None = None
+    """The file as `memory__clai2` (production) has it now; None for a new file."""
+    base_sha: str | None = None
+    """What the proposing agent saw as the current file, as it reported it."""
+    why: str | None = None
+    proposed_by: str | None = None
+    """Email of whoever proposed the latest content."""
+    proposal_count: int | None = None
+    """How many `memory proposal` spans this file collected (all of them are evidence)."""
+    review_flag: str | None = None
+    """Set when a light check thinks this is a personal preference rather than a repo fact. Flags, never drops."""
 
     _clean = field_validator('id', 'name', 'description', 'text', 'rationale', 'pattern')(clean_text)
 
