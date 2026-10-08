@@ -1360,6 +1360,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             max_tokens = model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile))
 
             async def send(stream: bool) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
+                # A retry re-sends the same ``anthropic_messages``; reset every
+                # BytesIO payload the previous attempt exhausted.
+                self._rewind_binary_streams(anthropic_messages)
                 return await self.client.beta.messages.create(
                     max_tokens=max_tokens,
                     system=system_prompt or OMIT,
@@ -3034,6 +3037,25 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
         else:  # pragma: no cover
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
+
+    @staticmethod
+    def _rewind_binary_streams(anthropic_messages: list[BetaMessageParam]) -> None:
+        """Reset exhausted BytesIO streams before a (re)sent request.
+
+        ``_map_binary_data`` wraps image/PDF bytes in an ``io.BytesIO``. The SDK
+        reads each stream to its end while serializing the first request, so a
+        retry (stale-thinking ``drop_block`` or expired-container fallback)
+        re-sends the same ``anthropic_messages`` with every stream already
+        exhausted — each image goes out as an empty base64 payload and the API
+        rejects the request with ``image cannot be empty``.
+        """
+        for message in anthropic_messages:
+            for block in message.get('content', ()):
+                source = block.get('source')
+                if isinstance(source, dict) and source.get('type') == 'base64':
+                    data = source.get('data')
+                    if isinstance(data, io.BytesIO):
+                        data.seek(0)
 
     @staticmethod
     async def _map_image_url(item: ImageUrl) -> BetaImageBlockParam:
