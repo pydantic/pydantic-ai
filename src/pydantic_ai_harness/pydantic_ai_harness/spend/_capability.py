@@ -350,9 +350,10 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         the first accrual. A boundary that cannot be priced adds no USD and `response` catches
         up, so pricing errors and `on_unpriced` apply to `response` alone. USD growth is floored
         at zero against the highest amount applied so far, so a pricing function that values a
-        later boundary below an earlier one cannot post a credit. A boundary that adds nothing
-        is skipped, which keeps a background job polled under one id to one store call when
-        its intermediate polls carry no usage.
+        later boundary below an earlier one cannot post a credit. A later boundary that adds
+        nothing is skipped, so idle polls of a background job add no store calls. The first is
+        always written: it carries the request, and a retry must write it at the same position
+        the failed attempt did.
         """
         usd, priced, price_error = self._price_of(response)
         keyed = await self._keyed(ctx)
@@ -363,6 +364,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             with money_precision():
                 usd_growth = max(Decimal(0), boundary_usd - applied_usd)
             tokens_growth = max(0, boundary.usage.total_tokens - applied_tokens)
+            # Never the first write, even with nothing to add: see above.
             if accrued is not None and not (usd_growth or tokens_growth):
                 continue
             first = accrued is None

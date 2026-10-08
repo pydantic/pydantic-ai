@@ -2111,64 +2111,114 @@ def _billed_cost(response: ModelResponse) -> Decimal | None:
     return response.usage.cost
 
 
+def _failing_chains() -> dict[str, tuple[list[ModelResponse | Exception], list[list[tuple[int, Decimal]]], Spent]]:
+    """Chains whose continuation fails once: the script, the store writes across both attempts, and the total.
+
+    `three-segments` fails after a boundary was already accrued. `background-job` polls one job id
+    and fails between two polls that carry no usage, so only the final poll adds to the first write.
+    """
+    failed = RuntimeError('continuation failed')
+    return {
+        'pause-turn': (
+            _paused_then_finished(fail_between=True),
+            [[(10, Decimal('0.010'))], [(11, Decimal('0.011'))]],
+            Spent(usd=Decimal('0.021'), tokens=21, requests=1),
+        ),
+        'three-segments': (
+            [
+                _segment('A', tokens=(7, 3), cost='0.010', suspended=True, response_id='a'),
+                _segment('B', tokens=(8, 3), cost='0.011', suspended=True, response_id='b'),
+                failed,
+                _segment('C', tokens=(4, 1), cost='0.005', suspended=False, response_id='c'),
+            ],
+            [[(10, Decimal('0.010'))], [(11, Decimal('0.011'))], [(5, Decimal('0.005'))]],
+            Spent(usd=Decimal('0.026'), tokens=26, requests=1),
+        ),
+        'background-job': (
+            [
+                _segment('', tokens=(0, 0), cost='0', suspended=True, response_id='job'),
+                failed,
+                _segment('', tokens=(0, 0), cost='0', suspended=True, response_id='job'),
+                _segment('done', tokens=(40, 2), cost='0.05', suspended=False, response_id='job'),
+            ],
+            [[(0, Decimal('0'))], [(42, Decimal('0.05'))]],
+            Spent(usd=Decimal('0.05'), tokens=42, requests=1),
+        ),
+    }
+
+
 class TestContinuationAccrual:
     """A continuation chain is merged into one response but billed segment by segment."""
 
-    async def test_a_durable_retry_accrues_the_continuation_it_newly_billed(self):
-        """The first segment was charged before the second failed; the retry replays it and bills the second.
+    @pytest.mark.parametrize('chain', ['pause-turn', 'three-segments', 'background-job'])
+    async def test_a_durable_retry_accrues_the_continuation_it_newly_billed(self, chain: str):
+        """The segments charged before a failure are replayed on retry, and only the rest is billed.
 
         Regression test for https://github.com/pydantic/pydantic-ai/issues/9935: the retry accrued
-        the merged response at the journal position the failed attempt had recorded for the first
-        segment alone, so the journal replayed that record and the second segment never reached the
-        store.
+        the merged response at the journal position the failed attempt had recorded for the
+        segments it completed, so the journal replayed that record and the segments the retry
+        billed never reached the store.
         """
+        responses, batches, spent = _failing_chains()[chain]
+        provider_calls = len(responses)
         journal = _Journal()
         store = _CountingStore()
-        model = ScriptedContinuationModel(responses=_paused_then_finished(fail_between=True))
+        model = ScriptedContinuationModel(responses=responses)
         limits = SpendLimits[None](budgets=[Budget(window='total')], store=store, price=_billed_cost)
         agent = Agent(model, name='journal', deps_type=type(None), capabilities=[_JournalDurability(journal), limits])
 
         with pytest.raises(RuntimeError, match='continuation failed'):
             await agent.run('go', run_id='same-durable-task')
-        first = (await limits.status())[0].spent
-        assert (first.tokens, first.usd, first.requests) == (10, Decimal('0.010'), 1)
-
         journal.replay()
         usage = RunUsage()
         await agent.run('go', run_id='same-durable-task', usage=usage)
 
-        final = (await limits.status())[0].spent
-        assert model.request_calls == 3
-        assert (usage.total_tokens, usage.cost) == (21, Decimal('0.021'))
-        assert (final.tokens, final.usd, final.requests) == (21, Decimal('0.021'), 1)
-        assert [[(entry.tokens, entry.usd) for entry in batch] for batch in store.batches] == [
-            [(10, Decimal('0.010'))],
-            [(11, Decimal('0.011'))],
-        ]
+        assert model.request_calls == provider_calls
+        assert (usage.total_tokens, usage.cost) == (spent.tokens, spent.usd)
+        assert (await limits.status())[0].spent == spent
+        assert [[(entry.tokens, entry.usd) for entry in batch] for batch in store.batches] == batches
 
-    @pytest.mark.parametrize('response_ids', [True, False], ids=['provider-ids', 'no-provider-ids'])
-    async def test_a_retry_whose_accruals_reach_the_store_again_charges_the_replayed_segment_once(
-        self, response_ids: bool
-    ):
-        """Recovery that cannot consult the recorded accrual is left to the store's token.
+    @pytest.mark.parametrize('chain', ['pause-turn', 'three-segments', 'background-job'])
+    async def test_a_retry_whose_accruals_reach_the_store_again_charges_completed_segments_once(self, chain: str):
+        """Recovery that cannot consult the recorded accruals is left to the store's tokens.
 
-        The token is derived from the run position and the replay-stable response content, so it
-        recognises the replayed segment whether or not the provider reported a response id. Accruing
-        the merged response whole presented a token the store had never seen and charged the first
-        segment twice.
+        Accruing the merged response whole presented a token the store had never seen and charged
+        the completed segments twice.
         """
+        responses, _, spent = _failing_chains()[chain]
         journal = _Journal(journal_capabilities=False)
-        model = ScriptedContinuationModel(responses=_paused_then_finished(response_ids=response_ids, fail_between=True))
         limits = SpendLimits[None](budgets=[Budget(window='total')], price=_billed_cost)
-        agent = Agent(model, name='journal', deps_type=type(None), capabilities=[_JournalDurability(journal), limits])
+        agent = Agent(
+            ScriptedContinuationModel(responses=responses),
+            name='journal',
+            deps_type=type(None),
+            capabilities=[_JournalDurability(journal), limits],
+        )
 
         with pytest.raises(RuntimeError, match='continuation failed'):
             await agent.run('go', run_id='same-durable-task')
         journal.replay()
         await agent.run('go', run_id='same-durable-task')
 
-        final = (await limits.status())[0].spent
-        assert (final.tokens, final.usd, final.requests) == (21, Decimal('0.021'), 1)
+        assert (await limits.status())[0].spent == spent
+
+    async def test_a_retry_without_provider_response_ids_charges_the_replayed_segment_once(self):
+        """The token is derived from the run position and the response content, not the provider's id."""
+        journal = _Journal(journal_capabilities=False)
+        limits = SpendLimits[None](budgets=[Budget(window='total')], price=_billed_cost)
+        agent = Agent(
+            ScriptedContinuationModel(responses=_paused_then_finished(response_ids=False, fail_between=True)),
+            name='journal',
+            deps_type=type(None),
+            capabilities=[_JournalDurability(journal), limits],
+        )
+
+        with pytest.raises(RuntimeError, match='continuation failed'):
+            await agent.run('go', run_id='same-durable-task')
+        journal.replay()
+        await agent.run('go', run_id='same-durable-task')
+
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('0.021'), tokens=21, requests=1)
 
     @pytest.mark.parametrize('journal_capabilities', [True, False], ids=['journaled', 'store-token'])
     async def test_replaying_a_completed_chain_charges_nothing_again(self, journal_capabilities: bool):
