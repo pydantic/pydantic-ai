@@ -665,7 +665,7 @@ class Fleet:
             item = by_key.get(key)
             details = (item.description, item.provenance) if item is not None else ('', Provenance())
             if (note := notes.get(key)) is not None:
-                how = f'accepted by {note.accepted_by}' if note.accepted_by else None
+                how = 'auto-published' if note.auto else f'accepted by {note.accepted_by}' if note.accepted_by else None
                 if how is None and config.shared_memory != 'review':
                     how = 'auto-published' if config.shared_memory == 'auto' else 'confirmed by teammates'
                 details = ('', Provenance(pushed_by=how))

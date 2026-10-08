@@ -90,12 +90,17 @@ class RepoNote(BaseModel):
     """This user's own proposal, not yet published: shown to them only."""
 
     @property
+    def auto(self) -> bool:
+        """Published by the fleet miner under `policy.memory.shared: auto`, not by a person."""
+        return self.source == 'auto' or self.accepted_by == 'auto-publish'
+
+    @property
     def provenance(self) -> str:
         """`accepted by alice@… on 2026-10-08, proposed by bob@…`, or `''`."""
         if self.pending:
             return 'pending review: only you see this'
         parts = [
-            *([f'accepted by {self.accepted_by}'] if self.accepted_by else []),
+            *(['auto-published'] if self.auto else [f'accepted by {self.accepted_by}'] if self.accepted_by else []),
             *([f'on {self.accepted_at[:10]}'] if self.accepted_at else []),
             *([f'proposed by {self.proposed_by}'] if self.proposed_by else []),
         ]

@@ -251,3 +251,10 @@ def test_auto_published_repo_notes_say_so(tmp_path: Path) -> None:
     assert build.snapshot.config.shared_memory == 'auto'
     assert [change.describe() for change in fleet.changes(build)] == ['Repo notes: + MEMORY.md (auto-published)']
     assert _fleet(tmp_path / 'b', {}, {'items': []}).prepare().snapshot.config.shared_memory == 'review'
+    # The miner marks what it published itself.
+    by_miner = {'files': [{'path': 'MEMORY.md', 'content': 'x', 'source': 'auto', 'accepted_by': 'auto-publish'}]}
+    fleet = _fleet(tmp_path / 'c', {}, {'items': []}, by_miner)
+    assert [change.describe() for change in fleet.changes(fleet.prepare())] == [
+        'Repo notes: + MEMORY.md (auto-published)'
+    ]
+    assert fleet.notes()[0].provenance == 'auto-published'
