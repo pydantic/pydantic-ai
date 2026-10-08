@@ -251,6 +251,9 @@ def observe_continuation_segments(
     is a separately billed request. Some consumers need a single request's usage instead: prompt-cache
     health judges the cache read of the final segment, whose prompt carries the whole prefix. The
     observer is tied to its request, so a nested agent's requests made in the same context don't reach it.
+
+    Private for now: read by the `Instrumentation` capability and, together with `merge_responses`, by the
+    Pydantic AI Harness's `SpendLimits`, which pins this package's exact version.
     """
     token = _segment_observers.set((*_segment_observers.get(), (request_context, observer)))
     try:
