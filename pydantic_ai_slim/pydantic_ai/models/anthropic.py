@@ -2862,21 +2862,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Map the unified `cache` setting onto Anthropic cache settings.
 
         Only called when no explicit `anthropic_cache*` setting is present (those take
-        precedence in `prepare_request`). Uses automatic caching where the client supports it;
-        on Bedrock and Vertex the library places breakpoints at the end of the static
-        instructions, the tool definitions and the conversation instead. Automatic caching
-        breakpoints the end of the conversation, so caching only the stable prefix
-        (`messages=False`) uses the instruction and tool definition breakpoints everywhere.
+        precedence in `prepare_request`). The static instructions and tool definitions always get
+        breakpoints, since Anthropic only reads cache entries written at a breakpoint and a new
+        conversation can only share that prefix. The conversation is cached with automatic caching
+        where the client supports it, and with a breakpoint on its last block on Bedrock and Vertex.
         """
         retention, messages = split_cache_setting(cache)
         ttl: Literal['5m', '1h'] = retention if retention in ('5m', '1h') else '5m'
         translated = model_settings.copy()
-        if messages and self.profile.get('supports_auto_cache', False):
-            translated['anthropic_cache'] = ttl
-        else:
-            translated['anthropic_cache_instructions'] = ttl
-            translated['anthropic_cache_tool_definitions'] = ttl
-            if messages:
+        translated['anthropic_cache_instructions'] = ttl
+        translated['anthropic_cache_tool_definitions'] = ttl
+        if messages:
+            if self.profile.get('supports_auto_cache', False):
+                translated['anthropic_cache'] = ttl
+            else:
                 translated['anthropic_cache_messages'] = ttl
         return translated
 
