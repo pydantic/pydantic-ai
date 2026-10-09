@@ -497,6 +497,16 @@ async def test_shell_relaunches_after_an_install(tmp_path: Path, monkeypatch: py
     assert (fresh.session_id, fresh.new_session_id) == (None, None)
     named = await _relaunch_after(monkeypatch, tmp_path, [], session_id='0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f')
     assert (named.session_id, named.new_session_id) == (None, '0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f')
+
+    def rebuild(factory: Callable[[], object]) -> object:
+        return factory()
+
+    # `/reload` rebuilds the shell, which keeps the conversation the launch options chose.
+    monkeypatch.setattr(_app, 'reload_clai', rebuild)
+    reloaded = await _relaunch_after(
+        monkeypatch, tmp_path, ['/reload'], session_id='0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f'
+    )
+    assert (reloaded.session_id, reloaded.new_session_id) == (None, '0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f')
     resumed = await _relaunch_after(monkeypatch, tmp_path, ['hello'])
     assert resumed.session_id is not None
     saved = await SqliteConversationStore(database=tmp_path / 'sessions.db').get(conversation_id=resumed.session_id)

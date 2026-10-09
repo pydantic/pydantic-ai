@@ -49,13 +49,19 @@ class Sessions(Generic[DepsT, OutputT]):
     """One application's services. No worker, registration, or selection is global."""
 
     def __init__(
-        self, *, session: Session[DepsT, OutputT], store: SqliteConversationStore, context: CommandContext
+        self,
+        *,
+        session: Session[DepsT, OutputT],
+        store: SqliteConversationStore,
+        context: CommandContext,
+        launched: str | None = None,
     ) -> None:
         """Bind services to the active shell and its validated settings."""
         self.session = session
         self.store = store
         self.context = context
-        self._launched: str | None = None
+        self.launched = launched
+        """The conversation ID launch options picked, carried across `/reload`."""
         self.quiet: Callable[[], AbstractAsyncContextManager[None]] = nullcontext
         """Entered to tell plugins about a background rename; the shell holds it until no turn or command runs."""
         self.namer = SessionNamer(
@@ -139,13 +145,13 @@ class Sessions(Generic[DepsT, OutputT]):
         elif session_id is not None:
             await self.session.clear(session_id)
         if notice or session_id is not None:
-            self._launched = self.session.conversation_id
+            self.launched = self.session.conversation_id
         return notice
 
     @property
     def chosen(self) -> bool:
         """Whether launch options picked the current conversation; see `SessionStart.conversation_chosen`."""
-        return self._launched == self.session.conversation_id
+        return self.launched == self.session.conversation_id
 
     async def import_session(self, source: ImportSource, native_id: str) -> str:
         """Copy a Claude Code or Codex session into the store by its own ID, returning its CLAI ID.

@@ -388,6 +388,7 @@ async def chat(
                         project=project,
                         message_history=shell.session.messages,
                         summary=shell.session.summary,
+                        launched=shell.sessions.launched,
                         transcript=shell.transcript,
                         load_plugins=load_plugins,
                     )
@@ -553,6 +554,7 @@ def create_shell(
     project: ProjectSettings,
     message_history: Sequence[ModelMessage] = (),
     summary: ConversationSummary | None = None,
+    launched: str | None = None,
     transcript: TranscriptBuffer | None = None,
     headless: bool = False,
     load_plugins: bool = True,
@@ -606,7 +608,7 @@ def create_shell(
             + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
         )
 
-    sessions = Sessions(session=session, store=conversations, context=context)
+    sessions = Sessions(session=session, store=conversations, context=context, launched=launched)
     commands = Commands()
     commands.register(
         Command(
