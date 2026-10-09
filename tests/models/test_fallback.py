@@ -45,7 +45,7 @@ from pydantic_ai.messages import (
     ToolAvailabilityDeltaPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
+from pydantic_ai.models.fallback import ExceptionHandler, FallbackModel, ResponseHandler, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -1847,6 +1847,86 @@ async def test_async_response_handler() -> None:
 
     result = await agent.run('hello')
     assert result.output == 'fallback response'
+
+
+@pytest.mark.parametrize('async_handler', [False, True])
+async def test_fallback_on_response_handler_tuple(async_handler: bool) -> None:
+    """A tuple of response handlers rejects a response just like a list or a single handler."""
+    calls: list[ModelResponse] = []
+
+    def reject_primary(response: ModelResponse) -> bool:
+        calls.append(response)
+        part = response.parts[0]
+        return isinstance(part, TextPart) and 'primary' in part.content
+
+    async def reject_primary_async(response: ModelResponse) -> bool:
+        return reject_primary(response)
+
+    handler: ResponseHandler = reject_primary_async if async_handler else reject_primary
+    result = await Agent(FallbackModel(primary_model, fallback_model_impl, fallback_on=(handler,))).run('hello')
+
+    assert result.output == 'fallback response'
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize('async_handler', [False, True])
+@pytest.mark.parametrize('stream', [False, True])
+async def test_fallback_on_exception_handler_tuple(async_handler: bool, stream: bool) -> None:
+    """Tuple handlers can recover from exceptions while opening a stream or making an ordinary request."""
+    calls: list[Exception] = []
+
+    def retry_http_error(exc: Exception) -> bool:
+        calls.append(exc)
+        return isinstance(exc, ModelHTTPError)
+
+    async def retry_http_error_async(exc: Exception) -> bool:
+        return retry_http_error(exc)
+
+    handler: ExceptionHandler = retry_http_error_async if async_handler else retry_http_error
+    agent = Agent(
+        FallbackModel(
+            failure_model_stream if stream else failure_model,
+            success_model_stream if stream else success_model,
+            fallback_on=(handler,),
+        )
+    )
+    if stream:
+        async with agent.run_stream('hello') as result:
+            assert await result.get_output() == 'hello world'
+    else:
+        assert (await agent.run('hello')).output == 'success'
+
+    assert len(calls) == 1
+    assert isinstance(calls[0], ModelHTTPError)
+
+
+async def test_fallback_on_mixed_tuple() -> None:
+    """Exception classes and both handler kinds in a tuple each participate in fallback."""
+    calls: list[str] = []
+
+    def fail_value_error(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        raise ValueError('try the next model')
+
+    def retry_http_error(exc: Exception) -> bool:
+        calls.append('exception')
+        return isinstance(exc, ModelHTTPError)
+
+    def reject_primary(response: ModelResponse) -> bool:
+        calls.append('response')
+        part = response.parts[0]
+        return isinstance(part, TextPart) and 'primary' in part.content
+
+    agent = Agent(
+        FallbackModel(
+            FunctionModel(fail_value_error),
+            failure_model,
+            primary_model,
+            fallback_model_impl,
+            fallback_on=(ValueError, retry_http_error, reject_primary),
+        )
+    )
+    assert (await agent.run('hello')).output == 'fallback response'
+    assert calls == ['exception', 'response', 'response']
 
 
 def test_fallback_on_invalid_type() -> None:
