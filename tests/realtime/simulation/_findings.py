@@ -19,7 +19,7 @@ they stay, and have no pinned scenario to retire.
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -412,16 +412,24 @@ CUT_OFF_TURN_COMPLETE = Finding(
 )
 
 
-def _continued_after_calling(sim: Simulation) -> bool:
-    """A response went on after its first tool call: it said more, or called another tool in a later message."""
+def _continued_after_calling(sim: Simulation, responses: Iterable[TruthResponse] | None = None) -> bool:
+    """A response went on after its first tool call: it said more, or called another tool in a later message.
+
+    Any response, unless `responses` narrows it to the ones a violation names.
+    """
     truth = sim.truth
     return any(
         any(truth.word_seq[word] > first for word in response.words)
         or any(truth.tool_calls[call_id].seq > first for call_id in response.tool_calls)
-        for response in truth.responses.values()
+        for response in (truth.responses.values() if responses is None else responses)
         if response.tool_calls
         for first in [truth.tool_calls[response.tool_calls[0]].seq]
     )
+
+
+def _reply_continued_across_a_round(sim: Simulation, violation: InvariantViolation) -> bool:
+    """A response the violation names continued after its first tool call."""
+    return _continued_after_calling(sim, _context_responses(sim, violation) or [])
 
 
 def _spoke_after_calling(sim: Simulation, violation: InvariantViolation) -> bool:
@@ -643,13 +651,14 @@ LIVE_REPLY_SPLIT_BY_TOOL_ROUND = Finding(
     id='SIM-18',
     title=(
         'on GPT-Live, a spoken reply that goes on across a delegated tool round is recorded in two pieces around '
-        "the tool's return (the GPT-Live counterpart of #8760)"
+        "the tool's return (the GPT-Live counterpart of #8760); when the model has started another reply by then, "
+        "the delegation's later tool call is recorded in that reply instead, with the words around it"
     ),
     tracked_by='per-response-id state, so a response the session already recorded can be continued; found by this simulator',
     evidence='recorded',
-    codes=frozenset({'response.duplicated'}),
+    codes=frozenset({'response.duplicated', 'response.mixed', 'response.truncated'}),
     providers=frozenset({'gpt-live'}),
-    matches=lambda sim, violation: _continued_after_calling(sim),
+    matches=_reply_continued_across_a_round,
 )
 
 EXTENDED_THINKING_PARALLEL_CALLS = Finding(

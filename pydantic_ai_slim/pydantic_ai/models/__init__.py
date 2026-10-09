@@ -54,6 +54,7 @@ from ..messages import (
     InstructionPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestAttempt,
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
@@ -1241,6 +1242,8 @@ class StreamedResponse(ABC):
     state: ModelResponseState = field(default='complete', init=False)
     """Lifecycle state of the response."""
     metadata: dict[str, Any] | None = field(default=None, init=False)
+    failed_attempts: list[ModelRequestAttempt] | None = field(default=None, init=False)
+    """Earlier attempts at this request that failed before this stream was opened, see [`ModelResponse.failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts]."""
 
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
@@ -1446,6 +1449,7 @@ class StreamedResponse(ABC):
             finish_reason=self.finish_reason,
             state=state,
             metadata=self.metadata,
+            failed_attempts=self.failed_attempts,
         )
 
     @property
@@ -1635,13 +1639,13 @@ class CompletedStreamedResponse(StreamedResponse):
         pass
 
     def get(self) -> ModelResponse:
+        response = self.response
         if isinstance(self._replay_events, list):
-            return replace(
-                self.response,
-                parts=self._parts_manager.get_parts(),
-                state=super().get().state,
-            )
-        return self.response
+            response = replace(response, parts=self._parts_manager.get_parts(), state=super().get().state)
+        # A `FallbackModel` that fell back to the model producing this stream records its attempts here.
+        if self.failed_attempts:
+            response = replace(response, failed_attempts=[*self.failed_attempts, *(response.failed_attempts or [])])
+        return response
 
     @property
     def usage(self) -> RequestUsage:

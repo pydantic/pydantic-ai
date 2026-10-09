@@ -8421,6 +8421,7 @@ def test_binary_content_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'failed_attempts': None,
                 'workspace_ref': None,
             },
         ]
@@ -8498,6 +8499,7 @@ def test_image_url_serializable_missing_media_type():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'failed_attempts': None,
                 'workspace_ref': None,
             },
         ]
@@ -8581,6 +8583,7 @@ def test_image_url_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'failed_attempts': None,
                 'workspace_ref': None,
             },
         ]

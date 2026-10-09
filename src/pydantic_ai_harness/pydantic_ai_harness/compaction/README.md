@@ -539,6 +539,9 @@ SlidingWindowCompaction(max_messages=80, keep_messages=40, receipts=True)
   above is secondhand; `SlidingWindowCompaction` drops history outright, so its receipt says that context
   is gone. The blank-in-place strategies (`ClearToolResults`, `DeduplicateFileReads`,
   `ClampOversizedMessages`) keep every message and cross no boundary, so they emit no receipt.
+- **Receipt slot.** `SlidingWindowCompaction` counts its receipt toward `keep_messages`, so
+  `keep_messages=40` keeps the receipt and 39 messages. The receipt never takes the last slot:
+  `keep_messages=1` keeps the receipt and the newest message.
 - **Transcript handle.** Attach any capability exposing `compaction_transcript_handle() -> str | None`
   (the `TranscriptHandleProvider` protocol) and the receipt gains a `Persisted run handle:` pointer.
   `StepPersistence` implements it (returning its `run_id`), so attaching it is enough. The handle

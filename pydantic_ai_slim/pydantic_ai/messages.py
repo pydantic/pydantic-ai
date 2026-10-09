@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import KW_ONLY, dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
@@ -2829,6 +2829,47 @@ class WorkspaceRef:
     """Provider-specific identifier for the environment."""
 
 
+@dataclass(repr=False, kw_only=True, frozen=True)
+class ModelRequestAttempt:
+    """An attempt at a model request that did not produce the response it is recorded on.
+
+    A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] records one for each model it moved
+    on from, on the response of the model that answered
+    ([`ModelResponse.failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts]), or on the
+    [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] when every model failed.
+    """
+
+    model_name: str
+    """The name of the model that was attempted."""
+
+    provider_name: str | None = None
+    """The name of the provider the attempt was sent to."""
+
+    outcome: Literal['error', 'rejected']
+    """How the attempt failed.
+
+    - `'error'` — the request raised an exception, described by `error`.
+    - `'rejected'` — the model returned a response, and a `fallback_on` response handler rejected it.
+    """
+
+    error: str | None = None
+    """The exception the attempt raised, as `'ExceptionType: message'`, or `None` if it was rejected."""
+
+    timestamp: datetime
+    """When the attempt started."""
+
+    duration: timedelta
+    """How long the attempt took, up to the point it failed or its response was rejected."""
+
+    usage: RequestUsage | None = None
+    """The usage the provider reported for the attempt, including its cost where it can be calculated.
+
+    `None` when the usage is unknown, as it is for an attempt that raised before returning a response.
+    """
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass(repr=False)
 class ModelResponse:
     """A response from a model, e.g. a message from the model to the Pydantic AI app."""
@@ -2902,6 +2943,16 @@ class ModelResponse:
     Each response records the ref when it is produced; the last response is refreshed when the run
     ends. A run with no attached workspace carries the conversation's ref forward, unless it was
     started with `workspace='new'`. Not sent to the model.
+    """
+
+    failed_attempts: list[ModelRequestAttempt] | None = None
+    """Earlier attempts at this request that failed before this response was produced, in order.
+
+    A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] records the models it moved on
+    from here. Their usage is not included in `usage`, which is this response's own, but it does
+    count towards the run's [`RunUsage`][pydantic_ai.usage.RunUsage] and
+    [`UsageLimits`][pydantic_ai.usage.UsageLimits] token and cost limits. A rejected response's
+    parts are not kept. Not sent to the model.
     """
 
     state: ModelResponseState = 'complete'

@@ -9,7 +9,7 @@ import ssl
 import subprocess
 import sys
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from importlib.util import find_spec
@@ -632,6 +632,7 @@ def test_docs_examples(
 
 def print_callback(s: str) -> str:
     s = re.sub(r'datetime\.datetime\(.+?\)', 'datetime.datetime(...)', s, flags=re.DOTALL)
+    s = re.sub(r'datetime\.timedelta\(.+?\)', 'datetime.timedelta(...)', s, flags=re.DOTALL)
     s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
     s = re.sub(r'datetime.date\(', 'date(', s)
     s = re.sub(r"run_id='.+?'", "run_id='...'", s)
@@ -1883,8 +1884,11 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
     if isinstance(model, FallbackModel):
         # When a fallback model is encountered, replace any OpenAIChatModel with a model that will raise a ModelHTTPError.
         # Otherwise, do the usual inference.
-        def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            raise ModelHTTPError(401, 'Invalid API Key')
+        def raise_http_error(model_name: str) -> Callable[[list[ModelMessage], AgentInfo], ModelResponse]:
+            def function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+                raise ModelHTTPError(401, model_name, {'error': 'Invalid API Key'})
+
+            return function
 
         mock_fallback_models: list[Model] = []
         for m in model.models:
@@ -1895,10 +1899,17 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
 
             if isinstance(m, OpenAIChatModel):
                 # Raise an HTTP error for OpenAIChatModel
-                mock_fallback_models.append(FunctionModel(raise_http_error, model_name=m.model_name))
+                failing_model = FunctionModel(raise_http_error(m.model_name), model_name=m.model_name)
+                # Named after the provider it stands in for, as the attempt it records would be.
+                failing_model._system = m.system  # pyright: ignore[reportPrivateUsage]
+                mock_fallback_models.append(failing_model)
             else:
                 mock_fallback_models.append(mock_infer_model(m))
-        return FallbackModel(*mock_fallback_models)
+        mocked = FallbackModel(*mock_fallback_models)
+        # Keep the example's own `fallback_on`, so a response handler it passes still applies.
+        mocked._exception_handlers = model._exception_handlers  # pyright: ignore[reportPrivateUsage]
+        mocked._response_handlers = model._response_handlers  # pyright: ignore[reportPrivateUsage]
+        return mocked
     if isinstance(model, FunctionModel | TestModel):
         return model
     elif isinstance(model, DecisionModel):

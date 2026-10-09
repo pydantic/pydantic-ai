@@ -488,7 +488,9 @@ async def test_decide_span_records_an_unsure_route_handed_to_a_fallback(
     """A pick below `decision_route_threshold` is recorded on the `decide` span that picked it, even without content.
 
     The `FallbackModel` hands the step to the model behind the decision model, so the `chat` span ends without an
-    error: the `decide` span is the one place the hand-off shows, with the picked route's label on its exception.
+    error. The hand-off shows on the `decide` span, with the picked route's label on its exception, and on the
+    `model request attempt` span beside it. That span is only opened once the attempt has failed, so the `decide` span
+    the attempt opened can't be its child.
     """
     fallback = FallbackModel(UnsureDecisionModel(), TestModel(call_tools=[]))
     agent = Agent(
@@ -520,7 +522,18 @@ async def test_decide_span_records_an_unsure_route_handed_to_a_fallback(
                                         'pydantic_ai.decision.route': 'escalate_to_team',
                                     }
                                 ],
-                            }
+                            },
+                            {
+                                'name': 'model request attempt in-memory-decisions',
+                                'level': 17,
+                                'events': [
+                                    {
+                                        'name': 'exception',
+                                        'exception.type': 'pydantic_ai.models.decision.UnsureRoute',
+                                        'exception.escaped': 'True',
+                                    }
+                                ],
+                            },
                         ],
                     }
                 ],
