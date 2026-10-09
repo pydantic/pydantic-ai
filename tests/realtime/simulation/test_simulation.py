@@ -1365,6 +1365,21 @@ def test_scenario_xai_reconnect_replays_history() -> None:
     run_tolerant(OpenAISimulation(openai=OpenAIOptions(dialect='xai')), scenario)
 
 
+@pytest.mark.parametrize('clear', [False, True])
+def test_scenario_xai_reconnect_after_a_turn_is_discarded(clear: bool) -> None:
+    """xAI adds a spoken turn's item at speech start: once the turn is discarded, by a drop mid-speech or a clear
+    before one, the reconnect doesn't discard it a second time for the transcript it was awaiting."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        if clear:
+            sim.clear_audio()
+        sim.drop()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect='xai')), scenario)
+
+
 def test_push_to_talk_turn_filed_before_its_answer() -> None:
     """The transcript of a committed turn arrives after its answer is recorded (OR9, fixed by #8764).
 

@@ -348,6 +348,8 @@ class OpenAILifecycle:
         events: list[LifecycleEvent] = [UserTurnDiscarded(turn_id=turn_id) for turn_id in self._speaking]
         # One that hadn't joined never will, whatever the provider still reports about it.
         self._committed.update(self._speaking)
+        # Nor is a transcript waited for any more: the turn is settled.
+        self._untranscribed.difference_update(self._speaking)
         self._speaking.clear()
         return events
 
