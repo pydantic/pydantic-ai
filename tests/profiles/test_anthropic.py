@@ -364,6 +364,7 @@ def test_model_profile_fable_5():
         ('claude-sonnet-5', True, False),
         ('claude-opus-5-5', True, True),
         ('claude-sonnet-5-5', True, True),
+        ('claude-haiku-5-5', True, False),
         ('claude-fable-5', True, True),
         ('claude-fable-5-1', True, True),
         ('claude-mythos-5-1', True, True),
@@ -373,9 +374,12 @@ def test_model_profile_fable_5():
 def test_model_profile_thinking_defaults(model_name: str, thinks_by_default: bool, always_thinks: bool):
     """Which models think without a `thinking` setting, and which reject `{'type': 'disabled'}`.
 
-    Verified live for every model but the Mythos ones, which match Anthropic's docs: with no `thinking` parameter,
+    Verified live for every model except Mythos. Haiku 5.5's adaptive default was verified with
+    `anthropic_effort='high'` and no `thinking` parameter; the response included thinking tokens. Anthropic [documents
+    Haiku 5.5 as adaptive-on by default](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide#configure-thinking)
+    and accepts `thinking={'type': 'disabled'}` at effort `high` or below. With no `thinking` parameter,
     Claude Opus 5, Sonnet 5, Opus 5.5, Fable 5 and Fable 5.1 return thinking tokens where Sonnet 4.6 and Opus 4.8
-    return none, and Opus 5.5, Fable 5 and Fable 5.1 answer `thinking={'type': 'disabled'}` with a 400.
+    return none; Opus 5.5, Fable 5 and Fable 5.1 reject `thinking={'type': 'disabled'}` with a 400.
     """
     profile = anthropic_model_profile(model_name)
     assert profile is not None
@@ -397,6 +401,7 @@ def test_model_profile_thinking_defaults(model_name: str, thinks_by_default: boo
         ('claude-opus-5-5', False),
         ('claude-opus-5', True),
         ('claude-sonnet-5-5', False),
+        ('claude-haiku-5-5', True),
         ('claude-sonnet-5', True),
     ],
 )
@@ -620,6 +625,37 @@ def test_model_profile_sonnet_5_5():
         'supports_forced_tool_choice': False,
         'anthropic_binds_thinking_blocks': True,
         'thinking_always_enabled': True,
+    }
+
+
+def test_model_profile_haiku_5_5():
+    """Haiku 5.5 uses Opus 5's existing defaults with two model-specific overrides.
+
+    Anthropic documents Haiku 5.5's 128K output, adaptive default, `xhigh`/`max`, manual budget-thinking and
+    non-default sampling rejection, disabled-thinking effort cap, task-budget support, and prefix binding. Fast mode
+    docs list only Opus models; web-search docs cover dynamic filtering on Claude 4.6 and later. Live probes confirmed
+    adaptive `xhigh`/`max` returned signed thinking blocks; adaptive default with no `thinking` setting and effort `high`
+    also returned signed thinking blocks and positive thinking-token usage. Other live probes confirmed forced tool
+    choice, task-budget acceptance, `code_execution_20260120`, BM25 search, Advisor, web-search request acceptance,
+    deferred tool addition, inline system messages, and the `drop_block` transformation after a prefix change. The only
+    Haiku-specific profile overrides are fast speed disabled and thinking-block binding enabled; unchanged fields
+    retain Opus 5's existing profile defaults. See Anthropic's
+    [overview](https://platform.claude.com/docs/en/models/haiku-5-5/overview),
+    [migration guide](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide),
+    [thinking configuration](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting),
+    [effort](https://platform.claude.com/docs/en/build-with-claude/effort),
+    [task-budget support](https://platform.claude.com/docs/en/build-with-claude/task-budgets),
+    [fast mode](https://platform.claude.com/docs/en/build-with-claude/fast-mode), and
+    [web search and dynamic filtering](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool).
+    """
+    profile = anthropic_model_profile('claude-haiku-5-5')
+    opus_5 = anthropic_model_profile('claude-opus-5')
+    assert profile is not None
+    assert opus_5 is not None
+    assert profile == {
+        **opus_5,
+        'anthropic_supports_fast_speed': False,
+        'anthropic_binds_thinking_blocks': True,
     }
 
 

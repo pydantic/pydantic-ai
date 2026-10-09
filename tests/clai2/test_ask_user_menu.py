@@ -2,7 +2,8 @@
 
 import asyncio
 import io
-from collections.abc import AsyncGenerator, Callable, Generator
+import json
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from threading import Event
 
@@ -13,10 +14,10 @@ from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, FunctionToolCallEvent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, PartStartEvent, TextPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.ask_user import (
     DECLINED,
     AskUser,
@@ -27,7 +28,8 @@ from pydantic_ai_harness.ask_user import (
     Question,
     QuestionOption,
 )
-from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_ai_harness.subagents import DelegationTasks, SubAgent, SubAgents
+from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
 from pydantic_clai2.builtin_plugins.ask_user_menu import (
     AskUserPlugin,
     QuestionMenu,
@@ -35,9 +37,11 @@ from pydantic_clai2.builtin_plugins.ask_user_menu import (
     render_answer,
 )
 from pydantic_clai2.plugins import PluginHost, load_plugin
+from pydantic_clai2.runtime.sandbox_calls import SandboxCallStartedEvent
 from pydantic_clai2.ui.menus.menu_worker import menu_key
-from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, PromptSurface
 from pydantic_clai2.ui.prompt.question_input import Paste
+from tests.clai2.surface_terminal import SurfaceTerminal
 
 
 @pytest.fixture
@@ -102,6 +106,25 @@ def test_multi_select_enter_toggles_and_done_submits() -> None:
     assert menu.choose('3') == ('api.py', 'db.py')
 
 
+def test_question_is_pinned_between_title_and_choices() -> None:
+    menu = QuestionMenu(question=APPROACH, position=1, total=1)
+    rows = [Text.from_ansi(row).plain for row in menu.frame(width=80, height=24)]
+    assert rows[:3] == ['Approach', 'How should we do it?', '> 1. Refactor - Rewrite the module']
+    menu.choose('3')
+    rows = [Text.from_ansi(row).plain for row in menu.frame(width=80, height=24)]
+    assert rows[:2] == ['Approach: Other (type answer)', 'How should we do it?']
+
+
+def test_long_question_is_cut_so_choices_stay_visible() -> None:
+    question = APPROACH.model_copy(update={'question': 'word ' * 200})
+    menu = QuestionMenu(question=question, position=1, total=1)
+    rows = [Text.from_ansi(row).plain for row in menu.frame(width=40, height=24)]
+    assert len(rows) <= 12
+    assert rows[5].endswith('…')
+    assert rows[6:9] == ['> 1. Refactor - Rewrite the module', '  2. Patch', '  3. Other (type answer)']
+    assert all(cell_len(row) <= 40 for row in rows)
+
+
 def test_inline_frame_shows_context_selection_and_navigation() -> None:
     menu = QuestionMenu(question=TARGETS, position=1, total=1)
     menu.choose('1')
@@ -134,12 +157,12 @@ def test_inline_terminal_preserves_transcript(keys: list[str], expected: tuple[s
     assert menu.run(console=console, key_source=iter(keys).__next__) == expected
     rendered = output.getvalue()
     assert rendered.startswith('Previous conversation stays here')
-    assert 'How should we do it?' in rendered
     assert 'Rewrite the module' in rendered
-    assert '\x1b[?1049' not in rendered
-    assert '\x1b[2J' not in rendered
+    # Without an editor, the picker opens a live panel for the question, then leaves the
+    # question in the terminal's own scrollback.
+    assert rendered.rindex(LEAVE) > rendered.rindex(ENTER)
+    assert 'How should we do it?' in rendered.rsplit(LEAVE, 1)[1]
     assert '\x1b[3J' not in rendered
-    assert rendered.endswith('\x1b[?2026l')
     assert '\x1b[?25h' in rendered
 
 
@@ -214,6 +237,63 @@ def test_render_answer_lists_picks_or_the_decline() -> None:
     assert '● You declined to answer' in text
 
 
+@pytest.mark.parametrize('sandboxed', [False, True])
+async def test_call_header_names_the_questions_without_raw_json(sandboxed: bool) -> None:
+    """The header once showed `questions=[{"header":...`; the picker below shows each question in full."""
+    output = io.StringIO()
+    host: PluginHost[None] = PluginHost(name='ask_user', console=Console(file=io.StringIO()), settings={})
+    plugin = load_plugin(AskUserPlugin, host).plugin
+    renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None, renderers=[plugin.render])
+    questions = {'questions': [APPROACH.model_dump(mode='json'), TARGETS.model_dump(mode='json')]}
+    if sandboxed:
+        call = ToolCallPart('ask_user_question', questions, tool_call_id='code__1')
+        await renderer.on_stream_event(SandboxCallStartedEvent(tool_call_id='code__1', call=call))
+        assert output.getvalue() == '● run_code\n\n● ask_user_question Approach, Targets\n\n'
+    else:
+        await renderer.on_stream_event(FunctionToolCallEvent(ToolCallPart('ask_user_question', questions)))
+        assert output.getvalue() == '● ask_user_question Approach, Targets\n\n'
+
+
+@pytest.mark.parametrize('args', ['{"questions": [{"head', {'questions': 'none'}, {}])
+async def test_call_header_without_readable_questions_shows_only_the_tool_name(args: str | dict[str, object]) -> None:
+    output = io.StringIO()
+    console = Console(file=output, width=80)
+    host: PluginHost[None] = PluginHost(name='ask_user', console=console, settings={})
+    renderable = load_plugin(AskUserPlugin, host).plugin.render(
+        FunctionToolCallEvent(ToolCallPart('ask_user_question', args))
+    )
+    console.print(renderable)
+    assert output.getvalue() == '● ask_user_question\n'
+    assert load_plugin(AskUserPlugin, host).plugin.render(FunctionToolCallEvent(ToolCallPart('other', args))) is None
+
+
+async def test_call_header_with_many_questions_stays_on_one_row() -> None:
+    output = io.StringIO()
+    console = Console(file=output, width=40)
+    host: PluginHost[None] = PluginHost(name='ask_user', console=console, settings={})
+    questions = [APPROACH.model_copy(update={'header': f'Q{index}'}).model_dump() for index in range(10)]
+    console.print(
+        load_plugin(AskUserPlugin, host).plugin.render(
+            FunctionToolCallEvent(ToolCallPart('ask_user_question', {'questions': questions}))
+        )
+    )
+    assert output.getvalue() == '● ask_user_question Q0, Q1, Q2, Q3, Q4,…\n'
+
+
+async def test_call_header_escapes_line_breaks_in_question_headers() -> None:
+    """The header renders before validation, so a forged `\\n● ...` row must stay on the header's line."""
+    output = io.StringIO()
+    console = Console(file=output, width=80)
+    host: PluginHost[None] = PluginHost(name='ask_user', console=console, settings={})
+    questions = [APPROACH.model_copy(update={'header': 'Real\n● forged call'}).model_dump()]
+    console.print(
+        load_plugin(AskUserPlugin, host).plugin.render(
+            FunctionToolCallEvent(ToolCallPart('ask_user_question', {'questions': questions}))
+        )
+    )
+    assert output.getvalue() == '● ask_user_question Real\\x0a● forged call\n'
+
+
 async def test_plugin_declares_capability_and_renderer() -> None:
     host: PluginHost[None] = PluginHost(name='ask_user', console=Console(file=io.StringIO()), settings={})
     loaded = load_plugin(AskUserPlugin, host)
@@ -247,6 +327,48 @@ async def test_declining_reaches_the_model_through_the_plugin() -> None:
     assert len(returns) == 1 and returns[0].content == DECLINED
 
 
+async def test_a_delegated_task_names_itself_before_asking() -> None:
+    """The user did not prompt a child task, so its question first says which task is asking."""
+    titles: list[str] = []
+    output = io.StringIO()
+
+    def answer(menu: QuestionMenu) -> tuple[str, ...]:
+        titles.append(menu.title)
+        return ('Patch',)
+
+    capabilities: list[AbstractCapability[object]] = [
+        AskUser(answerer=TerminalAnswerer(full_screen=ScreenLog(), console=Console(file=output), runner=answer))
+    ]
+
+    async def child(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) == 1:
+            questions = json.dumps({'questions': [APPROACH.model_dump(mode='json')]})
+            yield {0: DeltaToolCall(name='ask_user_question', json_args=questions)}
+        else:
+            yield 'child done'
+
+    def parent(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'asker', 'task': 'ask'})])
+        return ModelResponse(parts=[TextPart('parent done')])
+
+    asker = Agent(FunctionModel(stream_function=child), deps_type=object, name='asker', capabilities=capabilities)
+    agent = Agent(
+        FunctionModel(parent),
+        deps_type=object,
+        capabilities=[SubAgents(agents=[SubAgent(asker)], agent_folders=None)],
+    )
+    owner = DelegationTasks()
+    async with owner.opened():
+        with owner.bind():
+            assert (await agent.run('go', deps=None)).output == 'parent done'
+    (record,) = owner.records.values()
+    assert record.output == 'child done'
+    assert output.getvalue() == f'Task [{record.id[:8]}] requests your input\n'
+    # The pinned title names the task too, since streamed output can push that line away.
+    assert titles == [f'Task [{record.id[:8]}]: Approach']
+
+
 async def test_default_runner_reuses_editor_surface(question_pipe: PipeInput) -> None:
     output = io.StringIO()
     surface = PromptSurface(output=output, size=lambda: (80, 24))
@@ -257,7 +379,8 @@ async def test_default_runner_reuses_editor_surface(question_pipe: PipeInput) ->
     assert response.answers == (AskUserAnswer(header='Approach', selected=('Patch',)),)
     assert 'Earlier conversation' in output.getvalue()
     assert 'How should we do it?' in '\n'.join(surface.transcript.frame(width=80, height=24).rows)
-    assert '\x1b[?1049' not in output.getvalue()
+    assert LEAVE not in output.getvalue(), "the editor's panel stays on screen"
+    assert output.getvalue().count(ENTER) == 1
 
 
 def test_terminal_cleanup_on_input_failure() -> None:
@@ -270,7 +393,7 @@ def test_terminal_cleanup_on_input_failure() -> None:
     with pytest.raises(OSError, match='input closed'):
         QuestionMenu(question=APPROACH, position=1, total=1).run(console=console, key_source=fail)
     assert '\x1b[?25h' in output.getvalue()
-    assert '\x1b[r' in output.getvalue()
+    assert 'How should we do it?' in output.getvalue().rsplit(LEAVE, 1)[1]
 
 
 async def test_cancellation_joins_question_reader_before_releasing_screen(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -352,7 +475,7 @@ def test_option_description_preserves_explicit_line_breaks() -> None:
     )
     menu = QuestionMenu(question=question, position=1, total=1)
     rows = [Text.from_ansi(row).plain for row in menu.frame(width=80, height=24)]
-    assert rows[1:4] == ['> 1. First - First step', '  ', '  Second step']
+    assert rows[1:5] == ['Which sequence?', '> 1. First - First step', '  ', '  Second step']
 
 
 def test_wide_characters_wrap_without_losing_choice_text() -> None:
@@ -415,13 +538,14 @@ def test_custom_inline_lifecycle(keys: list[str], expected: tuple[str, ...] | st
     surface.write('Previous conversation\n')
     menu = QuestionMenu(question=APPROACH, position=1, total=1)
     assert menu.run(console=Console(file=surface), key_source=iter(keys).__next__) == expected
-    assert '\x1b[?1049' not in output.getvalue()
+    assert LEAVE not in output.getvalue()
     assert 'Previous conversation' in output.getvalue()
-    assert '\x1b[?25h' in output.getvalue()
+    assert MODES_OFF in output.getvalue(), 'input modes return to the editor, the screen stays'
 
 
-async def test_custom_answer_reaches_model_through_inline_picker(question_pipe: PipeInput) -> None:
-    question_pipe.send_text('3Use another approach\n')
+@pytest.mark.parametrize('enter', ['\r', '\n'])
+async def test_custom_answer_reaches_model_through_inline_picker(question_pipe: PipeInput, enter: str) -> None:
+    question_pipe.send_text(f'3Use another approach{enter}')
     screen = ScreenLog()
     output = io.StringIO()
     answerer = TerminalAnswerer(full_screen=screen, console=Console(file=output))
@@ -431,7 +555,8 @@ async def test_custom_answer_reaches_model_through_inline_picker(question_pipe: 
             return ModelResponse(parts=[ToolCallPart('ask_user_question', {'questions': [APPROACH.model_dump()]})])
         return ModelResponse(parts=[TextPart('done')])
 
-    result = await Agent(FunctionModel(respond), capabilities=[AskUser(answerer=answerer)]).run('go')
+    with anyio.fail_after(5):
+        result = await Agent(FunctionModel(respond), capabilities=[AskUser(answerer=answerer)]).run('go')
     returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
     assert returns[0].content == {'Approach': ['Use another approach']}
     assert screen.events == ['taken', 'released']
@@ -524,3 +649,53 @@ async def test_custom_decoder_cancellation_detaches_before_editor_resumes(
                 )
             assert scope.cancelled_caught
     assert screen.events == ['taken', 'attached', 'detached', 'released']
+
+
+def test_output_streamed_while_answering_stays_above_the_pinned_question() -> None:
+    """A delegated task's question once scrolled away under the parent's streamed thinking and tool calls."""
+    terminal = SurfaceTerminal(width=80, height=24)
+    surface = PromptSurface(output=terminal, size=lambda: (80, 24))
+    surface.write('Earlier conversation\n')
+    console = Console(file=surface, width=80, height=24, color_system=None)
+    seen: list[list[str]] = []
+
+    def keys() -> Generator[str]:
+        for index in range(40):
+            surface.write(f'streamed {index}\n')
+        yield ''
+        seen.append(terminal.lines())
+        yield '2'
+
+    menu = QuestionMenu(question=APPROACH, position=1, total=1)
+    assert menu.run(console=console, key_source=keys().__next__) == ('Patch',)
+    (screen,) = seen
+    assert screen[-6:] == [
+        'Approach',
+        'How should we do it?',
+        '> 1. Refactor - Rewrite the module',
+        '  2. Patch',
+        '  3. Other (type answer)',
+        'Up/Down move - number/Enter select - Esc decline',
+    ]
+    assert screen.index('streamed 39') < screen.index('Approach')
+    assert screen.count('How should we do it?') == 1
+    # Once answered, the transcript records the question after what streamed meanwhile.
+    assert [line for line in terminal.lines() if line][-2:] == ['streamed 39', 'How should we do it?']
+
+
+async def test_wheel_and_page_keys_scroll_the_transcript_while_answering(question_pipe: PipeInput) -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    surface = PromptSurface(output=terminal, size=lambda: (80, 24))
+    for index in range(60):
+        surface.write(f'line {index}\n')
+    # Wheel up, a click, a drag that copies, then a page back and forth: none of them type into the answer.
+    question_pipe.send_text('3\x1b[<64;10;5M\x1b[<0;10;5M\x1b[<0;1;1M\x1b[<32;7;1M\x1b[<0;7;1m\x1b[5~\x1b[6~x\r')
+    # The fake terminal is a TTY, so an auto colour system would downgrade, and Rich caches that
+    # downgrade on the shared parsed style, leaking into later truecolor tests on this worker.
+    console = Console(file=surface, width=80, height=24, color_system=None)
+    response = await TerminalAnswerer(full_screen=ScreenLog(), console=console)(AskUserRequest(questions=(APPROACH,)))
+    assert response.answers == (AskUserAnswer(header='Approach', custom_answer='x'),)
+    assert surface.view.anchor is not None, 'the view stays where the user scrolled'
+    assert '\x1b]52;c;' in terminal.getvalue(), 'the drag copied the transcript'
+    assert 'How should we do it?' not in terminal.lines()
+    assert 'line 50' in terminal.lines()

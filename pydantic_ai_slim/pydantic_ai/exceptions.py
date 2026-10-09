@@ -1,9 +1,8 @@
 from __future__ import annotations as _annotations
 
 import json
-import sys
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
 
@@ -16,12 +15,6 @@ from ._warnings import (
     PydanticAIDeprecationWarning as PydanticAIDeprecationWarning,
     UsageExtractionFailedWarning as UsageExtractionFailedWarning,
 )
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
-
 
 if TYPE_CHECKING:
     from .messages import ModelMessage, ModelResponse, RetryPromptPart, ToolReturnPart
@@ -276,9 +269,7 @@ class RunCancelled(AgentRunError):
     asked it to. External cancellation of the task running the agent (`asyncio.Task.cancel()`,
     a timeout scope, workflow cancellation under durable execution) is infrastructure-level and
     keeps propagating as `asyncio.CancelledError` instead — it is never translated into this
-    exception, and when both race, the external cancellation wins. (On Python 3.10, which lacks
-    `Task.uncancel()`, the race cannot be disambiguated and a requested first-party cancellation
-    wins instead.)
+    exception, and when both race, the external cancellation wins.
 
     Everything the run completed before the cancellation took effect — including the partial
     response of an interrupted stream and the results of tool calls that finished — is preserved
@@ -329,7 +320,8 @@ class RunCancelled(AgentRunError):
         `RunCancelled.from_cancellation(exc)` to access the partial run state attached by Pydantic
         AI. This also works with the `TimeoutError` raised by `asyncio.timeout()` or
         `asyncio.wait_for()`, whose exception chain contains the original `CancelledError`, and with
-        the `KeyboardInterrupt` raised by pressing Ctrl-C during `agent.run_sync()`. An
+        the `KeyboardInterrupt` raised by pressing Ctrl-C during `agent.run_sync()` or
+        `agent.run_stream_sync()`. An
         external `CancelledError` must keep propagating for timeouts and task groups to tear down
         correctly, so re-raise it after capturing the state rather than returning from the handler;
         only a first-party `RunCancelled` is yours to consume.
@@ -337,11 +329,8 @@ class RunCancelled(AgentRunError):
         Passing a `RunCancelled` directly returns the same instance, providing uniform handling for
         first-party and external cancellation paths.
 
-        Python 3.11+ preserves the exception instance across an `await task` boundary. Python 3.10
-        recreates the `CancelledError` there, but chains the original exception — and the attached
-        run state — via `__context__`, which this method traverses; the chain is attached only to
-        the first `await` of the cancelled task, so later awaits of the same task see an unchained
-        exception. Use `capture_run_messages()` as the fallback when only message history is needed.
+        This method traverses `__context__` to find attached run state. Use
+        `capture_run_messages()` as the fallback when only message history is needed.
         """
         pending = [exc]
         visited: set[int] = set()
@@ -605,10 +594,10 @@ class ModelHTTPError(ModelAPIError):
             assert isinstance(retry_time, datetime)
             # asctime-date format (RFC 9110 §5.6.7) carries no timezone; treat as UTC.
             if retry_time.tzinfo is None:
-                retry_time = retry_time.replace(tzinfo=timezone.utc)
-            wait = (retry_time - datetime.now(timezone.utc)).total_seconds()
+                retry_time = retry_time.replace(tzinfo=UTC)
+            wait = (retry_time - datetime.now(UTC)).total_seconds()
             return max(0.0, wait)
-        except (ValueError, TypeError, AssertionError):
+        except (ValueError, TypeError, AssertionError, OverflowError):
             return None
 
 

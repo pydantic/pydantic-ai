@@ -16,13 +16,14 @@ from rich.syntax import Syntax
 from rich.text import Text
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
 from pydantic_ai.models import KnownModelName
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
-agent = Agent()
+agent = Agent(capabilities=[Caching()])
 
 # models to try, and the appropriate env var
 models: list[tuple[KnownModelName, str]] = [

@@ -5,9 +5,7 @@ from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 from itertools import chain
-from typing import Any, TypeAlias
-
-from typing_extensions import assert_never, overload
+from typing import Any, TypeAlias, assert_never, overload
 
 from .. import _utils, usage
 from .._instrumentation import get_instructions

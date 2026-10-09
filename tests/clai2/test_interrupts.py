@@ -2,7 +2,6 @@
 
 import asyncio
 import signal
-import sys
 
 import pytest
 
@@ -46,8 +45,7 @@ async def test_interrupt_cleans_up_and_preserves_parent(double: bool) -> None:
     assert signal.getsignal(signal.SIGINT) == original
     current = asyncio.current_task()
     assert current is not None
-    if sys.version_info >= (3, 11):  # 3.10 has no cancellation counter to leak.
-        assert current.cancelling() == 0
+    assert current.cancelling() == 0
 
     async def next_operation() -> None:
         return

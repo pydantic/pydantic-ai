@@ -8,10 +8,10 @@ history processors can recognize `run_code` with `isinstance` instead of matchin
 from __future__ import annotations
 
 from dataclasses import KW_ONLY, dataclass
-from typing import Annotated
+from typing import Annotated, NotRequired
 
 from pydantic import Field, TypeAdapter, ValidationError
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai.messages import ToolCallPart
 

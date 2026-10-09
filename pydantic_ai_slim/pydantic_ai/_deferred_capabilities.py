@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 from dataclasses import KW_ONLY, dataclass
-from typing import TYPE_CHECKING, Annotated, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Literal, NotRequired, cast
 
 import pydantic
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 # Imported late by `messages.py`; avoid imports that would re-enter it.
 from .messages import (

@@ -36,6 +36,10 @@ class OpenAIOptions:
     transcription: bool = True
     dialect: Dialect = 'openai'
     """Which provider's model the session connects to: OpenAI, Azure OpenAI, or xAI Grok Voice."""
+    vad_interrupts: bool = True
+    """Server VAD's `interrupt_response`: whether the user starting to speak cancels the active response."""
+    vad_responds: bool = True
+    """Server VAD's `create_response`: whether the user stopping answers their turn (xAI answers regardless)."""
 
 
 class OpenAISimulation(Simulation):
@@ -61,10 +65,6 @@ class OpenAISimulation(Simulation):
         """How many requests for a response were cancelled while the connection was sending them."""
         if self.options.latency:
             self.server.network.latency = lambda: self.rng.choice((0, 0, 0, 1, 2, 4))
-
-    @property
-    def failed_sends(self) -> list[tuple[str | None, str | None, SendFault]]:
-        return self.server.network.failed_sends
 
     @property
     def truth(self) -> GroundTruth:
@@ -124,6 +124,17 @@ class OpenAISimulation(Simulation):
             'input_transcription_model': 'gpt-4o-mini-transcribe' if self.openai.transcription else None,
         }
         settings['reconnect'] = {'max_attempts': 2, 'base_delay': 0.1, 'jitter': False}
+        vad = self.openai
+        if (
+            vad.turn_detection == 'server_vad'
+            and vad.dialect != 'xai'
+            and not (vad.vad_interrupts and vad.vad_responds)
+        ):
+            settings['openai_turn_detection'] = {
+                'type': 'server_vad',
+                'interrupt_response': vad.vad_interrupts,
+                'create_response': vad.vad_responds,
+            }
         return settings
 
     @contextmanager
@@ -187,8 +198,8 @@ class OpenAISimulation(Simulation):
         self._after_server(deliver, ticks)
 
     @step
-    def speech_stop(self, deliver: bool = True, ticks: int | None = None) -> None:
-        self.server.speech_stop()
+    def speech_stop(self, deliver: bool = True, ticks: int | None = None, commit: bool = True) -> None:
+        self.server.speech_stop(commit=commit)
         self._after_server(deliver, ticks)
 
     @step
@@ -241,12 +252,20 @@ class OpenAISimulation(Simulation):
 
 
 def _options(dialect: Dialect) -> st.SearchStrategy[OpenAIOptions]:
-    return st.builds(
+    # The VAD flags only matter under server VAD, and xAI ignores them.
+    vad_flag = st.just(True) if dialect == 'xai' else st.booleans()
+    manual = st.builds(
+        OpenAIOptions, turn_detection=st.just('manual'), transcription=st.booleans(), dialect=st.just(dialect)
+    )
+    server_vad = st.builds(
         OpenAIOptions,
-        turn_detection=st.sampled_from(['server_vad', 'manual']),
+        turn_detection=st.just('server_vad'),
         transcription=st.booleans(),
         dialect=st.just(dialect),
+        vad_interrupts=vad_flag,
+        vad_responds=vad_flag,
     )
+    return manual | server_vad
 
 
 class OpenAIMachine(ManualTurnMachine):  # pragma: lax no cover (driven only by randomized exploration)
@@ -339,9 +358,11 @@ class OpenAIMachine(ManualTurnMachine):  # pragma: lax no cover (driven only by 
         self.run(lambda: self.openai_sim.speech_start(late=late, deliver=deliver, ticks=ticks))
 
     @precondition(lambda self: (session := self.server_session()) is not None and session.speaking is not None)
-    @rule(deliver=st.booleans(), ticks=TICKS)
-    def speech_stop(self, deliver: bool, ticks: int | None) -> None:
-        self.run(lambda: self.openai_sim.speech_stop(deliver=deliver, ticks=ticks))
+    @rule(deliver=st.booleans(), ticks=TICKS, commit=st.booleans())
+    def speech_stop(self, deliver: bool, ticks: int | None, commit: bool) -> None:
+        # xAI adds a turn's item when it hears speech start, so a stop it takes back is not modeled there.
+        commit = commit or self.openai_sim.openai.dialect == 'xai'
+        self.run(lambda: self.openai_sim.speech_stop(deliver=deliver, ticks=ticks, commit=commit))
 
     @precondition(lambda self: (session := self.server_session()) is not None and bool(session.pending_transcripts))
     @rule(fail=st.booleans(), deliver=st.booleans(), ticks=TICKS)

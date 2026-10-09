@@ -4,11 +4,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from math import isfinite
-from typing import Annotated, Literal, cast
+from typing import Annotated, ClassVar, Literal, assert_never, cast
 
 import httpx2
 from pydantic import Field, TypeAdapter, ValidationError
-from typing_extensions import assert_never
 
 from .._http import to_httpx2_timeout
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
@@ -80,6 +79,9 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
 
     # `max_choice_options` and `max_score_levels` stay `None`: limits belong to the model behind the URL, so they come
     # from the profile for the model name, and where it sets none the API refuses a request over them itself.
+
+    # The API's schema requires `instructions` on every question, even one whose options say what it asks.
+    requires_instructions: ClassVar[bool] = True
 
     _model_name: SystemOneModelName = field(repr=False)
     _provider: Provider[httpx2.AsyncClient] = field(repr=False)

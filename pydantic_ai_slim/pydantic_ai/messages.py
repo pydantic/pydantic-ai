@@ -25,18 +25,19 @@ from typing import (
     NamedTuple,
     TypeAlias,
     TypeGuard,
+    assert_never,
     cast,
     get_type_hints,
     overload,
 )
-from urllib.parse import urlparse
+from urllib.parse import unquote_to_bytes, urlparse
 
 import pydantic
 import pydantic_core
 from genai_prices import types as genai_types
 from pydantic.alias_generators import to_snake
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, TypeVar, assert_never
+from typing_extensions import TypeAliasType, TypeVar
 
 from pydantic_ai._genai_prices import calculate_price_for_usage
 
@@ -73,8 +74,6 @@ _mime_types.read_windows_registry()
 for file in mimetypes.knownfiles:
     if os.path.isfile(file):
         _mime_types.read(file)  # pragma: lax no cover
-# TODO check for added mimetypes in Python 3.11 when dropping support for Python 3.10:
-# https://github.com/python/cpython/blob/3.11/Lib/mimetypes.py
 # Document types
 _mime_types.add_type('application/rtf', '.rtf')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
@@ -317,6 +316,31 @@ class FileUrl(ABC):
         distinguish multiple files.
         """
         return self._identifier or _multi_modal_content_identifier(self.url)
+
+    @pydantic.model_serializer(mode='wrap')
+    def _serialize(self, handler: pydantic.SerializerFunctionWrapHandler, info: pydantic.SerializationInfo):
+        # Left unannotated: a return annotation would replace the serialization JSON schema with its own.
+        try:
+            return handler(self)
+        except ValueError:
+            try:
+                self.media_type
+            except ValueError:
+                pass
+            else:
+                raise
+        # A URL with no usable extension and no given media type: `media_type` raises, and the computed field
+        # reads it before any serializer of its own could step in. Dumping must not raise, or a history that
+        # ran can't be saved or sent to a frontend (https://github.com/pydantic/pydantic-ai/issues/8388).
+        # So serialize a stand-in that has a media type and write `None` in its place, which validates back
+        # into an equal item. A dump that leaves `media_type` out never reads the property, so it only gets
+        # here when something else failed too, and the stand-in's dump raises that again.
+        serialized: dict[str, object] = handler(replace(self, _media_type='application/octet-stream'))
+        if info.exclude_none:
+            del serialized['media_type']
+        else:
+            serialized['media_type'] = None
+        return serialized
 
     @abstractmethod
     def _infer_media_type(self) -> str:
@@ -643,7 +667,7 @@ class BinaryContent:
         if ';base64,' not in body:
             raise ValueError('Data URI must be base64-encoded (expected ";base64," marker)')
         media_type, data = body.split(';base64,', 1)
-        return cls.narrow_type(cls(data=base64.b64decode(data), media_type=media_type))
+        return cls.narrow_type(cls(data=base64.b64decode(unquote_to_bytes(data)), media_type=media_type))
 
     @classmethod
     def from_path(cls, path: PathLike[str]) -> BinaryContent:
@@ -1260,22 +1284,18 @@ class _RequireUrlMediaType:
     """The `MultiModalContent` arm of `ToolReturnContent`, with an explicit `media_type` required of its URL items.
 
     A tool return is arbitrary user data, so this arm has to separate a multimodal item we serialized
-    from a mapping a tool happened to build. For the four [`FileUrl`][pydantic_ai.messages.FileUrl]
-    kinds, `media_type` draws that line, because those are the items whose media type the URL alone
-    cannot always supply: `FileUrl.media_type` infers one from the URL when it was given none, and a
-    URL with no usable extension raises `Could not infer media type` — on the *dump*, not on the load
-    that built the object, so a history that had loaded cleanly could no longer be saved
-    ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)). An item reconstructed here
-    brings its own media type and never reaches that inference, and a URL mapping without one was
-    never dumped by us: it stays a plain `Mapping` and reaches the caller with the keys its tool put
-    in it.
+    from a mapping a tool happened to build ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)).
+    For the four [`FileUrl`][pydantic_ai.messages.FileUrl] kinds, the `media_type` key draws that line,
+    because a default dump of ours always writes it: the media type given or inferred from the URL, or
+    `null` for a URL with no usable extension ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)),
+    which reconstructs into an item with no media type and dumps `null` again. A URL mapping without the
+    key stays a plain `Mapping` and reaches the caller with the keys its tool put in it.
 
-    Nothing is required of the other two kinds, which cannot fail that way and so keep rehydrating
-    from the fields they declare: `media_type` is a required field on `BinaryContent`, and
-    `UploadedFile.media_type` falls back to `application/octet-stream` instead of raising.
+    Nothing is required of the other two kinds, which keep rehydrating from the fields they declare:
+    `media_type` is a required field on `BinaryContent`, and `UploadedFile.media_type` falls back to
+    `application/octet-stream`.
 
-    The requirement is a *non-empty* string. `FileUrl` infers whenever `_media_type` is falsy, so `''`
-    would reconstruct an item that raises on dump after all, and no dump of ours writes one.
+    The key has to hold a *non-empty* string or `null`. No dump of ours writes `''`.
 
     The check is chained onto each URL choice of the tagged union rather than written as a validator,
     because any Python callable on this union is called once per node of the decoded payload — the cost
@@ -1306,25 +1326,25 @@ class _RequireUrlMediaType:
         for kind in _FILE_URL_KINDS:
             choice = schema['choices'][kind]
             assert isinstance(choice, dict), choice
-            schema['choices'][kind] = pydantic_core.core_schema.chain_schema([cls._names_a_media_type(), choice])
+            schema['choices'][kind] = pydantic_core.core_schema.chain_schema([cls._carries_media_type(), choice])
         return schema
 
     @staticmethod
-    def _names_a_media_type() -> pydantic_core.CoreSchema:
-        mapping_naming_its_media_type = pydantic_core.core_schema.typed_dict_schema(
+    def _carries_media_type() -> pydantic_core.CoreSchema:
+        mapping_carrying_media_type = pydantic_core.core_schema.typed_dict_schema(
             {
                 'media_type': pydantic_core.core_schema.typed_dict_field(
-                    pydantic_core.core_schema.str_schema(min_length=1)
+                    pydantic_core.core_schema.nullable_schema(pydantic_core.core_schema.str_schema(min_length=1))
                 )
             },
             extra_behavior='allow',
         )
         return pydantic_core.core_schema.json_or_python_schema(
-            json_schema=mapping_naming_its_media_type,
+            json_schema=mapping_carrying_media_type,
             # An instance is already one of ours and reaches the arm as itself, not as a mapping.
             python_schema=pydantic_core.core_schema.union_schema(
                 [
-                    mapping_naming_its_media_type,
+                    mapping_carrying_media_type,
                     pydantic_core.core_schema.is_instance_schema(FileUrl),
                 ],
                 mode='left_to_right',
@@ -3458,28 +3478,35 @@ def _dangling_tool_calls_by_response(messages: list[ModelMessage]) -> dict[int, 
 
     Matching is an ordered walk: a tool result (`_is_tool_result_part` — a `ToolReturnPart` or
     *tool-bound* `RetryPromptPart`; plain validation feedback doesn't answer a call even if its
-    `tool_call_id` collides) only answers a call that is open (produced by an earlier response and
-    not already answered) at that point. An out-of-place result — one preceding its call, a
+    `tool_call_id` collides) answers the oldest open call with a matching ID, so calls repeating an
+    ID within one response are answered FIFO. An out-of-place result — one preceding its call, a
     duplicate, or one reusing the ID of an already-answered call — doesn't mask a genuinely
-    dangling call.
+    dangling call. An open call whose ID is reused by a call from a later response can no longer be
+    answered — any later result answers the new call instead — so it's dangling.
     """
-    open_calls: dict[str, tuple[int, ToolCallPart]] = {}
+    open_calls: dict[str, list[tuple[int, ToolCallPart]]] = {}
     dangling_by_response: dict[int, list[ToolCallPart]] = {}
     for index, message in enumerate(messages):
         if isinstance(message, ModelResponse):
             for part in message.parts:
                 if isinstance(part, ToolCallPart):
-                    if shadowed := open_calls.get(part.tool_call_id):
-                        # A new call reusing the ID of an open call means the open call can no
-                        # longer be answered: any later result answers the new call instead.
-                        dangling_by_response.setdefault(shadowed[0], []).append(shadowed[1])
-                    open_calls[part.tool_call_id] = (index, part)
+                    pending = open_calls.get(part.tool_call_id)
+                    if pending and pending[-1][0] != index:
+                        # A call reusing the ID of calls from an earlier response means those calls
+                        # can no longer be answered: any later result answers the new call instead.
+                        for shadowed_index, shadowed in pending:
+                            dangling_by_response.setdefault(shadowed_index, []).append(shadowed)
+                        pending.clear()
+                    open_calls.setdefault(part.tool_call_id, []).append((index, part))
         elif isinstance(message, ModelRequest):  # pragma: no branch
             for part in message.parts:
                 if _is_tool_result_part(part):
-                    open_calls.pop(part.tool_call_id, None)
-    for response_index, call in open_calls.values():
-        dangling_by_response.setdefault(response_index, []).append(call)
+                    pending = open_calls.get(part.tool_call_id)
+                    if pending:
+                        pending.pop(0)
+    for calls in open_calls.values():
+        for response_index, call in calls:
+            dangling_by_response.setdefault(response_index, []).append(call)
     return dangling_by_response
 
 
@@ -3582,10 +3609,11 @@ def _repair_dangling_tool_calls(
     are the live frontier that run resumption and `deferred_tool_results` may still answer, and a
     trailing unparsable-args call is left for local args validation to turn into a retry prompt.
 
-    Matching is an ordered walk: a result only answers a call that is open (produced by an earlier
-    response and not already answered) at that point. An out-of-place result — one preceding its
-    call, a duplicate, or one reusing the ID of an already-answered call — doesn't mask a genuinely
-    dangling call; such orphaned results themselves are not repaired.
+    Matching is an ordered walk: a result only answers an open call (produced by an earlier response
+    and not already answered) at that point — the oldest open call with a matching ID, so calls
+    repeating an ID within one response bind FIFO. An out-of-place result — one preceding its call, a
+    duplicate, or one reusing the ID of an already-answered call — doesn't mask a genuinely dangling
+    call; such orphaned results themselves are not repaired.
 
     The repair is deterministic and idempotent: synthesized parts derive their timestamp from the
     response they repair and contain no wall-clock or random data, so repairing the same history
