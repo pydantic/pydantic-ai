@@ -298,7 +298,7 @@ def _typecheck_examples(examples: Sequence[CodeExample], work_dir: Path) -> dict
     environments: dict[str, list[dict[str, Any]]] = {}
     for index, example in enumerate(examples):
         prefix_settings = example.prefix_settings()
-        python_version = prefix_settings.get('py', '3.10')
+        python_version = prefix_settings.get('py', '3.11')
         example_dir = work_dir / f'py{python_version}' / str(index)
         example_dir.mkdir(parents=True)
         for req in filter(None, prefix_settings.get('requires', '').split(',')):
@@ -553,7 +553,7 @@ def test_docs_examples(
 
     _check_python_version(python_version, max_python_version)
 
-    ruff_target_version: str = 'py310'
+    ruff_target_version: str = 'py311'
     if python_version:
         python_version_info = tuple(int(v) for v in python_version.split('.'))
         ruff_target_version = f'py{python_version_info[0]}{python_version_info[1]}'

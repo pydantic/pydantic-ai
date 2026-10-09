@@ -14,12 +14,13 @@ from typing import (
     Generic,
     Literal,
     Protocol,
+    Self,
     cast,
     runtime_checkable,
 )
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
-from typing_extensions import Self, TypeVar
+from typing_extensions import TypeVar
 
 from pydantic_ai import CancellationToken, DeferredToolRequests, DeferredToolResults, _instructions
 from pydantic_ai._warnings import PydanticAIDeprecationWarning

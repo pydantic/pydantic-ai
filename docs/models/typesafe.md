@@ -62,7 +62,7 @@ print(result.output)
 Give an agent an output type, and Jev answers every field of it in one request, each with its own confidence:
 
 ```python {title="triage_with_jev.py"}
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -70,7 +70,7 @@ from pydantic import BaseModel, ConfigDict
 from pydantic_ai import Agent, BoolCriteria, UseEnumMemberDocstrings
 
 
-class Area(UseEnumMemberDocstrings, str, Enum):
+class Area(UseEnumMemberDocstrings, StrEnum):
     billing = 'billing'
     """Charges, invoices, plans and payment methods."""
 
