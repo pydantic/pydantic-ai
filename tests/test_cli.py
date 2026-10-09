@@ -1593,9 +1593,15 @@ def test_clai_intro_shows_banner(capfd: CaptureFixture[str], mocker: MockerFixtu
 
 
 def test_clai_intro_shows_cached_updates_then_starts_the_check(
-    capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, terminal_clai: None
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    env: TestEnv,
+    terminal_clai: None,
 ):
-    env.remove('PYDANTIC_AI_NO_VERSION_CHECK')
+    # `monkeypatch` rather than `env`, which would restore the value `terminal_clai` set on teardown.
+    monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK')
+    monkeypatch.delenv('DO_NOT_TRACK', raising=False)
     env.set('OPENAI_API_KEY', 'test')
     mocker.patch('pydantic_ai._cli.ask_agent')
     mocker.patch.object(_version_check, 'cached_updates', return_value=[('pydantic-ai', '2.46.0')])
@@ -1868,7 +1874,7 @@ def test_run_chat_shows_banner_for_a_users_own_agent(mocker: MockerFixture, tmp_
 def test_run_chat_lays_the_banner_out_for_the_terminal_it_has(
     mocker: MockerFixture, tmp_path: Path, terminal_clai: None
 ):
-    """A pane too narrow for the text and logo gives all of its room to the text."""
+    """A pane the banner outruns is one the terminal breaks itself, straight through the logo."""
     console, io = _chat_console(width=64)
     agent = Agent(TestModel(), name='support_agent')
 
@@ -1877,7 +1883,7 @@ def test_run_chat_lays_the_banner_out_for_the_terminal_it_has(
         anyio.run(run_chat, True, agent, console, 'monokai', 'pydantic-ai', tmp_path)
 
     banner = _plain(io.getvalue()).partition('Exiting')[0]
-    assert LOGO_MARKER not in banner
+    assert LOGO_MARKER in banner
     assert max(map(len, banner.splitlines())) <= 64
 
 

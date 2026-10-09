@@ -29,6 +29,8 @@ _DETECT_CODING_AGENT = _display.detect_coding_agent
 @pytest.fixture(autouse=True)
 def version_check_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
+    # Where the cache lives on Windows, so that no platform's tests reach the real one.
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
     monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK', raising=False)
     monkeypatch.delenv('DO_NOT_TRACK', raising=False)
     monkeypatch.delenv('AI_AGENT', raising=False)
@@ -442,6 +444,7 @@ def test_wrong_cache_types_are_a_miss(contents: str, cache_file: Path):
 def test_cache_paths_follow_the_platform(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.delenv('XDG_CACHE_HOME')
     monkeypatch.setattr(Path, 'home', lambda: tmp_path / 'home')
+    monkeypatch.setattr(_version_check, 'os', SimpleNamespace(name='posix', environ=os.environ))
     assert _version_check._cache_file() == (  # pyright: ignore[reportPrivateUsage]
         tmp_path / 'home' / '.cache' / 'pydantic-ai' / 'version-check.json'
     )

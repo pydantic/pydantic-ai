@@ -36,11 +36,13 @@ navigation:
         slug: "overview/troubleshooting"
         aliases:
           - "troubleshooting"
-      - page: "Network requests"
+      - page: "Network Requests"
         path: "network-requests.md"
         slug: "overview/network-requests"
         aliases:
           - "network-requests"
+          # What the banner links to: short enough not to widen it.
+          - "requests"
   - section: "Core Concepts"
     slug: ""
     contents:

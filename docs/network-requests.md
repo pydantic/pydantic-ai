@@ -1,4 +1,4 @@
-# Network requests
+# Network Requests
 
 This page lists every request Pydantic AI makes on its own initiative, what each one carries, and how to turn it off. It doesn't cover the requests you configure: to model providers, MCP servers, or from your own tools.
 
@@ -18,7 +18,7 @@ For example, Pydantic AI 2.45.0 sends `User-Agent: pydantic-ai/2.45.0`.
 
 Whenever the banner is displayed, Pydantic AI checks `https://info.pydantic.info/versions.json` in a background thread. The endpoint lists the latest versions of Pydantic's packages, grouped by registry. Pydantic AI reads only `pydantic-ai` and `pydantic-ai-harness` from the `pypi` registry and ignores unknown registries, packages, and package fields. The result appears in the next banner, never the banner that starts the request.
 
-The check runs at most once per 24 hours per machine. For an agent run, the banner is displayed on the first run in a process only when instrumentation is not configured and a terminal or coding agent is present. `clai` displays its intro banner when a terminal or coding agent is present, including when instrumentation is configured.
+The check runs at most once per 24 hours per user cache directory, so each user on a machine, and each container started with a fresh home directory, makes its own. For an agent run, the banner is displayed on the first run in a process only when instrumentation is not configured and a terminal or coding agent is present. `clai` displays its intro banner when a terminal or coding agent is present, including when instrumentation is configured.
 
 Neither banner is displayed:
 

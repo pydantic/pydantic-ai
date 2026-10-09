@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import platform
 import re
 import sys
 from collections.abc import Sequence
-from importlib import metadata
 from itertools import zip_longest
 from textwrap import wrap
 from threading import Lock
@@ -80,10 +78,12 @@ laid out for, so a reworded line or a wider logo can't quietly cost a link.
 """
 _HIDE_LINE = 'goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1'
 _UPDATE_PREFIX = 'update available: '
-_VERSION_CHECK_LINE = 'checks for new versions daily: https://pydantic.dev/docs/ai/network-requests/'
+_VERSION_CHECK_LINE = 'checks for new versions daily: https://pydantic.dev/docs/ai/requests/'
 """Says that the check happens, wherever it does, and where to read what it sends and how to stop it.
 
 Short enough to stay on one line beside the logo: the banner is already as tall as it should get.
+The URL is an alias kept no longer than `_OTEL_LINE`'s, so that adding this line can't raise
+`_MIN_TEXT_WIDTH` and change the layout for someone who has turned the check off and never sees it.
 """
 
 _MIN_TEXT_WIDTH = len(_INFO_INDENT) + max(
@@ -487,18 +487,8 @@ def _version_line() -> str:
     # for mid-run, stays importable from anywhere in the package without an import cycle.
     from . import __version__
 
-    harness_version = None
-    try:
-        if importlib.util.find_spec('pydantic_ai_harness') is not None:
-            harness_version = metadata.version('pydantic-ai-harness')
-    except Exception:
-        # Best-effort enrichment: the harness is named only when it can be found and named without
-        # trouble. `find_spec` raises for a module whose `__spec__` is None and for anything a
-        # custom importer objects to, and the distribution can be missing or unreadable.
-        pass
-
     version = f'pydantic-ai v{__version__}'
-    if harness_version is not None:
+    if (harness_version := _version_check.harness_version()) is not None:
         version += f' • pydantic-ai-harness v{harness_version}'
     return version + f' • Python {platform.python_version()}'
 

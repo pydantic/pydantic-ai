@@ -178,9 +178,18 @@ def _installed_versions() -> dict[str, str]:
     from . import __version__
 
     installed = {'pydantic-ai': __version__}
-    if (harness_version := _distribution_version('pydantic_ai_harness', 'pydantic-ai-harness')) is not None:
-        installed['pydantic-ai-harness'] = harness_version
+    if (harness := harness_version()) is not None:
+        installed['pydantic-ai-harness'] = harness
     return installed
+
+
+def harness_version() -> str | None:
+    """The installed Pydantic AI Harness version, or `None` when it isn't installed or can't be read.
+
+    The one lookup the banner, the update notice and the `User-Agent` share, so that the three can't
+    disagree about which harness is installed.
+    """
+    return _distribution_version('pydantic_ai_harness', 'pydantic-ai-harness')
 
 
 def _distribution_version(module: str, distribution: str) -> str | None:
@@ -188,6 +197,9 @@ def _distribution_version(module: str, distribution: str) -> str | None:
         if importlib.util.find_spec(module) is not None:
             return metadata.version(distribution)
     except Exception:
+        # Best-effort enrichment: a package is named only when it can be found and named without
+        # trouble. `find_spec` raises for a module whose `__spec__` is None and for anything a
+        # custom importer objects to, and the distribution can be missing or unreadable.
         pass
     return None
 
@@ -200,8 +212,8 @@ def _user_agent() -> str:
     user_agent = (
         f'{models.get_user_agent()} (Python {platform.python_version()}; {platform.system()}; {platform.machine()})'
     )
-    if (harness_version := _distribution_version('pydantic_ai_harness', 'pydantic-ai-harness')) is not None:
-        user_agent += f' pydantic-ai-harness/{harness_version}'
+    if (harness := harness_version()) is not None:
+        user_agent += f' pydantic-ai-harness/{harness}'
     if (prices_version := _distribution_version('genai_prices', 'genai-prices')) is not None:
         user_agent += f' genai-prices/{prices_version}'
 

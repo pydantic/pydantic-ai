@@ -89,6 +89,8 @@ def reset_banner(monkeypatch: pytest.MonkeyPatch):
     # Existing banner tests opt out so none can start a thread, touch a cache, or make a request.
     # Tests for the version check remove this explicitly.
     monkeypatch.setenv('PYDANTIC_AI_NO_VERSION_CHECK', '1')
+    # A test that turns the check on gets it on, whatever the developer's shell says.
+    monkeypatch.delenv('DO_NOT_TRACK', raising=False)
     monkeypatch.delenv('CI', raising=False)
     # This suite is the one place a test run may show a banner, and the only place that decides
     # whether an agent is watching — the agent running the suite doesn't get to answer that.
@@ -280,7 +282,7 @@ def test_the_observability_links_each_survive_on_one_line(render: Callable[..., 
         [
             'https://pydantic.dev/ai-setup.md',
             'https://pydantic.dev/docs/ai/logfire/#otel',
-            'https://pydantic.dev/docs/ai/network-requests/',
+            'https://pydantic.dev/docs/ai/requests/',
         ]
     )
     assert max(map(len, lines)) <= _MIN_TEXT_WIDTH
@@ -294,7 +296,7 @@ def test_the_observability_links_each_survive_on_one_line(render: Callable[..., 
 
 def test_the_narrowest_widths_the_banner_lays_itself_out_in():
     """Pinned so that rewording a line into a longer one shows up as the cost in room that it is."""
-    assert (_MIN_TEXT_WIDTH, _MIN_WIDTH_FOR_LOGO) == snapshot((48, 65))
+    assert (_MIN_TEXT_WIDTH, _MIN_WIDTH_FOR_LOGO) == snapshot((44, 61))
 
 
 def test_render_banner_wraps_the_text_column_to_a_narrow_terminal(render: Callable[..., str]):
@@ -329,14 +331,15 @@ HEADING
 agent: support_agent • model: openai:gpt-5.6-sol • tools: 2
   capabilities: 0
 
-observability: off — see every model and tool call live, with
-  cost
+observability: off — see every model and tool call live,
+  with cost
   set it up free with Logfire and a GitHub login:
   https://pydantic.dev/ai-setup.md
   or use any OpenTelemetry backend:
   https://pydantic.dev/docs/ai/logfire/#otel
 
-goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
+goes away once observability is on — or
+  PYDANTIC_AI_NO_BANNER=1\
 """)
     assert _display._LOGO_LINES[-1] not in banner  # pyright: ignore[reportPrivateUsage]
     assert max(map(len, banner.splitlines())) <= _MIN_WIDTH_FOR_LOGO - 1
@@ -382,7 +385,7 @@ def test_render_banner_with_one_update_and_version_check(render: Callable[..., s
    /___.___\\
   /    |    \\    agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
 /      |      \\
-`---.._|_..---'  checks for new versions daily: https://pydantic.dev/docs/ai/network-requests/\
+`---.._|_..---'  checks for new versions daily: https://pydantic.dev/docs/ai/requests/\
 """)
 
 
@@ -396,7 +399,7 @@ def test_render_banner_with_two_colored_updates(render: Callable[..., str]):
 
     assert 'update available: \x1b[32mpydantic-ai v2.46.0\x1b[0m' in banner
     assert '• \x1b[32mpydantic-ai-harness v0.8.0\x1b[0m' in banner
-    assert banner.endswith('https://pydantic.dev/docs/ai/network-requests/')
+    assert banner.endswith('https://pydantic.dev/docs/ai/requests/')
 
 
 def test_render_banner_with_updates_at_a_narrow_width(render: Callable[..., str]):
@@ -412,11 +415,12 @@ HEADING
 update available: pydantic-ai v2.46.0 •
   pydantic-ai-harness v0.8.0
 
-agent: support_agent • model: openai:gpt-5.6-sol
-  tools: 2 • capabilities: 0
+agent: support_agent
+  model: openai:gpt-5.6-sol • tools: 2
+  capabilities: 0
 
 checks for new versions daily:
-  https://pydantic.dev/docs/ai/network-requests/\
+  https://pydantic.dev/docs/ai/requests/\
 """)
     assert max(map(len, banner.splitlines())) <= _MIN_TEXT_WIDTH
 
@@ -497,7 +501,7 @@ def test_displayed_banner_shows_cached_updates_then_starts_the_check(
     display_banner()
 
     assert 'update available: pydantic-ai v2.46.0' in stderr.getvalue()
-    assert 'https://pydantic.dev/docs/ai/network-requests/' in stderr.getvalue()
+    assert 'https://pydantic.dev/docs/ai/requests/' in stderr.getvalue()
     assert started is True
 
 
