@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -48,6 +48,9 @@ class Macroscope(AbstractCapability[AgentDepsT]):
     package README). This capability cannot sign in on the user's behalf; a missing
     binary or a review that never starts raises `UserError` telling the user what to fix.
     """
+
+    id: str | None = field(default='macroscope', kw_only=True)
+    """Stable, so its instructions can be addressed as `capability:macroscope`, e.g. by Agent Control."""
 
     base: str | None = None
     """Git ref to diff against. When `None`, `--base` is omitted and the CLI

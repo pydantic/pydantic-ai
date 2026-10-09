@@ -370,7 +370,10 @@ async def test_prompt_submissions_interrupts_and_steering(exporter: InMemorySpan
             live.feed('alt-enter')
     assert steered == ['steer this', 'steer that']
     assert recorded(exporter) == [
-        ('prompt submitted', {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 16}),
+        (
+            'prompt submitted',
+            {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 16, 'clai2.prompt.source': 'typed'},
+        ),
         (
             'prompt submitted',
             {'route': 'submitted', 'recalled': False, 'kind': 'command', 'command': 'help', 'chars': 8},
@@ -382,7 +385,10 @@ async def test_prompt_submissions_interrupts_and_steering(exporter: InMemorySpan
         ('prompt submitted', {'route': 'submitted', 'recalled': False, 'kind': 'shell', 'chars': 3}),
         ('prompt submitted', {'route': 'submitted', 'recalled': True, 'kind': 'shell', 'chars': 3}),
         ('prompt interrupt', {'key': 'ctrl-c', 'cancelled_turn': False}),
-        ('prompt submitted', {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 10}),
+        (
+            'prompt submitted',
+            {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 10, 'clai2.prompt.source': 'typed'},
+        ),
         ('prompt steer', {'steered': True, 'source': 'queue'}),
         ('prompt steer', {'steered': True, 'source': 'draft'}),
     ]
@@ -418,11 +424,25 @@ async def test_only_prompt_text_is_recorded_with_content(
     assert recorded(content_exporter) == [
         (
             'prompt submitted',
-            {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 19, 'prompt': 'fix the session bug'},
+            {
+                'route': 'submitted',
+                'recalled': False,
+                'kind': 'prompt',
+                'chars': 19,
+                'clai2.prompt.source': 'typed',
+                'prompt': 'fix the session bug',
+            },
         ),
         (
             'prompt submitted',
-            {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 38, 'prompt': 'a prompt longer than'},
+            {
+                'route': 'submitted',
+                'recalled': False,
+                'kind': 'prompt',
+                'chars': 38,
+                'clai2.prompt.source': 'typed',
+                'prompt': 'a prompt longer than',
+            },
         ),
         ('prompt submitted', {'route': 'submitted', 'recalled': False, 'kind': 'shell', 'chars': 18}),
         (

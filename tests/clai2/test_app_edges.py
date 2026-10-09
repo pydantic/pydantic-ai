@@ -30,6 +30,7 @@ from pydantic_clai2.commands import Command
 from pydantic_clai2.config import Settings, api_keys
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.customization import CustomizationGuide
 from pydantic_clai2.ui.menus import key_menu
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command, open_add_model_menu
@@ -144,6 +145,8 @@ async def test_double_interrupt_during_a_background_report_turn_exits(
         await asyncio.Event().wait()
 
     inputs(monkeypatch, [PromptWakeup()])
+    # A report turn has no prompt of its own, and the bare stock agent here has no instructions either.
+    monkeypatch.setattr(CustomizationGuide, 'get_instructions', lambda self: 'You are CLAI.')  # pyright: ignore[reportUnknownLambdaType]
     output = io.StringIO()
     shell = stock_shell(tmp_path, output, FunctionModel(stream_function=stream))
     conversation = shell.session.summary.id

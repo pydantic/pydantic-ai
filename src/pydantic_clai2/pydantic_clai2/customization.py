@@ -7,18 +7,13 @@ from pydantic_ai.capabilities import Capability, CapabilityOrdering
 from pydantic_ai_harness.ask_user import AskUser
 from pydantic_ai_harness.repo_context import RepoContext
 
-_HINT = (
-    'When asked to customize CLAI itself (plugins, CLI UX/UI, commands, rendering, '
-    'TUI menus, models or providers), first call read_clai_customization_guide. '
-    'It documents supported APIs and boundaries. Do not assume plugin APIs exist.'
-)
-
 
 def read_clai_customization_guide(**_ignored: object) -> str:
     """Read CLAI's plugin authoring guide, including CLI UX, TUI menus, and custom model providers.
 
-    Read before implementing or advising on CLAI customization. Includes supported
-    extension points, examples, installation, testing, and source-change boundaries.
+    When asked to customize CLAI itself (plugins, CLI UX/UI, commands, rendering, TUI menus, models or
+    providers), call this first: it documents the supported APIs and boundaries, so do not assume plugin
+    APIs exist. Includes extension points, examples, installation, testing, and source-change boundaries.
     No arguments are needed; unexpected arguments are ignored.
     """
     return files('pydantic_clai2').joinpath('customization.md').read_text(encoding='utf-8')
@@ -40,7 +35,9 @@ class CustomizationGuide(Capability[None]):
 
     def __init__(self) -> None:
         """Offer the hint and the guide tool."""
-        super().__init__(instructions=_HINT, tools=[Tool(read_clai_customization_guide, strict=False)])
+        # The hint lives in the tool's description rather than a separate instruction block: it is about
+        # this one tool, and a block without a stable id is one Agent Control cannot address.
+        super().__init__(tools=[Tool(read_clai_customization_guide, strict=False)])
 
     def get_ordering(self) -> CapabilityOrdering:
         """Sit after the working guidance and before the repository's instructions."""

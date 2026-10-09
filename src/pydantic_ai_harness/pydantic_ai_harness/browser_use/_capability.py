@@ -89,6 +89,9 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     judgement about unknown pages, not for scripted flows.
     """
 
+    id: str | None = field(default='browser_use', kw_only=True)
+    """Stable, so its instructions can be addressed as `capability:browser_use`, e.g. by Agent Control."""
+
     llm: ChatModelInput | None = None
     """The chat model driving the sub-agent.
 

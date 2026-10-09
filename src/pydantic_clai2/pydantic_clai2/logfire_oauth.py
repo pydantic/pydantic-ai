@@ -37,6 +37,7 @@ from pydantic import (
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 ACCOUNT = 'logfire-oauth'
@@ -270,7 +271,7 @@ def _pkce() -> tuple[str, str]:
 
 def _open(url: str) -> bool:
     try:
-        return webbrowser.open(url)
+        return open_browser(url)
     except webbrowser.Error:
         return False
 
@@ -449,6 +450,10 @@ class DeviceAuth(httpx.Auth, httpx2.Auth):  # pyright: ignore[reportIncompatible
             tokens = await self._tokens(rejected=tokens)
             request.headers['Authorization'] = f'Bearer {tokens.access_token}'
             yield request
+
+    async def token(self) -> Tokens:
+        """A usable sign-in: the stored one, refreshed, or a new browser sign-in; concurrent requests wait for it."""
+        return await self._tokens(rejected=None)
 
     async def _tokens(self, *, rejected: Tokens | None) -> Tokens:
         # One sign-in at a time: an MCP connection sends several requests at once.

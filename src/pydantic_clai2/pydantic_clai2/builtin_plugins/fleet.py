@@ -1,0 +1,862 @@
+"""Logfire as the fleet's control plane: company config, the catalog, and notices when either changes.
+
+Hackathon code. The `observability` plugin builds this next to its instrumentation when it has a Logfire API key
+that can read managed variables. Three things come down from Logfire:
+
+- `agent__<name>`: the Agent Control config, applied by `AgentControl`, plus two sections this module applies
+  itself: company `skills` (deferred capabilities the model loads on demand) and company `mcp_servers`.
+- `catalog__<name>`: the marketplace. Items marked `default: on` are active unless the user opted out with
+  `/catalog`; items marked `off` are active only once the user opts in. `plugin` items must name a capability
+  class on the plugin's allowlist.
+- What changed since the user last saw it, shown as a notice at the start of a turn and in the status bar.
+"""
+
+from __future__ import annotations
+
+import fnmatch
+import hashlib
+import importlib
+import json
+import os
+import re
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
+
+import logfire
+from logfire.variables import Variable
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from pydantic_ai import AgentRunResult, RunContext
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    CapabilityOrdering,
+    CombinedCapability,
+    Instrumentation,
+    WrapRunHandler,
+)
+from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai_harness.logfire import AgentControlConfig
+from pydantic_ai_harness.policy import (
+    Approver,
+    Policy,
+    PolicyDecision,
+    PolicyRule,
+    PolicyRules,
+    default_blocked_message,
+)
+from pydantic_clai2 import policy_state
+from pydantic_clai2.builtin_plugins.fleet_memory import MemoryNotes, MemoryPolicy, RepoNote, SharedMode, repo_notes
+
+if TYPE_CHECKING:
+    from pydantic_clai2.builtin_plugins.fleet_ui import CatalogRow
+
+ItemKind = Literal['skill', 'mcp_server', 'plugin', 'instruction']
+
+
+class AppliesTo(BaseModel):
+    """Who a pushed item is for; a listed dimension must match, an omitted one matches everyone."""
+
+    model_config = ConfigDict(extra='ignore')
+    teams: list[str] | None = None
+    repos: list[str] | None = None
+    """Repo slugs or globs, such as `pydantic/pydantic-ai` or `pydantic/*`."""
+
+
+def applies(scope: AppliesTo | Mapping[str, Any] | None, *, team: str | None, repo: str | None) -> bool:
+    """Whether an item's `applies_to` covers this client's team and repo."""
+    if scope is None:
+        return True
+    parsed = scope if isinstance(scope, AppliesTo) else AppliesTo.model_validate(scope)
+    if parsed.teams is not None and team not in parsed.teams:
+        return False
+    if parsed.repos is not None and (repo is None or not any(fnmatch.fnmatchcase(repo, glob) for glob in parsed.repos)):
+        return False
+    return True
+
+
+class FleetSkill(BaseModel):
+    """A skill pushed to every agent: the model sees its name and description and loads the body on demand."""
+
+    model_config = ConfigDict(extra='ignore')
+    name: str
+    description: str = ''
+    instructions: str = ''
+    source: str | None = None
+    proposal_id: str | None = None
+    why: str | None = None
+    """A short reason, such as the miner's rationale ("4 teammates kept asking for this")."""
+    pushed_by: str | None = None
+    applies_to: AppliesTo | None = None
+
+
+class FleetMCPServer(BaseModel):
+    """A Streamable HTTP MCP server pushed to every agent; header values may reference `${env:NAME}`."""
+
+    model_config = ConfigDict(extra='ignore')
+    name: str
+    url: str
+    description: str | None = None
+    env_allow: list[str] = Field(default_factory=list[str])
+    """Environment variables this server may send; every `${env:NAME}` in its headers must be listed here."""
+    applies_to: AppliesTo | None = None
+    source: str | None = None
+    why: str | None = None
+    pushed_by: str | None = None
+    headers: dict[str, str] = Field(default_factory=dict[str, str])
+
+
+class FleetPolicy(Policy):
+    """The harness policy, plus how this organization publishes shared repo notes."""
+
+    memory: MemoryPolicy = Field(default_factory=MemoryPolicy)
+
+
+class FleetAgentConfig(AgentControlConfig):
+    """Agent Control's config (with named added instructions) plus company `skills` and `mcp_servers` sections."""
+
+    display_name: str | None = None
+    """Who is pushing this, as notices name it ("Pydantic"); unset, notices name the Logfire project."""
+
+    skills: list[FleetSkill] | None = None
+    mcp_servers: list[FleetMCPServer] | None = None
+    policy: FleetPolicy | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    @property
+    def shared_memory(self) -> SharedMode:
+        """How shared repo notes are published: `review` unless the policy says otherwise."""
+        return self.policy.memory.shared if self.policy is not None else 'review'
+
+
+class CatalogItem(BaseModel):
+    """One marketplace entry; `payload` is the skill, MCP server, or plugin declaration it activates."""
+
+    model_config = ConfigDict(extra='ignore')
+    kind: ItemKind
+    name: str
+    description: str = ''
+    default: Literal['on', 'off'] = 'off'
+    source: str | None = None
+    why: str | None = None
+    pushed_by: str | None = None
+    adoption: int | None = None
+    """How many teammates use it, when the catalog says."""
+    applies_to: AppliesTo | None = None
+    payload: dict[str, Any] = Field(default_factory=dict[str, Any])
+
+
+class Catalog(BaseModel):
+    """The `catalog__<name>` variable."""
+
+    model_config = ConfigDict(extra='ignore')
+    items: list[CatalogItem] = Field(default_factory=list[CatalogItem])
+
+
+class _UserState(BaseModel):
+    opted_in: list[str] = Field(default_factory=list[str])
+    opted_out: list[str] = Field(default_factory=list[str])
+    seen: dict[str, str] = Field(default_factory=dict[str, str])
+    """What the user was last shown, as item key to content digest."""
+    consents: dict[str, tuple[str, bool]] = Field(default_factory=dict[str, tuple[str, bool]])
+    """Per pushed MCP server or plugin key: the consent fingerprint the user decided on, and whether they allowed it."""
+
+
+class _State(BaseModel):
+    users: dict[str, _UserState] = Field(default_factory=dict[str, _UserState])
+
+
+def _key(kind: str, name: str) -> str:
+    return f'{kind}:{name}'
+
+
+def _digest(value: object) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()[:12]
+
+
+_ENV_REF = re.compile(r'\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}')
+
+
+def _full_text(kind: str, payload: Mapping[str, Any]) -> str:
+    """What an item would actually do, for the `/catalog` preview: the text, or the URL and env it sends."""
+    if kind == 'mcp_server':
+        env = sorted(
+            set(payload.get('env_allow') or ()) | set(_ENV_REF.findall(json.dumps(payload.get('headers') or {})))
+        )
+        return f'URL: {payload.get("url", "")}' + (f'\nSends: {", ".join(f"${name}" for name in env)}' if env else '')
+    if kind == 'plugin':
+        return f'Factory: {payload.get("factory", "")}\nSettings: {json.dumps(payload.get("settings") or {})}'
+    return str(payload.get('instructions') or '')
+
+
+def _declined(state: _UserState, key: str) -> bool:
+    decision = state.consents.get(key)
+    return decision is not None and not decision[1]
+
+
+def _check_env(names: Sequence[str], *, declared: Sequence[str], local: Sequence[str]) -> None:
+    """Refuse a reference the server doesn't declare in `env`, one outside a local allowlist, or an unset one."""
+    for name in names:
+        if name not in declared:
+            raise ValueError(f"Logfire config references ${name}, which isn't in this server's env_allow list")
+        if local and not any(fnmatch.fnmatchcase(name, pattern) for pattern in local):
+            raise ValueError(f"Logfire config references ${name}, which isn't allowed by your fleet_env_allow")
+        if name not in os.environ:
+            raise ValueError(f'Logfire config references ${name}, which is not set in your environment')
+
+
+def _resolve_env(value: str) -> str:
+    return _ENV_REF.sub(lambda match: os.environ[match.group(1)], value)
+
+
+@dataclass(frozen=True)
+class Provenance:
+    """Where a pushed item came from, for notices and `/catalog why`."""
+
+    source: str | None = None
+    why: str | None = None
+    pushed_by: str | None = None
+
+    @classmethod
+    def of(cls, item: BaseModel) -> Provenance:
+        return cls(
+            source=getattr(item, 'source', None),
+            why=getattr(item, 'why', None),
+            pushed_by=getattr(item, 'pushed_by', None),
+        )
+
+    def describe(self) -> str:
+        """`from 4 teammates' sessions, pushed by Douwe`, or `''`."""
+        parts = [self.why or ("suggested from teammates' sessions" if self.source == 'fleet-miner' else '')]
+        if self.pushed_by:
+            parts.append(f'pushed by {self.pushed_by}')
+        return ', '.join(part for part in parts if part)
+
+
+@dataclass(frozen=True)
+class ActiveItem:
+    """An item in force for this user, with where it came from."""
+
+    kind: ItemKind
+    name: str
+    description: str
+    tier: Literal['company', 'catalog']
+    payload: Mapping[str, Any]
+    provenance: Provenance = field(default_factory=lambda: Provenance())
+
+    @property
+    def key(self) -> str:
+        return _key(self.kind, self.name)
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    """The company config and catalog, resolved once, so everything a run or a turn reads agrees."""
+
+    config: FleetAgentConfig
+    version: str | None
+    """The `agent__` (company config) version."""
+    catalog: Catalog
+    catalog_version: str | None = None
+    memory: MemoryNotes = field(default_factory=MemoryNotes)
+    """The `memory__` variable: repo notes admins accepted."""
+    memory_version: str | None = None
+
+    def versions(self, *, config: bool = True, catalog: bool = True, memory: bool = False) -> str:
+        """`config v12 · catalog v3 · memory v2`, naming only what was asked for and is known."""
+        parts = [
+            *([f'config v{self.version}'] if config and self.version else []),
+            *([f'catalog v{self.catalog_version}'] if catalog and self.catalog_version else []),
+            *([f'memory v{self.memory_version}'] if memory and self.memory_version else []),
+        ]
+        return ' · '.join(parts)
+
+    @property
+    def policy(self) -> Policy | None:
+        return self.config.policy
+
+
+@dataclass(frozen=True)
+class Build:
+    """One build of the fleet config for a run: the capabilities, the items they came from, and what failed."""
+
+    snapshot: Snapshot
+    capabilities: list[AbstractCapability[None]]
+    loaded: list[ActiveItem]
+    failed: list[tuple[ActiveItem, str]]
+    pending: list[Consent] = field(default_factory=list['Consent'])
+    """Pushed servers and plugins waiting for the user's consent; inactive until approved."""
+    declined: list[ActiveItem] = field(default_factory=list[ActiveItem])
+
+
+@dataclass(frozen=True)
+class Consent:
+    """What the user is asked before a pushed MCP server or plugin becomes active."""
+
+    item: ActiveItem
+    target: str
+    """The URL (MCP server) or factory (plugin)."""
+    env: tuple[str, ...]
+    """Environment variables its config would send."""
+
+    @property
+    def fingerprint(self) -> str:
+        return _digest([self.item.kind, self.item.name, self.target, list(self.env)])
+
+    def question(self) -> str:
+        sends = f' Sends: {", ".join(f"${name}" for name in self.env)}.' if self.env else ''
+        if self.item.kind == 'mcp_server':
+            return f'Logfire wants to connect MCP server `{self.item.name}` at {self.target}.{sends}'
+        return f'Logfire wants to enable plugin `{self.item.name}` ({self.target}){sends}.'
+
+
+@dataclass(frozen=True)
+class Change:
+    """Something that arrived from Logfire since the user last saw the fleet config."""
+
+    action: Literal['added', 'updated', 'removed']
+    kind: str
+    name: str
+    tier: str
+    description: str = ''
+    provenance: Provenance = field(default_factory=lambda: Provenance())
+
+    def describe(self) -> str:
+        verb = {'added': 'New', 'updated': 'Updated', 'removed': 'Removed'}[self.action]
+        if self.kind == 'memory':
+            sign = {'added': '+', 'updated': '~', 'removed': '-'}[self.action]
+            accepted = f' ({self.provenance.pushed_by})' if self.provenance.pushed_by else ''
+            return f'Repo notes: {sign} {self.name}{accepted}'
+        if self.kind == 'instructions':
+            return f'{verb} company instructions from Logfire'
+        if self.kind == 'instruction':
+            return f'{verb} company instruction from Logfire: {self.name}'
+        noun = {'skill': 'skill', 'mcp_server': 'MCP server', 'plugin': 'plugin'}
+        # A removed item is no longer anywhere to say which tier it came from.
+        where = {'company': 'company ', 'catalog': 'catalog '}.get(self.tier, '')
+        return f'{self.action.capitalize()} {where}{noun.get(self.kind, self.kind)} from Logfire: {self.name}'
+
+
+@dataclass
+class Fleet:
+    """Reads the fleet config for one user, and remembers what that user opted into and has seen."""
+
+    instance: logfire.Logfire
+    name: str
+    state_file: Path
+    allowed_plugins: Sequence[str] = ()
+    scope: Callable[[], tuple[str | None, str | None]] = lambda: (None, None)
+    """This client's (team, repo slug), read afresh for every build since the workspace can change."""
+    env_allow: Sequence[str] = ()
+    """Local globs (`fleet_env_allow`) that, when set, every pushed env reference must also match: the user's net."""
+    attributes: Callable[[], Mapping[str, Any]] = dict
+    targeting_key: Callable[[], str | None] = lambda: None
+    user: Callable[[], str] = lambda: 'local'
+    agent_variable: Variable[FleetAgentConfig] = field(init=False)
+    catalog_variable: Variable[Catalog] = field(init=False)
+    memory_variable: Variable[MemoryNotes] = field(init=False)
+    proposals_variable: Variable[dict[str, Any]] = field(init=False)
+    _mcp: dict[str, AbstractToolset[None]] = field(default_factory=dict[str, AbstractToolset[None]], init=False)
+    _prepared: Build | None = field(default=None, init=False)
+    latest: Snapshot | None = field(default=None, init=False)
+    """The most recent snapshot, for decisions made outside a run (the MCP allowlist, locked items)."""
+
+    def __post_init__(self) -> None:
+        self.agent_variable = Variable(
+            f'agent__{self.name}', type=FleetAgentConfig, default=FleetAgentConfig(), logfire_instance=self.instance
+        )
+        self.catalog_variable = Variable(
+            f'catalog__{self.name}', type=Catalog, default=Catalog(), logfire_instance=self.instance
+        )
+        self.memory_variable = Variable(
+            f'memory__{self.name}', type=MemoryNotes, default=MemoryNotes(), logfire_instance=self.instance
+        )
+        self.proposals_variable = Variable(
+            f'fleet_proposals__{self.name}', type=dict[str, Any], default={}, logfire_instance=self.instance
+        )
+
+    # Resolution
+
+    def snapshot(self) -> Snapshot:
+        """Resolve the company config and the catalog once (one `Resolve variable` span each)."""
+        targeting_key, attributes = self.targeting_key(), self.attributes()
+        resolved = self.agent_variable.get(targeting_key=targeting_key, attributes=attributes)
+        version = getattr(resolved, 'version', None)
+        catalog_resolved = self.catalog_variable.get(targeting_key=targeting_key, attributes=attributes)
+        catalog_version = getattr(catalog_resolved, 'version', None)
+        catalog = catalog_resolved.value
+        memory_resolved = self.memory_variable.get(targeting_key=targeting_key, attributes=attributes)
+        memory_version = getattr(memory_resolved, 'version', None)
+        self.latest = Snapshot(
+            config=resolved.value,
+            version=None if version is None else str(version),
+            catalog=catalog,
+            catalog_version=None if catalog_version is None else str(catalog_version),
+            memory=memory_resolved.value,
+            memory_version=None if memory_version is None else str(memory_version),
+        )
+        return self.latest
+
+    def fingerprint(self) -> tuple[str | None, ...]:
+        """The raw published values, read from the provider's cache without a span, to notice a push cheaply."""
+        provider = self.instance.config.get_variable_provider()
+        targeting_key, attributes = self.targeting_key(), self.attributes()
+        return tuple(
+            provider.get_serialized_value(variable.name, targeting_key, attributes).value
+            for variable in (self.agent_variable, self.catalog_variable, self.memory_variable, self.proposals_variable)
+        )
+
+    def current_policy(self) -> Policy | None:
+        """The policy as last resolved, for decisions outside a run."""
+        return (self.latest or self.snapshot()).policy
+
+    def notes(self, snapshot: Snapshot | None = None) -> list[RepoNote]:
+        """The repo notes in force here: scoped to this repo (and team), valid, and within the size limits."""
+        snapshot = snapshot or self.latest or self.snapshot()
+        return repo_notes(snapshot.memory, self.applies_here)
+
+    def proposals(self) -> list[Mapping[str, Any]]:
+        """The miner's proposals as Logfire last served them, to see which of this user's notes were dismissed."""
+        try:
+            value = self.proposals_variable.get(targeting_key=self.targeting_key(), attributes=self.attributes()).value
+        except Exception:  # noqa: BLE001 -- a missing or unreadable proposals list means nothing was dismissed
+            return []
+        items = value.get('proposals') if isinstance(value, dict) else None
+        return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []  # pyright: ignore[reportUnknownVariableType]
+
+    def applies_here(self, scope: AppliesTo | Mapping[str, Any] | None) -> bool:
+        """Whether an item's `applies_to` covers this client now."""
+        team, repo = self.scope()
+        return applies(scope, team=team, repo=repo)
+
+    def active(self, snapshot: Snapshot) -> list[ActiveItem]:
+        """Company items, then catalog items the user has on, among those scoped to this team and repo."""
+        return [item for item in self._all(snapshot) if self.applies_here(item.payload.get('applies_to'))]
+
+    def _all(self, snapshot: Snapshot) -> list[ActiveItem]:
+        config = snapshot.config
+        items = [
+            *(
+                ActiveItem(
+                    'instruction',
+                    name,
+                    '',
+                    'company',
+                    {'instructions': text, 'applies_to': config.instruction_scope(text)},
+                )
+                for name, text in _named_instructions(config)
+            ),
+            *(
+                ActiveItem('skill', skill.name, skill.description, 'company', skill.model_dump(), Provenance.of(skill))
+                for skill in config.skills or ()
+            ),
+            *(
+                ActiveItem(
+                    'mcp_server',
+                    server.name,
+                    server.description or '',
+                    'company',
+                    server.model_dump(),
+                    Provenance.of(server),
+                )
+                for server in config.mcp_servers or ()
+            ),
+        ]
+        state = self._user_state()
+        company = {item.key for item in items}
+        for item in snapshot.catalog.items:
+            key = _key(item.kind, item.name)
+            if key in company or not self._enabled(item, state):
+                continue
+            payload = {**item.payload, 'applies_to': item.applies_to.model_dump() if item.applies_to else None}
+            items.append(ActiveItem(item.kind, item.name, item.description, 'catalog', payload, Provenance.of(item)))
+        return items
+
+    def compliance(self, snapshot: Snapshot, active: Sequence[ActiveItem]) -> dict[str, str]:
+        """The compliance attributes for a run: versions, Default-on items the user turned off, Required items held.
+
+        `locked_ok` covers Required (organization) items that apply here, plus the observability plugin. Turning
+        off a Default-on add-on is the user's choice, recorded in `opted_out`, not a compliance failure.
+        """
+        state = self._user_state()
+        defaults_on = {_key(item.kind, item.name) for item in snapshot.catalog.items if item.default == 'on'}
+        opted_out = sorted(key for key in state.opted_out if key in defaults_on)
+        keys = {item.key for item in active} | {f'plugin:{name}' for name in policy_state.loaded_plugins()}
+        required = {item.key for item in self.active(snapshot) if item.tier == 'company'} | {'plugin:observability'}
+        return {
+            'clai2.policy.version': snapshot.version or '',
+            'clai2.catalog.version': snapshot.catalog_version or '',
+            'clai2.catalog.opted_out': ','.join(opted_out),
+            'clai2.policy.locked_ok': 'true' if required <= keys else 'false',
+        }
+
+    def _enabled(self, item: CatalogItem, state: _UserState) -> bool:
+        key = _key(item.kind, item.name)
+        if item.default == 'on':
+            return key not in state.opted_out
+        return key in state.opted_in
+
+    # Capabilities
+
+    def build(self, snapshot: Snapshot | None = None) -> Build:
+        """Build every active item; one that fails is reported, not counted as loaded."""
+        snapshot = snapshot or self.snapshot()
+        capabilities: list[AbstractCapability[None]] = []
+        loaded: list[ActiveItem] = []
+        failed: list[tuple[ActiveItem, str]] = []
+        state = self._user_state()
+        pending: list[Consent] = []
+        declined: list[ActiveItem] = []
+        for item in self.active(snapshot):
+            try:
+                consent = self._consent_needed(item)
+                if consent is not None:
+                    decided = state.consents.get(item.key)
+                    if decided is None or decided[0] != consent.fingerprint:
+                        pending.append(consent)
+                        continue
+                    if not decided[1]:
+                        declined.append(item)
+                        continue
+                capability = self._build(item)
+            except Exception as error:  # noqa: BLE001 -- one bad pushed item must not stop the run
+                failed.append((item, f'{type(error).__name__}: {error}'))
+                continue
+            loaded.append(item)
+            if capability is not None:
+                capabilities.append(capability)
+        return Build(
+            snapshot=snapshot,
+            capabilities=capabilities,
+            loaded=loaded,
+            failed=failed,
+            pending=pending,
+            declined=declined,
+        )
+
+    def _consent_needed(self, item: ActiveItem) -> Consent | None:
+        """The consent a pushed MCP server or plugin needs; raises when it references env it may not."""
+        if item.kind == 'mcp_server':
+            server = FleetMCPServer.model_validate({'name': item.name, **item.payload})
+            names = sorted({name for value in server.headers.values() for name in _ENV_REF.findall(value)})
+            _check_env(names, declared=server.env_allow, local=self.env_allow)
+            return Consent(item=item, target=server.url, env=tuple(sorted(set(server.env_allow) | set(names))))
+        if item.kind == 'plugin':
+            return Consent(item=item, target=str(item.payload.get('factory', '')), env=())
+        return None
+
+    def forget_consent(self, key: str) -> str:
+        """Undo a declined consent, so the user is asked again."""
+        state = self._load()
+        user = state.users.setdefault(self.user(), _UserState())
+        user.consents.pop(key, None)
+        self._save(state)
+        return f'{key.partition(":")[2]}: you will be asked again whether to turn it on.'
+
+    def decide(self, consent: Consent, *, allow: bool) -> None:
+        """Remember the user's answer for exactly this server/plugin, target and env set."""
+        state = self._load()
+        user = state.users.setdefault(self.user(), _UserState())
+        user.consents[consent.item.key] = (consent.fingerprint, allow)
+        self._save(state)
+
+    def prepare(self) -> Build:
+        """Build for the turn about to start, so its notices and its run agree on what loaded."""
+        self._prepared = self.build()
+        return self._prepared
+
+    def take(self) -> Build:
+        """The build `prepare` made for this turn's run, or a fresh one (a nested or headless run)."""
+        build, self._prepared = self._prepared or self.build(), None
+        return build
+
+    def _build(self, item: ActiveItem) -> AbstractCapability[None] | None:
+        if item.kind == 'instruction':
+            return None  # AgentControl adds these to the prompt itself.
+        if item.kind == 'skill':
+            skill = FleetSkill.model_validate({'name': item.name, **item.payload})
+            body = f'# Skill: {skill.name}\n\n{skill.instructions}' if skill.instructions else f'# Skill: {skill.name}'
+            return Capability[None](
+                id=_capability_id(skill.name),
+                description=(skill.description or skill.name).replace('\n', '\n  '),
+                instructions=body,
+                defer_loading=True,
+            )
+        if item.kind == 'mcp_server':
+            server = FleetMCPServer.model_validate({'name': item.name, **item.payload})
+            headers = {key: _resolve_env(value) for key, value in server.headers.items()}
+            cache_key = _digest([server.url, headers])
+            toolset = self._mcp.get(cache_key)
+            if toolset is None:
+                leaf = MCPToolset[None](server.url, id=server.name, headers=headers or None)
+                policy_state.mark_gated(leaf)  # Pushed by Logfire, so always allowed.
+                toolset = leaf.prefixed(_capability_id(server.name))
+                self._mcp[cache_key] = toolset
+            return Capability[None](toolsets=[toolset])
+        factory = str(item.payload.get('factory', ''))
+        if factory not in self.allowed_plugins:
+            raise ValueError(f'{factory or "(no factory)"} is not on the allowlist of plugins Logfire may enable')
+        module_name, _, attr = factory.partition(':')
+        target = getattr(importlib.import_module(module_name), attr)
+        if not (isinstance(target, type) and issubclass(target, AbstractCapability)):
+            raise TypeError(f'{factory} is not a capability class')
+        settings: dict[str, Any] = dict(item.payload.get('settings') or {})
+        return target(**settings)  # pyright: ignore[reportUnknownVariableType]
+
+    # Opt-in and notices
+
+    def set_opt(self, key: str, on: bool) -> str:
+        snapshot = self.snapshot()
+        catalog = {_key(item.kind, item.name): item for item in snapshot.catalog.items}
+        if key not in catalog:
+            matches = [k for k in catalog if k.split(':', 1)[1] == key]
+            if len(matches) != 1:
+                return f'No catalog item {key!r}. Run /catalog to list them.'
+            key = matches[0]
+        item = catalog[key]
+        state = self._load()
+        user = state.users.setdefault(self.user(), _UserState())
+        user.opted_in = [k for k in user.opted_in if k != key]
+        user.opted_out = [k for k in user.opted_out if k != key]
+        if on and item.default == 'off':
+            user.opted_in.append(key)
+        elif not on and item.default == 'on':
+            user.opted_out.append(key)
+        # The user made this change themselves, so it is not news on their next prompt.
+        if on:
+            user.seen[key] = _digest(dict(item.payload))
+        else:
+            user.seen.pop(key, None)
+        self._save(state)
+        return f'{"Enabled" if on else "Disabled"} {item.name} ({item.kind}); it applies from your next prompt.'
+
+    def changes(self, build: Build, *, mark_seen: bool = True) -> list[Change]:
+        """What was added, updated, or removed since the user last saw the fleet config, among what loaded.
+
+        An item that failed to build is neither news nor a removal: the user sees the failure instead, and
+        the item is announced once it loads.
+        """
+        config = build.snapshot.config
+        # Failed and consent-pending items are neither news nor removals: the user sees why instead.
+        failed = {item.key for item, _ in build.failed} | {consent.item.key for consent in build.pending}
+        current: dict[str, tuple[str, str, str, str]] = {}
+        by_key = {item.key: item for item in build.loaded}
+        for item in build.loaded:
+            current[item.key] = (item.kind, item.name, item.tier, _digest(dict(item.payload)))
+        named_texts = {text for _, text in _named_instructions(config)}
+        added_instructions = [
+            block
+            for block in config.instructions or ()
+            if _is_added(block) and (block if isinstance(block, str) else block.instructions) not in named_texts
+        ]
+        if added_instructions:
+            digest = _digest([_dump_block(block) for block in added_instructions])
+            current['instructions:company'] = ('instructions', 'company instructions', 'company', digest)
+        notes = {_key('memory', note.path): note for note in self.notes(build.snapshot)}
+        for key, note in notes.items():
+            current[key] = ('memory', note.path, 'repo', _digest(note.content))
+        state = self._load()
+        user = state.users.setdefault(self.user(), _UserState())
+        changes: list[Change] = []
+        for key, (kind, name, tier, digest) in current.items():
+            previous = user.seen.get(key)
+            item = by_key.get(key)
+            details = (item.description, item.provenance) if item is not None else ('', Provenance())
+            if (note := notes.get(key)) is not None:
+                how = 'auto-published' if note.auto else f'accepted by {note.accepted_by}' if note.accepted_by else None
+                if how is None and config.shared_memory != 'review':
+                    how = 'auto-published' if config.shared_memory == 'auto' else 'confirmed by teammates'
+                details = ('', Provenance(pushed_by=how))
+            if previous is None:
+                changes.append(Change('added', kind, name, tier, *details))
+            elif previous != digest:
+                changes.append(Change('updated', kind, name, tier, *details))
+        for key in user.seen.keys() - current.keys() - failed:
+            kind, _, name = key.partition(':')
+            changes.append(Change('removed', kind, name, ''))
+        if mark_seen and changes:
+            kept = {key: digest for key, digest in user.seen.items() if key in failed}
+            user.seen = {**kept, **{key: value[3] for key, value in current.items()}}
+            self._save(state)
+        return changes
+
+    def rows(self, snapshot: Snapshot) -> list[CatalogRow]:
+        """Everything for the `/catalog` picker: Required items, then add-ons; items scoped elsewhere greyed."""
+        from pydantic_clai2.builtin_plugins.fleet_ui import CatalogRow
+
+        state = self._user_state()
+        rows: list[CatalogRow] = []
+        for item in self._all(snapshot):
+            if item.tier != 'company':
+                continue
+            rows.append(
+                CatalogRow(
+                    key=item.key,
+                    kind=item.kind,
+                    name=item.name,
+                    description=item.description or str(item.payload.get('instructions', ''))[:120],
+                    delivery='organization',
+                    on=not _declined(state, item.key),
+                    declined=_declined(state, item.key),
+                    locked=True,
+                    new=item.key not in state.seen,
+                    adoption=None,
+                    provenance=item.provenance,
+                    elsewhere=not self.applies_here(item.payload.get('applies_to')),
+                    full_text=_full_text(item.kind, item.payload),
+                )
+            )
+        for entry in snapshot.catalog.items:
+            key = _key(entry.kind, entry.name)
+            on = self._enabled(entry, state)
+            rows.append(
+                CatalogRow(
+                    key=key,
+                    kind=entry.kind,
+                    name=entry.name,
+                    description=entry.description,
+                    delivery='default on' if entry.default == 'on' else 'optional',
+                    on=on and not _declined(state, key),
+                    declined=on and _declined(state, key),
+                    locked=False,
+                    new=key not in state.seen and key not in state.opted_in and key not in state.opted_out,
+                    adoption=entry.adoption,
+                    provenance=Provenance.of(entry),
+                    elsewhere=not self.applies_here(entry.applies_to),
+                    full_text=_full_text(entry.kind, entry.payload),
+                )
+            )
+        return rows
+
+    def listing(self) -> str:
+        """The `/catalog` listing: company items, then the catalog with each item's state for this user."""
+        snapshot = self.snapshot()
+        config, version = snapshot.config, snapshot.version
+        state = self._user_state()
+        lines = [f'From your organization{f" (v{version})" if version else ""}:']
+        company = [
+            *(f'  skill       {skill.name}: {skill.description}' for skill in config.skills or ()),
+            *(f'  mcp_server  {server.name}: {server.url}' for server in config.mcp_servers or ()),
+        ]
+        lines.extend(company or ['  (none)'])
+        lines.append('Optional add-ons:')
+        items = snapshot.catalog.items
+        for item in items:
+            on = self._enabled(item, state)
+            default = 'default on' if item.default == 'on' else 'optional'
+            lines.append(f'  [{"x" if on else " "}] {item.kind:<10} {item.name} ({default}): {item.description}')
+        if not items:
+            lines.append('  (empty)')
+        lines.append('Toggle with /catalog enable NAME or /catalog disable NAME.')
+        return '\n'.join(lines)
+
+    def _user_state(self) -> _UserState:
+        return self._load().users.get(self.user(), _UserState())
+
+    def _load(self) -> _State:
+        try:
+            return _State.model_validate_json(self.state_file.read_text())
+        except (OSError, ValidationError):
+            return _State()
+
+    def _save(self, state: _State) -> None:
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        self.state_file.write_text(state.model_dump_json(indent=2))
+
+
+def _capability_id(name: str) -> str:
+    return re.sub(r'[^A-Za-z0-9_-]', '_', name) or 'item'
+
+
+def _named_instructions(config: FleetAgentConfig) -> list[tuple[str, str]]:
+    """The added instructions published with a `name`, as `(name, text)`; unnamed ones are grouped separately."""
+    named: list[tuple[str, str]] = []
+    for block in config.instructions or ():
+        text = block if isinstance(block, str) else block.instructions if block.id is None else None
+        name = config.instruction_name(text) if text else None
+        if name and text:
+            named.append((name, text))
+    return named
+
+
+def _is_added(block: object) -> bool:
+    if isinstance(block, str):
+        return True
+    return getattr(block, 'id', None) is None
+
+
+def _dump_block(block: object) -> object:
+    return block.model_dump() if isinstance(block, BaseModel) else block
+
+
+@dataclass(kw_only=True)
+class FleetControl(AbstractCapability[None]):
+    """Contributes the company skills, MCP servers, and enabled catalog items, read afresh for every run."""
+
+    fleet: Fleet
+    id: str | None = 'clai2_fleet'
+
+    approver: Approver | None = None
+    record: Callable[[PolicyDecision], None] | None = None
+    blocked_message: Callable[[PolicyRule], str] = default_blocked_message
+
+    async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+        build = self.fleet.take()
+        capabilities, items, snapshot = build.capabilities, build.loaded, build.snapshot
+        baggage = {
+            ACTIVE_ITEMS_ATTRIBUTE: ','.join(sorted(item.key for item in items)),
+            'clai2.fleet.pending_consent': ','.join(sorted(consent.item.key for consent in build.pending)),
+            **self.fleet.compliance(snapshot, items),
+        }
+        # The run's policy is the one this run resolved, so a push mid-run applies from the next run.
+        rules = PolicyRules(
+            applies=self.fleet.applies_here,
+            policy=lambda: snapshot.policy,
+            approver=self.approver,
+            record=self.record,
+            attribute_prefix='clai2.policy',
+            blocked_message=self.blocked_message,
+        )
+        return CombinedCapability([_AdoptionBaggage(baggage=baggage), rules, _PluginMCPAllowlist(), *capabilities])
+
+
+@dataclass(kw_only=True)
+class _PluginMCPAllowlist(AbstractCapability[None]):
+    """Apply the MCP allowlist to MCP toolsets other plugins contribute (the `mcp` plugin gates its own).
+
+    In `enforce` mode a server outside the list keeps its connection but offers the model no tools.
+    """
+
+    def get_wrapper_toolset(self, toolset: AbstractToolset[None]) -> AbstractToolset[None]:
+        return toolset.visit_and_replace(_gate_plugin_mcp)
+
+
+def _gate_plugin_mcp(toolset: AbstractToolset[None]) -> AbstractToolset[None]:
+    if not isinstance(toolset, MCPToolset) or policy_state.is_gated(toolset):
+        return toolset
+    transport = getattr(toolset.client, 'transport', None)
+    url = str(getattr(transport, 'url', '') or '')
+    name = toolset.id or url or 'unnamed'
+    if policy_state.mcp_allowed(name, url, subject=url or name):
+        return toolset
+    return toolset.filtered(lambda ctx, tool_def: False)
+
+
+ACTIVE_ITEMS_ATTRIBUTE = 'clai2.fleet.active'
+"""Every span of a run lists the fleet items in force for it, as sorted `kind:name` keys joined by commas."""
+
+
+@dataclass(kw_only=True)
+class _AdoptionBaggage(AbstractCapability[None]):
+    """Puts which company and catalog items this run had on every span, so Logfire can show who adopted what."""
+
+    baggage: dict[str, str]
+
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(position='outermost', wraps=(Instrumentation,))
+
+    async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        with logfire.set_baggage(**self.baggage):
+            return await handler()

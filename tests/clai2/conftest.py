@@ -80,6 +80,7 @@ def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     for name in (
         'LOGFIRE_TOKEN',
         'LOGFIRE_API_KEY',
+        'LOGFIRE_CLAI2_API_KEY',
         'OTEL_EXPORTER_OTLP_ENDPOINT',
         'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT',
         'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT',

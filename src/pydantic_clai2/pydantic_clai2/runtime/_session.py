@@ -285,6 +285,8 @@ class StockAgent(Agent[DepsT, OutputT]):
             output_type=output_type,
             capabilities=capabilities,
             defer_model_check=defer_model_check,
+            # Hackathon: a stable name, so Logfire groups every user's runs as one agent.
+            name='clai2',
         )
         self._stock_deps_type = deps_type
 

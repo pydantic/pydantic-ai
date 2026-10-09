@@ -1,7 +1,13 @@
 """A plugin-owned session root, shared by UI events and agent instrumentation."""
 
+import functools
+import os
+import subprocess
 from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
+from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import logfire
@@ -12,7 +18,10 @@ from opentelemetry.trace import Span
 from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation, WrapRunHandler
 from pydantic_clai2.plugins import SessionEndReason
-from pydantic_clai2.ui.telemetry import SCOPE, parent_span
+from pydantic_clai2.ui.telemetry import PROMPT_SOURCE, PROMPT_SOURCE_ATTRIBUTE, SCOPE, parent_span
+
+_IN_RUN: ContextVar[bool] = ContextVar('clai2_in_run', default=False)
+"""Set inside a run, so a run started within it (a sub-agent's) is attributed as one."""
 
 
 @dataclass(kw_only=True)
@@ -22,6 +31,9 @@ class SessionTracing(AbstractCapability[None]):
     instance: logfire.Logfire
     session_id: Callable[[], str | None]
     id: str | None = 'clai2_session_tracing'
+    team: str | None = None
+    include_repo: bool = False
+    """Send the workspace's git remote (`clai2.repo`, `clai2.repo_slug`); only with message content export on."""
     _email: str | None = field(default=None, init=False)
     _active: bool = field(default=False, init=False)
     _roots: dict[str, Span] = field(default_factory=dict[str, Span], init=False)
@@ -79,9 +91,75 @@ class SessionTracing(AbstractCapability[None]):
         """Match instrumentation's last-instance precedence, preserving that instance's live roots."""
         return capabilities[-1]
 
+    @property
+    def email(self) -> str | None:
+        """The user's email once the session started, when `user_tag` names one."""
+        return self._email
+
+    def identity(self) -> dict[str, str]:
+        """Who is running: baggage on every span of a run, and the attributes fleet targeting matches on."""
+        session_id = self.session_id()
+        return {
+            **({'user.email': self._email} if self._email else {}),
+            **({'clai2.team': self.team} if self.team else {}),
+            **({'agent_session_id': session_id} if session_id else {}),
+            **(repo_attributes(Path.cwd()) if self.include_repo else {}),
+            # Hackathon: test sessions say so, so fleet analysis (the miner) can leave them out.
+            **({'clai2.test': 'true'} if os.getenv('CLAI2_TEST') else {}),
+        }
+
     async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
-        with parent_span(self.root()):
-            return await handler()
+        # Hackathon: the fleet control plane groups traces by user and team, so identity rides on every span.
+        source = 'subagent' if _IN_RUN.get() else PROMPT_SOURCE.get()
+        nested = _IN_RUN.set(True)
+        try:
+            with parent_span(self.root()), logfire.set_baggage(**self.identity(), **{PROMPT_SOURCE_ATTRIBUTE: source}):
+                return await handler()
+        finally:
+            _IN_RUN.reset(nested)
+
+    def ui_identity(self) -> dict[str, str]:
+        """What every UI record carries: the user, the team, and the session, so no join with the root is needed."""
+        return self.identity()
+
+
+def repo_attributes(directory: Path) -> dict[str, str]:
+    """`clai2.repo` (the normalized remote URL, credentials stripped) and `clai2.repo_slug` for GitHub/GitLab."""
+    url = _origin_url(str(directory))
+    if url is None:
+        return {}
+    attributes = {'clai2.repo': url}
+    parts = urlsplit(url)
+    if parts.hostname in ('github.com', 'gitlab.com') and parts.path.strip('/'):
+        attributes['clai2.repo_slug'] = parts.path.strip('/')
+    return attributes
+
+
+@functools.lru_cache(maxsize=32)
+def _origin_url(directory: str) -> str | None:
+    """The `origin` remote of the repository containing `directory`, as `https://host/owner/repo`."""
+    try:
+        result = subprocess.run(
+            ['git', '-C', directory, 'remote', 'get-url', 'origin'],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    raw = result.stdout.strip()
+    if result.returncode != 0 or not raw:
+        return None
+    if '://' not in raw and ':' in raw:  # scp-like `git@github.com:owner/repo.git`
+        host, _, path = raw.partition(':')
+        raw = f'https://{host.rpartition("@")[2]}/{path}'
+    parts = urlsplit(raw)
+    if not parts.hostname:
+        return None
+    path = parts.path.removesuffix('.git').rstrip('/')
+    # Credentials (`https://user:token@host/...`) never leave the machine.
+    return f'https://{parts.hostname}{path}'
 
 
 async def git_email() -> str | None:

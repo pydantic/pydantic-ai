@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -46,6 +46,9 @@ class AskUser(AbstractCapability[AgentDepsT]):
     agent = Agent('anthropic:claude-fable-5', capabilities=[AskUser(answerer=pick_first)])
     ```
     """
+
+    id: str | None = field(default='ask_user', kw_only=True)
+    """Stable, so its instructions can be addressed as `capability:ask_user`, e.g. by Agent Control."""
 
     answerer: Answerer | None
     """Presents each `AskUserRequest` to the user and returns their `AskUserResponse`.

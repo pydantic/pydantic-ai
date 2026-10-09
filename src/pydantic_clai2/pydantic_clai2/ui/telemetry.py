@@ -11,7 +11,7 @@ secrets and free-text values stay out. The one exception is a submitted prompt's
 `prompt_text` only when the subscriber records message content, as agent spans do.
 """
 
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -30,6 +30,10 @@ PROMPT = 'prompt'
 """The submitted prompt, which `keep_names` also keeps: agent spans carry the same text unscrubbed."""
 MAX_CONTENT_CHARS = 64_000
 """Typed text beyond this is cut, so a huge paste cannot make the exporter drop the whole record."""
+PROMPT_SOURCE_ATTRIBUTE = 'clai2.prompt.source'
+"""Who wrote the prompt a run answers: `typed` by a human, `plugin` (an automated continuation), `headless`
+(`clai2 -p`), or `subagent` (a nested run). Hackathon: the fleet miner keeps only `typed` ones."""
+PROMPT_SOURCE: ContextVar[str] = ContextVar('clai2_prompt_source', default='typed')
 
 
 @dataclass(kw_only=True)
@@ -37,6 +41,7 @@ class _Sink:
     instance: logfire.Logfire
     root: Callable[[], Span | None]
     include_content: bool
+    identity: Callable[[], Mapping[str, Attribute]]
 
 
 _sinks: list[_Sink] = []
@@ -46,7 +51,11 @@ _emitting: ContextVar[bool] = ContextVar('_emitting', default=False)
 
 
 def subscribe(
-    sink: logfire.Logfire, *, root: Callable[[], Span | None] = lambda: None, include_content: bool = False
+    sink: logfire.Logfire,
+    *,
+    root: Callable[[], Span | None] = lambda: None,
+    include_content: bool = False,
+    identity: Callable[[], Mapping[str, Attribute]] = dict,
 ) -> Callable[[], None]:
     """Send UI telemetry to `sink` until the returned function is called; calling it again does nothing.
 
@@ -54,7 +63,7 @@ def subscribe(
     so each destination gets whole, correctly nested traces; when it unsubscribes, the previous one takes over.
     `include_content` lets `prompt_text` add what the user typed, like `InstrumentationSettings.include_content`.
     """
-    subscribed = _Sink(instance=sink, root=root, include_content=include_content)
+    subscribed = _Sink(instance=sink, root=root, include_content=include_content, identity=identity)
     _sinks.append(subscribed)
 
     def unsubscribe() -> None:
@@ -95,7 +104,8 @@ def record(msg_template: str, /, **attributes: Attribute) -> None:
     if _sinks:
         sink = _sinks[-1]
         with parent_span(sink.root()), _exempt():
-            sink.instance.log('info', msg_template, attributes=dict(attributes))
+            # Hackathon: each record says who and which session directly, so nothing needs the root-span join.
+            sink.instance.log('info', msg_template, attributes={**sink.identity(), **attributes})
 
 
 class UiSpan:
@@ -167,6 +177,9 @@ def operation_name(operation: object) -> str:
     return f'{prefix}:{path}' if prefix else path
 
 
+FLEET_PREFIXES = ('clai2.fleet.', 'clai2.policy.', 'clai2.memory.', 'clai2.session.')
+
+
 def keep_names(match: logfire.ScrubMatch) -> object:
     """A Logfire scrubbing callback that keeps UI telemetry's names, which can look like secrets but are not.
 
@@ -175,6 +188,10 @@ def keep_names(match: logfire.ScrubMatch) -> object:
     filled from them, are kept, along with `PROMPT`, whose words would otherwise trip the same patterns ("the
     session bug"). Everything else, including every agent span, is scrubbed as usual.
     """
+    # Hackathon: fleet and policy attributes hold item keys and rule names (`mcp_server:deepwiki-auth`), not
+    # secrets; scrubbing them would hide what was adopted and what policy decided.
+    if len(match.path) == 2 and match.path[0] == 'attributes' and str(match.path[1]).startswith(FLEET_PREFIXES):
+        return match.value
     if (
         _emitting.get()
         and len(match.path) == 2

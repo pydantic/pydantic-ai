@@ -7,6 +7,7 @@ tokens. The user token lives only for the duration of setup. What is kept is a p
 and traces go to that project, with session roots tagged with that email.
 """
 
+import os
 import platform
 import re
 import time
@@ -24,6 +25,7 @@ from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, save_key
 from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.slash_search import slash_search
@@ -77,6 +79,11 @@ class Project(BaseModel):
         return terminal_text(f'{self.organization_name}/{self.project_name}', keep='')
 
     @property
+    def variables_key_name(self) -> str:
+        """The `/keys` entry for this project's read-variables API key, like `LOGFIRE_VARIABLES_PYDANTIC_CLAI2`."""
+        return re.sub(r'[^A-Z0-9]+', '_', f'LOGFIRE_VARIABLES_{self.organization_name}_{self.project_name}'.upper())
+
+    @property
     def key_name(self) -> str:
         """The `/keys` entry for this project's write token, such as `LOGFIRE_TOKEN_PYDANTIC_CLAI2`."""
         return re.sub(r'[^A-Z0-9]+', '_', f'LOGFIRE_TOKEN_{self.organization_name}_{self.project_name}'.upper())
@@ -92,7 +99,7 @@ class Setup:
     announce: Announce
     runners: Runners = TERMINAL
     http: Callable[[], httpx.AsyncClient] = lambda: httpx.AsyncClient(timeout=httpx.Timeout(30, read=60))
-    open_browser: OpenBrowser = webbrowser.open
+    open_browser: OpenBrowser = open_browser
     sleep: Callable[[float], Awaitable[None]] = anyio.sleep
 
 
@@ -104,15 +111,31 @@ class Chosen:
     base_url: str
     project: Project
     account_email: str | None
+    variables_key: KeyReference | None = None
+    gateway: bool = False
+    """Whether that key also has `project:gateway_proxy`, so models run through the Pydantic AI Gateway."""
+    team: str | None = None
+    query: bool = False
+    """Whether that key also has `project:read_otlp` and a test query worked, so sessions can be read back."""
 
 
-async def run_setup(setup: Setup, *, current: str | None, owned: KeyReference | None) -> Chosen | None:
+async def run_setup(
+    setup: Setup,
+    *,
+    current: str | None,
+    owned: KeyReference | None,
+    owned_variables: KeyReference | None = None,
+    team: str | None = None,
+    destination: str | None = None,
+    fixed_project: tuple[str, str] | None = None,
+) -> Chosen | None:
     """Pick a destination, sign in, pick a project, and save its write token; `None` when cancelled.
 
     `owned` is the key the plugin already uses: setting up the same project again replaces it, but any other
     key of the same name is left alone.
     """
-    base_url = await run_worker(lambda: pick_destination(setup.runners, current=current))
+    # Managed enrolment names the Logfire and the project, so neither is picked.
+    base_url = destination or await run_worker(lambda: pick_destination(setup.runners, current=current))
     if base_url is None:
         return None
     with telemetry.span('logfire setup', destination=_destination(base_url)) as span:
@@ -122,14 +145,74 @@ async def run_setup(setup: Setup, *, current: str | None, owned: KeyReference | 
             projects = await _projects(http, base_url, user_token)
             if not projects:
                 raise SetupError(f'You cannot write to any project on {base_url} yet. Create one there, then retry.')
-            project = await run_worker(lambda: pick_project(setup.runners, projects))
+            if fixed_project is not None:
+                project = next((p for p in projects if (p.organization_name, p.project_name) == fixed_project), None)
+                if project is None:
+                    raise SetupError(
+                        f'You cannot write to {fixed_project[0]}/{fixed_project[1]} on {base_url}. '
+                        'Ask whoever manages clai2 for access.'
+                    )
+            else:
+                project = await run_worker(lambda: pick_project(setup.runners, projects))
             if project is None:
                 span.set('outcome', 'cancelled')
                 return None
             value = await _write_token(http, base_url, user_token, project)
+            variables = await _variables_key(http, base_url, user_token, project)
         name = await to_thread.run_sync(lambda: _save(project.key_name, value, owned=owned))
+        variables_name: str | None = None
+        if variables is not None:
+            key = variables.access_token
+            variables_name = await to_thread.run_sync(
+                lambda: _save(project.variables_key_name, key, owned=owned_variables)
+            )
         span.set('outcome', 'saved')
-    return Chosen(token=KeyReference(name=name), base_url=base_url, project=project, account_email=account_email)
+        span.set('fleet_control', variables is not None)
+        gateway = variables is not None and GATEWAY_SCOPE in (variables.scope or '').split()
+        span.set('gateway', gateway)
+        query = variables is not None and QUERY_SCOPE in (variables.scope or '').split()
+        if variables is not None and query:
+            async with setup.http() as http:
+                query = await query_works(http, base_url, variables.access_token)
+        span.set('query', query)
+    if variables is None:
+        setup.announce('Logfire did not issue a project API key, so company config from Logfire stays off.')
+    else:
+        setup.announce(f'Saved a personal Logfire API key ({variables.describe()}).')
+        if not gateway:
+            setup.announce('Gateway not available for your role; using your own model keys.')
+        if not query:
+            setup.announce('Your role cannot query Logfire, so /sessions logfire and resuming from Logfire stay off.')
+    chosen_team = await run_worker(lambda: pick_team(setup.runners, current=team))
+    return Chosen(
+        token=KeyReference(name=name),
+        base_url=base_url,
+        project=project,
+        account_email=account_email,
+        variables_key=KeyReference(name=variables_name) if variables_name else None,
+        gateway=gateway,
+        team=team if chosen_team is None else chosen_team or None,
+        query=query,
+    )
+
+
+def pick_team(runners: Runners, *, current: str | None) -> str | None:
+    """Optionally name your team, for team-targeted config; `None` keeps the current one, `''` clears it.
+
+    Pre-filled with the current team, else `CLAI2_TEAM`, so Enter accepts it.
+    """
+    typed = runners.run_text(
+        TextInputBuilder('Your team (optional, for team-targeted config from Logfire)')
+        .style(markdown_style())
+        .prompt('Team: ')
+        .initial(current or os.getenv('CLAI2_TEAM') or '')
+        .footer_hint('Enter save (empty clears) - Esc skip')
+        .key_source(menu_key)
+        .build()
+    )
+    if typed.cancelled or not isinstance(typed.value, str):
+        return None
+    return typed.value.strip()
 
 
 def pick_destination(runners: Runners, *, current: str | None) -> str | None:
@@ -248,6 +331,67 @@ async def _write_token(http: httpx.AsyncClient, base_url: str, user_token: str, 
     path = f'/v1/organizations/{project.organization_name}/projects/{project.project_name}/write-tokens/'
     response = await _call(http.post(f'{base_url}{path}', headers={'Authorization': user_token}))
     return _parse(_UserToken, response).token
+
+
+TOKEN_EXCHANGE = 'urn:ietf:params:oauth:grant-type:token-exchange'
+API_KEY_TOKEN_TYPE = 'urn:pydantic:logfire:token-type:api-key'
+VARIABLES_SCOPE = 'project:read_variables'
+GATEWAY_SCOPE = 'project:gateway_proxy'
+"""Asked for in the same exchange; a role without it drops it silently (RFC 6749), so setup checks what came back."""
+QUERY_SCOPE = 'project:read_otlp'
+"""Lets the key use Logfire's query API (`/v1/query`), to list and resume sessions; needs a role that can make tokens."""
+
+
+class _ExchangedKey(BaseModel):
+    access_token: str
+    scope: str | None = None
+    expires_in: int | None = None
+
+    def describe(self) -> str:
+        """What was granted, for the setup message: scope and lifetime, never the key."""
+        days = f', expires in {round(self.expires_in / 86400)} days' if self.expires_in else ''
+        return f'{self.scope or VARIABLES_SCOPE}{days}'
+
+
+async def _variables_key(
+    http: httpx.AsyncClient, base_url: str, user_token: str, project: Project
+) -> _ExchangedKey | None:
+    """Exchange the sign-in (RFC 8693) for a personal, expiring API key: read managed variables, and use the gateway.
+
+    Logfire mints it for the signed-in user and the chosen project, bounded by their role; it expires in 90 days.
+    `None` when the server refuses, such as an older self-hosted Logfire: fleet control is optional.
+    """
+    try:
+        response = await http.post(
+            f'{base_url}/api/oauth/token',
+            data={
+                'grant_type': TOKEN_EXCHANGE,
+                'subject_token': user_token,
+                'subject_token_type': 'urn:ietf:params:oauth:token-type:access_token',
+                'requested_token_type': API_KEY_TOKEN_TYPE,
+                'audience': f'{base_url}/{project.organization_name}/{project.project_name}',
+                'scope': f'{VARIABLES_SCOPE} {GATEWAY_SCOPE} {QUERY_SCOPE}',
+            },
+        )
+    except httpx.HTTPError:
+        return None
+    if response.is_error:
+        return None
+    try:
+        return _ExchangedKey.model_validate_json(response.content)
+    except ValidationError:
+        return None
+
+
+async def query_works(http: httpx.AsyncClient, base_url: str, key: str) -> bool:
+    """Preflight the query API with `key`: one trivial query, so a missing scope shows at setup, not at resume."""
+    try:
+        response = await http.get(
+            f'{base_url}/v1/query', params={'sql': 'SELECT 1', 'limit': 1}, headers={'Authorization': f'Bearer {key}'}
+        )
+    except httpx.HTTPError:
+        return False
+    return response.is_success
 
 
 async def _call(request: Awaitable[httpx.Response]) -> httpx.Response:

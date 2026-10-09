@@ -23,6 +23,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import Plugin
+from pydantic_clai2.runtime import remote_sessions
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.imported_sessions import (
     IMPORT_SOURCES,
@@ -33,6 +34,7 @@ from pydantic_clai2.runtime.imported_sessions import (
     merge,
     save_import,
 )
+from pydantic_clai2.runtime.remote_sessions import RemoteListing, RemoteResume
 from pydantic_clai2.runtime.session_naming import NamingResult, SessionNamer, generate_name
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -106,13 +108,75 @@ class Sessions(Generic[DepsT, OutputT]):
             args = args[1:]
         if len(args) > 1:
             raise ValueError('Usage: /resume [claude|codex] [SESSION-ID]')
+        if args and source is None and (remote := remote_sessions.current()) is not None:
+            resumed = await remote.resume(args[0], local=await self._saved(args[0]))
+            if resumed is not None:
+                return await self._resume_remote(resumed)
         if args:
             return await self.resume(await self.import_session(source, args[0]) if source else args[0])
         return await self.browse(source)
 
+    async def _saved(self, conversation_id: str) -> bool:
+        try:
+            await self.store.get(conversation_id=conversation_id)
+        except LookupError:
+            return False
+        return True
+
+    async def _resume_remote(self, resumed: RemoteResume) -> str:
+        """Save a remote session's history under its CLAI ID (replacing an older copy), then resume it here."""
+        if resumed.messages is not None:
+            try:
+                await self.store.delete(source=(await self.store.get(conversation_id=resumed.conversation_id)).summary)
+            except LookupError:
+                pass
+            summary = ConversationSummary(
+                id=resumed.conversation_id,
+                workspace=self.session.workspace,
+                title=resumed.title or 'Session from Logfire',
+                subtitle=resumed.subtitle,
+                tags=('logfire',),
+            )
+            await self.store.save(summary=summary, messages=resumed.messages)
+        notice = await self.resume(resumed.conversation_id, allow_other_workspace=True)
+        return f'{resumed.notice} {notice}'.strip()
+
+    async def listing_command(self, args: list[str]) -> str:
+        """`/sessions`: this machine's sessions and remote ones (Logfire), one list, newest first."""
+        if args:
+            raise ValueError('Usage: /sessions (then /resume ID or /resume to pick one)')
+        saved = await self.store.listing(limit=30)
+        remote = await self._remote_listing()
+        here = {summary.id: summary for summary in saved}
+        remote_entries = remote.entries if remote else []
+        newer = {
+            entry.id for entry in remote_entries if entry.id in here and entry.updated_at > here[entry.id].updated_at
+        }
+        entries = merge(saved, remote_entries, limit=30)
+        if not entries and not (remote and remote.unavailable):
+            return 'No saved sessions yet.'
+        lines = ['Sessions, newest first:']
+        for entry in entries:
+            where = 'this machine' if entry.id in here else 'Logfire · other machine'
+            if entry.id in newer:
+                where = 'this machine, newer in Logfire'
+            when = entry.updated_at.astimezone().strftime('%Y-%m-%d %H:%M')
+            lines.append(f'  {entry.id}  {when}  {where:<24} {entry.title[:70]}')
+        if remote and remote.unavailable:
+            lines.append(remote.unavailable)
+        lines.append('Continue one with /resume ID (or a Logfire link), here or on another machine.')
+        return '\n'.join(lines)
+
+    async def _remote_listing(self) -> RemoteListing | None:
+        remote = remote_sessions.current()
+        return None if remote is None else await remote.listing(workspace=self.session.workspace)
+
     async def browse(self, source: ImportSource | None) -> str:
         """Pick from CLAI's sessions and not-yet-imported ones, or from one agent's sessions only."""
         entries: list[ConversationSummary] = [] if source else await self.store.listing()
+        remote = None if source else await self._remote_listing()
+        remote_entries = remote.entries if remote else []
+        remote_ids = {entry.id for entry in remote_entries} - {entry.id for entry in entries}
         self.namer.backfill(entries)
         imports = await run_sync(ImportCatalog, (source,) if source else IMPORT_SOURCES)
         loop = asyncio.get_running_loop()
@@ -122,7 +186,9 @@ class Sessions(Generic[DepsT, OutputT]):
 
         def listing(query: str, limit: int) -> list[ConversationSummary]:
             saved: list[ConversationSummary] = [] if source else apply(self.store.listing(query=query, limit=limit))
-            return merge(saved, imports.listing(query, limit), limit=limit)
+            needle = query.casefold()
+            others = [*imports.listing(query, limit), *(e for e in remote_entries if needle in e.title.casefold())]
+            return merge(saved, others, limit=limit)
 
         async def rename(source: ConversationSummary, title: str) -> None:
             if not await self.store.name(
@@ -133,7 +199,7 @@ class Sessions(Generic[DepsT, OutputT]):
         def browse() -> str:
             # Resolve Git identities on the menu worker, not the application loop.
             return SessionBrowser(
-                entries=merge(entries, imports.listing(), limit=200),
+                entries=merge(entries, [*imports.listing(), *remote_entries], limit=200),
                 workspace=self.session.workspace,
                 active_id=self.session.summary.id,
                 refresh=listing,
@@ -152,6 +218,10 @@ class Sessions(Generic[DepsT, OutputT]):
         if self.session.running:
             # The browser opens mid-turn, but a running conversation cannot be swapped out.
             return f'A turn is running. Enter /resume {selected} to restore that session once it ends.'
+        if selected in remote_ids and (remote_store := remote_sessions.current()) is not None:
+            resumed = await remote_store.resume(selected, local=False)
+            if resumed is not None:
+                return await self._resume_remote(resumed)
         return await self.resume(selected, allow_other_workspace=True)
 
     async def _preview(self, conversation_id: str, *, imports: ImportCatalog) -> str:

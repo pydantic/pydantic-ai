@@ -27,6 +27,19 @@ from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
 from tests.clai2.test_logfire import Recorder, observability_loader, recorder as recorder
 
+_FLEET_KEYS = (
+    'agent_control',
+    'agent_control_name',
+    'api_key',
+    'team',
+    'allowed_catalog_plugins',
+    'fleet_env_allow',
+    'project',
+    'gateway',
+    'sessions_query',
+)
+"""Hackathon fleet-control settings, tagged with the `fleet-control` feature."""
+
 
 @pytest.mark.parametrize('user_tag', [None, 'git-email', 'false'])
 async def test_logfire_user_tag_settings_survive_older_builds(
@@ -69,12 +82,15 @@ async def test_logfire_user_tag_settings_survive_older_builds(
             'user_tag': ['logfire-user-tag'],
             'account': ['logfire-user-tag'],
             'httpx': ['logfire-httpx'],
+            **dict.fromkeys(_FLEET_KEYS, ['fleet-control']),
         }
         old_view = apply_requirements(
             saved.settings, stored_requirements(requirements, saved.settings), defaults={}, supported=frozenset()
         )
         assert old_view.settings == {
-            key: value for key, value in saved.settings.items() if key not in ('user_tag', 'account', 'httpx')
+            key: value
+            for key, value in saved.settings.items()
+            if key not in ('user_tag', 'account', 'httpx', *_FLEET_KEYS)
         }
         monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
         await loader.reload('observability')
@@ -104,6 +120,7 @@ async def test_httpx_opt_in_is_ignored_by_older_builds(tmp_path: Path, recorder:
             'httpx': ['logfire-httpx'],
             'user_tag': ['logfire-user-tag'],
             'account': ['logfire-user-tag'],
+            **dict.fromkeys(_FLEET_KEYS, ['fleet-control']),
         }
         old_view = apply_requirements(
             saved.settings,

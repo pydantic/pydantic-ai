@@ -27,8 +27,9 @@ from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_U
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, SavedKey, load_keys, prompt_api_key, save_key
 from pydantic_clai2.logfire_oauth import SIGN_IN_TIMEOUT, Announce, DeviceAuth, SignInError, forget, status
+from pydantic_clai2.managed import managed_target
 from pydantic_clai2.mcp import http_client
-from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart
+from pydantic_clai2.plugins import Plugin, PluginHost, SessionEnd, SessionStart
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker, worker_stopping
 from pydantic_clai2.ui.rendering import theme
@@ -70,6 +71,8 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
         super().__init__(host, settings)
         self.capability: LogfireMCP[None] | None = None
         """Built by `on_session_start`; runs that start earlier get no Logfire MCP tools."""
+        self._launch_sign_in: asyncio.Task[None] | None = None
+        """A managed launch's background sign-in, cancelled when the session ends."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return (self._for_run,)
@@ -99,6 +102,41 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
             # Loading anyway keeps the settings menu available; each run fails closed until the key is saved.
             self.host.console.print(
                 f'Logfire MCP has no credential: {missing} is not in /keys. {SETUP}',
+                style=theme.color(theme.WARNING),
+                markup=False,
+            )
+        elif isinstance(client := self.capability.client, Client) and managed_target() is not None:
+            if isinstance(auth := client.transport.auth, DeviceAuth):
+                await self._sign_in_at_launch(auth)
+
+    async def on_session_end(self, event: SessionEnd) -> None:
+        if self._launch_sign_in is not None:
+            self._launch_sign_in.cancel()
+
+    async def _sign_in_at_launch(self, auth: DeviceAuth) -> None:
+        """Managed clai2 starts Logfire MCP's sign-in at launch, so its link and code never appear mid-turn.
+
+        Logfire MCP is its own OAuth client, issued tokens for the MCP URL alone, so the managed enrolment's
+        sign-in cannot stand in for it. It runs in the background through the connection's own `DeviceAuth`:
+        the shell stays usable, and a prompt sent before approval waits for this sign-in instead of starting
+        another.
+        """
+        settings = self.settings
+        signed = await anyio.to_thread.run_sync(
+            partial(status, resource=settings.url, read_only=settings.read_only), abandon_on_cancel=True
+        )
+        if signed == 'signed in':
+            return
+        # Printed now, while launch output is still going to the transcript; the link and code follow.
+        self._announce(f'Logfire MCP ({urlsplit(settings.url).hostname}) needs its own sign-in; starting it now.')
+        self._launch_sign_in = asyncio.get_running_loop().create_task(self._finish_sign_in(auth))
+
+    async def _finish_sign_in(self, auth: DeviceAuth) -> None:
+        try:
+            await auth.token()
+        except SignInError as exc:
+            self.host.console.print(
+                f'{exc} Logfire MCP will ask again on the first prompt that uses it.',
                 style=theme.color(theme.WARNING),
                 markup=False,
             )

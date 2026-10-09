@@ -28,7 +28,7 @@ from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, Mode
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-from pydantic_clai2 import warm_imports
+from pydantic_clai2 import policy_state, warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
 from pydantic_clai2.cli.self_update import Relaunch, Updates
@@ -80,6 +80,7 @@ from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, task_row
 from pydantic_clai2.runtime.worktrees import Worktree
+from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
@@ -612,6 +613,14 @@ def create_shell(
             during_turn=True,
         )
     )
+    commands.register(
+        Command(
+            name='sessions',
+            description='Saved sessions, from this machine and from Logfire when managed',
+            handler=sessions.listing_command,
+            during_turn=True,
+        )
+    )
     commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command, during_turn=True))
     commands.register(
         Command(
@@ -766,6 +775,8 @@ def create_shell(
         status=status,
         enabled=load_plugins,
     )
+    # Hackathon: lets the fleet's `locked_ok` check that a locked plugin is really loaded.
+    policy_state.loaded_plugins = lambda: frozenset(loader._loaded)  # pyright: ignore[reportPrivateUsage]
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -1119,6 +1130,9 @@ class _Shell(Generic[DepsT, OutputT]):
             )
             try:
                 model = self.session.model or _model_label(self.agent)
+                if not self.session.model_chosen and (pushed := policy_state.pushed_model()):
+                    # Hackathon: with no pick of the user's own, Agent Control's pushed model is the one that runs.
+                    model = pushed
                 if model != self.status.model:
                     self.status.context_window = None
                     self.status.context_alert = False
@@ -1222,7 +1236,11 @@ class _Shell(Generic[DepsT, OutputT]):
 
         async def run_turn() -> None:
             nonlocal ended
-            ended = await self.run_turn(start, images=images, automated=automated)
+            source = telemetry.PROMPT_SOURCE.set('plugin' if automated else 'typed')
+            try:
+                ended = await self.run_turn(start, images=images, automated=automated)
+            finally:
+                telemetry.PROMPT_SOURCE.reset(source)
 
         previous_tasks = {(record.id, record.generation) for record in self.tasks.records()}
         completed = await self.interrupts.run(run_turn())

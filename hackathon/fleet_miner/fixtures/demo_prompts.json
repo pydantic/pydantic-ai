@@ -1,0 +1,182 @@
+[
+  {
+    "trace_id": "92c5dd53af2a43018777c696e539a3f6",
+    "span_id": "cec9428c0caf4e48",
+    "timestamp": "2026-10-06T11:51:00+00:00",
+    "text": "Add a `max_retries` option to the Temporal activity config in the harness",
+    "user": "douwe@pydantic.dev",
+    "session_id": "21fe06ad-d076-437c-8306-c99906db0566",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "92c5dd53af2a43018777c696e539a3f6",
+    "span_id": "d39fb3d66bdd4d4c",
+    "timestamp": "2026-10-06T12:05:00+00:00",
+    "text": "yes, go with option 2",
+    "user": "douwe@pydantic.dev",
+    "session_id": "21fe06ad-d076-437c-8306-c99906db0566",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "92c5dd53af2a43018777c696e539a3f6",
+    "span_id": "a550f40628ef4979",
+    "timestamp": "2026-10-06T12:27:00+00:00",
+    "text": "Great. Commit, open a PR, then keep an eye on CI and the agentic review comments and keep iterating until it's all green and resolved",
+    "user": "douwe@pydantic.dev",
+    "session_id": "21fe06ad-d076-437c-8306-c99906db0566",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "55f56cfe25184ccc98684b4a52dc1014",
+    "span_id": "09e88cd7ce174173",
+    "timestamp": "2026-10-06T09:28:00+00:00",
+    "text": "why does test_streaming_tool_calls flake on 3.11?",
+    "user": "douwe@pydantic.dev",
+    "session_id": "80ac3b30-1d90-4576-bd83-b5640263f52f",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "55f56cfe25184ccc98684b4a52dc1014",
+    "span_id": "a5c5194721ea4b35",
+    "timestamp": "2026-10-06T09:47:00+00:00",
+    "text": "ok fix it",
+    "user": "douwe@pydantic.dev",
+    "session_id": "80ac3b30-1d90-4576-bd83-b5640263f52f",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "55f56cfe25184ccc98684b4a52dc1014",
+    "span_id": "99b378aea838407a",
+    "timestamp": "2026-10-06T09:52:00+00:00",
+    "text": "now push it and babysit the PR: watch the checks, address what the review bots say, repeat till done",
+    "user": "douwe@pydantic.dev",
+    "session_id": "80ac3b30-1d90-4576-bd83-b5640263f52f",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "6b40c7bab82d4a518d9eeb80a303b5b1",
+    "span_id": "a8a3413d1b2a4aa4",
+    "timestamp": "2026-10-06T12:27:00+00:00",
+    "text": "refactor the plugin loader so drop-ins load lazily",
+    "user": "mike@pydantic.dev",
+    "session_id": "ae2f3fb8-2ba5-4e8d-b28a-655a81e73097",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "6b40c7bab82d4a518d9eeb80a303b5b1",
+    "span_id": "de47aa70b1db44fb",
+    "timestamp": "2026-10-06T12:30:00+00:00",
+    "text": "looks good. open a pr and then keep watching CI + the coderabbit/macroscope comments, fix whatever comes up until it's mergeable",
+    "user": "mike@pydantic.dev",
+    "session_id": "ae2f3fb8-2ba5-4e8d-b28a-655a81e73097",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "7b0c0af7fffc417c9cdd990be63388ac",
+    "span_id": "a5632b6c264e4157",
+    "timestamp": "2026-10-06T13:27:00+00:00",
+    "text": "run the tests before you commit anything",
+    "user": "mike@pydantic.dev",
+    "session_id": "bc37af92-af06-48b2-91e5-f388dbbdcd9b",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "7b0c0af7fffc417c9cdd990be63388ac",
+    "span_id": "3479005b7d3e4b4f",
+    "timestamp": "2026-10-06T13:30:00+00:00",
+    "text": "add a /theme preview command",
+    "user": "mike@pydantic.dev",
+    "session_id": "bc37af92-af06-48b2-91e5-f388dbbdcd9b",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "27fb159cbee2440faead42149e53ccab",
+    "span_id": "e474df8b8ad84aeb",
+    "timestamp": "2026-10-06T09:59:00+00:00",
+    "text": "Fix the off-by-one in the logfire query pagination",
+    "user": "david@pydantic.dev",
+    "session_id": "a711f46b-3b21-44b2-86f7-f45e39469ed2",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "27fb159cbee2440faead42149e53ccab",
+    "span_id": "b4d8caf51aff485f",
+    "timestamp": "2026-10-06T10:14:00+00:00",
+    "text": "Make a PR for this and don't stop at opening it: monitor the CI run and the AI reviewer feedback, push fixes until everything passes",
+    "user": "david@pydantic.dev",
+    "session_id": "a711f46b-3b21-44b2-86f7-f45e39469ed2",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "a8a048c32c7c49449f69fd3cd91b0c18",
+    "span_id": "b7412fb606b54e5e",
+    "timestamp": "2026-10-06T09:44:00+00:00",
+    "text": "please run the tests before you commit",
+    "user": "david@pydantic.dev",
+    "session_id": "b2bc212f-f404-490a-8e26-5901ada9649c",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "a8a048c32c7c49449f69fd3cd91b0c18",
+    "span_id": "54df8de2ac084d27",
+    "timestamp": "2026-10-06T09:48:00+00:00",
+    "text": "explain how SSE invalidation works in the variables provider",
+    "user": "david@pydantic.dev",
+    "session_id": "b2bc212f-f404-490a-8e26-5901ada9649c",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "3494c8171c564ea585c10e1125c00cce",
+    "span_id": "c84c22b06d144e25",
+    "timestamp": "2026-10-06T13:57:00+00:00",
+    "text": "Port the scrubbing callback to logfire-js",
+    "user": "alex@pydantic.dev",
+    "session_id": "86fd2418-d235-4b8a-b284-8c331746a6ca",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "3494c8171c564ea585c10e1125c00cce",
+    "span_id": "1a955778925646d8",
+    "timestamp": "2026-10-06T14:00:00+00:00",
+    "text": "ship it - open the PR and stick around: when CI fails or a review bot comments, fix and push again until it's clean",
+    "user": "alex@pydantic.dev",
+    "session_id": "86fd2418-d235-4b8a-b284-8c331746a6ca",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "dc81307674e44f729fa665da320bf5df",
+    "span_id": "f7e0095146404775",
+    "timestamp": "2026-10-06T13:54:00+00:00",
+    "text": "what does `agent_control_config_hint` carry?",
+    "user": "alex@pydantic.dev",
+    "session_id": "2c9630d1-b563-44fc-b80f-dd547aab1bfd",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "dc81307674e44f729fa665da320bf5df",
+    "span_id": "f91f04ef8021448f",
+    "timestamp": "2026-10-06T14:03:00+00:00",
+    "text": "don't add docstrings to private helpers",
+    "user": "alex@pydantic.dev",
+    "session_id": "2c9630d1-b563-44fc-b80f-dd547aab1bfd",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "16c4bc08c08e43a89e60a2e347881b6a",
+    "span_id": "6d8fb77b5b0945e1",
+    "timestamp": "2026-10-06T14:01:00+00:00",
+    "text": "make the monty sandbox url configurable via env var",
+    "user": "samuel@pydantic.dev",
+    "session_id": "48405684-1e58-4fea-85b6-c1c5bfa9d310",
+    "source": "prompt_submitted"
+  },
+  {
+    "trace_id": "16c4bc08c08e43a89e60a2e347881b6a",
+    "span_id": "3e718e972a2546d5",
+    "timestamp": "2026-10-06T14:21:00+00:00",
+    "text": "yes",
+    "user": "samuel@pydantic.dev",
+    "session_id": "48405684-1e58-4fea-85b6-c1c5bfa9d310",
+    "source": "prompt_submitted"
+  }
+]

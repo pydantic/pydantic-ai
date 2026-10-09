@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 
 import httpx
 import pytest
+from pydantic import JsonValue
 from rich.console import Console
 from termflow.tui import MenuItem
 from termflow.tui.menu import Menu, MenuResult
@@ -48,6 +49,10 @@ class FakeLogfire:
     )
     projects: Answer = field(default_factory=lambda: httpx.Response(200, json=PROJECTS))
     write_token: Answer = field(default_factory=lambda: httpx.Response(200, json={'token': 'pylf_v1_us_write'}))
+    variables_key: Answer = field(
+        default_factory=lambda: httpx.Response(200, json={'access_token': 'pylf_v2_us_variables', 'token_type': 'N_A'})
+    )
+    query: Answer = field(default_factory=lambda: httpx.Response(200, json={'columns': []}))
     requests: list[httpx.Request] = field(default_factory=list[httpx.Request])
 
     def handle(self, request: httpx.Request) -> httpx.Response:
@@ -61,6 +66,10 @@ class FakeLogfire:
             answer = self.account
         elif path == '/v1/writable-projects/':
             answer = self.projects
+        elif path == '/api/oauth/token':
+            answer = self.variables_key
+        elif path == '/v1/query':
+            answer = self.query
         else:
             assert path == '/v1/organizations/pydantic/projects/clai2/write-tokens/'
             answer = self.write_token
@@ -85,7 +94,8 @@ def scripted(choices: list[object], typed: list[str | None] | None = None) -> Ru
         return MenuResult(item=MenuItem(str(wanted), value=wanted))
 
     def run_text(widget: TextInput) -> TextInputResult:
-        text = texts.pop(0)
+        # The optional team question at the end of setup is skipped (Esc) unless a test scripts it.
+        text = texts.pop(0) if texts else None
         return TextInputResult(cancelled=True) if text is None else TextInputResult(value=text)
 
     def run_list(menu: Menu) -> MenuResult:
@@ -184,11 +194,22 @@ async def test_sign_in_pick_a_project_and_save_its_write_token(configure: Config
         email='mike@example.com', token=KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2')
     )
     assert harness.lines == [
-        'Sign in to Logfire (new users can sign up there): https://logfire-us.pydantic.dev/auth/dev-123'
+        'Sign in to Logfire (new users can sign up there): https://logfire-us.pydantic.dev/auth/dev-123',
+        'Saved a personal Logfire API key (project:read_variables).',
+        'Gateway not available for your role; using your own model keys.',
+        'Your role cannot query Logfire, so /sessions logfire and resuming from Logfire stay off.',
     ]
     assert harness.opened == ['https://logfire-us.pydantic.dev/auth/dev-123']
-    new, *_, me, listed, minted = harness.server.requests
+    new, *_, me, listed, minted, exchanged = harness.server.requests
     assert new.url.params['machine_name']
+    # Hackathon fleet control: the same sign-in is exchanged (RFC 8693) for a read-variables API key.
+    assert exchanged.url.path == '/api/oauth/token'
+    form = dict(httpx.QueryParams(exchanged.content.decode()))
+    assert form['subject_token'] == 'user-token'
+    assert form['audience'] == f'{US}/pydantic/clai2'
+    assert form['scope'] == 'project:read_variables project:gateway_proxy project:read_otlp'
+    assert saved.api_key == KeyReference(name='LOGFIRE_VARIABLES_PYDANTIC_CLAI2')
+    assert load_keys()['LOGFIRE_VARIABLES_PYDANTIC_CLAI2'].get_secret_value() == 'pylf_v2_us_variables'
     assert me.url.path == '/v1/account/me'
     assert me.headers['Authorization'] == listed.headers['Authorization'] == minted.headers['Authorization']
     assert minted.headers['Authorization'] == 'user-token'
@@ -365,3 +386,72 @@ def test_https_origin_rejects_credentials_without_echoing_them() -> None:
     with pytest.raises(SetupError, match='Leave credentials out of the URL') as error:
         https_origin('https://mike:hunter2@logfire.example.com')
     assert 'hunter2' not in str(error.value)
+
+
+def _typed_by_default(widget: TextInput) -> str:
+    return ''.join(widget._chars)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    ('current', 'env', 'prefilled'),
+    [(None, None, ''), (None, 'ai', 'ai'), ('logfire', 'ai', 'logfire')],
+)
+def test_the_team_prompt_is_prefilled_from_clai2_team(
+    monkeypatch: pytest.MonkeyPatch, current: str | None, env: str | None, prefilled: str
+) -> None:
+    if env is None:
+        monkeypatch.delenv('CLAI2_TEAM', raising=False)
+    else:
+        monkeypatch.setenv('CLAI2_TEAM', env)
+    shown: list[str] = []
+
+    def run_text(widget: TextInput) -> TextInputResult:
+        shown.append(_typed_by_default(widget))
+        return TextInputResult(value=f' {prefilled} ', cancelled=False)
+
+    runners = Runners(
+        run_list=lambda menu: MenuResult(cancelled=True),
+        run_choice=lambda menu: MenuResult(cancelled=True),
+        run_text=run_text,
+    )
+    assert logfire_setup.pick_team(runners, current=current) == prefilled
+    assert shown == [prefilled]
+
+
+def test_the_team_setting_is_prefilled_from_clai2_team_while_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic_clai2.builtin_plugins.logfire import LogfireSource
+    from pydantic_clai2.ui.menus.field_menu import FieldMenu
+
+    monkeypatch.setenv('CLAI2_TEAM', 'ai')
+
+    def editor(**settings: JsonValue) -> str:
+        source = LogfireSource(PluginHost(name='observability', console=Console(file=io.StringIO()), settings=settings))
+        [row] = [row for row in source.rows() if row.key == 'team']
+        return _typed_by_default(FieldMenu(source).build_editor(row))
+
+    assert editor() == 'ai'
+    assert editor(team='platform') == ''
+
+
+@pytest.mark.parametrize(('query', 'saved'), [(200, True), (403, False)])
+async def test_a_key_that_can_query_is_preflighted_before_sessions_are_turned_on(
+    configure: Configure, query: int, saved: bool
+) -> None:
+    harness = Harness()
+    harness.server.variables_key = httpx.Response(
+        200,
+        json={
+            'access_token': 'pylf_v2_us_variables',
+            'token_type': 'N_A',
+            'scope': 'project:read_variables project:gateway_proxy project:read_otlp',
+        },
+    )
+    harness.server.query = httpx.Response(query, json={})
+    host = make_host()
+    await configure(host, harness.setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
+    assert host.settings(LogfireSettings).sessions_query is saved
+    [preflight] = [request for request in harness.server.requests if request.url.path == '/v1/query']
+    assert preflight.url.params['sql'] == 'SELECT 1'
+    assert preflight.headers['Authorization'] == 'Bearer pylf_v2_us_variables'
+    stays_off = 'Your role cannot query Logfire, so /sessions logfire and resuming from Logfire stay off.'
+    assert (stays_off in harness.lines) is not saved

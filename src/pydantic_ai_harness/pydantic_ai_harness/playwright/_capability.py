@@ -135,6 +135,9 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     at agent construction.
     """
 
+    id: str | None = field(default='playwright', kw_only=True)
+    """Stable, so its instructions can be addressed as `capability:playwright`, e.g. by Agent Control."""
+
     headless: bool = True
     """Run Chromium without a visible window. `True` suits servers and CI."""
 

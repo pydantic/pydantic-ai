@@ -19,6 +19,7 @@ from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHt
 from pydantic_ai import RunContext
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset
+from pydantic_clai2 import policy_state
 from pydantic_clai2.mcp._settings import Server, Servers, SSEServer, StdioServer, http_client, missing, resolve
 from pydantic_clai2.mcp._store import MCPStore
 from pydantic_clai2.mcp._tokens import TokenStore, oauth
@@ -202,11 +203,24 @@ class MCPServers:
         for entry in self.entries():
             if self.state(entry) not in ('running', 'ready'):
                 continue
+            if not self._allowed_by_policy(entry):
+                continue
             connection = await self._connection(entry)
             if connection.stack is None and await self._open(entry.name, connection):
                 continue  # A server that cannot connect is marked `error`, not allowed to fail the prompt.
+            policy_state.mark_gated(connection.toolset)
             toolsets.append(connection.toolset.prefixed(entry.name))
         return CombinedToolset(toolsets) if toolsets else None
+
+    def _allowed_by_policy(self, entry: ServerEntry) -> bool:
+        """Hackathon: apply the organization's MCP allowlist to the user's and the project's servers.
+
+        Servers Logfire pushes never come through here. In `enforce` mode a server outside the list is not
+        connected; either way it is recorded once per session.
+        """
+        url = str(getattr(entry.server, 'url', '') or '')
+        subject = url or str(getattr(entry.server, 'command', '') or '') or entry.name
+        return policy_state.mcp_allowed(entry.name, url, subject=subject)
 
     async def list_tools(self, name: str) -> list[str]:
         """Connect if needed and list the server's prefixed tool names."""

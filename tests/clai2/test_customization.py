@@ -61,10 +61,16 @@ async def test_default_agent_does_not_read_guide_for_normal_turn(monkeypatch: py
     assert result.output == 'hello'
     assert model.last_model_request_parameters is not None
     assert 'read_clai_customization_guide' in {tool.name for tool in model.last_model_request_parameters.function_tools}
-    parts = model.last_model_request_parameters.instruction_parts
-    assert parts is not None
+    parts = model.last_model_request_parameters.instruction_parts or []
     instructions = '\n'.join(part.content for part in parts)
-    assert 'first call read_clai_customization_guide' in instructions
+    # The hint is the tool's own description (an instruction block of its own would have no stable id).
+    [guide] = [
+        tool
+        for tool in model.last_model_request_parameters.function_tools
+        if tool.name == 'read_clai_customization_guide'
+    ]
+    assert 'When asked to customize CLAI itself' in (guide.description or '')
+    assert 'customize CLAI itself' not in instructions
     assert '# Customizing CLAI 2' not in instructions
 
 
@@ -104,9 +110,9 @@ async def test_instruction_order_puts_the_hint_between_guidance_and_repository(t
     parts = [part.content for part in params.instruction_parts or []]
     assert parts[0].startswith('You are a software engineering agent')
     assert 'ask_user_question' in parts[1]
-    assert parts[2].startswith('When asked to customize CLAI itself')
-    assert parts[3].startswith('<context-file path="AGENTS.md">')
-    assert '# House rules' in parts[3]
+    assert parts[2].startswith('<context-file path="AGENTS.md">')
+    assert '# House rules' in parts[2]
+    assert str([part.id for part in params.instruction_parts or []][1]) == 'capability:ask_user'
     assert 'read_clai_customization_guide' in {tool.name for tool in params.function_tools}
 
 
@@ -125,8 +131,7 @@ async def test_hint_still_follows_the_coding_guidance_without_ask_user(tmp_path:
     assert params is not None
     parts = [part.content for part in params.instruction_parts or []]
     assert parts[0].startswith('You are a software engineering agent')
-    assert parts[1].startswith('When asked to customize CLAI itself')
-    assert parts[2].startswith('<context-file path="AGENTS.md">')
+    assert parts[1].startswith('<context-file path="AGENTS.md">')
 
 
 async def test_custom_agent_can_opt_in() -> None:

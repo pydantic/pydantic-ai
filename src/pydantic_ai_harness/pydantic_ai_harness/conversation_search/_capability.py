@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability
@@ -85,6 +85,9 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
     the capabilities is required; the search tool reads the store lazily at call
     time.
     """
+
+    id: str | None = field(default='conversation_search', kw_only=True)
+    """Stable, so its instructions can be addressed as `capability:conversation_search`, e.g. by Agent Control."""
 
     source: HistorySource
     """Where the search corpus comes from. Use `SnapshotHistorySource` over the

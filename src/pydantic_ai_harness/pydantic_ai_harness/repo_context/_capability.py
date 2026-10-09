@@ -85,6 +85,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     ```
     """
 
+    id: str | None = field(default='repo_context', kw_only=True)
+    """Stable, so its instructions can be addressed as `capability:repo_context`, e.g. by Agent Control."""
+
     workspace_dir: Path | None = None
     """Deprecated and ignored: the walk-up and asset scan are anchored at the workspace's working directory.
 

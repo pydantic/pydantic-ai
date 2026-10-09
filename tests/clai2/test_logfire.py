@@ -67,6 +67,7 @@ class Recorder:
         token: str | None,
         scrubbing: logfire.ScrubbingOptions | None,
         advanced: logfire.AdvancedOptions | None,
+        **variables: object,
     ) -> logfire.Logfire:
         self.tokens.append(token)
         self.options.append(
@@ -665,6 +666,15 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             'base_url': None,
             'httpx': True,
             'ui_events': False,
+            'agent_control': True,
+            'agent_control_name': 'clai2',
+            'api_key': None,
+            'team': None,
+            'allowed_catalog_plugins': [],
+            'fleet_env_allow': [],
+            'project': None,
+            'gateway': False,
+            'sessions_query': False,
         }
         assert [options['service_name'] for options in recorder.options] == ['pydantic-clai2', 'my-clai']
         assert recorder.options[-1]['send_to_logfire'] is False
