@@ -4,11 +4,12 @@ import re
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
-from typing import ClassVar, Generic, Literal, Protocol, TypeVar, cast, get_args, get_origin
+from datetime import datetime
+from typing import ClassVar, Generic, Literal, Never, Protocol, Self, TypeVar, cast, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 from rich.console import Console, RenderableType
-from typing_extensions import Never, Self, TypeVar as DefaultTypeVar, get_original_bases
+from typing_extensions import TypeVar as DefaultTypeVar, get_original_bases
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
@@ -51,7 +52,10 @@ class Conversation(Protocol):
         ...
 
     async def resolved_model(self) -> Model | str | None:
-        """The model the next run uses; `None` when nothing has been chosen yet."""
+        """The model CLAI or the user selected for the next run; `None` when neither has chosen one.
+
+        A capability that selects a model can replace CLAI's default per request, so a run may use another.
+        """
         ...
 
 
@@ -91,6 +95,14 @@ class SessionStart:
 
 
 @dataclass(kw_only=True)
+class PluginLoadFailed:
+    """A plugin failed to load; delivered to loaded plugins after startup loading finishes."""
+
+    plugin: str
+    error: BaseException
+
+
+@dataclass(kw_only=True)
 class SessionEnd:
     """CLAI is quitting, or this plugin is being unloaded."""
 
@@ -122,7 +134,7 @@ class TurnEnd:
 
 
 SettingsProvider = Literal['anthropic', 'google', 'openai', 'openai-chat']
-"""Providers whose `/model_settings` controls a plugin's models can take."""
+"""Providers whose `/model settings` controls a plugin's models can take."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -136,16 +148,22 @@ class ModelProvider:
     a model under it then fails as an unknown provider until the plugin is enabled again.
 
     When `resolve` returns that provider's model class, such as an `AnthropicModel` subclass, set
-    `settings_from` so `/model_settings` offers its controls (thinking, effort) for these models.
+    `settings_from` so `/model settings` offers its controls (thinking, effort) for these models.
     """
 
     prefix: str
     resolve: Callable[[str], Model]
     """Build the model for a name given without its prefix."""
     models: tuple[str, ...] = ()
-    """Names without the prefix, offered by `/add_model` and `/set model`."""
+    """Names without the prefix, offered by `/model add` and `/set model`."""
     settings_from: SettingsProvider | None = None
-    """The provider whose `/model_settings` controls these models take; `None` offers the generic ones."""
+    """The provider whose `/model settings` controls these models take; `None` offers the generic ones."""
+    resolve_profile: Callable[[str, str], Model] | None = None
+    """Build NAME for another account: called as `resolve_profile(NAME, PROFILE)` for `PREFIX@PROFILE:NAME`.
+
+    Called in a worker thread like `resolve`. `None` means the prefix has one account, and a model
+    naming a profile fails with a message saying so.
+    """
 
     def __post_init__(self) -> None:
         """Reject a malformed prefix, one CLAI already runs, or an unknown `settings_from`."""
@@ -164,15 +182,36 @@ class ModelProvider:
 
 
 @dataclass(frozen=True, kw_only=True)
+class UsageWindow:
+    """One limit on an account, such as a five-hour or weekly window, as `/accounts` shows it."""
+
+    label: str
+    """A short name for the window: `5h`, `7d`, or `premium`."""
+    used_percent: float
+    """How much of the limit is used, from 0 to 100."""
+    resets_at: datetime | None = None
+    """When the window resets, timezone-aware; `None` when the service does not say."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class AccountUsage:
+    """An account's current usage: its limits, most pressing first, and its plan when known."""
+
+    windows: tuple[UsageWindow, ...]
+    plan: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
 class PluginLogin:
     """A sign-in a plugin adds as `/login NAME`; return it from `Plugin.get_logins`.
 
     For sign-ins that store credentials, such as the subscription behind a `ModelProvider`. Keep
     secrets in the keyring, never in plugin settings, and raise `UserError` when signing in fails.
-    NAME cannot be a sign-in CLAI ships (`codex`, `copilot`, or their provider names); when two
+    Name it after the model prefix it unlocks, as CLAI's own `openai-codex` and `github-copilot` are.
+    NAME cannot be a sign-in CLAI ships (including the earlier `codex` and `copilot`); when two
     plugins add one name, the later one wins. Unloading the plugin removes it. Once the sign-in
     succeeds, `models` (as `PREFIX:NAME`, such as a `ModelProvider`'s `names`) are added to the saved
-    model list, so `/model` and `/model_settings` offer them without `/add_model`.
+    model list, so `/model` and `/model settings` offer them without `/model add`.
     """
 
     name: str
@@ -180,6 +219,18 @@ class PluginLogin:
     """Sign in and return the message to show."""
     models: tuple[str, ...] = ()
     """Models, as `PREFIX:NAME`, added to the saved model list once the sign-in succeeds."""
+    profile_handler: Callable[[str], Awaitable[str]] | None = None
+    """Sign in to another account: called as `profile_handler(PROFILE)` for `/login NAME@PROFILE`.
+
+    On success `models` are saved with the profile, as `PREFIX@PROFILE:NAME`. `None` means the
+    sign-in has one account, and `/login NAME@PROFILE` says so.
+    """
+    usage: Callable[[str | None], Awaitable[AccountUsage]] | None = None
+    """The account's current usage, for `/accounts`: called as `usage(PROFILE)`, `None` for the default.
+
+    `/accounts` calls it in the background for each listed account while the menu is open, with a
+    short timeout. Raise `UserError` with a short reason when usage is unavailable.
+    """
 
     def __post_init__(self) -> None:
         """Reject a malformed name, or one CLAI already signs in to, before any plugin can offer it."""
@@ -217,7 +268,7 @@ def _runs_already(prefix: str) -> bool:
     return True
 
 
-HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd
+HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd | PluginLoadFailed
 Renderer = Callable[[AgentStreamEvent], RenderableType | None]
 """Draws an event, or returns `None` to fall back to the default display; see `Plugin.render`."""
 FullScreen = Callable[[], AbstractAsyncContextManager[None]]
@@ -244,6 +295,7 @@ class PluginHost(Generic[DepsT]):
         settings: dict[str, JsonValue],
         full_screen: FullScreen = bare_screen,
         conversation: Conversation | None = None,
+        session_id: Callable[[], str | None] = lambda: None,
         status: Status | None = None,
         save_settings: Callable[[dict[str, JsonValue]], None] = lambda _settings: None,
         requirements: Requirements | None = None,
@@ -266,10 +318,16 @@ class PluginHost(Generic[DepsT]):
         screen. Between turns it is a no-op.
         """
         self.conversation: Conversation = conversation if conversation is not None else Transcript()
+        self._session_id = session_id
         self.status = status if status is not None else Status()
         self._settings = settings
         self._persist = save_settings
         self._requirements: Requirements = dict(requirements or {})
+
+    @property
+    def session_id(self) -> str | None:
+        """The current saved conversation's ID, or `None` for a host without session persistence."""
+        return self._session_id()
 
     @property
     def requirements(self) -> Requirements:
@@ -416,7 +474,7 @@ class Plugin(Generic[SettingsT, DepsT]):
         return ()
 
     def get_model_providers(self) -> Sequence[ModelProvider]:
-        """Model prefixes this plugin runs, offered in `/add_model` and `/set model`."""
+        """Model prefixes this plugin runs, offered in `/model add` and `/set model`."""
         return ()
 
     def get_logins(self) -> Sequence[PluginLogin]:
@@ -428,7 +486,7 @@ class Plugin(Generic[SettingsT, DepsT]):
         return None
 
     async def configure(self) -> str:
-        """A settings menu, opened by `/plugins configure NAME`, `C` in `/plugins`, and on enable or add.
+        """A settings menu, opened by `/plugins configure NAME`, `c` in `/plugins`, and on enable or add.
 
         Build it on `FieldMenu` and `run_flow` so it ends with the shared Save & close row. Save each
         change with `host.save_settings` as the user makes it and return a line to show. When the
@@ -441,6 +499,9 @@ class Plugin(Generic[SettingsT, DepsT]):
 
     async def on_session_end(self, event: SessionEnd) -> None:
         """CLAI is quitting, the plugin is unloading, or it failed to load after it was built."""
+
+    async def on_plugin_load_failed(self, event: PluginLoadFailed) -> None:
+        """A startup plugin failed to load; called after all enabled plugins have been tried."""
 
     async def on_turn_start(self, event: TurnStart) -> None:
         """A prompt was submitted; edit `event.text` or call `event.cancel()`. A failure cancels the turn."""
@@ -469,6 +530,7 @@ _HANDLERS: dict[type[HostEvent], str] = {
     SessionEnd: 'on_session_end',
     TurnStart: 'on_turn_start',
     TurnEnd: 'on_turn_end',
+    PluginLoadFailed: 'on_plugin_load_failed',
 }
 
 

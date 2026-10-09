@@ -229,11 +229,27 @@ The `remaining` field on `task_budget` is for *client-side* compaction patterns 
 
 ## Prompt Caching
 
-Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI supports automatic caching, per-block message caching, and explicit cache breakpoints:
+Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI supports the unified `cache` setting as well as Anthropic's automatic caching, per-block message caching, and explicit cache breakpoints:
+
+### Unified `cache` setting
+
+The provider-agnostic way to enable prompt caching is the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting (or the [`Caching`][pydantic_ai.capabilities.Caching] capability), which works the same across every supporting provider:
+
+```python {title="anthropic_unified_cache.py"}
+from pydantic_ai import Agent
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    instructions='You are a helpful assistant.',
+    model_settings={'cache': True},
+)
+```
+
+On Anthropic, `cache=True` (or a retention like `cache='1h'`) uses automatic caching, exactly like `anthropic_cache` below; on the Bedrock and Vertex AI SDK clients, which don't support automatic caching, it places cache breakpoints at the end of the tool definitions, the static instructions and the conversation instead. Cache writes cost 1.25x the input price for the 5-minute cache and 2x for the 1-hour cache, and cache reads 0.1x; see [Prompt Caching](../capabilities/caching.md) for the trade-off. The provider-specific `anthropic_cache*` settings below take precedence when any is set, and offer finer control.
 
 ### Automatic Caching
 
-The simplest way to enable prompt caching is with [`AnthropicModelSettings.anthropic_cache`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache]. This uses Anthropic's [automatic caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching), passing a top-level `cache_control` parameter so the server automatically applies a cache breakpoint to the last cacheable block in each request:
+The Anthropic-specific way to use automatic caching is [`AnthropicModelSettings.anthropic_cache`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache]. This uses Anthropic's [automatic caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching), passing a top-level `cache_control` parameter so the server automatically applies a cache breakpoint to the last cacheable block in each request:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -411,6 +427,31 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```
 
 `cache_write_tokens` counts all cache writes. When some of them used a one-hour TTL, which Anthropic bills at a higher rate than five-minute writes, their count is also in `usage.details['ephemeral_1h_input_tokens']`, or in `usage.details['compaction_ephemeral_1h_input_tokens']` for writes made during [message compaction](#message-compaction), and the cost is calculated at the one-hour rate for those tokens.
+
+### Cache Diagnostics
+
+When a request misses the cache unexpectedly, Anthropic's [cache diagnostics](https://platform.claude.com/docs/en/build-with-claude/cache-diagnostics) can tell you why. Set [`AnthropicModelSettings.anthropic_cache_diagnostics`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_diagnostics] to `True`, and each request names the most recent Anthropic response in the message history as the one to compare against. When the prompt prefix diverged, the response's [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] has a `'cache_diagnostics'` key with Anthropic's result, such as `{'cache_miss_reason': {'type': 'tools_changed', 'cache_missed_input_tokens': 3713}}`:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    instructions='Instructions...',
+    model_settings=AnthropicModelSettings(anthropic_cache=True, anthropic_cache_diagnostics=True),
+)
+
+result1 = agent.run_sync('Your question')
+result2 = agent.run_sync('Follow-up question', message_history=result1.all_messages())
+diagnostics = (result2.response.provider_details or {}).get('cache_diagnostics')
+if diagnostics and (reason := diagnostics['cache_miss_reason']):
+    print(f"Cache miss: {reason['type']}, {reason.get('cache_missed_input_tokens')} tokens")
+```
+
+The `type` is one of `model_changed`, `system_changed`, `tools_changed`, `messages_changed`, `previous_message_not_found` or `unavailable`. The key is absent when Anthropic found no divergence, and holds `{'cache_miss_reason': None}` when the comparison hadn't finished yet.
+
+Diagnostics are free and don't affect caching, but they're off by default: Anthropic keeps a short-lived fingerprint of each request that asks for them (hashes and token counts, not prompt content), and rejects them for HIPAA-enabled organizations. They're only available on the Claude API, so the setting is ignored on Bedrock, Vertex AI and Microsoft Foundry.
 
 ### Cache Point Limits
 

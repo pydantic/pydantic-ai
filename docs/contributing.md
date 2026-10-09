@@ -186,7 +186,8 @@ already near its limit swaps and comes out slower than the default. Unset the va
 [`docs/navigation.yml`](https://github.com/pydantic/pydantic-ai/blob/main/docs/navigation.yml)
 owns the sidebar, public routes, and redirects for
 [Pydantic AI's documentation](https://pydantic.dev/docs/ai/). Update it when adding, removing,
-or moving a page.
+or moving a page. `tests/test_docs_navigation.py` fails when a page under `docs/` has no entry; a
+page that stays unpublished on purpose goes in its `UNPUBLISHED_PAGES`, with the reason.
 
 All routes in `docs/navigation.yml` are relative to the Pydantic AI documentation root. Give each
 page its complete canonical route in `slug`; use `aliases` only for redirect sources. Do not prefix

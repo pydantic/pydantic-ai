@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 from pydantic import field_validator
 from typing_extensions import TypedDict, override
 
+from .. import _utils
 from ..messages import FinishReason, ModelResponseStreamEvent, ThinkingPart, ToolCallPart
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
@@ -152,6 +153,22 @@ class _SnowflakeChatCompletionChunk(_ChatCompletionChunk):
     choices: list[_SnowflakeChunkChoice]  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
+def _drop_empty_moderation_stub(data: dict[str, Any]) -> dict[str, Any]:
+    """Remove the empty `moderation` placeholder that Cortex sends when moderation wasn't requested.
+
+    Both `input` and `output` contain `{'type': '', 'results': None, ...}`, which matches neither
+    variant of the OpenAI SDK's strict `moderation` union. Drop the entire field only when both
+    sides are placeholders, so valid results are retained and other malformed moderation is rejected.
+    """
+    moderation = data.get('moderation')
+    if _utils.is_str_dict(moderation) and all(
+        _utils.is_str_dict(side) and side.get('type') == '' and side.get('results') is None
+        for side in (moderation.get('input'), moderation.get('output'))
+    ):
+        return {key: value for key, value in data.items() if key != 'moderation'}
+    return data
+
+
 @dataclass(init=False)
 class SnowflakeModel(OpenAIChatModel):
     """A model that uses Snowflake Cortex's OpenAI-compatible Chat Completions API.
@@ -218,8 +235,15 @@ class SnowflakeModel(OpenAIChatModel):
         # Cortex returns an empty `finish_reason` for Claude models, which would fail validation.
         for choice in response.choices:
             if not choice.finish_reason:
-                choice.finish_reason = 'tool_calls' if choice.message.tool_calls else 'stop'
-        return _SnowflakeChatCompletion.model_validate(response.model_dump())
+                choice.finish_reason = self._missing_finish_reason(choice)
+        # The SDK's lenient parse accepts the stub's invalid `type`, which warns when serialized.
+        # Suppress those warnings before removing the stub and strictly revalidating the response.
+        return _SnowflakeChatCompletion.model_validate(_drop_empty_moderation_stub(response.model_dump(warnings=False)))
+
+    @override
+    def _missing_finish_reason(self, choice: chat_completion.Choice) -> Literal['stop', 'tool_calls']:
+        # Cortex responses from Claude models have no finish reason; as in `SnowflakeStreamedResponse`.
+        return 'tool_calls' if choice.message.tool_calls else 'stop'
 
     @override
     def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
@@ -262,11 +286,15 @@ class SnowflakeStreamedResponse(OpenAIStreamedResponse):
     @override
     async def _validate_response(self) -> AsyncIterable[chat.ChatCompletionChunk]:
         async for chunk in self._response:
-            yield _SnowflakeChatCompletionChunk.model_validate(chunk.model_dump())
+            # The SDK's lenient parse accepts the stub's invalid `type`, which warns when serialized.
+            # Suppress those warnings before removing the stub and strictly revalidating the chunk.
+            yield _SnowflakeChatCompletionChunk.model_validate(
+                _drop_empty_moderation_stub(chunk.model_dump(warnings=False))
+            )
 
     @override
     def _missing_finish_reason(self) -> FinishReason:
-        # Cortex streams from Claude models have no finish reason; as in `SnowflakeModel._validate_completion`.
+        # Cortex streams from Claude models have no finish reason; as in `SnowflakeModel._missing_finish_reason`.
         return (
             'tool_call' if any(isinstance(part, ToolCallPart) for part in self._parts_manager.get_parts()) else 'stop'
         )
