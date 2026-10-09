@@ -39,6 +39,7 @@ from pydantic_clai2.plugins import (
 )
 from pydantic_clai2.runtime._session import Session
 
+READINESS_WAIT_TIMEOUT = 10
 INSTANCE = 'abcd1234ef567890'
 PANE_PID = 4242
 
@@ -100,21 +101,23 @@ class Fixture:
     async def status(self, expected: str) -> None:
         """Wait until the plugin writes `expected` as the status."""
         while True:
-            name, content = await asyncio.wait_for(self.writes.get(), timeout=10)
+            name, content = await asyncio.wait_for(self.writes.get(), timeout=READINESS_WAIT_TIMEOUT)
             if name == 'status' and content == expected:
                 return
 
     async def write(self, expected: str, content: str | None = None) -> None:
         """Wait until the plugin writes the file `expected`, with `content` when given."""
         while True:
-            name, written = await asyncio.wait_for(self.writes.get(), timeout=10)
+            name, written = await asyncio.wait_for(self.writes.get(), timeout=READINESS_WAIT_TIMEOUT)
             if name == expected and content in (None, written):
                 return
 
     async def aoe(self, command: str) -> tuple[str, ...]:
         """Wait until the plugin runs `aoe ... <command> ...`."""
         assert self.system.aoe_calls is not None
-        while command not in (call := await asyncio.wait_for(self.system.aoe_calls.get(), timeout=10)):
+        while command not in (
+            call := await asyncio.wait_for(self.system.aoe_calls.get(), timeout=READINESS_WAIT_TIMEOUT)
+        ):
             pass
         return call
 
