@@ -260,9 +260,10 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 
 ## Upgrading
 
+`Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
+
 This release makes the workspace the single place that decides where an agent works. Removed arguments are still accepted, emit a `HarnessDeprecationWarning` naming the fix, and are ignored.
 
-- **Prompt caching is on by default.** `Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
 - **Attach a workspace.** `Coder`, `FileSystem`, `Shell`, `RepoContext`, and `Macroscope` fail at run start without one, as do `Skills`, `PydanticAIDocs` (with a local checkout), and `ToolOutputLimits` (when it can spill) unless given their own `workspace=` or store. Add `LocalWorkspace('.')` to the agent's capabilities, as in [Usage](#usage).
 - **Set the directory on the workspace.** `Coder('dir')`, `Shell(cwd=)`, `FileSystem(cwd=)`, `Macroscope(cwd=)`, and `RepoContext(workspace_dir=)` are ignored; use `LocalWorkspace('./dir')`.
 - **Pass the command environment.** Commands used to inherit your whole environment (`Coder` removed LLM API keys from it). Now they get only your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`, plus the workspace's `env` and `Shell(env=)`. Pass what they need, such as an SSH agent socket, a `gh` token or proxy settings, with `LocalWorkspace('.', env={...})` (see [The command environment](#the-command-environment)).
