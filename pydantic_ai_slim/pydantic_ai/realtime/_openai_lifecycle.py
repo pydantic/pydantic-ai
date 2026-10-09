@@ -33,6 +33,7 @@ from ._lifecycle import (
     InputId,
     InputLost,
     LifecycleEvent,
+    OutputItemDetails,
     ResponseEnded,
     ResponseRequestRefused,
     ResponseStarted,
@@ -60,6 +61,17 @@ def _is_final_transcription(data: dict[str, Any]) -> bool:
     """Whether a transcription frame settles its item, as in `_map_input_transcription_event`: xAI and Azure send interim `completed` snapshots too."""
     status = data.get('status')
     return status is None or status == 'completed'
+
+
+def _output_item_details(data: dict[str, Any]) -> list[LifecycleEvent]:
+    """The `phase` of an assistant message a response adds (`commentary` or `final_answer`), for its part."""
+    item, response_id = data.get('item'), data.get('response_id')
+    if not is_str_dict(item) or not isinstance(response_id, str) or not response_id:
+        return []
+    item_id, phase = item.get('id'), item.get('phase')
+    if not isinstance(item_id, str) or not item_id or not isinstance(phase, str) or not phase:
+        return []
+    return [OutputItemDetails(response_id=response_id, item_id=item_id, provider_details={'phase': phase})]
 
 
 def frame_response_id(event_type: str | None, data: dict[str, Any]) -> str | None:
@@ -273,6 +285,8 @@ class OpenAILifecycle:
             return []
         if event_type in _CONVERSATION_ITEM_ADDED_FRAMES:
             return self.item_added(data)
+        if event_type == 'response.output_item.added':
+            return _output_item_details(data)
         if event_type == 'error':
             return self.error(data)
         return []
@@ -321,7 +335,7 @@ class OpenAILifecycle:
         self._speaking.pop(item_id, None)
         return events
 
-    def _place(self, item_id: str) -> list[LifecycleEvent]:
+    def _place(self, item_id: str, *, still_speaking: bool = False) -> list[LifecycleEvent]:
         """The spoken turn joins the conversation (once), whatever says so first."""
         if item_id in self._committed:
             return []
@@ -333,7 +347,7 @@ class OpenAILifecycle:
             return []
         # Push-to-talk reports no speech start: the commit both starts and ends the turn.
         events: list[LifecycleEvent] = [] if item_id in self._speaking else [UserTurnStarted(turn_id=item_id)]
-        events.append(UserTurnEnded(turn_id=item_id))
+        events.append(UserTurnEnded(turn_id=item_id, still_speaking=still_speaking))
         self._unclaimed_turn = item_id
         if self._transcribes:
             self._untranscribed.add(item_id)
@@ -361,7 +375,7 @@ class OpenAILifecycle:
         elif item.id is not None and item.id in self._speaking:
             # A spoken turn joins the conversation when its item is added. That can be before the user has
             # stopped speaking: xAI adds it at speech start, and starts responding before the commit.
-            return self._place(item.id)
+            return self._place(item.id, still_speaking=True)
         elif not is_user_message_item(item):
             # The model's output, or a spoken turn already committed.
             return []
