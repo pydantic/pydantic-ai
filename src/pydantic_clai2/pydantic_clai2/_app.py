@@ -75,6 +75,7 @@ from pydantic_clai2.runtime._session import (
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES, ImportSource
+from pydantic_clai2.runtime.launch import launch_session_id
 from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
@@ -269,6 +270,8 @@ async def chat(
     resume: str | None = None,
     resume_from: ImportSource | None = None,
     load_plugins: bool = True,
+    session_id: str | None = None,
+    fork_session: bool = False,
     worktree: Worktree | None = None,
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
@@ -279,8 +282,13 @@ async def chat(
     `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.
     `load_plugins=False` loads no built-in, project, saved, or drop-in plugin and turns `/plugins` off for this
     session only; saved plugin preferences are untouched.
+    `resume` restores a saved conversation (`''` opens the browser); `fork_session` then continues in a copy.
+    `session_id` names the new conversation, or the copy. These follow the CLI's rules: a bad combination,
+    or a `session_id` that is not a UUID, raises `ValueError` before anything is drawn.
     `worktree` is the checkout `--worktree` opened; its path and branch are shown under the launch banner.
     """
+    # Before anything is drawn, as the CLI checks these before it starts.
+    session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
     console = console or Console()
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
@@ -316,27 +324,36 @@ async def chat(
                             workers.start_soon(shell.sessions.namer.run)
                             try:
                                 with transcript.capture(console):
-                                    # Restore a named session first, so plugins start with it. The browser
-                                    # waits for plugins, whose models may name the sessions it lists, and
-                                    # until it picks one, telemetry has no session to assign.
-                                    notice: str | None = None
-                                    if resume:
-                                        if resume_from is not None:
-                                            resume = await shell.sessions.import_session(resume_from, resume)
-                                        notice = await shell.session.resume(resume, record=False)
-                                        resume = None
-                                    with shell.defer_identity() if resume is not None else nullcontext():
+                                    # Apply launch options first, so plugins start with the conversation they
+                                    # name. The browser waits for plugins, whose models may name its sessions,
+                                    # and until it picks one, telemetry has no session to assign.
+                                    browse = resume == ''
+                                    restored = bool(resume)
+                                    notice = ''
+                                    if not browse and (resume is not None or session_id is not None):
+                                        notice = await shell.sessions.start(
+                                            resume=resume,
+                                            resume_from=resume_from,
+                                            session_id=session_id,
+                                            fork=fork_session,
+                                        )
+                                    with shell.defer_identity() if browse else nullcontext():
                                         await shell.loader.load_all(fresh=fresh)
                                         _report_project_plugins(shell.loader, console)
-                                        if notice is not None:
+                                        if restored:
                                             # Now that observability has subscribed and renderers have loaded.
                                             shell.session.record_resumed()
                                             await shell.sessions.show_resumed()
+                                        if browse:
+                                            notice = await shell.sessions.start(
+                                                resume='',
+                                                resume_from=resume_from,
+                                                session_id=session_id,
+                                                fork=fork_session,
+                                            )
+                                        if notice:
                                             console.print(notice, markup=False)
-                                        if resume is not None:
-                                            source = [resume_from] if resume_from else []
-                                            console.print(await shell.sessions.command(source), markup=False)
-                                            resume = None
+                                    resume = session_id = None
                                 warming = warming or warm_imports.start()
                                 reason = await shell.run()
                             finally:
@@ -351,7 +368,12 @@ async def chat(
                 if not shell.reload_requested:
                     if (executable := shell.updates.relaunch) is not None:
                         summary = shell.session.summary
-                        raise Relaunch(executable=executable, session_id=summary.id if summary.revision else None)
+                        raise Relaunch(
+                            executable=executable,
+                            session_id=summary.id if summary.revision else None,
+                            # A conversation named with `--session-id` keeps its ID until its first prompt saves it.
+                            new_session_id=summary.id if not summary.revision and shell.sessions.chosen else None,
+                        )
                     return
                 shell.reload_requested = False
                 if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
@@ -376,6 +398,7 @@ async def chat(
                             project=project,
                             message_history=shell.session.messages,
                             summary=shell.session.summary,
+                            launched=shell.sessions.launched,
                             transcript=shell.transcript,
                             load_plugins=load_plugins,
                         )
@@ -541,6 +564,7 @@ def create_shell(
     project: ProjectSettings,
     message_history: Sequence[ModelMessage] = (),
     summary: ConversationSummary | None = None,
+    launched: str | None = None,
     transcript: TranscriptBuffer | None = None,
     headless: bool = False,
     load_plugins: bool = True,
@@ -594,7 +618,7 @@ def create_shell(
             + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
         )
 
-    sessions = Sessions(session=session, store=conversations, context=context)
+    sessions = Sessions(session=session, store=conversations, context=context, launched=launched)
     commands = Commands()
     commands.register(
         Command(
@@ -769,7 +793,7 @@ def create_shell(
         store=store,
         console=console,
         commands=commands,
-        session_start=lambda: SessionStart(agent=agent, settings=context.settings),
+        session_start=lambda: SessionStart(agent=agent, settings=context.settings, conversation_chosen=sessions.chosen),
         builtin=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins),
         full_screen=screen.full,
         project=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in project.plugins),

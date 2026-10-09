@@ -131,6 +131,11 @@ class SessionStart:
 
     agent: AbstractAgent[Never, object]
     settings: Settings
+    conversation_chosen: bool = False
+    """Whether launch options (`--resume`, `--session-id`, `--fork-session`) picked `host.conversation`.
+
+    A plugin that restores a conversation of its own choosing on start should then leave it alone.
+    """
 
 
 @dataclass(kw_only=True)
@@ -139,7 +144,8 @@ class ConversationChanged:
 
     Fires after `/new`, `/clear`, and `/resume`, when the first prompt titles a new conversation,
     and when background naming or a rename in `/resume` retitles the current one. A startup
-    `--resume SESSION-ID` is already in place when `on_session_start` runs, so it fires nothing.
+    `--resume SESSION-ID`, `--session-id`, or `--fork-session` is already in place when
+    `on_session_start` runs, so it fires nothing.
     """
 
     conversation_id: str

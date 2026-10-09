@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from pydantic_clai2.runtime.launch import launch_session_id
 from pydantic_clai2.ui.rendering.splash import Splash
 
 if TYPE_CHECKING:
@@ -21,6 +22,16 @@ def run(*, splash: Splash | None = None) -> None:
     """Parse explicit overrides without replacing persisted preferences."""
     parser = argparse.ArgumentParser(description='CLAI 2.0: streaming Pydantic AI terminal')
     _add_resume_flags(parser)
+    parser.add_argument(
+        '--session-id',
+        metavar='UUID',
+        help='Start the new session under this ID, or with --fork-session, save the copy under it',
+    )
+    parser.add_argument(
+        '--fork-session',
+        action='store_true',
+        help='With --resume, continue in a copy of the session under a new ID, leaving the original as it was',
+    )
     parser.add_argument(
         '--worktree',
         '-w',
@@ -100,6 +111,8 @@ def run(*, splash: Splash | None = None) -> None:
                         resume=args.resume,
                         resume_from=args.resume_from,
                         agent=agent,
+                        session_id=args.session_id,
+                        fork_session=args.fork_session,
                     )
                 )
             )
@@ -117,13 +130,20 @@ def run(*, splash: Splash | None = None) -> None:
                 resume=args.resume,
                 resume_from=args.resume_from,
                 load_plugins=agent is None,
+                session_id=args.session_id,
+                fork_session=args.fork_session,
                 worktree=worktree,
             )
         )
         offer_worktree_cleanup(worktree=launched)
     except Relaunch as relaunch:
         # Replace this process with the new build; the working directory, a worktree included, carries over.
-        argv = relaunch_argv(args, executable=relaunch.executable, session_id=relaunch.session_id)
+        argv = relaunch_argv(
+            args,
+            executable=relaunch.executable,
+            session_id=relaunch.session_id,
+            new_session_id=relaunch.new_session_id,
+        )
         _remember_worktree(launched)
         sys.stdout.flush()
         os.execv(relaunch.executable, argv)
@@ -171,8 +191,13 @@ def _remember_worktree(worktree: 'Worktree | None') -> None:
         os.environ[_RELAUNCH_WORKTREE] = f'{worktree.head} new-branch' if worktree.new_branch else worktree.head
 
 
-def relaunch_argv(args: argparse.Namespace, *, executable: str, session_id: str | None) -> list[str]:
-    """The launch options to restart with after `/update`, resuming `session_id` instead of any `--resume`."""
+def relaunch_argv(
+    args: argparse.Namespace, *, executable: str, session_id: str | None, new_session_id: str | None = None
+) -> list[str]:
+    """The launch options to restart with after `/update`, resuming `session_id` instead of any `--resume`.
+
+    An unsaved conversation started with `--session-id` restarts under `new_session_id`.
+    """
     argv = [executable]
     if args.agent is not None:
         argv += ['--agent', args.agent]
@@ -184,6 +209,8 @@ def relaunch_argv(args: argparse.Namespace, *, executable: str, session_id: str 
         argv += ['--database', str(args.database)]
     if session_id is not None:
         argv += ['--resume', session_id]
+    elif new_session_id is not None:
+        argv += ['--session-id', new_session_id]
     return argv
 
 
@@ -212,8 +239,20 @@ def _resume_source(args: argparse.Namespace) -> None:
 
 
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    if args.command and (args.resume is not None or args.worktree is not None or args.agent is not None):
-        parser.error('--resume, --worktree, and --agent cannot be combined with config or plugins')
+    if args.command and (
+        args.resume is not None
+        or args.worktree is not None
+        or args.agent is not None
+        or args.session_id is not None
+        or args.fork_session
+    ):
+        parser.error(
+            '--resume, --session-id, --fork-session, --worktree, and --agent cannot be combined with config or plugins'
+        )
+    try:
+        args.session_id = launch_session_id(resume=args.resume, session_id=args.session_id, fork=args.fork_session)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.worktree is not None and args.resume is not None:
         parser.error('--worktree cannot be combined with --resume; resume from an existing worktree directory')
     if args.prompt is not None:

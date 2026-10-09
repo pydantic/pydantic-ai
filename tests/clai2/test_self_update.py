@@ -468,7 +468,9 @@ async def test_tool_executable_asks_uv_for_its_bin_directory(tmp_path: Path) -> 
     assert await tool_executable(str(uv)) is None
 
 
-async def _relaunch_after(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, prompts: list[str]) -> Relaunch:
+async def _relaunch_after(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, prompts: list[str], *, session_id: str | None = None
+) -> Relaunch:
     updates, _ = _updates(['main'])
 
     def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
@@ -483,6 +485,7 @@ async def _relaunch_after(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, promp
             settings=Settings(model='test', update_channel='main'),
             console=Console(file=StringIO(), width=200),
             store=SettingsStore(tmp_path / 'config.db'),
+            session_id=session_id,
         )
     assert raised.value.code == 0
     assert raised.value.executable == '/tools/clai2'
@@ -490,7 +493,20 @@ async def _relaunch_after(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, promp
 
 
 async def test_shell_relaunches_after_an_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    assert (await _relaunch_after(monkeypatch, tmp_path, [])).session_id is None
+    fresh = await _relaunch_after(monkeypatch, tmp_path, [])
+    assert (fresh.session_id, fresh.new_session_id) == (None, None)
+    named = await _relaunch_after(monkeypatch, tmp_path, [], session_id='0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f')
+    assert (named.session_id, named.new_session_id) == (None, '0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f')
+
+    def rebuild(factory: Callable[[], object]) -> object:
+        return factory()
+
+    # `/reload` rebuilds the shell, which keeps the conversation the launch options chose.
+    monkeypatch.setattr(_app, 'reload_clai', rebuild)
+    reloaded = await _relaunch_after(
+        monkeypatch, tmp_path, ['/reload'], session_id='0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f'
+    )
+    assert (reloaded.session_id, reloaded.new_session_id) == (None, '0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f')
     resumed = await _relaunch_after(monkeypatch, tmp_path, ['hello'])
     assert resumed.session_id is not None
     saved = await SqliteConversationStore(database=tmp_path / 'sessions.db').get(conversation_id=resumed.session_id)
@@ -500,6 +516,16 @@ async def test_shell_relaunches_after_an_install(tmp_path: Path, monkeypatch: py
 def test_relaunch_argv(tmp_path: Path) -> None:
     bare = argparse.Namespace(agent=None, model=None, request_limit=None, database=None)
     assert relaunch_argv(bare, executable='/b/clai2', session_id=None) == ['/b/clai2']
+    assert relaunch_argv(bare, executable='/b/clai2', session_id=None, new_session_id='u') == [
+        '/b/clai2',
+        '--session-id',
+        'u',
+    ]
+    assert relaunch_argv(bare, executable='/b/clai2', session_id='s', new_session_id='u') == [
+        '/b/clai2',
+        '--resume',
+        's',
+    ]
     full = argparse.Namespace(agent='m:a', model='test', request_limit=5, database=tmp_path / 'c.db')
     assert relaunch_argv(full, executable='/b/clai2', session_id='abc') == [
         '/b/clai2',

@@ -34,6 +34,7 @@ from pydantic_clai2.runtime.imported_sessions import (
     merge,
     save_import,
 )
+from pydantic_clai2.runtime.launch import launch_session_id
 from pydantic_clai2.runtime.session_naming import NamingResult, SessionNamer, generate_name
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -48,12 +49,19 @@ class Sessions(Generic[DepsT, OutputT]):
     """One application's services. No worker, registration, or selection is global."""
 
     def __init__(
-        self, *, session: Session[DepsT, OutputT], store: SqliteConversationStore, context: CommandContext
+        self,
+        *,
+        session: Session[DepsT, OutputT],
+        store: SqliteConversationStore,
+        context: CommandContext,
+        launched: str | None = None,
     ) -> None:
         """Bind services to the active shell and its validated settings."""
         self.session = session
         self.store = store
         self.context = context
+        self.launched = launched
+        """The conversation ID launch options picked, carried across `/reload`."""
         self.quiet: Callable[[], AbstractAsyncContextManager[None]] = nullcontext
         """Entered to tell plugins about a background rename; the shell holds it until no turn or command runs."""
         self.namer = SessionNamer(
@@ -107,6 +115,43 @@ class Sessions(Generic[DepsT, OutputT]):
             saved = await self.store.get(conversation_id=self.session.summary.id)
             report += f'\nBackground naming: {saved.summary.naming_tokens:,} tokens (outside retained-history cost).'
         return report
+
+    async def start(
+        self,
+        *,
+        resume: str | None,
+        resume_from: ImportSource | None = None,
+        session_id: str | None = None,
+        fork: bool = False,
+    ) -> str:
+        """Apply the launch options and return the notice to show.
+
+        `resume` restores a conversation (`''` opens the browser), first importing it from
+        `resume_from` when given. With `fork`, a restored one is copied to `session_id`, or a random
+        ID; otherwise `session_id` names the new conversation. Raises `ValueError` for options
+        Claude Code would refuse, before changing anything.
+        A named `resume` is not shown yet: the caller records and shows it once plugins have loaded.
+        """
+        session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork)
+        if resume:
+            if resume_from is not None:
+                resume = await self.import_session(resume_from, resume)
+            notice = await self.session.resume(resume, record=False)
+        else:
+            notice = await self.command([resume_from] if resume_from else []) if resume is not None else ''
+        if fork and notice:
+            # Keep the resume notice: it warns about an interrupted session, which the copy no longer records.
+            notice = f'{notice}\n{await self.session._fork(session_id)}'  # pyright: ignore[reportPrivateUsage]
+        elif session_id is not None:
+            await self.session.clear(session_id)
+        if notice or session_id is not None:
+            self.launched = self.session.conversation_id
+        return notice
+
+    @property
+    def chosen(self) -> bool:
+        """Whether launch options picked the current conversation; see `SessionStart.conversation_chosen`."""
+        return self.launched == self.session.conversation_id
 
     async def import_session(self, source: ImportSource, native_id: str) -> str:
         """Copy a Claude Code or Codex session into the store by its own ID, returning its CLAI ID.

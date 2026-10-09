@@ -235,10 +235,12 @@ class Relaunch(SystemExit):
     A `SystemExit`, so a caller other than the CLI exits as it did before CLAI restarted itself.
     """
 
-    def __init__(self, *, executable: str, session_id: str | None) -> None:
+    def __init__(self, *, executable: str, session_id: str | None, new_session_id: str | None = None) -> None:
+        """Resume `session_id` when set, or else start the new conversation under `new_session_id`."""
         super().__init__(0)
         self.executable = executable
         self.session_id = session_id
+        self.new_session_id = new_session_id
 
 
 async def tool_executable(uv: str) -> str | None:
