@@ -133,7 +133,7 @@ def _check_content_type(request: Request, allowed_content_types: frozenset[str] 
     )
 
 
-def _validation_error_response(e: ValidationError) -> Response:
+def validation_error_response(e: ValidationError) -> Response:
     """Build the 422 response returned when a UI request body fails validation."""
     from starlette.responses import Response
 
@@ -860,7 +860,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             A streaming Starlette response with protocol-specific events encoded per the request's `Accept` header value.
         """
         try:
-            from starlette.responses import Response  # noqa: F401
+            from starlette.responses import Response  # noqa: F401  # pyright: ignore[reportUnusedImport]
         except ImportError as e:  # pragma: no cover
             raise ImportError(
                 'Please install the `starlette` package to use `dispatch_request()` method, '
@@ -884,7 +884,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 ),
             )
         except ValidationError as e:
-            return _validation_error_response(e)
+            return validation_error_response(e)
 
         return adapter.streaming_response(
             adapter.run_stream(

@@ -16,7 +16,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.ui._adapter import _validation_error_response
+from pydantic_ai.ui._adapter import validation_error_response
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 AgentDepsT = TypeVar('AgentDepsT')
@@ -223,7 +223,7 @@ def create_api_app(
             )
             extra_data = ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
         except ValidationError as e:
-            return _validation_error_response(e)
+            return validation_error_response(e)
 
         if error := validate_request_options(extra_data, model_ids, allowed_tool_ids):
             return JSONResponse({'error': error}, status_code=400)
