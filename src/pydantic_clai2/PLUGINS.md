@@ -300,6 +300,59 @@ server errors are nonfatal. Unloading discards queued work and attempts one
 release with bounded shutdown. A departed or unresponsive herdr may miss
 reports; they do not fail the agent turn.
 
+## Agent of Empires integration
+
+The built-in `aoe` plugin (`pydantic_clai2.builtin_plugins.aoe`) starts disabled. Run
+`clai2 plugins enable aoe` (or `/plugins enable aoe`) to let
+[Agent of Empires](https://github.com/agent-of-empires/agent-of-empires) (AoE)
+track CLAI2 like its built-in agents. Register CLAI2 as an AoE custom agent:
+
+```toml
+# ~/.config/agent-of-empires/config.toml
+[session.custom_agents]
+clai2 = "clai2"
+```
+
+and start sessions with `aoe add --tool clai2 -l`, or pick `clai2` in AoE's new-session
+dialog. If AoE alerts you on status changes (its sounds, or `[status_hooks]` such as
+`on_waiting = "notify-send ..."`), `/plugins disable notifications` avoids a second
+desktop alert from CLAI2 for the same turn.
+
+The plugin does nothing unless CLAI2 runs interactively (not `-p`) on Linux or macOS,
+in a tmux pane of an AoE agent session: AoE names that session `aoe_<title>_<id>` and
+sets the instance ID on it, which the plugin reads from `AOE_INSTANCE_ID` or the tmux
+session's hidden environment. A CLAI2 started from inside another CLAI2 in the same
+pane, such as from a `!` shell command, stays quiet so the outer one keeps reporting.
+
+**Status.** AoE reads a custom agent's state from `/tmp/aoe-hooks-<uid>/<id>/status`;
+the plugin writes it the way AoE's own hooks do, refusing a directory that is a
+symlink, owned by another user, or open to group or others. It reports `running`
+while a prompt's agent run is in progress (rewritten every minute, as AoE ignores an
+older `running`), `waiting` while an `ask_user` question is open, `error` after a
+failed turn until the next prompt's agent run starts, and `idle` otherwise. Background
+`/fork` runs do not count as `running`, but a failed fork is a failed turn and shows
+`error`; a fork starting or completing does not clear it.
+Other approval prompts are not tracked. The file is removed when
+CLAI2 exits; AoE removes the directory when it stops the session.
+
+**Conversation.** The current conversation ID goes to `session_id` beside the status
+file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
+`~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
+CLAI2 starts empty, so the plugin resumes the conversation recorded there; `--resume`,
+`--session-id`, and `--fork-session` take precedence (`SessionStart.conversation_chosen`). A conversation saved in another
+directory, such as after AoE moved a worktree, is not resumed; use `/resume`. AoE's
+own resume, `--fork-from`, and smart rename apply to its built-in agents only.
+
+**Title.** When the conversation's title changes (its first prompt, background naming,
+or a rename in `/resume`), the plugin runs `aoe session rename ID --title=TITLE`, in a linked
+Git worktree too. There, AoE's `session.tie_workdir_to_name` (on by default) refuses the
+rename while a turn runs, and otherwise may move an AoE-managed worktree to follow the title.
+The plugin stops trying for the session once AoE refuses a rename; a rename that times out is
+tried again with the next title. AoE renames the tmux session to match.
+
+All file and process work runs off the event loop, and failures are logged at debug
+level, never raised into a turn. `/plugins disable aoe` stops reporting.
+
 ## Desktop notifications
 
 The default-enabled `notifications` plugin (`pydantic_clai2.builtin_plugins.notifications`)
