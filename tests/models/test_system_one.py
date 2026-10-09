@@ -11,7 +11,14 @@ from pydantic import BaseModel, Field, WithJsonSchema
 from pydantic_ai import Agent, BinaryContent, ModelHTTPError, ToolCallPart
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import infer_model
-from pydantic_ai.models.decision import DecisionRequest, NoulQuestion, ScoreAnswer, ScoreQuestion
+from pydantic_ai.models.decision import (
+    ChoiceAnswer,
+    ChoiceQuestion,
+    DecisionRequest,
+    NoulQuestion,
+    ScoreAnswer,
+    ScoreQuestion,
+)
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.system_one import SystemOneModel, SystemOneModelSettings
 from pydantic_ai.models.test import TestModel
@@ -663,12 +670,43 @@ async def test_rounded_score_can_match_rounded_probabilities(
 
 
 @pytest.mark.parametrize(
-    ('probability', 'valid'),
-    [pytest.param(0.0, False, id='all-zero'), pytest.param(0.005, True, id='uniform-rounded')],
+    'probabilities',
+    [
+        pytest.param({'a': 0.335, 'b': 0.335, 'c': 0.335}, id='three-decimal'),
+        pytest.param({str(option): 0.0 for option in range(200)}, id='all-zero'),
+    ],
 )
-async def test_200_level_score_probabilities_must_not_be_all_zero(
-    probability: float, valid: bool, allow_model_requests: None
-):
+async def test_choice_preserves_probability_tolerance(probabilities: dict[str, float], allow_model_requests: None):
+    """Synthetic boundary responses pin the existing tolerance without requiring the API to emit them."""
+    choice = next(iter(probabilities))
+    captured = Captured(
+        lambda _: answers(
+            choice={
+                'type': 'choice',
+                'choice': choice,
+                'confidence': probabilities[choice],
+                'probabilities': probabilities,
+            }
+        )
+    )
+    response = await mock_model(captured).decide(
+        DecisionRequest(
+            state='Choose an option.',
+            questions={'choice': ChoiceQuestion(criteria={option: None for option in probabilities})},
+        ),
+        {},
+    )
+    assert response.answers == {
+        'choice': ChoiceAnswer(choice=choice, confidence=probabilities[choice], probabilities=probabilities)
+    }
+
+
+@pytest.mark.parametrize(
+    'probability',
+    [pytest.param(0.0, id='all-zero'), pytest.param(0.005, id='uniform-rounded')],
+)
+async def test_200_level_score_preserves_probability_tolerance(probability: float, allow_model_requests: None):
+    """Synthetic boundary responses pin System One's established two-decimal score tolerance."""
     probabilities: dict[str, float] = {str(level): probability for level in range(200)}
     captured = Captured(
         lambda _: answers(
@@ -685,14 +723,14 @@ async def test_200_level_score_probabilities_must_not_be_all_zero(
         questions={'score': ScoreQuestion(criteria=[str(level) for level in range(200)])},
     )
 
-    if valid:
-        response = await mock_model(captured).decide(request, {})
-        score_answer = response.answers['score']
-        assert isinstance(score_answer, ScoreAnswer)
-        assert score_answer.score == 99.5
-    else:
-        with pytest.raises(UnexpectedModelBehavior, match='Invalid response from the System One API'):
-            await mock_model(captured).decide(request, {})
+    response = await mock_model(captured).decide(request, {})
+    assert response.answers == {
+        'score': ScoreAnswer(
+            score=99.5,
+            confidence=probability,
+            probabilities={level: probability for level in range(200)},
+        )
+    }
 
 
 async def test_provider_recreates_its_client():

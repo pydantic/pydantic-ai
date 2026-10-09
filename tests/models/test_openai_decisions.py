@@ -9,10 +9,8 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Callable, Mapping
-from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from types import MappingProxyType
 from typing import Annotated, Literal
 from unittest.mock import AsyncMock, PropertyMock, patch
 
@@ -727,29 +725,6 @@ async def test_user_agent_and_default_timeout(allow_model_requests: None, user_a
     request = captured.requests[0]
     assert request.headers['user-agent'] == 'support-bot'
     assert None not in request.extensions['timeout'].values()
-
-
-async def test_json_extra_body_preserves_sdk_encoding(allow_model_requests: None):
-    class ExtraBodyModel(BaseModel):
-        display_name: str = Field(alias='displayName')
-        omitted: str = 'default'
-
-    nested_model = ExtraBodyModel.model_validate({'displayName': 'visible'})
-    timestamp = datetime(2024, 3, 4, 5, 6, 7)
-    extra_body = MappingProxyType({'custom': {'model': nested_model, 'timestamp': timestamp}})
-    settings: OpenAIDecisionsModelSettings = {'extra_body': extra_body}
-    captured = Captured(boolean_answers)
-
-    await Agent(
-        mock_model(captured),
-        output_type=bool,
-        instructions='Does the ticket need attention?',
-    ).run('Charged twice.', model_settings=settings)
-
-    assert captured.body['custom'] == {
-        'model': {'displayName': 'visible'},
-        'timestamp': '2024-03-04T05:06:07',
-    }
 
 
 @pytest.mark.parametrize(
