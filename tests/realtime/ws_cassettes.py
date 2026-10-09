@@ -354,6 +354,12 @@ class _SentFrameNormalizer:
 # making progress never comes near it.
 _REPLAY_PROGRESS_GRACE = 2.0
 
+# Outbound frames a session sends once it has stopped reading, to end the provider session: GPT-Live's
+# `session.close`. Whatever the provider sent before it is read afterwards, by the same code that waits
+# for the provider to confirm the close, so on replay the close overtakes those frames instead of
+# waiting for a reader that only starts once the send returns.
+_SESSION_END_TYPES = frozenset({'session.close'})
+
 
 class ReplayWebSocket:
     """Replay a recorded WebSocket conversation, validating outbound frames as they are sent.
@@ -364,7 +370,8 @@ class ReplayWebSocket:
     """
 
     def __init__(self, cassette: RealtimeCassette, *, hold_open: bool = False) -> None:
-        self._interactions = cassette.interactions
+        # A copy: a session-ending send reorders it (see `_SESSION_END_TYPES`), and the cassette is the recording.
+        self._interactions = list(cassette.interactions)
         self._hold_open = hold_open
         self._position = 0
         cassette._replay = self  # pyright: ignore[reportPrivateUsage]
@@ -384,6 +391,8 @@ class ReplayWebSocket:
         text = message.decode('utf-8') if isinstance(message, bytes) else message
         actual = _truncate_audio(self._normalizer.normalize(_scrub(json.loads(text))))
         async with self._condition:
+            if actual.get('type') in _SESSION_END_TYPES:
+                self._take_next_send_ahead_of_unread_frames()
             interaction = self._peek()
             # A caller that keeps sending (streaming a microphone) runs ahead of the recorded inbound
             # frames sitting between its sends. Let the reader drain those first rather than failing the
@@ -536,6 +545,15 @@ class ReplayWebSocket:
         at = self._delivered.popleft()
         if at is not None:
             self._now = max(self._now, at)
+
+    def _take_next_send_ahead_of_unread_frames(self) -> None:
+        """Move the next recorded send in front of the inbound frames recorded before it. Call with the condition held."""
+        for index in range(self._position, len(self._interactions)):
+            interaction = self._interactions[index]
+            if not (isinstance(interaction, CassetteMessage) and interaction.direction == 'received'):
+                if isinstance(interaction, CassetteMessage):
+                    self._interactions.insert(self._position, self._interactions.pop(index))
+                return
 
     def _advance(self) -> None:
         """Consume the next interaction. Call with the condition held."""
