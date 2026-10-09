@@ -4452,8 +4452,8 @@ def _raise_earlier_cache_ttls(
     """
     blocks: list[object] = [*tools, *(system_prompt if isinstance(system_prompt, list) else [])]
     for message in anthropic_messages:
-        if not isinstance(message['content'], str):
-            blocks.extend(message['content'])
+        content = message['content']
+        blocks.extend([] if isinstance(content, str) else content)
     carriers = [block for block in blocks if is_str_dict(block) and block.get('cache_control')]
     ttls: list[Literal['5m', '1h']] = [carrier['cache_control'].get('ttl', '5m') for carrier in carriers]
     automatic_ttls: list[Literal['5m', '1h']] = (
