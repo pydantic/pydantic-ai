@@ -93,7 +93,6 @@ with try_import() as imports_successful:
     from urllib3 import HTTPResponse
 
     from pydantic_ai.models.bedrock import (
-        _DATA_RETENTION_HINT,  # pyright: ignore[reportPrivateUsage]
         BedrockConverseModel,
         BedrockModelName,
         BedrockModelSettings,
@@ -726,7 +725,7 @@ async def test_bedrock_data_retention_error_hint(allow_model_requests: None, str
     assert str(exc) == snapshot(
         "status_code: 400, model_name: us.amazon.nova-micro-v1:0, body: {'Error': {'Code': 'ValidationException', 'Message': \"data retention mode 'default' is not available for this model\"}, 'ResponseMetadata': {'RequestId': 'test-request-id', 'HostId': '', 'HTTPStatusCode': 400, 'HTTPHeaders': {}, 'RetryAttempts': 0}}. Bedrock rejected this model under the account's data retention mode for this Region. Models that require human review, such as Claude Fable 5 and 5.1, need the account's data retention mode set to `aws_review` (or the legacy `provider_data_share`) with the Bedrock control plane's `PutAccountDataRetention` API, as it can't be set per request. See https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html"
     )
-    assert exc.hint == _DATA_RETENTION_HINT
+    assert exc.hint is not None and str(exc).endswith(f'. {exc.hint}')
 
 
 async def test_bedrock_request_non_http_error(allow_model_requests: None):
