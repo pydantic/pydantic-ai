@@ -1329,6 +1329,473 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
     assert output_text == snapshot(['The capital of France is Paris.'])
 
 
+def _function_call_item(
+    item_id: str,
+    arguments: str,
+    *,
+    name: str = 'lookup',
+    namespace: str | None = None,
+) -> resp.ResponseFunctionToolCall:
+    return resp.ResponseFunctionToolCall(
+        id=item_id,
+        arguments=arguments,
+        call_id=f'call_{item_id}',
+        name=name,
+        namespace=namespace,
+        status='completed',
+        type='function_call',
+    )
+
+
+async def _collect_function_call_stream(
+    stream_events: list[resp.ResponseStreamEvent],
+) -> tuple[list[Any], ModelResponse]:
+    response = response_message([])
+    stream = [
+        resp.ResponseCreatedEvent(response=response, type='response.created', sequence_number=0),
+        *(event.model_copy(update={'sequence_number': index}) for index, event in enumerate(stream_events, 1)),
+        resp.ResponseCompletedEvent(
+            response=response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=len(stream_events) + 1,
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='call a tool')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as streamed:
+        events = [event async for event in streamed]
+
+    return events, streamed.get()
+
+
+@pytest.mark.parametrize('args_event', ['function_call_arguments.done', 'output_item.done'])
+async def test_openai_responses_stream_function_call_args_from_done_event(
+    allow_model_requests: None, args_event: Literal['function_call_arguments.done', 'output_item.done']
+):
+    full_args = '{"city":"Paris"}'
+    added_item = _function_call_item('fc_1', '')
+    done_item = added_item.model_copy(update={'arguments': full_args})
+    stream_events: list[resp.ResponseStreamEvent] = [
+        resp.ResponseOutputItemAddedEvent(
+            item=added_item,
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=0,
+        )
+    ]
+    if args_event == 'function_call_arguments.done':
+        stream_events.append(
+            resp.ResponseFunctionCallArgumentsDoneEvent(
+                arguments=full_args,
+                item_id='fc_1',
+                output_index=0,
+                type='response.function_call_arguments.done',
+                sequence_number=0,
+            )
+        )
+    stream_events.append(
+        resp.ResponseOutputItemDoneEvent(
+            item=done_item,
+            output_index=0,
+            type='response.output_item.done',
+            sequence_number=0,
+        )
+    )
+
+    events, response = await _collect_function_call_stream(stream_events)
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='lookup',
+                    args='',
+                    tool_call_id='call_fc_1',
+                    id='fc_1',
+                    provider_name='openai',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta='{"city":"Paris"}', tool_call_id='call_fc_1'),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='lookup',
+                    args='{"city":"Paris"}',
+                    tool_call_id='call_fc_1',
+                    id='fc_1',
+                    provider_name='openai',
+                ),
+            ),
+        ]
+    )
+    assert response.parts == snapshot(
+        [
+            ToolCallPart(
+                tool_name='lookup',
+                args='{"city":"Paris"}',
+                tool_call_id='call_fc_1',
+                id='fc_1',
+                provider_name='openai',
+            )
+        ]
+    )
+
+
+async def test_openai_responses_stream_function_call_complete_deltas_not_duplicated(allow_model_requests: None):
+    full_args = '{"city":"Paris"}'
+    item = _function_call_item('fc_1', '')
+    events, response = await _collect_function_call_stream(
+        [
+            resp.ResponseOutputItemAddedEvent(
+                item=item, output_index=0, type='response.output_item.added', sequence_number=0
+            ),
+            resp.ResponseFunctionCallArgumentsDeltaEvent(
+                delta='{"city":',
+                item_id='fc_1',
+                output_index=0,
+                type='response.function_call_arguments.delta',
+                sequence_number=0,
+            ),
+            resp.ResponseFunctionCallArgumentsDeltaEvent(
+                delta='"Paris"}',
+                item_id='fc_1',
+                output_index=0,
+                type='response.function_call_arguments.delta',
+                sequence_number=0,
+            ),
+            resp.ResponseFunctionCallArgumentsDoneEvent(
+                arguments=full_args,
+                item_id='fc_1',
+                output_index=0,
+                type='response.function_call_arguments.done',
+                sequence_number=0,
+            ),
+            resp.ResponseOutputItemDoneEvent(
+                item=item.model_copy(update={'arguments': full_args}),
+                output_index=0,
+                type='response.output_item.done',
+                sequence_number=0,
+            ),
+        ]
+    )
+
+    assert [type(event).__name__ for event in events] == snapshot(
+        ['PartStartEvent', 'PartDeltaEvent', 'PartDeltaEvent', 'PartEndEvent']
+    )
+    assert isinstance(response.parts[0], ToolCallPart)
+    assert response.parts[0].args == full_args
+
+
+async def test_openai_responses_stream_parallel_function_call_args(allow_model_requests: None):
+    done_args = '{"city":"Paris"}'
+    delta_args = '{"city":"London"}'
+    done_item = _function_call_item('fc_done', '')
+    delta_item = _function_call_item('fc_delta', '')
+    events, response = await _collect_function_call_stream(
+        [
+            resp.ResponseOutputItemAddedEvent(
+                item=done_item, output_index=0, type='response.output_item.added', sequence_number=0
+            ),
+            resp.ResponseFunctionCallArgumentsDoneEvent(
+                arguments=done_args,
+                item_id='fc_done',
+                output_index=0,
+                type='response.function_call_arguments.done',
+                sequence_number=0,
+            ),
+            resp.ResponseOutputItemAddedEvent(
+                item=delta_item, output_index=1, type='response.output_item.added', sequence_number=0
+            ),
+            resp.ResponseFunctionCallArgumentsDeltaEvent(
+                delta='{"city":',
+                item_id='fc_delta',
+                output_index=1,
+                type='response.function_call_arguments.delta',
+                sequence_number=0,
+            ),
+            resp.ResponseFunctionCallArgumentsDeltaEvent(
+                delta='"London"}',
+                item_id='fc_delta',
+                output_index=1,
+                type='response.function_call_arguments.delta',
+                sequence_number=0,
+            ),
+            resp.ResponseFunctionCallArgumentsDoneEvent(
+                arguments=delta_args,
+                item_id='fc_delta',
+                output_index=1,
+                type='response.function_call_arguments.done',
+                sequence_number=0,
+            ),
+        ]
+    )
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='lookup',
+                    args='',
+                    tool_call_id='call_fc_done',
+                    id='fc_done',
+                    provider_name='openai',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta='{"city":"Paris"}', tool_call_id='call_fc_done'),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='lookup',
+                    args='{"city":"Paris"}',
+                    tool_call_id='call_fc_done',
+                    id='fc_done',
+                    provider_name='openai',
+                ),
+                next_part_kind='tool-call',
+            ),
+            PartStartEvent(
+                index=1,
+                part=ToolCallPart(
+                    tool_name='lookup', args='', tool_call_id='call_fc_delta', id='fc_delta', provider_name='openai'
+                ),
+                previous_part_kind='tool-call',
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='{"city":', tool_call_id='call_fc_delta'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='"London"}', tool_call_id='call_fc_delta'),
+            ),
+            PartEndEvent(
+                index=1,
+                part=ToolCallPart(
+                    tool_name='lookup',
+                    args='{"city":"London"}',
+                    tool_call_id='call_fc_delta',
+                    id='fc_delta',
+                    provider_name='openai',
+                ),
+            ),
+        ]
+    )
+    assert response.parts == snapshot(
+        [
+            ToolCallPart(
+                tool_name='lookup',
+                args='{"city":"Paris"}',
+                tool_call_id='call_fc_done',
+                id='fc_done',
+                provider_name='openai',
+            ),
+            ToolCallPart(
+                tool_name='lookup',
+                args='{"city":"London"}',
+                tool_call_id='call_fc_delta',
+                id='fc_delta',
+                provider_name='openai',
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_stream_function_call_done_appends_missing_suffix(allow_model_requests: None):
+    full_args = '{"city":"Paris"}'
+    item = _function_call_item('fc_1', '')
+    events, response = await _collect_function_call_stream(
+        [
+            resp.ResponseOutputItemAddedEvent(
+                item=item, output_index=0, type='response.output_item.added', sequence_number=0
+            ),
+            resp.ResponseFunctionCallArgumentsDeltaEvent(
+                delta='{"city":',
+                item_id='fc_1',
+                output_index=0,
+                type='response.function_call_arguments.delta',
+                sequence_number=0,
+            ),
+            resp.ResponseFunctionCallArgumentsDoneEvent(
+                arguments=full_args,
+                item_id='fc_1',
+                output_index=0,
+                type='response.function_call_arguments.done',
+                sequence_number=0,
+            ),
+        ]
+    )
+
+    deltas = [event for event in events if isinstance(event, PartDeltaEvent)]
+    assert deltas[-1] == snapshot(
+        PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='"Paris"}', tool_call_id='call_fc_1'))
+    )
+    assert isinstance(response.parts[0], ToolCallPart)
+    assert response.parts[0].args == full_args
+
+
+async def test_openai_responses_stream_function_call_done_replaces_disagreeing_args(allow_model_requests: None):
+    item = _function_call_item('fc_1', '', name='lookup_weather', namespace='weather')
+    events, response = await _collect_function_call_stream(
+        [
+            resp.ResponseOutputItemAddedEvent(
+                item=item, output_index=0, type='response.output_item.added', sequence_number=0
+            ),
+            resp.ResponseFunctionCallArgumentsDeltaEvent(
+                delta='{"city":"Londo',
+                item_id='fc_1',
+                output_index=0,
+                type='response.function_call_arguments.delta',
+                sequence_number=0,
+            ),
+            resp.ResponseFunctionCallArgumentsDoneEvent(
+                arguments='{"city":"Paris"}',
+                item_id='fc_1',
+                output_index=0,
+                type='response.function_call_arguments.done',
+                sequence_number=0,
+            ),
+        ]
+    )
+
+    starts = [event for event in events if isinstance(event, PartStartEvent)]
+    assert starts[-1] == snapshot(
+        PartStartEvent(
+            index=0,
+            part=ToolCallPart(
+                tool_name='lookup_weather',
+                args='{"city":"Paris"}',
+                tool_call_id='call_fc_1',
+                id='fc_1',
+                provider_name='openai',
+                provider_details={'namespace': 'weather'},
+            ),
+            previous_part_kind='tool-call',
+        )
+    )
+    assert response.parts == snapshot(
+        [
+            ToolCallPart(
+                tool_name='lookup_weather',
+                args='{"city":"Paris"}',
+                tool_call_id='call_fc_1',
+                id='fc_1',
+                provider_name='openai',
+                provider_details={'namespace': 'weather'},
+            )
+        ]
+    )
+
+
+async def test_openai_responses_stream_function_call_empty_done_and_late_delta(allow_model_requests: None):
+    item = _function_call_item('fc_1', '')
+    full_args = '{"city":"Paris"}'
+    events, response = await _collect_function_call_stream(
+        [
+            resp.ResponseOutputItemAddedEvent(
+                item=item, output_index=0, type='response.output_item.added', sequence_number=0
+            ),
+            resp.ResponseFunctionCallArgumentsDeltaEvent(
+                delta='{"city":',
+                item_id='fc_1',
+                output_index=0,
+                type='response.function_call_arguments.delta',
+                sequence_number=0,
+            ),
+            resp.ResponseFunctionCallArgumentsDoneEvent(
+                arguments='',
+                item_id='fc_1',
+                output_index=0,
+                type='response.function_call_arguments.done',
+                sequence_number=0,
+            ),
+            resp.ResponseFunctionCallArgumentsDoneEvent(
+                arguments=full_args,
+                item_id='fc_1',
+                output_index=0,
+                type='response.function_call_arguments.done',
+                sequence_number=0,
+            ),
+            resp.ResponseFunctionCallArgumentsDeltaEvent(
+                delta='ignored',
+                item_id='fc_1',
+                output_index=0,
+                type='response.function_call_arguments.delta',
+                sequence_number=0,
+            ),
+        ]
+    )
+
+    assert [
+        event.delta.args_delta
+        for event in events
+        if isinstance(event, PartDeltaEvent) and isinstance(event.delta, ToolCallPartDelta)
+    ] == snapshot(['{"city":', '"Paris"}'])
+    assert isinstance(response.parts[0], ToolCallPart)
+    assert response.parts[0].args == full_args
+
+
+async def test_openai_responses_stream_function_call_output_done_without_added(allow_model_requests: None):
+    events, response = await _collect_function_call_stream(
+        [
+            resp.ResponseOutputItemDoneEvent(
+                item=_function_call_item('fc_1', '{"city":"Paris"}'),
+                output_index=0,
+                type='response.output_item.done',
+                sequence_number=0,
+            )
+        ]
+    )
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='lookup',
+                    args='{"city":"Paris"}',
+                    tool_call_id='call_fc_1',
+                    id='fc_1',
+                    provider_name='openai',
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='lookup',
+                    args='{"city":"Paris"}',
+                    tool_call_id='call_fc_1',
+                    id='fc_1',
+                    provider_name='openai',
+                ),
+            ),
+        ]
+    )
+    assert response.parts == snapshot(
+        [
+            ToolCallPart(
+                tool_name='lookup',
+                args='{"city":"Paris"}',
+                tool_call_id='call_fc_1',
+                id='fc_1',
+                provider_name='openai',
+            )
+        ]
+    )
+
+
 async def test_openai_responses_moderation(allow_model_requests: None, openai_api_key: str):
     """Moderation results requested via `openai_moderation` are surfaced in `provider_details['moderation']`."""
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))

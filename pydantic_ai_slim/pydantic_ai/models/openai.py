@@ -4797,6 +4797,63 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
             mcp_list_tools_return_ids: set[str] = set()
             pending_tool_search_call_ids: deque[str] = deque()
+            function_call_args: dict[str, str] = {}
+            finalized_function_calls: set[str] = set()
+
+            def handle_function_call_part(
+                item: responses.ResponseFunctionToolCall,
+            ) -> ModelResponseStreamEvent:
+                item_id = item.id
+                if item_id is not None:  # pragma: no branch
+                    function_call_args[item_id] = item.arguments
+                # Preserve any namespace attached to a discovered deferred tool for replay.
+                provider_details: dict[str, Any] | None = None
+                if item.namespace:
+                    provider_details = {'namespace': item.namespace}
+                return self._parts_manager.handle_tool_call_part(
+                    vendor_part_id=item_id,
+                    tool_name=item.name,
+                    args=item.arguments,
+                    tool_call_id=_response_tool_call_id(
+                        item.call_id,
+                        self.provider_response_id if self._tool_call_ids_are_response_scoped else None,
+                    ),
+                    id=item_id,
+                    provider_name=self.provider_name,
+                    provider_details=provider_details,
+                )
+
+            def finalize_function_call(item_id: str, final_args: str) -> ModelResponseStreamEvent | None:
+                if item_id in finalized_function_calls or not final_args:
+                    return None
+
+                received_args = function_call_args.get(item_id, '')
+                if received_args == final_args:
+                    finalized_function_calls.add(item_id)
+                    return None
+
+                if final_args.startswith(received_args):
+                    # The Codex backend can send arguments only in the done events.
+                    event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=item_id,
+                        args=final_args[len(received_args) :],
+                    )
+                else:
+                    existing_part = self._parts_manager.get_part_by_vendor_id(item_id)
+                    assert isinstance(existing_part, ToolCallPart)
+                    event = self._parts_manager.handle_tool_call_part(
+                        vendor_part_id=item_id,
+                        tool_name=existing_part.tool_name,
+                        args=final_args,
+                        tool_call_id=existing_part.tool_call_id,
+                        id=existing_part.id,
+                        provider_name=existing_part.provider_name,
+                        provider_details=existing_part.provider_details,
+                    )
+
+                function_call_args[item_id] = final_args
+                finalized_function_calls.add(item_id)
+                return event
 
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
@@ -4887,15 +4944,18 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get('failed')
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=chunk.item_id,
-                        args=chunk.delta,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    if chunk.item_id not in finalized_function_calls:
+                        function_call_args[chunk.item_id] = function_call_args.get(chunk.item_id, '') + chunk.delta
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=chunk.item_id,
+                            args=chunk.delta,
+                        )
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
-                    pass  # there's nothing we need to do here
+                    if event := finalize_function_call(chunk.item_id, chunk.arguments):
+                        yield event
 
                 elif isinstance(chunk, (responses.ResponseInProgressEvent, responses.ResponseQueuedEvent)):
                     self._usage += self._map_usage(chunk.response)
@@ -4913,23 +4973,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
                     if isinstance(chunk.item, responses.ResponseFunctionToolCall):
-                        # Preserve any `namespace` the Responses API attaches to a
-                        # discovered deferred tool so it can be round-tripped on replay.
-                        fn_provider_details: dict[str, Any] | None = None
-                        if chunk.item.namespace:
-                            fn_provider_details = {'namespace': chunk.item.namespace}
-                        yield self._parts_manager.handle_tool_call_part(
-                            vendor_part_id=chunk.item.id,
-                            tool_name=chunk.item.name,
-                            args=chunk.item.arguments,
-                            tool_call_id=_response_tool_call_id(
-                                chunk.item.call_id,
-                                self.provider_response_id if self._tool_call_ids_are_response_scoped else None,
-                            ),
-                            id=chunk.item.id,
-                            provider_name=self.provider_name,
-                            provider_details=fn_provider_details,
-                        )
+                        yield handle_function_call_part(chunk.item)
                     elif isinstance(chunk.item, responses.ResponseReasoningItem):
                         pass
                     elif isinstance(chunk.item, responses.ResponseOutputMessage):
@@ -5026,7 +5070,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         )
 
                 elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
-                    if isinstance(chunk.item, responses.ResponseReasoningItem):
+                    if isinstance(chunk.item, responses.ResponseFunctionToolCall) and (item_id := chunk.item.id):
+                        # The Codex backend can send a call's arguments only in the done events, without deltas.
+                        if not isinstance(self._parts_manager.get_part_by_vendor_id(item_id), ToolCallPart):
+                            yield handle_function_call_part(chunk.item)
+                            finalized_function_calls.add(item_id)
+                        elif event := finalize_function_call(item_id, chunk.item.arguments):
+                            yield event
+                    elif isinstance(chunk.item, responses.ResponseReasoningItem):
                         if signature := chunk.item.encrypted_content:  # pragma: no branch
                             # Add the signature to the part corresponding to the first summary/raw CoT
                             for event in self._parts_manager.handle_thinking_delta(
