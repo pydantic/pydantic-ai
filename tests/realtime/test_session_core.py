@@ -1136,9 +1136,8 @@ def test_a_held_filler_keeps_the_wait_through_a_transcript_until_the_model_carri
     session_core = core()
 
     def message(*codec: Any) -> None:
-        for event, stale in tracker.message(list(codec)):
-            if not stale:
-                session_core.apply(event)
+        for event, _ in tracker.message(list(codec)):
+            session_core.apply(event)
 
     session_core.apply(InputSent(input_id=0, request=text_request('Weather?'), solicits=True))
     tracker.input_sent(0, 'Weather?')
