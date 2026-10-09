@@ -216,6 +216,8 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to TypeSafe's Decisions API."""
+        if request.images:
+            raise UserError('TypeSafe does not support image input.')
         questions = {name: _to_typesafe_question(question) for name, question in request.questions.items()}
         timeout = model_settings.get('timeout')
         try:
