@@ -170,6 +170,7 @@ def _remove(worktree: Worktree, *, unchanged: bool) -> bool:
 
 
 def _git(*args: str) -> str:
+    # Git for Windows emits UTF-8; POSIX Git preserves ref and path bytes for Python's locale decoder.
     return subprocess.run(
         ['git', *args],
         check=True,

@@ -26,7 +26,7 @@ def non_utf8_locale(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def windows_non_utf8_locale(monkeypatch: pytest.MonkeyPatch, non_utf8_locale: None) -> None:
     monkeypatch.setattr(project_identity_module, 'sys', SimpleNamespace(platform='win32'))
-    monkeypatch.setattr(worktrees_module, 'sys', SimpleNamespace(platform='win32', stdin=sys.stdin))
+    monkeypatch.setattr(worktrees_module, 'sys', SimpleNamespace(platform='win32', stdin=sys.stdin, stderr=sys.stderr))
 
 
 @pytest.mark.parametrize('name', ['После', 'Иван'])
@@ -63,23 +63,30 @@ def test_worktree_with_non_ascii_repository_path(
 
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='checks native POSIX text decoding for Git output')
-def test_git_output_uses_posix_default_codec(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    repo = tmp_path / 'Иван'
-    linked = tmp_path / 'После-checkout'
-    repository(repo, linked=linked, branch='feature/Иван')
+def test_git_output_uses_posix_default_codec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, non_utf8_locale: None
+) -> None:
+    repo = tmp_path / 'repo'
+    linked = tmp_path / 'checkout'
+    branch = 'feature/Иван'
+    repository(repo, linked=linked, branch=branch)
+
+    subprocess.run(['git', '-C', str(repo), 'pack-refs', '--all'], check=True, capture_output=True)
+    packed_refs = repo / '.git' / 'packed-refs'
+    packed_refs.write_bytes(packed_refs.read_bytes().replace(branch.encode(), branch.encode('cp1251')))
+    (repo / '.git' / 'worktrees' / linked.name / 'HEAD').write_bytes(
+        b'ref: refs/heads/' + branch.encode('cp1251') + b'\n'
+    )
 
     identity = project_identity(str(linked))
-    assert identity.name == 'Иван'
+    assert identity.name == 'repo'
     assert identity.checkout == 'feature/Иван'
 
-    monkeypatch.chdir(repo)
-    worktree = open_worktree(name='encoding')
-    assert worktree.path == repo.resolve() / '.worktrees' / 'encoding'
-    monkeypatch.chdir(worktree.path)
+    monkeypatch.chdir(linked)
     current = current_worktree()
     assert current is not None
-    assert current.path == worktree.path
-    assert current.branch == 'clai-encoding'
+    assert current.path == linked.resolve()
+    assert current.branch == 'feature/Иван'
 
 
 @pytest.mark.parametrize('command', ['token', 'login'])
