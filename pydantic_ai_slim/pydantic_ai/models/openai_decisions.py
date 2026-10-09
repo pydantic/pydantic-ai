@@ -344,6 +344,11 @@ def _answer(
         probabilities = {level.value: level.probability for level in answer.probabilities}
         if len(probabilities) != len(answer.probabilities):
             return None
-        return ScoreAnswer(score=answer.score, confidence=answer.confidence, probabilities=probabilities)
+        return ScoreAnswer(
+            score=answer.score,
+            confidence=answer.confidence,
+            probabilities=probabilities,
+            legend={level.value: level.label for level in answer.probabilities},
+        )
     else:
         assert_never(answer)

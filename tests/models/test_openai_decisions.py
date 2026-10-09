@@ -54,6 +54,7 @@ from pydantic_ai.models.decision import (
     NoulAnswer,
     NoulCriteria,
     NoulQuestion,
+    ScoreAnswer,
     ScoreQuestion,
     UnfillableRoute,
 )
@@ -711,6 +712,27 @@ async def test_request_id(allow_model_requests: None):
             usage=RequestUsage(input_tokens=396, cache_read_tokens=128, output_reasoning_tokens=0),
             provider_response_id='req_123',
         )
+    )
+
+
+async def test_score_level_labels_are_kept(allow_model_requests: None):
+    response = await mock_model(lambda _: decisions(FRUSTRATION)).decide(
+        DecisionRequest(
+            state='Review this.',
+            questions={'frustration': ScoreQuestion(criteria=['Calm', 'Frustrated', 'Very angry'])},
+        ),
+        {},
+    )
+
+    assert response.answers == snapshot(
+        {
+            'frustration': ScoreAnswer(
+                score=1.7,
+                confidence=0.55,
+                probabilities={0: 0.05, 1: 0.2, 2: 0.75},
+                legend={0: '0', 1: '1', 2: '2'},
+            )
+        }
     )
 
 
