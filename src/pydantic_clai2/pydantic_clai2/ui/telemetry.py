@@ -20,7 +20,9 @@ from functools import partial
 from typing import Literal
 
 import logfire
-from opentelemetry.trace import Span, SpanKind, Status, StatusCode, get_current_span, use_span
+from opentelemetry.trace import Span, SpanKind, get_current_span, use_span
+
+from pydantic_ai._instrumentation import record_exception, set_error_status
 
 Attribute = str | int | float | bool
 SCOPE = 'clai2'
@@ -153,14 +155,10 @@ def log_error(
     if content:
         instance.log('error', msg_template, attributes=dict(attributes or {}), exc_info=error)
         return
-    error_type = type(error)
-    name = error_type.__qualname__
-    if error_type.__module__ != 'builtins':
-        name = f'{error_type.__module__}.{name}'
     with _open(instance, msg_template, dict(attributes or {}), level='error'):
         current = get_current_span()
-        current.add_event('exception', {'exception.type': name, 'exception.escaped': 'False'})
-        current.set_status(Status(StatusCode.ERROR))
+        record_exception(current, error, include_content=False, escaped=False)
+        set_error_status(current, error, include_content=False)
 
 
 class UiSpan:
