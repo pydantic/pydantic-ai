@@ -510,6 +510,45 @@ def test_custom_answer_editing(question: Question, shortcut: str) -> None:
     assert 'Other (type answer)' in ''.join(menu.frame(width=80, height=24))
 
 
+@pytest.mark.parametrize('question', [APPROACH, TARGETS])
+def test_typing_on_highlighted_other_starts_the_answer(question: Question) -> None:
+    menu = QuestionMenu(question=question, position=1, total=1)
+    menu.choose('up')
+    assert 'type your answer' in menu.hint
+    # Digits are text here, not shortcuts, so an answer may start with one.
+    for key in ('2', ' ', 'f', 'i', 'l', 'e', 's'):
+        assert menu.choose(key) is None
+    assert menu.editing_custom
+    assert menu.selected == set()
+    assert menu.choose('enter') == '2 files'
+
+
+def test_paste_on_highlighted_other_starts_the_answer() -> None:
+    menu = QuestionMenu(question=APPROACH, position=1, total=1)
+    menu.choose('up')
+    assert menu.choose(Paste(text='first\nsecond')) is None
+    assert menu.editing_custom
+    assert menu.choose('enter') == 'first\nsecond'
+
+
+def test_typing_resumes_the_draft_after_escape() -> None:
+    menu = QuestionMenu(question=APPROACH, position=1, total=1)
+    menu.choose('3')
+    menu.choose('a')
+    menu.choose('escape')
+    assert not menu.editing_custom
+    menu.choose('b')
+    assert menu.choose('enter') == 'ab'
+
+
+def test_typing_elsewhere_does_not_start_the_answer() -> None:
+    menu = QuestionMenu(question=APPROACH, position=1, total=1)
+    assert menu.choose('x') is None
+    assert not menu.editing_custom
+    assert 'number/Enter select' in menu.hint
+    assert menu.choose('enter') == ('Refactor',)
+
+
 def test_custom_back_preserves_picks_and_draft() -> None:
     menu = QuestionMenu(question=TARGETS, position=1, total=1)
     menu.choose('1')
@@ -518,6 +557,7 @@ def test_custom_back_preserves_picks_and_draft() -> None:
     menu.choose('escape')
     assert not menu.editing_custom
     assert menu.selected == {0}
+    menu.choose('up')
     assert menu.choose('3') == ('api.py',)
     menu.choose('4')
     assert menu.choose('enter') == 'x'
@@ -527,7 +567,7 @@ def test_custom_back_preserves_picks_and_draft() -> None:
     'keys, expected',
     [
         (['3', 'x', 'enter'], 'x'),
-        (['3', 'x', 'escape', '2'], ('Patch',)),
+        (['3', 'x', 'escape', 'up', '2'], ('Patch',)),
         (['3', 'escape', 'escape'], None),
         (['3', 'ctrl-c'], None),
     ],
@@ -541,6 +581,15 @@ def test_custom_inline_lifecycle(keys: list[str], expected: tuple[str, ...] | st
     assert LEAVE not in output.getvalue()
     assert 'Previous conversation' in output.getvalue()
     assert MODES_OFF in output.getvalue(), 'input modes return to the editor, the screen stays'
+
+
+async def test_typing_on_highlighted_other_through_the_terminal(question_pipe: PipeInput) -> None:
+    # Up arrow wraps to `Other`; the answer is typed straight away, with no Enter to open it.
+    question_pipe.send_text('\x1b[A2 files\r')
+    response = await TerminalAnswerer(full_screen=ScreenLog(), console=Console(file=io.StringIO()))(
+        AskUserRequest(questions=(APPROACH,))
+    )
+    assert response.answers == (AskUserAnswer(header='Approach', custom_answer='2 files'),)
 
 
 @pytest.mark.parametrize('enter', ['\r', '\n'])
