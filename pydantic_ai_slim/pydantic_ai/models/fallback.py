@@ -127,9 +127,10 @@ class FallbackModel(Model):
                 If the first parameter is hinted as `ModelResponse`, it's a response handler.
                 Otherwise (including untyped handlers and lambdas), it's an exception handler.
 
-                Response handlers only apply to non-streamed requests. A streamed request,
-                including one made by `run()` with an `event_stream_handler` or an `on_event`
-                listener, accepts the response as is and emits a `UserWarning`.
+                Response handlers only apply to non-streamed requests. A streamed request accepts
+                the response as is and emits a `UserWarning`. A request is streamed whenever
+                something consumes the run's events, including `run()` with an
+                `event_stream_handler` or an event listener.
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
@@ -387,10 +388,10 @@ class FallbackModel(Model):
         if self._response_handlers:
             warnings.warn(
                 '`FallbackModel` response handlers in `fallback_on` are not applied to streamed requests, '
-                'so the streamed response is accepted as is. Requests are streamed by `run_stream()` and '
-                '`run_stream_events()`, and by `run()` with an `event_stream_handler` or an `on_event` listener.',
+                'so the streamed response is accepted as is. A request is streamed whenever something consumes '
+                "the run's events, such as `run_stream()`, `run_stream_events()`, `iter()` with `node.stream()`, "
+                'an `event_stream_handler`, or an event listener or hook.',
                 UserWarning,
-                stacklevel=2,
             )
 
         for model in self.models:

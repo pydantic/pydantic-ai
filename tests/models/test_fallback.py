@@ -2190,15 +2190,12 @@ async def test_response_handler_not_applied_to_streamed_requests_warns() -> None
     async def primary_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
         yield 'primary response'
 
-    async def fallback_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
-        yield 'fallback response'  # pragma: no cover
-
     def reject_primary(response: ModelResponse) -> bool:
         return any(isinstance(part, TextPart) and 'primary' in part.content for part in response.parts)
 
     fallback = FallbackModel(
         FunctionModel(primary_response, stream_function=primary_stream),
-        FunctionModel(fallback_response, stream_function=fallback_stream),
+        FunctionModel(fallback_response),
         fallback_on=reject_primary,
     )
     agent = Agent(model=fallback)

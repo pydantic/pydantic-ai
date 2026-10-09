@@ -512,7 +512,7 @@ In addition to exception-based fallback, you can also trigger fallback based on 
 !!! note "Non-streaming only"
     Response-based fallback only works with non-streamed requests. A streamed response has already reached you by the time it could be judged, so response handlers aren't applied to it: it's accepted as is, and a `UserWarning` is emitted. Exception-based fallback still applies while the stream is being opened.
 
-    Requests are streamed by [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], and also by [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] and [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] when the run has an `event_stream_handler` or an [`on_event`](../capabilities/overview.md#reacting-to-events) listener.
+    A request is streamed whenever something consumes the run's events: [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] (which the [UI adapters](../ui/overview.md) use), [`agent.iter()`][pydantic_ai.agent.Agent.iter] with `node.stream()`, and [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] or [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] with an `event_stream_handler`, an [`agent.on_event`][pydantic_ai.agent.Agent.on_event] listener, or a capability that reacts to events, like the [event stream hooks](../hooks.md#event-stream-hooks).
 
 The `fallback_on` parameter accepts:
 
