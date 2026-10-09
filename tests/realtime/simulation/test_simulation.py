@@ -1304,6 +1304,31 @@ def test_gemini_extended_thinking_filler_followed_by_more_speech() -> None:
     run_clean(GeminiSimulation(behavior=GeminiBehavior(stalls_in_progress=True)), scenario)
 
 
+def test_gemini_user_cuts_in_on_a_held_filler() -> None:
+    """The model stalls `IN_PROGRESS`, and the user speaks over the pause: the exchange is over."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.finish(in_progress=True)
+        sim.wait_for_reply()
+        sim.send_audio()
+        sim.user_speaks()
+        sim.settle()
+
+    run_clean(GeminiSimulation(behavior=GeminiBehavior(stalls_in_progress=True)), scenario)
+
+
+def test_scenario_gemini_context_sent_while_a_reply_is_owed() -> None:
+    """SIM-39: context sent right after a typed turn is placed after the reply, which the server may not have begun."""
+
+    with GeminiSimulation(strict=False) as sim:
+        sim.send_text()
+        sim.send_text(respond=False)
+        sim.settle()
+        assert ('SIM-39', 'history.order') in sim.checker.known_hits
+
+
 def test_baseline_gemini_extended_thinking() -> None:
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_text()
