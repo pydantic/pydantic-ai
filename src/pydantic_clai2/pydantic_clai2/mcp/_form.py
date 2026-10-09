@@ -7,14 +7,9 @@ Everything here is synchronous and runs in a menu worker thread.
 """
 
 import json
-import os
 import shlex
 import shutil
-import subprocess
-import sys
-import tempfile
 from collections.abc import Callable
-from pathlib import Path
 from typing import get_args
 
 from pydantic import HttpUrl, JsonValue, TypeAdapter, ValidationError
@@ -27,6 +22,7 @@ from pydantic_clai2.mcp._store import MCPStore
 from pydantic_clai2.mcp._tokens import TokenStore
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners, first_error
 from pydantic_clai2.ui.menus.menu_worker import menu_key
+from pydantic_clai2.ui.menus.text_editor import editor_command, run_editor
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 SERVER_TYPES: tuple[ServerType, ...] = get_args(ServerType)
@@ -371,20 +367,10 @@ def _json_problem(text: str) -> str | None:
 
 def edit_in_editor(initial: str) -> str | None:
     """Open `$VISUAL` or `$EDITOR` (default `vi`) on the JSON; `None` when it could not run."""
-    handle, name = tempfile.mkstemp(suffix='.json', prefix='mcp_server_')
-    path = Path(name)
     try:
-        editor = shlex.split(os.environ.get('VISUAL') or os.environ.get('EDITOR') or 'vi')
-        with os.fdopen(handle, 'w') as file:
-            file.write(initial)
-        print('\x1b[2J\x1b[H', end='', flush=True, file=sys.__stdout__)
-        if subprocess.call([*editor, name]) != 0:
-            return None
-        return path.read_text(encoding='utf-8')
+        return run_editor(editor_command(default='vi'), initial, prefix='mcp_server_', suffix='.json')
     except (OSError, ValueError):  # ValueError: an unparsable $EDITOR; the one-line input takes over.
         return None
-    finally:
-        path.unlink(missing_ok=True)
 
 
 def run_form(form: ServerForm, runners: Runners = TERMINAL, editor: Editor = edit_in_editor) -> bool:

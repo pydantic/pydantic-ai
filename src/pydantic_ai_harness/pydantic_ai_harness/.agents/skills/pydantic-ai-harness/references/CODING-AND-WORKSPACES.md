@@ -336,6 +336,9 @@ capability's commands in a Linux `bwrap` sandbox on that workspace's host:
   multiprocessing (use `get_context('spawn')`), need `network=True`: host network and ports, no filter.
 - File methods (and the `FileSystem`/`Coder` file tools) run in the sandbox as shell commands, so a
   swapped-in symlink can't lead a write outside the working dir.
+- A working dir containing `~` (SSH's default) gets `~/.ssh`, `~/.pam_environment`, `~/.bashrc`,
+  `~/.zshenv`, `~/.cshrc`, `~/.tcshrc`, `~/.config/fish` read-only (created if missing; a symlink there
+  is unavailable), since the next SSH login runs them on the host. Prefer a project `working_dir`.
 - The host PID namespace is shared, so `Shell` background jobs survive the call (and the run), and
   sandboxed commands can see and signal the host user's processes.
 - Not a hostile-agent boundary: commands read everything the host user can (hide `~/.ssh` with
@@ -403,6 +406,13 @@ CLI can read and write host files (`file://`, `s3 cp`).
 `Coder(unrestricted_filesystem=True)` in the launch directory, with no sandbox or approval layer.
 `clai2 --worktree NAME` starts in a new git worktree (not a sandbox). To chat with your own agent:
 `asyncio.run(chat(agent, deps=None))` with `from pydantic_clai2 import chat`.
+
+To run CLAI's stock coding agent from code or over ACP, without the terminal:
+`async with open_stock_agent(workspace=path, model=...) as agent:` from `pydantic_clai2`. It binds the
+`coder`, `repo_context`, and `compaction` built-ins plus your `capabilities`, and ignores the user's
+saved CLAI configuration. `plugin_settings={'coder': {...}}` overrides built-in settings. With a
+capability that requires approval over ACP, pass `{'coder': {'sub_agents': False}}`: a delegated
+task's approval fails the run.
 
 ## See also
 

@@ -1,5 +1,9 @@
-"""The built-in `google_workspace` plugin: Google's hosted Workspace MCP servers, through harness `GoogleWorkspace`."""
+"""Use Gmail, Calendar, and Drive through Google's hosted Workspace MCP servers.
 
+The built-in `google_workspace` plugin: Google's hosted Workspace MCP servers, through harness `GoogleWorkspace`.
+"""
+
+from collections.abc import Sequence
 from functools import partial
 from typing import Generic, get_args
 
@@ -9,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from termflow.tui import MenuBuilder, MenuItem
 
 from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness.google_workspace import GoogleWorkspace, GoogleWorkspaceService
 from pydantic_clai2.commands import Command
@@ -21,7 +26,7 @@ from pydantic_clai2.config.api_keys import (
     save_key_connection,
 )
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials
-from pydantic_clai2.plugins import DepsT, PluginHost
+from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, run_flow
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.rendering import theme
@@ -247,34 +252,43 @@ async def configure(host: PluginHost[DepsT], args: list[str], *, runners: Runner
         return '\n'.join(source.log) or 'No changes.'
 
 
-def activate(host: PluginHost[DepsT]) -> None:
+class GoogleWorkspacePlugin(Plugin[GoogleWorkspaceSettings, DepsT]):
     """Load without a token so `/google_workspace` is available to supply one; every run needs it."""
-    host.settings(GoogleWorkspaceSettings)
-    host.configure(partial(configure, host, []))
-    host.commands.register(
-        Command(
-            name='google_workspace',
-            description='Google Workspace settings: products, read-only tools, and the /keys token',
-            handler=partial(configure, host),
+
+    def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
+        host = self.host
+
+        def token(ctx: RunContext[DepsT]) -> str:
+            # `GoogleWorkspace` drops the tools for a run whose token is empty; failing says why instead.
+            return access_token()
+
+        def workspace(ctx: RunContext[DepsT]) -> GoogleWorkspace[DepsT]:
+            # Built per run so `/google_workspace` edits apply to the next turn without a reload.
+            settings = host.settings(GoogleWorkspaceSettings)
+            return GoogleWorkspace[DepsT](
+                services=settings.services,
+                auth=token,
+                read_only=settings.read_only,
+                include_instructions=settings.include_instructions,
+            )
+
+        return (workspace,)
+
+    def get_commands(self) -> Sequence[Command]:
+        return (
+            Command(
+                name='google_workspace',
+                description='Google Workspace settings: products, read-only tools, and the /keys token',
+                handler=partial(configure, self.host),
+                during_turn=True,
+            ),
         )
-    )
-    try:
-        access_token()
-    except UserError as exc:
-        host.console.print(str(exc), style=theme.color(theme.WARNING), markup=False)
 
-    def token(ctx: RunContext[DepsT]) -> str:
-        # `GoogleWorkspace` drops the tools for a run whose token is empty; failing says why instead.
-        return access_token()
+    async def configure(self) -> str:
+        return await configure(self.host, [])
 
-    def workspace(ctx: RunContext[DepsT]) -> GoogleWorkspace[DepsT]:
-        # Built per run so `/google_workspace` edits apply to the next turn without a reload.
-        settings = host.settings(GoogleWorkspaceSettings)
-        return GoogleWorkspace[DepsT](
-            services=settings.services,
-            auth=token,
-            read_only=settings.read_only,
-            include_instructions=settings.include_instructions,
-        )
-
-    host.add(workspace)
+    async def on_session_start(self, event: SessionStart) -> None:
+        try:
+            access_token()
+        except UserError as exc:
+            self.host.console.print(str(exc), style=theme.color(theme.WARNING), markup=False)

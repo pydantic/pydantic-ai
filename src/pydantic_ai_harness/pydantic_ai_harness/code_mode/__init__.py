@@ -16,6 +16,7 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeOS,
     CodeModeOSCallback,
     CodeModeResourceLimits,
+    CodeModeReturnSchemaWarning,
     CodeModeToolset,
 )
 
@@ -26,6 +27,7 @@ __all__ = [
     'CodeModeOS',
     'CodeModeOSCallback',
     'CodeModeResourceLimits',
+    'CodeModeReturnSchemaWarning',
     'CodeModeToolset',
     'SpeculationStats',
     'SpeculativeCallClaimedEvent',

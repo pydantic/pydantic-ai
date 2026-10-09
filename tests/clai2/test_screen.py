@@ -138,22 +138,24 @@ async def test_plugin_takes_the_screen_from_inside_a_tool(tmp_path: Path, termin
         'from pydantic_ai import RunContext\n'
         'from pydantic_ai.capabilities import AbstractCapability\n'
         'from pydantic_ai.toolsets import FunctionToolset\n'
-        'from pydantic_clai2.plugins import PluginHost\n'
-        'def activate(host: PluginHost) -> None:\n'
-        '    toolset = FunctionToolset()\n'
-        '    @toolset.tool\n'
-        '    async def take(ctx: RunContext[None]) -> str:\n'
-        '        async with host.full_screen():\n'
-        "            host.console.print('drawing on a settled screen')\n"
-        "        return 'taken'\n"
-        '    class Taker(AbstractCapability):\n'
-        '        def get_toolset(self):\n'
-        '            return toolset\n'
-        '    host.add(Taker())\n'
+        'from pydantic_clai2.plugins import Plugin\n'
+        'class Taking(Plugin):\n'
+        '    def get_capabilities(self):\n'
+        '        host = self.host\n'
+        '        toolset = FunctionToolset()\n'
+        '        @toolset.tool\n'
+        '        async def take(ctx: RunContext[None]) -> str:\n'
+        '            async with host.full_screen():\n'
+        "                host.console.print('drawing on a settled screen')\n"
+        "            return 'taken'\n"
+        '        class Taker(AbstractCapability):\n'
+        '            def get_toolset(self):\n'
+        '                return toolset\n'
+        '        return [Taker()]\n'
     )
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('hello\n/exit\n')
+        pipe.send_text('hello\r/exit\r')
         await chat(
             Agent(TestModel(call_tools=['take'], custom_output_text='done')),
             deps=None,

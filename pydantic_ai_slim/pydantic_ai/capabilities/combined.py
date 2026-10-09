@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
+from pydantic_ai._history_mirroring import keep_mirroring
 from pydantic_ai._instructions import (
     AgentInstruction,
     AgentInstructions,
@@ -654,7 +655,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> ModelRequestContext:
         for capability in self.capabilities:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+                messages = request_context.messages
                 request_context = await capability.before_model_request(cap_ctx, request_context)
+                keep_mirroring(messages, request_context)
         return request_context
 
     async def after_model_request(

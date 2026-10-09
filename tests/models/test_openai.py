@@ -10,16 +10,16 @@ import textwrap
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, NotRequired, cast
 from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
 from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -193,20 +193,20 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 model_name='gpt-4o-123',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -214,20 +214,20 @@ async def test_request_simple_success(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 model_name='gpt-4o-123',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -298,19 +298,19 @@ async def test_response_with_created_timestamp_but_no_provider_details(allow_mod
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 model_name='gpt-4o-123',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
                 provider_details={
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -319,6 +319,23 @@ async def test_response_with_created_timestamp_but_no_provider_details(allow_mod
             ),
         ]
     )
+
+
+async def test_response_without_id_created_or_finish_reason(allow_model_requests: None):
+    """OpenAI-compatible providers may send an empty `id`, a zero `created`, and no `finish_reason`.
+
+    These build the same response as a stream without them does: none of them is reported as a provider value.
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    c.id = ''
+    c.created = 0
+    c.choices[0].finish_reason = None  # pyright: ignore[reportAttributeAccessIssue]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)))
+
+    response = await direct_model_request(model, [ModelRequest.user_text_prompt('hello')])
+    assert response.provider_response_id is None
+    assert response.provider_details is None
+    assert response.finish_reason == 'stop'
 
 
 async def test_openai_chat_image_detail_vendor_metadata(allow_model_requests: None):
@@ -365,7 +382,7 @@ async def test_request_structured_response(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -384,7 +401,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -397,7 +414,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -467,7 +484,7 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC)),
                 ],
                 instructions='this is the system prompt',
                 timestamp=IsDatetime(),
@@ -493,7 +510,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -506,7 +523,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -533,7 +550,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -546,7 +563,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -562,7 +579,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -685,7 +702,7 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
                     provider_url='https://api.openai.com/v1',
                     provider_details={
                         'finish_reason': 'stop',
-                        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                     },
                     provider_response_id='123',
                     finish_reason='stop',
@@ -708,14 +725,14 @@ async def test_stream_text_no_created_timestamp(allow_model_requests: None):
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
             ['hello ', 'hello world', 'hello world.']
         )
-        assert result.timestamp == IsNow(tz=timezone.utc)
+        assert result.timestamp == IsNow(tz=UTC)
         response = cast(ModelResponse, result.all_messages()[-1])
         assert response == snapshot(
             ModelResponse(
                 parts=[TextPart(content='hello world.')],
                 usage=RequestUsage(input_tokens=6, output_tokens=3),
                 model_name='gpt-4o-123',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
                 provider_details={
@@ -742,7 +759,7 @@ async def test_stream_text_ignores_zero_created_timestamp(allow_model_requests: 
     async with Agent(model).run_stream('') as result:
         await result.get_output()
         response = cast(ModelResponse, result.all_messages()[-1])
-        assert response.timestamp == IsNow(tz=timezone.utc)
+        assert response.timestamp == IsNow(tz=UTC)
         assert response.provider_details is None
         assert b'1970-01-01T00:00:00Z' not in result.all_messages_json()
 
@@ -761,7 +778,7 @@ async def test_stream_text_uses_created_timestamp_from_usage_chunk(allow_model_r
         assert await result.get_output() == 'hello world'
         response = cast(ModelResponse, result.all_messages()[-1])
         assert response.provider_details == {
-            'timestamp': datetime(2024, 1, 1, tzinfo=timezone.utc),
+            'timestamp': datetime(2024, 1, 1, tzinfo=UTC),
             'finish_reason': 'stop',
         }
 
@@ -769,10 +786,10 @@ async def test_stream_text_uses_created_timestamp_from_usage_chunk(allow_model_r
 @pytest.mark.parametrize(
     ('created_values', 'expected'),
     [
-        ([1704067200, 1704153600, 1704240000], datetime(2024, 1, 1, tzinfo=timezone.utc)),
-        ([None, 1704153600, 1704240000], datetime(2024, 1, 2, tzinfo=timezone.utc)),
-        ([0, 1704153600, 1704240000], datetime(2024, 1, 2, tzinfo=timezone.utc)),
-        ([None, 0, 1704153600], datetime(2024, 1, 2, tzinfo=timezone.utc)),
+        ([1704067200, 1704153600, 1704240000], datetime(2024, 1, 1, tzinfo=UTC)),
+        ([None, 1704153600, 1704240000], datetime(2024, 1, 2, tzinfo=UTC)),
+        ([0, 1704153600, 1704240000], datetime(2024, 1, 2, tzinfo=UTC)),
+        ([None, 0, 1704153600], datetime(2024, 1, 2, tzinfo=UTC)),
     ],
 )
 async def test_stream_text_uses_created_timestamp_from_later_chunk(
@@ -794,7 +811,7 @@ async def test_stream_text_uses_created_timestamp_from_later_chunk(
             ['hello ', 'hello world', 'hello world.']
         )
         response = cast(ModelResponse, result.all_messages()[-1])
-        assert response.timestamp == IsNow(tz=timezone.utc)
+        assert response.timestamp == IsNow(tz=UTC)
         assert response.provider_details == {
             'timestamp': expected,
             'finish_reason': 'stop',
@@ -1506,7 +1523,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 4, 29, 21, 7, 59, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 29, 21, 7, 59, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
                 finish_reason='tool_call',
@@ -1549,7 +1566,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 4, 29, 21, 8, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 29, 21, 8, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
                 finish_reason='stop',
@@ -1836,6 +1853,15 @@ def test_is_text_like_media_type():
     assert _is_text_like_media_type('application/soap+xml') is True
     assert _is_text_like_media_type('application/pdf') is False
     assert _is_text_like_media_type('image/png') is False
+    # Parameters (RFC 2045) are ignored: classification happens on the bare type.
+    assert _is_text_like_media_type('text/plain;charset=utf-8') is True
+    assert _is_text_like_media_type('application/json; charset=utf-8') is True
+    assert _is_text_like_media_type('application/xml;charset=utf-8') is True
+    assert _is_text_like_media_type('application/yaml;charset=utf-8') is True
+    assert _is_text_like_media_type('application/toml;charset=utf-8') is True
+    assert _is_text_like_media_type('application/ld+json;charset=utf-8') is True
+    assert _is_text_like_media_type('application/soap+xml;charset=utf-8') is True
+    assert _is_text_like_media_type('application/pdf;charset=binary') is False
 
 
 async def test_toml_document_as_binary_content_input(allow_model_requests: None):
@@ -1866,6 +1892,78 @@ async def test_toml_document_as_binary_content_input(allow_model_requests: None)
 [project]
 name = "demo"
 -----END FILE id="312a73"-----\
+""",
+                        'type': 'text',
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_json_parameterized_media_type_as_binary_content_input(allow_model_requests: None):
+    """JSON `BinaryContent` with a parameterized media type is inlined as text, like bare JSON is.
+
+    Unit test, not VCR: `BinaryContent.from_data_uri` stores `application/json;charset=utf-8`
+    verbatim (RFC 2397), and before the classifier ignored parameters the mapping raised
+    `Unsupported binary content type` before any request was made, so this pins the request
+    shape the mock client receives.
+    """
+    json_content = BinaryContent.from_data_uri('data:application/json;charset=utf-8;base64,eyJhIjogMX0=')
+
+    c = completion_message(ChatCompletionMessage(content='A JSON document.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['What is this file?', json_content])
+    assert result.output == snapshot('A JSON document.')
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is this file?', 'type': 'text'},
+                    {
+                        'text': """\
+-----BEGIN FILE id="e4ad4d" type="application/json;charset=utf-8"-----
+{"a": 1}
+-----END FILE id="e4ad4d"-----\
+""",
+                        'type': 'text',
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_parameterized_structured_suffix_media_type_inlined(allow_model_requests: None):
+    """A parameterized `+json` suffix media type is inlined as text, like its bare form is.
+
+    Unit test, not VCR: classification must look at the bare `application/ld+json` essence,
+    so the structured-suffix branch keeps matching when RFC 2397 parameters are present.
+    """
+    jsonld_content = BinaryContent.from_data_uri('data:application/ld+json;charset=utf-8;base64,eyJhIjogMX0=')
+
+    c = completion_message(ChatCompletionMessage(content='A JSON-LD document.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['What is this file?', jsonld_content])
+    assert result.output == snapshot('A JSON-LD document.')
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is this file?', 'type': 'text'},
+                    {
+                        'text': """\
+-----BEGIN FILE id="e4ad4d" type="application/ld+json;charset=utf-8"-----
+{"a": 1}
+-----END FILE id="e4ad4d"-----\
 """,
                         'type': 'text',
                     },
@@ -2281,7 +2379,7 @@ async def test_message_history_can_start_with_model_response(allow_model_request
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 11, 22, 10, 1, 40, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 11, 22, 10, 1, 40, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-Ceeiy4ivEE0hcL1EX5ZfLuW5xNUXB',
                 finish_reason='stop',
@@ -3720,7 +3818,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 4, 7, 16, 30, 56, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 7, 16, 30, 56, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BJjf61mLb9z5H45ClJzbx0UWKwjo1',
                 finish_reason='stop',
@@ -3779,7 +3877,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 4, 16, 13, 37, 14, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 16, 13, 37, 14, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq',
                 finish_reason='tool_call',
@@ -3818,7 +3916,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 4, 16, 13, 37, 15, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 16, 13, 37, 15, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP',
                 finish_reason='stop',
@@ -3876,7 +3974,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 10, 22, 21, 57, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 10, 22, 21, 57, tzinfo=UTC),
                     'service_tier': 'default',
                 },
                 provider_response_id='resp_68c1fa0523248197888681b898567bde093f57e27128848a',
@@ -3926,7 +4024,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 9, 10, 22, 22, 24, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 10, 22, 22, 24, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-CENUmtwDD0HdvTUYL6lUeijDtxrZL',
                 finish_reason='stop',
@@ -4280,10 +4378,10 @@ def test_openai_response_timestamp_milliseconds(allow_model_requests: None):
 
     result = agent.run_sync('Hello')
     response = cast(ModelResponse, result.all_messages()[-1])
-    assert response.timestamp == IsNow(tz=timezone.utc)
+    assert response.timestamp == IsNow(tz=UTC)
     assert response.provider_name == 'openai'
     assert response.provider_details == snapshot(
-        {'finish_reason': 'stop', 'timestamp': datetime(2025, 6, 1, 3, 7, 48, tzinfo=timezone.utc)}
+        {'finish_reason': 'stop', 'timestamp': datetime(2025, 6, 1, 3, 7, 48, tzinfo=UTC)}
     )
 
 
@@ -4337,7 +4435,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 5, 1, 23, 36, 24, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 5, 1, 23, 36, 24, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BSXk0dWkG4hfPt0lph4oFO35iT73I',
                 finish_reason='tool_call',
@@ -4384,7 +4482,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 5, 1, 23, 36, 25, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 5, 1, 23, 36, 25, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BSXk1xGHYzbhXgUkSutK08bdoNv5s',
                 finish_reason='tool_call',
@@ -4459,7 +4557,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 6, 9, 21, 20, 53, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 6, 9, 21, 20, 53, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BgeDFS85bfHosRFEEAvq8reaCPCZ8',
                 finish_reason='tool_call',
@@ -4500,7 +4598,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 6, 9, 21, 20, 54, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 6, 9, 21, 20, 54, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BgeDGX9eDyVrEI56aP2vtIHahBzFH',
                 finish_reason='stop',
@@ -4565,7 +4663,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 5, 1, 23, 36, 22, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 5, 1, 23, 36, 22, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BSXjyBwGuZrtuuSzNCeaWMpGv2MZ3',
                 finish_reason='tool_call',
@@ -4606,7 +4704,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 5, 1, 23, 36, 23, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 5, 1, 23, 36, 23, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BSXjzYGu67dhTy5r8KmjJvQ4HhDVO',
                 finish_reason='stop',
@@ -4685,7 +4783,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 6, 9, 23, 21, 26, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 6, 9, 23, 21, 26, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-Bgg5utuCSXMQ38j0n2qgfdQKcR9VD',
                 finish_reason='tool_call',
@@ -4730,7 +4828,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 6, 9, 23, 21, 27, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 6, 9, 23, 21, 27, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-Bgg5vrxUtCDlvgMreoxYxPaKxANmd',
                 finish_reason='stop',
@@ -4793,7 +4891,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 6, 10, 0, 21, 35, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 6, 10, 0, 21, 35, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-Bgh27PeOaFW6qmF04qC5uI2H9mviw',
                 finish_reason='tool_call',
@@ -4834,7 +4932,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 6, 10, 0, 21, 36, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 6, 10, 0, 21, 36, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-Bgh28advCSFhGHPnzUevVS6g6Uwg0',
                 finish_reason='stop',
@@ -4901,7 +4999,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 6, 10, 0, 21, 38, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 6, 10, 0, 21, 38, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-Bgh2AW2NXGgMc7iS639MJXNRgtatR',
                 finish_reason='tool_call',
@@ -4946,7 +5044,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 6, 10, 0, 21, 39, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 6, 10, 0, 21, 39, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-Bgh2BthuopRnSqCuUgMbBnOqgkDHC',
                 finish_reason='stop',
@@ -5031,8 +5129,8 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5044,7 +5142,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -5071,7 +5169,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -5129,7 +5227,7 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     result = await agent.run('Hello')
     messages = result.all_messages()
     response_message = message(messages, ModelResponse, index=1)
-    assert response_message.timestamp == IsNow(tz=timezone.utc)
+    assert response_message.timestamp == IsNow(tz=UTC)
 
 
 async def test_process_response_no_finish_reason(allow_model_requests: None):
@@ -6626,7 +6724,7 @@ async def test_openai_malformed_tool_args_degraded_on_the_wire(allow_model_reque
         message_history=[
             ModelResponse(
                 parts=[ToolCallPart(tool_name='search_knowledge', tool_call_id='call_123', args=bad_args)],
-                timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                timestamp=datetime(2025, 1, 1, tzinfo=UTC),
             ),
             ModelRequest(
                 parts=[
@@ -6695,7 +6793,7 @@ def test_model_construction_preloads_lazy_dependencies():
 
 # Opted in, and the cassette was recorded with the described options in the request, so the recording only
 # matches what the code sends while the enum keeps opting in.
-class TicketPriority(UseEnumMemberDocstrings, str, Enum):
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """How urgent the ticket is."""
 
     low = 'low'
