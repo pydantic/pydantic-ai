@@ -67,6 +67,7 @@ def exploration_settings() -> settings:
     if imports_successful()
     else [],
 )
+@pytest.mark.slow(reason='explores 50 randomized sessions of up to 25 steps against each provider simulator')
 def test_exploration(machine: type[RuleBasedStateMachine]) -> None:
     KNOWN_HIT_COUNTS.clear()
     run_state_machine_as_test(machine, settings=exploration_settings())

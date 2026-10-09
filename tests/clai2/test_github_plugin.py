@@ -27,6 +27,10 @@ from pydantic_clai2.ui.menus.field_menu import CUSTOM, FieldRow
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
 from tests.clai2.menu_script import Script, pick, typed
 
+pytestmark = pytest.mark.subprocess(
+    reason='drives the fake `gh` CLI (`tests/clai2/fake_gh_cli.py`) as a real child process'
+)
+
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'github')
 CLOSE = MenuResult(cancelled=True)
 

@@ -2,8 +2,8 @@
 
 Organized by behavior: lifecycle, streaming/event ordering, tool calls, permission/HITL,
 cancellation, multi-turn history & isolation, errors, unsupported methods, and entry points.
-Most tests drive the adapter directly with an in-memory `FakeClient`; the entry-point tests
-spawn a real subprocess over stdio, as a TUI client (Zed/Toad) would.
+Most tests drive the adapter directly with an in-memory `FakeClient`; the entry-point tests drive it
+over the in-memory wire, and one spawns a real subprocess over stdio, as a TUI client (Zed/Toad) would.
 """
 
 from __future__ import annotations
@@ -62,6 +62,8 @@ from pydantic_ai_harness.experimental.acp import (
     InMemorySessionStore,
     PydanticAIACPAgent,
     ToolCallPresentation,
+    acp_filesystem,
+    acp_terminal,
     chain_presenters,
     default_coding_presenter,
     run_acp_stdio,
@@ -89,6 +91,7 @@ from tests.harness.experimental.acp._acp_clients import (
     RecordingClient,
     RecordingClientBase,
 )
+from tests.harness.experimental.acp._wire import wire_agent
 
 # A decider maps a permission request (the tool call) to the option_id the client "clicks",
 # or to None to signal a cancelled permission outcome (the user dismissed the dialog).
@@ -2159,6 +2162,7 @@ class TestEntryPoints:
         assert seen == ['host:custom']
         assert response.stop_reason == 'max_turn_requests'
 
+    @pytest.mark.subprocess(reason='the one test that drives the ACP entry point over real stdio')
     async def test_end_to_end_over_stdio(self) -> None:
         """Drive the adapter as a real subprocess over ACP stdio, as a TUI client would."""
         client = FakeClient()
@@ -2178,11 +2182,20 @@ class TestEntryPoints:
         # The streamed text is the model's JSON-encoded tool result, delivered intact.
         assert 'Sunny in a' in client.text()
 
-    async def test_end_to_end_permission_over_stdio(self) -> None:
-        """A tool requiring approval round-trips a real permission request over stdio."""
+    # The tests below drive the adapter over the in-memory wire (`_wire.py`): the real SDK router
+    # and JSON codec, without an interpreter start-up per test. `test_end_to_end_over_stdio` above
+    # is the one test that crosses a real process boundary.
+
+    async def test_end_to_end_permission_over_the_wire(self) -> None:
+        """A tool requiring approval round-trips a real permission request over the wire."""
+        agent = Agent(TestModel())
+
+        @agent.tool_plain(requires_approval=True)
+        def delete_file(path: str) -> str:
+            return f'deleted {path}'
+
         client = FakeClient(decider=lambda _call: 'allow_once')
-        script = Path(__file__).parent / '_demo_approval_agent.py'
-        async with acp.spawn_agent_process(client, sys.executable, str(script)) as (conn, _proc):
+        async with wire_agent(PydanticAIACPAgent(agent), client) as (conn, _client):
             await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
             session = await conn.new_session(cwd='.', mcp_servers=[])
             response = await conn.prompt(
@@ -2193,40 +2206,46 @@ class TestEntryPoints:
         assert len(client.permission_requests) == 1
         assert client.permission_requests[0].title == 'delete_file'
 
-    async def test_cancel_notification_over_stdio(self) -> None:
-        """A real `session/cancel` notification mid-prompt yields a cancelled stop reason over stdio."""
-        client = FakeClient()
-        script = Path(__file__).parent / '_demo_slow_agent.py'
-        async with acp.spawn_agent_process(client, sys.executable, str(script)) as (conn, _proc):
+    async def test_cancel_notification_over_the_wire(self) -> None:
+        """A real `session/cancel` notification mid-prompt yields a cancelled stop reason over the wire."""
+        started = asyncio.Event()
+        agent = Agent(TestModel())
+
+        @agent.tool_plain
+        async def slow() -> str:
+            started.set()
+            await asyncio.sleep(30)
+            # Cancelled before it returns.
+            return 'done'  # pragma: no cover
+
+        async with wire_agent(PydanticAIACPAgent(agent)) as (conn, _client):
             await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
             session = await conn.new_session(cwd='.', mcp_servers=[])
             prompt = asyncio.ensure_future(
                 conn.prompt(session_id=session.session_id, prompt=[acp.text_block('go')], message_id=uuid4().hex)
             )
-            await asyncio.sleep(0.5)  # let the slow tool start
+            await asyncio.wait_for(started.wait(), timeout=10)
             await conn.cancel(session_id=session.session_id)
             response = await asyncio.wait_for(prompt, timeout=10)
 
         assert response.stop_reason == 'cancelled'
 
-    async def test_large_output_over_stdio(self) -> None:
-        """A large streamed message survives the default stdio buffer intact (chunked, not truncated)."""
-        client = FakeClient()
-        script = Path(__file__).parent / '_demo_large_agent.py'
-        # No custom transport buffer: the adapter must chunk so the default client reader (64 KiB)
-        # is never overrun. Raising the buffer here would mask the real-client failure mode.
-        async with acp.spawn_agent_process(client, sys.executable, str(script)) as (conn, _proc):
+    async def test_large_output_over_the_wire(self) -> None:
+        """A large streamed message survives the default client read buffer intact (chunked, not truncated)."""
+        # `wire_agent` keeps the client reader's default 64 KiB line limit: the adapter must chunk so
+        # it is never overrun. Raising the buffer here would mask the real-client failure mode.
+        adapter = PydanticAIACPAgent(Agent(TestModel(custom_output_text='x' * 200_000)))
+        async with wire_agent(adapter) as (conn, client):
             await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
             session = await conn.new_session(cwd='.', mcp_servers=[])
             await conn.prompt(session_id=session.session_id, prompt=[acp.text_block('go')], message_id=uuid4().hex)
 
-        assert client.text() == 'x' * 200_000
+        assert client.texts() == 'x' * 200_000
 
-    async def test_model_config_and_unstable_close_route_over_stdio(self) -> None:
+    async def test_model_config_and_unstable_close_route_over_the_wire(self) -> None:
         """Model config updates and unstable `session/close` reach the handler over a real wire."""
-        client = FakeClient()
-        script = Path(__file__).parent / '_demo_models_agent.py'
-        async with acp.spawn_agent_process(client, sys.executable, str(script)) as (conn, _proc):
+        adapter = PydanticAIACPAgent(Agent(TestModel(custom_output_text='hi')), models=['test', 'openai:gpt-4o'])
+        async with wire_agent(adapter) as (conn, _client):
             await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
             session = await conn.new_session(cwd='.', mcp_servers=[])
             model_result = await conn.set_config_option(
@@ -2238,14 +2257,32 @@ class TestEntryPoints:
         assert isinstance(option, schema.SessionConfigOptionSelect)
         assert option.current_value == 'openai:gpt-4o'
 
-    async def test_native_toolsets_route_over_stdio(self) -> None:
-        """Client-backed fs/terminal tools reach the real client over stdio when mounted per session."""
+    async def test_native_toolsets_route_over_the_wire(self) -> None:
+        """Client-backed fs/terminal tools reach the real client over the wire when mounted per session."""
+
+        async def stream(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+            if _has_tool_return(messages):
+                yield 'done'
+                return
+            yield {
+                0: DeltaToolCall(name='read_file', json_args=json.dumps({'path': 'notes.txt'})),
+                1: DeltaToolCall(name='run_command', json_args=json.dumps({'command': 'echo hi'})),
+            }
+
+        def session_config(session: AcpSession) -> AcpSessionConfig[None]:
+            capabilities = [
+                capability for capability in (acp_filesystem(session), acp_terminal(session)) if capability is not None
+            ]
+            return AcpSessionConfig(deps=None, capabilities=capabilities)
+
+        adapter = PydanticAIACPAgent(Agent(FunctionModel(stream_function=stream)), session_config=session_config)
         client = RecordingClient(files={'notes.txt': 'hello'}, output='hi')
         capabilities = schema.ClientCapabilities(
             fs=schema.FileSystemCapabilities(read_text_file=True, write_text_file=True), terminal=True
         )
-        script = Path(__file__).parent / '_demo_native_agent.py'
-        async with acp.spawn_agent_process(client, sys.executable, str(script)) as (conn, _proc):
+        async with wire_agent(adapter, client) as (conn, _client):
             await conn.initialize(protocol_version=acp.PROTOCOL_VERSION, client_capabilities=capabilities)
             session = await conn.new_session(cwd='.', mcp_servers=[])
             await conn.prompt(session_id=session.session_id, prompt=[acp.text_block('go')], message_id=uuid4().hex)
