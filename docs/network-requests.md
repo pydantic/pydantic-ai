@@ -3,7 +3,6 @@
 This page lists every request Pydantic AI makes on its own initiative, what each one carries, and how to turn it off. It doesn't cover the requests you configure: to model providers, MCP servers, or from your own tools.
 
 One of them, [the version check](#the-version-check), goes to a server run by Pydantic. Like any web server, it sees the IP address and `User-Agent` of each request, and Pydantic uses these in aggregate to understand which versions and platforms Pydantic AI is used on, and by what kind of organization. To turn it off, set `PYDANTIC_AI_NO_VERSION_CHECK=1`, or see [every way to turn it off](#turning-the-version-check-off).
-<!-- TODO(DouweM): retention and IP handling wording, pending the proxylytics retention decision -->
 
 ## Model provider requests
 
