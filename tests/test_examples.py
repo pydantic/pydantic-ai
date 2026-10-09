@@ -532,6 +532,11 @@ def test_docs_examples(
     env.set('ZAI_API_KEY', 'testing')
     env.set('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
     env.set('SNOWFLAKE_TOKEN', 'testing')
+    # Many examples call `logfire.configure()`, whose console exporter then prints every span of every
+    # later test in the worker. Each of those prints goes through pytest-examples' mocked `print`, which
+    # calls `inspect.stack()`, so an evals example emitting hundreds of spans took up to 30s in CI.
+    # The console output is never part of an example's checked output, so turn the exporter off.
+    env.set('LOGFIRE_CONSOLE', 'false')
 
     # The Codex provider reads the Codex CLI's `auth.json` (honoring `CODEX_HOME`) instead of an
     # env var, so fake the file the same way the API keys above are faked.
