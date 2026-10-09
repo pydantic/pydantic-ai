@@ -1245,6 +1245,18 @@ def test_baseline_gemini_extended_thinking() -> None:
     run_clean(GeminiSimulation(behavior=GeminiBehavior(stalls_in_progress=True, handles_at_turn_start=True)), scenario)
 
 
+def test_live_backend_response_read_while_closing_counts_its_request() -> None:
+    """The session closes right after a delegation's backend reported its usage, before reading it: closing reads it."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.delegate(deliver=False)
+        sim.backend_finish(deliver=True, ticks=0)
+        sim.close()
+        sim.settle()
+
+    run_clean(LiveSimulation(), scenario)
+
+
 def test_baseline_live_conversation() -> None:
     def scenario(sim: LiveSimulation) -> None:
         sim.send_audio()

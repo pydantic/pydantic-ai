@@ -3012,7 +3012,10 @@ async def test_a_session_whose_socket_closed_is_not_asked_to_end_again() -> None
 
 
 async def test_backend_tokens_arriving_as_the_session_ends_count_as_session_usage() -> None:
-    """A backend response finishing during the drain has no reply left to land on, but its tokens are still billed."""
+    """A backend response finishing during the drain has no reply left to land on, but it is still billed.
+
+    Its report stays response-scoped: it was a request the backend made, which the session counts.
+    """
     completed = {
         'type': 'response.event',
         'event_id': 'e1',
@@ -3032,7 +3035,7 @@ async def test_backend_tokens_arriving_as_the_session_ends_count_as_session_usag
     reports = await _ended(_LiveSink(ws))
 
     assert [(report.usage.input_tokens, report.usage.audio_seconds, report.response_scoped) for report in reports] == [
-        (10, 0, False),
+        (10, 0, True),
         (0, 4, False),
     ]
 
