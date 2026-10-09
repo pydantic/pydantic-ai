@@ -6,8 +6,9 @@ the `clai2` instrumentation scope, like everything else CLAI emits itself.
 
 Instrument the shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the plugin loader,
 `/keys`, the prompt editor) rather than individual menus, so a new menu is covered without extra code.
-Attributes name what was chosen (a command, a menu, a setting, a plugin, a key's name), never what was typed:
-prompt text, secrets, and free-text values stay out.
+Attributes name what was chosen (a command, a menu, a setting, a plugin, a key's name), not what was typed:
+secrets and free-text values stay out. The one exception is a submitted prompt's text, added through
+`prompt_text` only when the subscriber records message content, as agent spans do.
 """
 
 from collections.abc import Callable, Generator
@@ -25,27 +26,41 @@ SCOPE = 'clai2'
 
 NAMES = frozenset({'command', 'menu', 'field', 'choice', 'setting', 'plugin', 'label', 'key_name', 'new_key_name'})
 """Attributes that only ever hold names and listed choices, which `keep_names` exempts from scrubbing."""
+PROMPT = 'prompt'
+"""The submitted prompt, which `keep_names` also keeps: agent spans carry the same text unscrubbed."""
+MAX_CONTENT_CHARS = 64_000
+"""Typed text beyond this is cut, so a huge paste cannot make the exporter drop the whole record."""
 
 
 @dataclass(kw_only=True)
 class _Sink:
     instance: logfire.Logfire
     root: Callable[[], Span | None]
+    include_content: bool
+    ui_events: bool
 
 
 _sinks: list[_Sink] = []
-"""Subscribed instances, newest last; only the newest receives UI telemetry."""
+"""Subscribed instances, newest last; only the newest with `ui_events` receives UI telemetry."""
 _emitting: ContextVar[bool] = ContextVar('_emitting', default=False)
 """Set while a UI record is handed to its sink, which is when Logfire scrubs it: `keep_names` checks it."""
 
 
-def subscribe(sink: logfire.Logfire, *, root: Callable[[], Span | None] = lambda: None) -> Callable[[], None]:
+def subscribe(
+    sink: logfire.Logfire,
+    *,
+    root: Callable[[], Span | None] = lambda: None,
+    include_content: bool = False,
+    ui_events: bool = True,
+) -> Callable[[], None]:
     """Send UI telemetry to `sink` until the returned function is called; calling it again does nothing.
 
     The caller supplies an instance in `SCOPE`. Telemetry goes to the most recently subscribed instance,
     so each destination gets whole, correctly nested traces; when it unsubscribes, the previous one takes over.
+    `include_content` lets `prompt_text` add what the user typed, like `InstrumentationSettings.include_content`.
+    With `ui_events=False`, `sink` gets no UI telemetry, but `conversation_selected` still calls `root`.
     """
-    subscribed = _Sink(instance=sink, root=root)
+    subscribed = _Sink(instance=sink, root=root, include_content=include_content, ui_events=ui_events)
     _sinks.append(subscribed)
 
     def unsubscribe() -> None:
@@ -53,6 +68,20 @@ def subscribe(sink: logfire.Logfire, *, root: Callable[[], Span | None] = lambda
             _sinks.remove(subscribed)
 
     return unsubscribe
+
+
+def conversation_selected() -> None:
+    """Call every subscriber's `root` once startup has selected the conversation to resume.
+
+    A session root opened before then has a provisional ID; binding it right away makes the running session
+    findable by its saved ID, instead of only once a turn runs or CLAI exits.
+    """
+    for sink in list(_sinks):
+        sink.root()
+
+
+def _newest() -> _Sink | None:
+    return next((sink for sink in reversed(_sinks) if sink.ui_events), None)
 
 
 @contextmanager
@@ -74,10 +103,17 @@ def _exempt() -> Generator[None]:
         _emitting.reset(token)
 
 
+def prompt_text(text: str) -> dict[str, Attribute]:
+    """A submitted prompt as the `PROMPT` attribute, cut to `MAX_CONTENT_CHARS`, if the subscriber records content."""
+    sink = _newest()
+    if sink is None or not sink.include_content:
+        return {}
+    return {PROMPT: text[:MAX_CONTENT_CHARS]}
+
+
 def record(msg_template: str, /, **attributes: Attribute) -> None:
     """Log one UI interaction, such as a setting change or a key saved."""
-    if _sinks:
-        sink = _sinks[-1]
+    if (sink := _newest()) is not None:
         with parent_span(sink.root()), _exempt():
             sink.instance.log('info', msg_template, attributes=dict(attributes))
 
@@ -103,10 +139,10 @@ def span(msg_template: str, /, **attributes: Attribute) -> Generator[UiSpan]:
     An exception propagates, but the span records only its type as `error`: messages can quote what was typed,
     such as a token a plugin's settings rejected.
     """
-    if not _sinks:
+    sink = _newest()
+    if sink is None:
         yield UiSpan(None)
         return
-    sink = _sinks[-1]
     with parent_span(sink.root()):
         with _exempt():
             opened = _open(sink.instance, msg_template, attributes).__enter__()
@@ -156,13 +192,14 @@ def keep_names(match: logfire.ScrubMatch) -> object:
 
     A setting such as `sessions.naming`, a key's name such as `OPENAI_API_KEY`, or a field such as `auth` trips
     Logfire's default patterns. Only the top-level `NAMES` attributes of UI records, and the message placeholders
-    filled from them, are kept; everything else, including every agent span, is scrubbed as usual.
+    filled from them, are kept, along with `PROMPT`, whose words would otherwise trip the same patterns ("the
+    session bug"). Everything else, including every agent span, is scrubbed as usual.
     """
     if (
         _emitting.get()
         and len(match.path) == 2
         and match.path[0] in ('attributes', 'message')
-        and match.path[1] in NAMES
+        and (match.path[1] in NAMES or match.path[1] == PROMPT)
     ):
         return match.value
     return None

@@ -340,7 +340,7 @@ def main() -> int:
             raise ValueError('GITHUB_TOKEN or GH_TOKEN is required')
         _repository(os.environ.get('GITHUB_REPOSITORY', REPO))
         client = attention.GitHubClient(token)
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.now(dt.UTC)
         if args.mode == 'snapshot':
             lines = write_snapshot(client, args.snapshot_path, now=now)
         elif args.mode == 'finalize':

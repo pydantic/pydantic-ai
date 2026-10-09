@@ -21,6 +21,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.exceptions import UserError
@@ -1025,3 +1027,28 @@ async def test_openrouter_limit_cache_points_e2e(
     cached_texts = [block['text'] for block in user_msg['content'] if 'cache_control' in block]
     assert all('one' not in text and 'two' not in text for text in cached_texts)
     assert any('five' in text for text in cached_texts)
+
+
+async def test_openrouter_cache_messages_marks_previous_request_after_wide_turn() -> None:
+    """After a turn with 12 parallel tool calls, the end of the previous request gets a breakpoint too.
+
+    OpenRouter may route to Amazon Bedrock, whose cache lookback spans only about 20 content blocks
+    (https://github.com/pydantic/pydantic-ai/issues/9404). This is a unit test: the property is the
+    placement across two requests, which a single recorded request can't show.
+    """
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
+    calls = [ToolCallPart('get_weather', {}, tool_call_id=f'call_{i}') for i in range(12)]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Check the weather everywhere.')]),
+        ModelResponse(parts=[TextPart('Checking.'), *calls]),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id=call.tool_call_id) for call in calls]),
+    ]
+
+    mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), model_settings=OpenRouterModelSettings(openrouter_cache_messages=True)
+    )
+
+    assert [index for index, message in enumerate(mapped) if 'cache_control' in str(message.get('content'))] == [
+        0,
+        len(mapped) - 1,
+    ]

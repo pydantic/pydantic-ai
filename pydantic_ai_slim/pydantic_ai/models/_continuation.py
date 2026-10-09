@@ -28,7 +28,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, 
 from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from .. import _utils
@@ -117,7 +117,7 @@ MergeMode = Literal['replace-same-id', 'replace-new', 'accumulate']
 # Deterministic fallback for `timestamp` before any segment has streamed. This is
 # never reached in practice (a segment is always in flight or finalized by the time
 # `timestamp` is read), but keeps the loop free of `now_utc()` for durable replay.
-_FALLBACK_TIMESTAMP = datetime.fromtimestamp(0, tz=timezone.utc)
+_FALLBACK_TIMESTAMP = datetime.fromtimestamp(0, tz=UTC)
 
 
 def _has_replace_marker(response: ModelResponse) -> bool:
@@ -251,6 +251,9 @@ def observe_continuation_segments(
     is a separately billed request. Some consumers need a single request's usage instead: prompt-cache
     health judges the cache read of the final segment, whose prompt carries the whole prefix. The
     observer is tied to its request, so a nested agent's requests made in the same context don't reach it.
+
+    Private for now: read by the `Instrumentation` capability and, together with `merge_responses`, by the
+    Pydantic AI Harness's `SpendLimits`, which pins this package's exact version.
     """
     token = _segment_observers.set((*_segment_observers.get(), (request_context, observer)))
     try:
