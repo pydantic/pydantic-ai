@@ -51,7 +51,7 @@ SHORT_TIMEOUT = 0.05
 
 async def hang(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     await anyio.sleep_forever()
-    raise AssertionError('unreachable')
+    raise AssertionError('unreachable')  # pragma: no cover
 
 
 async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -179,7 +179,7 @@ async def test_slow_stream_consumer_counts_towards_the_deadline():
 
     async def two_chunks(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         yield 'one '
-        yield 'two'
+        yield 'two'  # pragma: no cover
 
     agent = Agent(FunctionModel(stream_function=two_chunks), model_settings={'request_timeout': SHORT_TIMEOUT})
 
@@ -202,25 +202,18 @@ async def test_deadline_ends_with_the_last_chunk():
 
 async def test_stream_deadline_starts_when_the_request_is_made():
     """The deadline is fixed when the request starts, so waiting to start reading counts towards it."""
-    stream_opened = False
-
-    async def tracked(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        nonlocal stream_opened
-        stream_opened = True
-        yield 'answer'  # pragma: no cover
-
-    agent = Agent(FunctionModel(stream_function=tracked), model_settings={'request_timeout': SHORT_TIMEOUT})
+    agent = Agent(FunctionModel(stream_function=stream_answer), model_settings={'request_timeout': SHORT_TIMEOUT})
 
     with pytest.raises(ModelRequestTimeout):
         async with agent.iter('hello') as run:
-            async for node in run:
-                if Agent.is_model_request_node(node):
-                    async with node.stream(run.ctx) as stream:
-                        await anyio.sleep(SHORT_TIMEOUT * 4)
-                        async for _ in stream:
-                            pass  # pragma: no cover
-
-    assert not stream_opened
+            first_node = run.next_node
+            assert Agent.is_user_prompt_node(first_node)
+            node = await run.next(first_node)
+            assert Agent.is_model_request_node(node)
+            async with node.stream(run.ctx) as stream:
+                await anyio.sleep(SHORT_TIMEOUT * 4)
+                async for _ in stream:
+                    pass  # pragma: no cover
 
 
 @pytest.mark.parametrize('wrapped', [False, True])
