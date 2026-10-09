@@ -3,7 +3,7 @@
 import asyncio
 import math
 import os
-from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -20,7 +20,7 @@ from prompt_toolkit.history import History
 from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
-from pydantic_ai import Agent, AgentStreamEvent
+from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
@@ -80,12 +80,14 @@ from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, task_row
 from pydantic_clai2.runtime.worktrees import Worktree
+from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
 from pydantic_clai2.ui.menus.set_menu import set_command
 from pydantic_clai2.ui.menus.spinner_picker import spinner_command, spinner_completions
+from pydantic_clai2.ui.menus.system_prompt_menu import system_prompt_command
 from pydantic_clai2.ui.menus.task_menu import open_tasks
 from pydantic_clai2.ui.menus.theme_picker import theme_command
 from pydantic_clai2.ui.prompt._completion_adapter import COMPLETION_STYLE, PromptCompleter
@@ -555,6 +557,7 @@ def create_shell(
     session.model = settings.model
     session.model_chosen = 'model' in settings.model_fields_set
     session.tool_retries = settings.tool_retries
+    session.instructions = settings.instructions
     models = _ModelResolver(console=console, store=store)
     session.resolve_model = models.resolve
     if session.model is None and agent.model is None:
@@ -649,6 +652,14 @@ def create_shell(
             description='Select a Termflow palette; no arguments opens the picker',
             handler=lambda args: theme_command(context, args),
             complete=lambda args: theme.names() if len(args) <= 1 else (),
+            during_turn=True,
+        )
+    )
+    commands.register(
+        Command(
+            name='system_prompt',
+            description='View the system prompt and edit your own instructions, sent after the built-in ones',
+            handler=lambda args: system_prompt_command(context, args, history=lambda: session.messages),
             during_turn=True,
         )
     )
@@ -892,6 +903,7 @@ class _Shell(Generic[DepsT, OutputT]):
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
+    _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
 
     @property
@@ -901,12 +913,13 @@ class _Shell(Generic[DepsT, OutputT]):
 
     @contextmanager
     def defer_identity(self) -> Generator[None]:
-        """Keep startup telemetry unassigned until the requested conversation is selected."""
+        """Keep startup telemetry unassigned until the requested conversation is selected, then bind roots to it."""
         self._identity_pending = True
         try:
             yield
         finally:
             self._identity_pending = False
+        telemetry.conversation_selected()
 
     def __post_init__(self) -> None:
         self.tasks = Tasks(
@@ -957,6 +970,7 @@ class _Shell(Generic[DepsT, OutputT]):
         child.model = model or self.session.model
         child.model_chosen = model is not None or self.session.model_chosen
         child.tool_retries = self.session.tool_retries
+        child.instructions = self.session.instructions
         child.resolve_model = self.session.resolve_model
         child.model_settings = self.context.live_model_overrides(child.model or _model_label(self.agent))
         child.model_defaults = self.context.model_defaults(child.model or _model_label(self.agent))
@@ -1032,7 +1046,7 @@ class _Shell(Generic[DepsT, OutputT]):
         return await self._read_loop()
 
     def steer(self, text: str) -> bool:
-        """Resolve attachments and route input without printing over streamed output."""
+        """Enqueue steering in core and hand transcript feedback to the active turn."""
         try:
             resolved, images = self.images.resolve(text)
         except ValueError as exc:
@@ -1040,7 +1054,13 @@ class _Shell(Generic[DepsT, OutputT]):
             return True
         if not self.session.steer(resolved, images=images):
             return False
-        self.images.notice = f'Steering sent: {text}'
+        self.images.notice = ''
+        if self._steering is not None:
+            self._steering.send_nowait(text)
+        else:
+            # Direct session users have no active stream renderer to serialize against.
+            self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
+            self.console.print()
         return True
 
     def _released(self) -> AbstractAsyncContextManager[None]:
@@ -1168,11 +1188,33 @@ class _Shell(Generic[DepsT, OutputT]):
     async def _command(self, text: str) -> bool:
         if self.plugins_busy(text):
             return False
+        if self.editor is not None and self.commands.runs_live(text):
+            return await self._live_command(text, self.editor)
         async with self.forks.busy(), self._released():
             await self.interrupts.run(_execute_command(self.commands, text, console=self.console, status=self.status))
         return (
             text == '/exit' or self.interrupts.exit_requested or self.reload_requested or self.updates.restart_required
         )
+
+    async def _live_command(self, text: str, editor: LivePrompt) -> bool:
+        """Run a slow `live` command such as `/compact` with the spinner up and its cancel keys working.
+
+        Suspending the editor instead would freeze its last frame, an idle prompt and a `ready`
+        footer, for as long as the command runs, and echo keys raw into the terminal.
+        """
+        async with self.forks.busy():
+            self.status.activity = 'working'
+            try:
+                completed = await self.interrupts.run(
+                    _execute_command(self.commands, text, console=self.console, status=self.status)
+                )
+            finally:
+                self.status.activity = 'ready'
+                await editor.output.drain()
+        if not completed:
+            self.console.print('Command cancelled.', style=theme.color(theme.MUTED))
+            self.console.print()
+        return self.interrupts.exit_requested
 
     async def _turn(self, text: str | None) -> bool:
         automated = text is None
@@ -1257,9 +1299,11 @@ class _Shell(Generic[DepsT, OutputT]):
         ended = TurnEnd(text=start.text, outcome='cancelled')
         with self.session_settings.turn(), self.speculation.turn():
             send, receive = create_memory_object_stream[str](math.inf)
+            steering_send, steering_receive = create_memory_object_stream[str](math.inf)
             async with self.loader.turn(), create_task_group() as mid_turn:
                 mid_turn.start_soon(self._serve_mid_turn, receive)
                 self._mid_turn_commands = send
+                self._steering = steering_send
                 try:
                     ended = await _run_prompt(
                         self.session,
@@ -1271,10 +1315,14 @@ class _Shell(Generic[DepsT, OutputT]):
                         renderers=self.loader.renderers(),
                         screen=self.screen,
                         spinner=self.spinners.active,
+                        steering=(steering_send, steering_receive),
                         tasks=self.tasks if self.session.delegations is not None else None,
                     )
                 finally:
                     self._mid_turn_commands = None
+                    self._steering = None
+                    steering_send.close()
+                    steering_receive.close()
                     send.close()
         return ended
 
@@ -1366,6 +1414,39 @@ def _stream_renderer(
     )
 
 
+async def _prompt_with_steering(
+    session: Session[DepsT, OutputT],
+    text: str | None,
+    images: Sequence[BinaryContent],
+    steering: tuple[MemoryObjectSendStream[str], MemoryObjectReceiveStream[str]] | None,
+    echo: Callable[[str], Awaitable[None]],
+) -> AgentRunResult[OutputT]:
+    """Own feedback alongside the prompt, draining accepted messages at normal EOF."""
+    if steering is None:
+        return await session.prompt(text, images=images)
+    send, receive = steering
+
+    async def consume() -> None:
+        async with receive:
+            async for message in receive:
+                await echo(message)
+
+    error: Exception | None = None
+    result: AgentRunResult[OutputT] | None = None
+    async with create_task_group() as feedback:
+        feedback.start_soon(consume)
+        try:
+            result = await session.prompt(text, images=images)
+        except Exception as exc:  # noqa: BLE001 -- preserve the prompt error outside the task group.
+            error = exc
+        finally:
+            send.close()
+    if error is not None:
+        raise error
+    assert result is not None
+    return result
+
+
 async def _run_prompt(
     session: Session[DepsT, OutputT],
     text: str | None,
@@ -1378,6 +1459,7 @@ async def _run_prompt(
     spinner: Callable[[], Spinner],
     images: Sequence[BinaryContent] = (),
     tasks: Tasks | None = None,
+    steering: tuple[MemoryObjectSendStream[str], MemoryObjectReceiveStream[str]] | None = None,
 ) -> TurnEnd:
     renderer = _stream_renderer(
         console, settings=settings, renderers=[*renderers, task_row] if tasks is not None else renderers
@@ -1392,6 +1474,10 @@ async def _run_prompt(
         async with render_lock:
             status.observe(event)
             await renderer.on_stream_event(event)
+
+    async def echo_steering(text: str) -> None:
+        async with render_lock:
+            await renderer.echo_prompt(text)
 
     if tasks is not None:
         tasks.sink = observe
@@ -1411,14 +1497,15 @@ async def _run_prompt(
 
     @asynccontextmanager
     async def take_screen() -> AsyncGenerator[None]:
-        await renderer.finish()
+        async with render_lock:
+            await renderer.finish()
         async with status_line.paused():
             yield
 
     try:
         with screen.bound(take_screen):
             async with status_line:
-                result = await session.prompt(text, images=images)
+                result = await _prompt_with_steering(session, text, images, steering, echo_steering)
                 await renderer.finish()
         status.output_tokens = result.usage.output_tokens
         for message in reversed(result.all_messages()):  # pragma: no branch -- successful runs contain a response.

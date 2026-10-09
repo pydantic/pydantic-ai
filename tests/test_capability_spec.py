@@ -23,6 +23,7 @@ from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
+    Caching,
     Capability,
     ImageGeneration,
     IncludeToolReturnSchemas,
@@ -91,6 +92,7 @@ def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
             'NativeTool': NativeTool,
+            'Caching': Caching,
             'RaiseContentFilterError': RaiseContentFilterError,
             'ImageGeneration': ImageGeneration,
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
@@ -704,6 +706,15 @@ def test_model_json_schema_with_capabilities():
                         'output': {'title': 'Output', 'type': 'integer'},
                     },
                     'title': 'AgentRetries',
+                    'type': 'object',
+                },
+                'CacheConfig': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'retention': {'enum': ['5m', '30m', '1h'], 'title': 'Retention', 'type': 'string'},
+                        'messages': {'title': 'Messages', 'type': 'boolean'},
+                    },
+                    'title': 'CacheConfig',
                     'type': 'object',
                 },
                 'CodeExecutionTool': {
@@ -1656,6 +1667,14 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Thinking',
                         },
+                        'cache': {
+                            'anyOf': [
+                                {'type': 'boolean'},
+                                {'enum': ['5m', '30m', '1h'], 'type': 'string'},
+                                {'$ref': '#/$defs/CacheConfig'},
+                            ],
+                            'title': 'Cache',
+                        },
                         'service_tier': {
                             'enum': ['auto', 'default', 'flex', 'priority'],
                             'title': 'Service Tier',
@@ -1906,6 +1925,13 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_IncludeToolReturnSchemas',
                     'type': 'object',
                 },
+                'spec_Caching': {
+                    'additionalProperties': False,
+                    'properties': {'Caching': {'$ref': '#/$defs/spec_params_Caching'}},
+                    'required': ['Caching'],
+                    'title': 'spec_Caching',
+                    'type': 'object',
+                },
                 'short_spec_SetToolMetadata': {
                     'additionalProperties': False,
                     'properties': {
@@ -2014,6 +2040,21 @@ def test_model_json_schema_with_capabilities():
                     'properties': {'WebSearch': {'$ref': '#/$defs/spec_params_WebSearch'}},
                     'required': ['WebSearch'],
                     'title': 'spec_WebSearch',
+                    'type': 'object',
+                },
+                'spec_params_Caching': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'retention': {
+                            'anyOf': [{'type': 'boolean'}, {'enum': ['5m', '30m', '1h'], 'type': 'string'}],
+                            'title': 'Retention',
+                        },
+                        'messages': {'title': 'Messages', 'type': 'boolean'},
+                    },
+                    'title': 'spec_params_Caching',
                     'type': 'object',
                 },
                 'spec_XSearch': {
@@ -2261,6 +2302,8 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [
                                 {'const': 'NativeTool', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_NativeTool'},
+                                {'const': 'Caching', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_Caching'},
                                 {'const': 'RaiseContentFilterError', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_RaiseContentFilterError'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
@@ -2488,6 +2531,8 @@ def test_model_json_schema_with_capabilities():
                         'anyOf': [
                             {'const': 'NativeTool', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_NativeTool'},
+                            {'const': 'Caching', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_Caching'},
                             {'const': 'RaiseContentFilterError', 'type': 'string'},
                             {'$ref': '#/$defs/spec_RaiseContentFilterError'},
                             {'const': 'ImageGeneration', 'type': 'string'},

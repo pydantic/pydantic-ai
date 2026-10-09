@@ -23,9 +23,14 @@ class SettingsSource:
         self._context = context
 
     def rows(self) -> list[FieldRow]:
-        """Every `/set` key with its description, default, and fixed choices if it has any."""
+        """Every `/set` key with its description, default, and fixed choices if it has any.
+
+        `run.instructions` is left to `/system_prompt`: a one-line input would lose its line breaks.
+        """
         rows: list[FieldRow] = []
         for key, field in SETTING_FIELDS.items():
+            if key == 'run.instructions':
+                continue
             info = Settings.model_fields[field]
             preview: ChoicePreview | None = None
             if info.annotation is bool:

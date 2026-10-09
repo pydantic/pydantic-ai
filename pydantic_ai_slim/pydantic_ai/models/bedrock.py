@@ -7,7 +7,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, 
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from itertools import count
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, assert_never, cast, overload
@@ -82,6 +82,7 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
+from pydantic_ai.models._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
 from pydantic_ai.models._tool_choice import (
     FORCING_UNSUPPORTED_REASON,
     resolve_tool_choice,
@@ -99,7 +100,14 @@ from pydantic_ai.profiles.anthropic import (
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
-from pydantic_ai.settings import ModelSettings, ThinkingLevel, merge_model_settings
+from pydantic_ai.settings import (
+    CacheConfig,
+    CacheRetention,
+    CacheSetting,
+    ModelSettings,
+    ThinkingLevel,
+    merge_model_settings,
+)
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -614,6 +622,13 @@ class BedrockModelSettings(ModelSettings, total=False):
     """
 
 
+_CACHE_SETTINGS_KEYS = (
+    'bedrock_cache_instructions',
+    'bedrock_cache_tool_definitions',
+    'bedrock_cache_messages',
+)
+
+
 @dataclass(init=False)
 class BedrockConverseModel(Model[BaseClient]):
     """A model that uses the Bedrock Converse API."""
@@ -689,20 +704,24 @@ class BedrockConverseModel(Model[BaseClient]):
         """The model provider."""
         return self._provider.name
 
-    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve the longest retention requested by supported Bedrock cache settings."""
-        settings = merge_model_settings(self.settings, model_settings) or {}
-        return self._max_cache_retention(
-            settings.get('bedrock_cache_instructions')
-            if self.profile.get('bedrock_supports_prompt_caching', False)
-            else None,
-            settings.get('bedrock_cache_messages')
-            if self.profile.get('bedrock_supports_prompt_caching', False)
-            else None,
-            settings.get('bedrock_cache_tool_definitions')
-            if self.profile.get('bedrock_supports_tool_caching', False)
-            else None,
-        )
+    def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
+        return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
+
+    def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
+        # Mirrors `prepare_request` precedence: when any explicit `bedrock_cache_*` setting is present, the
+        # unified value contributes nothing, since it also adds nothing to the request. Each setting only takes
+        # effect where the profile supports it.
+        if self._has_provider_cache_settings(merged_settings):
+            settings = cast(BedrockModelSettings, merged_settings)
+            supports_prompt_caching = self.profile.get('bedrock_supports_prompt_caching', False)
+            return (
+                settings.get('bedrock_cache_instructions') if supports_prompt_caching else None,
+                settings.get('bedrock_cache_messages') if supports_prompt_caching else None,
+                settings.get('bedrock_cache_tool_definitions')
+                if self.profile.get('bedrock_supports_tool_caching', False)
+                else None,
+            )
+        return super()._effective_cache_settings(merged_settings)
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -774,6 +793,11 @@ class BedrockConverseModel(Model[BaseClient]):
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
             prepared_settings = filtered or None
+        # Explicit `bedrock_cache_*` settings take precedence over the unified `cache` setting.
+        if (cache := model_request_parameters.cache) and not any(
+            key in (prepared_settings or {}) for key in _CACHE_SETTINGS_KEYS
+        ):
+            prepared_settings = self._translate_cache(cast(BedrockModelSettings, prepared_settings or {}), cache)
         return prepared_settings, model_request_parameters
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
@@ -795,6 +819,28 @@ class BedrockConverseModel(Model[BaseClient]):
                 UserWarning,
                 stacklevel=2,
             )
+
+    def _translate_cache(
+        self, model_settings: BedrockModelSettings, cache: Literal[True] | CacheRetention | CacheConfig
+    ) -> BedrockModelSettings:
+        """Map the unified `cache` setting onto Bedrock cache settings.
+
+        Only called when no explicit `bedrock_cache_*` setting is present (those take precedence
+        in `prepare_request`). The Converse API has no automatic caching mode, so the library
+        places breakpoints at the end of the tool definitions, the static instructions and the
+        conversation (unless only the stable prefix is cached, with `messages=False`); the per-boundary
+        profile gates still apply when the settings are consumed.
+        """
+        retention, messages = split_cache_setting(cache)
+        # `True` stays `True` so no explicit `ttl` reaches the wire, matching what
+        # `bedrock_cache_instructions=True` sends; only a requested retention is forwarded.
+        value: Literal[True, '5m', '1h'] = retention if retention in ('5m', '1h') else True
+        translated = model_settings.copy()
+        translated['bedrock_cache_instructions'] = value
+        translated['bedrock_cache_tool_definitions'] = value
+        if messages:
+            translated['bedrock_cache_messages'] = value
+        return translated
 
     @property
     def _botocore_supports_strict_tool_param(self) -> bool:
@@ -1519,6 +1565,18 @@ class BedrockConverseModel(Model[BaseClient]):
             if profile.get('bedrock_supports_prompt_caching', False):
                 last_user_content = self._get_last_user_message_content(processed_messages)
                 if last_user_content is not None:
+                    # Bedrock's lookback for the previous request's cache entry spans only about 20 content
+                    # blocks, so after a wide turn the end of the previous request gets a breakpoint too.
+                    previous_tail = previous_tail_needing_breakpoint(
+                        [message['role'] for message in processed_messages],
+                        [len(message['content']) for message in processed_messages],
+                    )
+                    if previous_tail is not None:
+                        previous_content = cast(list[Any], processed_messages[previous_tail]['content'])
+                        if 'cachePoint' not in previous_content[-1]:
+                            _insert_cache_point_before_trailing_documents(
+                                previous_content, self._get_cache_point(cache_messages)
+                            )
                     # Note: `_get_last_user_message_content` ensures content doesn't already end with a `cachePoint`.
                     _insert_cache_point_before_trailing_documents(
                         last_user_content, self._get_cache_point(cache_messages)
@@ -1732,63 +1790,32 @@ class BedrockConverseModel(Model[BaseClient]):
     ) -> None:
         """Limit the number of cache points in the request to Bedrock's maximum.
 
-        Bedrock enforces a maximum of 4 cache points per request. This method ensures
-        compliance by counting existing cache points and removing excess ones from messages.
-
-        Strategy:
-        1. Count cache points in system_prompt
-        2. Count cache points in tools
-        3. Raise UserError if system + tools already exceed MAX_CACHE_POINTS
-        4. Calculate remaining budget for message cache points
-        5. Traverse messages from newest to oldest, keeping the most recent cache points
-           within the remaining budget
-        6. Remove excess cache points from older messages to stay within limit
-
-        Cache point priority (always preserved):
-        - System prompt cache points
-        - Tool definition cache points
-        - Message cache points (newest first, oldest removed if needed)
+        System prompt and tool definition cache points always take priority; excess message
+        cache points are removed oldest-first. A Bedrock cache point is a standalone
+        `cachePoint` content block, so excess blocks are dropped from their content lists.
 
         Raises:
-            UserError: If system_prompt and tools combined already exceed MAX_CACHE_POINTS (4).
+            UserError: If system_prompt and tools combined already exceed the budget.
                       This indicates a configuration error that cannot be auto-fixed.
         """
-        MAX_CACHE_POINTS = 4
+        reserved = sum(1 for block in system_prompt if 'cachePoint' in block)
+        reserved += sum(1 for tool in tools if 'cachePoint' in tool)
 
-        # Count existing cache points in system prompt
-        used_cache_points = sum(1 for block in system_prompt if 'cachePoint' in block)
-
-        # Count existing cache points in tools
-        for tool in tools:
-            if 'cachePoint' in tool:
-                used_cache_points += 1
-
-        # Calculate remaining cache points budget for messages
-        remaining_budget = MAX_CACHE_POINTS - used_cache_points
-        if remaining_budget < 0:  # pragma: no cover
-            raise UserError(
-                f'Too many cache points for Bedrock request. '
-                f'System prompt and tool definitions already use {used_cache_points} cache points, '
-                f'which exceeds the maximum of {MAX_CACHE_POINTS}.'
-            )
-
-        # Remove excess cache points from messages (newest to oldest)
-        for message in reversed(bedrock_messages):
-            content = message.get('content')
-            if not content or not isinstance(content, list):  # pragma: no cover
-                continue
-
-            # Build a new content list, keeping only cache points within budget
-            new_content: list[Any] = []
-            for block in reversed(content):  # Process newest first
-                is_cache_point = isinstance(block, dict) and 'cachePoint' in block
-                if is_cache_point:
-                    if remaining_budget > 0:
-                        remaining_budget -= 1
-                        new_content.append(block)
-                else:
-                    new_content.append(block)
-            message['content'] = list(reversed(new_content))  # Restore original order
+        message_contents = [
+            content for message in reversed(bedrock_messages) if isinstance(content := message.get('content'), list)
+        ]
+        excess = excess_cache_points(
+            (block for content in message_contents for block in reversed(content)),
+            # Bedrock enforces a maximum of 4 cache points per request.
+            max_points=4,
+            reserved=reserved,
+            is_cache_point=lambda block: isinstance(block, dict) and 'cachePoint' in block,
+            description='Bedrock request',
+        )
+        if excess:
+            excess_ids = {id(block) for block in excess}
+            for content in message_contents:
+                content[:] = [block for block in cast('list[Any]', content) if id(block) not in excess_ids]
 
 
 @dataclass
