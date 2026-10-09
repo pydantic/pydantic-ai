@@ -210,10 +210,10 @@ logfire-api = false
 # Admit termflow-md 1.0.0 for CLAI2's live panel (`termflow.live`); later releases stay quarantined.
 # TODO: Remove after 2026-10-09 15:06 UTC.
 termflow-md = "2026-10-02T15:05:25Z"
-# Anthropic 1.9.0 is the first release listing `claude-sonnet-5-5` and the `between_tools` thinking type.
-# TODO(dsfaccini): Remove after 2026-10-05 18:04 UTC. https://github.com/pydantic/pydantic-ai/issues/8972
-# This admits only the reviewed 1.9.0 artifacts; later Anthropic artifacts remain quarantined.
-anthropic = "2026-09-28T18:04:04Z"
+# Anthropic 1.12.1 adds `claude-haiku-5-5` to `ModelParam`.
+# TODO(dsfaccini): Remove after 2026-10-15T03:42:01.588842Z. https://github.com/pydantic/pydantic-ai/issues/9997
+# This admits the reviewed 1.12.1 artifacts through one second after the last upload; later artifacts remain quarantined.
+anthropic = "2026-10-08T03:42:01.588842Z"
 # OpenAI 3.26.0 is the first release with `client.decisions`, and the `openai` floor.
 # TODO(dsfaccini): Remove after 2026-10-13 21:32 UTC.
 openai = "2026-10-06T21:31:20Z"

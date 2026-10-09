@@ -284,6 +284,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock Mantle
     * TypeSafe
     * System One
+    * OpenAI Decisions
     """
 
     parallel_tool_calls: bool
@@ -479,6 +480,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock Mantle
     * TypeSafe
     * System One
+    * OpenAI Decisions
     """
 
     thinking: ThinkingLevel
@@ -530,8 +532,8 @@ class ModelSettings(TypedDict, total=False):
     0.1x, so a 1.25x write breaks even after one read and a 2x write after two.
 
     - `True`: Cache the stable prompt prefix (tool definitions and static instructions)
-      and the growing conversation, with the provider's default retention. Uses the provider's
-      automatic caching mode where one exists; elsewhere the library places cache breakpoints.
+      and the growing conversation, with the provider's default retention. The library places cache
+      breakpoints, using the provider's automatic caching mode for the conversation where one exists.
     - `False`: Disable library-managed caching, the same as leaving the setting unset but also
       overriding a `cache` value in the model's default settings. Explicit
       [`CachePoint`][pydantic_ai.messages.CachePoint] markers and provider-specific cache settings
@@ -544,7 +546,8 @@ class ModelSettings(TypedDict, total=False):
 
     Explicit `CachePoint` markers in the message history can be combined with this setting; when
     a request would exceed the provider's maximum number of cache breakpoints, the oldest message
-    breakpoints are dropped first. Provider-specific cache settings (e.g. `anthropic_cache`,
+    breakpoints are dropped first (on OpenAI, the server drops the earliest breakpoints first, starting
+    with the instruction breakpoint). Provider-specific cache settings (e.g. `anthropic_cache`,
     `bedrock_cache_instructions`) take precedence: if any is set, including to `False`, this unified
     field is ignored entirely for that request.
 
@@ -553,8 +556,9 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic (as `anthropic_cache`; as instruction, tool definition and message breakpoints on
-      the Bedrock and Vertex SDK clients)
+    * Anthropic (as `anthropic_cache_instructions`, `anthropic_cache_tool_definitions` and
+      `anthropic_cache`, with `anthropic_cache_messages` instead of `anthropic_cache` on the Bedrock
+      and Vertex SDK clients)
     * Bedrock (Anthropic and Amazon Nova models only; as `bedrock_cache_instructions`,
       `bedrock_cache_tool_definitions` and `bedrock_cache_messages`)
     * OpenRouter (Anthropic and Gemini models only; as `openrouter_cache_instructions`,
@@ -612,6 +616,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock Mantle
     * TypeSafe
     * System One
+    * OpenAI Decisions
 
     On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,
     Z.AI), the model's own derived keys overwrite yours when the keys collide.

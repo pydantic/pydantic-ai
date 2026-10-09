@@ -138,8 +138,8 @@ async def test_effort_for_supplied_model_instance(
     # A bare supplied name has the same limitations as /model settings, not command-only inference.
     assert shell.context.settings_model('gpt-5') == 'gpt-5'
     assert 'openai_reasoning_effort' not in {row.key for row in ModelSettingsSource(store, 'gpt-5').rows()}
-    assert shell.context.model_settings('gpt-5') is None
-    assert shell.context.model_defaults('gpt-5')('gpt-5') is None
+    assert shell.context.model_settings('gpt-5') == {'cache': True}
+    assert shell.context.model_defaults('gpt-5')('gpt-5') == {'cache': True}
     assert await shell.commands.execute_async('/effort') == snapshot(
         'No reasoning effort control for gpt-5. Use /model settings for available controls.'
     )

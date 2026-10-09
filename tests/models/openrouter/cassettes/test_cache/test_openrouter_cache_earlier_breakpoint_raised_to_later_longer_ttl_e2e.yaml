@@ -1,0 +1,356 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "20811"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-sonnet-4.6
+        stream: false
+        messages:
+        - role: system
+          content:
+          - type: text
+            text: >-
+              You are a concise Python assistant. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python concisely.
+              Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about Python
+              concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions about
+              Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer questions
+              about Python concisely. Answer questions about Python concisely. Answer
+              questions about Python concisely.
+            cache_control:
+              type: ephemeral
+              ttl: 1h
+        - role: user
+          content:
+          - text: >-
+              Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python. Some context about Python. Some context about Python. Some context about
+              Python.
+            type: text
+            cache_control:
+              type: ephemeral
+              ttl: 1h
+          - text: Name one Python web framework, in one word.
+            type: text
+        provider:
+          only:
+          - anthropic
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1791569558-2pwVOPVl0u7vd92wjGqL
+        object: chat.completion
+        created: 1791569558
+        model: anthropic/claude-sonnet-4.6
+        provider: Anthropic
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: Django
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 3926
+          completion_tokens: 4
+          total_tokens: 3930
+          cost: 0.023577
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 3913
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.023577
+            upstream_inference_prompt_cost: 0.023517
+            upstream_inference_completions_cost: 0.00006
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-09T18:12:39.581181+00:00

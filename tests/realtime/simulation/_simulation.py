@@ -305,12 +305,15 @@ class Simulation(ABC):
             self.consumer_error = e
         finally:
             self.receive_ended = True
+            self.receive_ended_at = self._now()
 
     receive_ended = False
     """Whether the session's event stream has ended: it reads nothing more from the provider.
 
     Usually with `consumer_error` set, but not when a send was the first to be told why it ended.
     """
+    receive_ended_at: int | None = None
+    """When the session's event stream ended, on the shared clock."""
 
     async def _play(self) -> None:
         assert self._player_wakeup is not None and self._view is not None
@@ -521,8 +524,6 @@ class Simulation(ABC):
             snapshot=frozenset(op.key for op in self.operations if op.done and op.key is not None and op.error is None),
         )
         self.waiters.append(waiter)
-        if (shadow := self.checker.shadow) is not None:
-            shadow.waiter_started(waiter)
 
         async def wait() -> None:
             try:

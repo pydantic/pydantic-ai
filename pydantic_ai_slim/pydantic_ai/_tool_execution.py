@@ -809,6 +809,18 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
         deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
+        def record_result(
+            result: tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None], index: int
+        ) -> _messages.FunctionToolResultEvent:
+            tool_parts, tool_user_content = result
+            tool_parts_by_index[index] = tool_parts
+            if tool_user_content:
+                user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
+
+            tool_part = tool_parts[0]
+            assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
+            return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
+
         async def handle_call_or_result(
             coro_or_task: Awaitable[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]]
             | asyncio.Task[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]],
@@ -825,13 +837,25 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 deferred_calls_by_index[index] = 'unapproved'
                 deferred_metadata_by_index[index] = e.metadata
             else:
-                tool_parts_by_index[index] = tool_parts
-                if tool_user_content:
-                    user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
+                return record_result((tool_parts, tool_user_content), index)
 
-                tool_part = tool_parts[0]
-                assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
-                return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
+        def record_completed_results(
+            tasks_by_index: dict[
+                int, asyncio.Task[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]]
+            ],
+        ) -> None:
+            for index, task in tasks_by_index.items():
+                if (
+                    task.done()
+                    and not task.cancelled()
+                    and task.exception() is None
+                    and index not in tool_parts_by_index
+                ):
+                    # A tool that finished before a sibling raised or the run was cancelled keeps
+                    # its return in the interrupted request, so resuming from that history doesn't
+                    # re-run it. Under `parallel_ordered_events` such results haven't been settled
+                    # yet; no result event is emitted for them, so event order is unchanged.
+                    record_result(task.result(), index)
 
         def call_tool(
             index: int,
@@ -888,6 +912,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                                 yield event
                 except asyncio.CancelledError as e:
                     await cancel_and_drain(*tasks_by_index.values(), msg=e.args[0] if len(e.args) != 0 else None)
+                    record_completed_results(tasks_by_index)
                     raise
                 except BaseException:
                     # Cancel any still-running sibling tasks so they don't become
@@ -895,6 +920,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     # (e.g. RuntimeError, ConnectionError) propagates out of
                     # handle_call_or_result().
                     await cancel_and_drain(*tasks_by_index.values())
+                    record_completed_results(tasks_by_index)
                     raise
         finally:
             # Populate output_parts even on exception so partial tool returns surface

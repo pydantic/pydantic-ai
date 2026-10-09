@@ -8166,6 +8166,82 @@ def test_dynamic_true_reevaluate_system_prompt():
     assert res_two.new_messages() == res_two.all_messages()[-2:]
 
 
+def test_dynamic_system_prompt_does_not_mutate_caller_message_history():
+    """Test that dynamic system-prompt re-evaluation does not rewrite caller-owned history objects."""
+    agent = Agent('test', system_prompt='Foobar')
+
+    dynamic_value = 'A'
+
+    @agent.system_prompt(dynamic=True)
+    async def dynamic_func() -> str:
+        return dynamic_value
+
+    res_one = agent.run_sync('Hello')
+    history = res_one.all_messages()
+    caller_requests = [(msg, msg.parts) for msg in history if isinstance(msg, ModelRequest)]
+
+    dynamic_value = 'B'
+    res_two = agent.run_sync('World', message_history=history)
+
+    # The re-evaluated value still reaches the run's own messages.
+    assert [
+        part.content
+        for msg in res_two.all_messages()
+        for part in msg.parts
+        if isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+    ] == ['B']
+
+    # The caller's history objects are left untouched.
+    assert [
+        part.content
+        for _, parts in caller_requests
+        for part in parts
+        if isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+    ] == ['A']
+    for msg, parts in caller_requests:
+        assert msg.parts is parts
+
+
+async def test_concurrent_runs_sharing_history_isolate_dynamic_system_prompts():
+    """Test that concurrent runs sharing one history list do not leak dynamic system prompts into each other."""
+    agent = Agent('test', system_prompt='Foobar')
+
+    counter = [0]
+
+    @agent.system_prompt(dynamic=True)
+    async def dynamic_func() -> str:
+        counter[0] += 1
+        return f'D{counter[0]}'
+
+    res_one = await agent.run('Hello')
+    history = res_one.all_messages()
+    caller_requests = [(msg, msg.parts) for msg in history if isinstance(msg, ModelRequest)]
+
+    results = await asyncio.gather(
+        agent.run('A', message_history=history),
+        agent.run('B', message_history=history),
+    )
+
+    # Each run re-evaluated to its own fresh value.
+    assert sorted(
+        part.content
+        for result in results
+        for msg in result.all_messages()
+        for part in msg.parts
+        if isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+    ) == ['D2', 'D3']
+
+    # The shared history objects are left untouched.
+    assert [
+        part.content
+        for _, parts in caller_requests
+        for part in parts
+        if isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+    ] == ['D1']
+    for msg, parts in caller_requests:
+        assert msg.parts is parts
+
+
 def test_dynamic_system_prompt_no_changes():
     """Test coverage for _reevaluate_dynamic_prompts branch where no parts are changed
     and the messages loop continues after replacement of parts.
@@ -8328,6 +8404,31 @@ def test_custom_output_type_invalid() -> None:
         agent.run_sync('Hello', output_type=int)
 
 
+def test_history_with_extensionless_image_url_dumps_after_run() -> None:
+    """A run with an extensionless `ImageUrl` in its history and in a tool return completes, and its history serializes."""
+
+    def model(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[TextPart('ok')])
+        return ModelResponse(parts=[ToolCallPart('get_file', {})])
+
+    agent = Agent(FunctionModel(model))
+
+    @agent.tool_plain
+    def get_file() -> dict[str, ImageUrl]:
+        return {'file': ImageUrl(url='https://example.com/image')}
+
+    result = agent.run_sync(
+        'hello',
+        message_history=[ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/image')])])],
+    )
+    dumped = json.loads(result.all_messages_json())
+    assert dumped[0]['parts'][0]['content'][0]['media_type'] is None
+    assert dumped[3]['parts'][0]['content']['file']['media_type'] is None
+    # The dumped history validates back into URL parts and can be run again.
+    agent.run_sync('again', message_history=ModelMessagesTypeAdapter.validate_python(dumped))
+
+
 def test_binary_content_serializable():
     agent = Agent('test')
 
@@ -8396,6 +8497,7 @@ def test_binary_content_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'failed_attempts': None,
                 'workspace_ref': None,
             },
         ]
@@ -8473,6 +8575,7 @@ def test_image_url_serializable_missing_media_type():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'failed_attempts': None,
                 'workspace_ref': None,
             },
         ]
@@ -8556,6 +8659,7 @@ def test_image_url_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'failed_attempts': None,
                 'workspace_ref': None,
             },
         ]

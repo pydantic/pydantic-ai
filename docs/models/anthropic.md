@@ -47,7 +47,7 @@ agent = Agent(model)
 ```
 
 !!! note "Claude Opus 4.7 / 4.8 / 5 / 5.5 migration"
-    Anthropic's [Claude Opus migration guide](https://platform.claude.com/docs/en/about-claude/models/migration-guide) recommends removing `temperature`, `top_p`, and `top_k` from Opus 4.7, 4.8, 5, and 5.5 requests. Pydantic AI drops those keys automatically for `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-opus-5-5`, `claude-sonnet-5`, `claude-sonnet-5-5`, `claude-fable-5` and `claude-mythos-5`, including `extra_body` overrides.
+    Anthropic's [Claude Opus migration guide](https://platform.claude.com/docs/en/about-claude/models/migration-guide) recommends removing `temperature`, `top_p`, and `top_k` from Opus 4.7, 4.8, 5, and 5.5 requests. Pydantic AI drops those keys automatically for `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-opus-5-5`, `claude-sonnet-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-fable-5` and `claude-mythos-5`, including `extra_body` overrides.
 
     The same guide also recommends re-evaluating `max_tokens` and any token-count assumptions when migrating from Opus 4.6, since Opus 4.7 introduced updated tokenization (carried into 4.8). If you rely on `count_tokens()` or `count_tokens_before_request`, verify your thresholds against the new model.
 
@@ -110,7 +110,7 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
-Anthropic requires [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which thinking counts toward. When you don't set it, Pydantic AI sends the model's maximum output, like 64,000 on Claude Sonnet 4.5 or 128,000 on Claude Opus 5, and streams the request behind the scenes, since a response that long can take more than 10 minutes. A [`timeout`][pydantic_ai.settings.ModelSettings.timeout] then limits the wait between streamed chunks rather than the whole response. A model whose maximum isn't known gets 16384, and models older than Claude Sonnet 4.5 get 4096, since they reject a request whose input plus `max_tokens` exceeds the context window. Models are recognized by name, so set `max_tokens` yourself if you reach one through a Bedrock ARN or a custom deployment name.
+Anthropic requires [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which thinking counts toward. When you don't set it, Pydantic AI sends the model's maximum output, like 64,000 on Claude Sonnet 4.5 or 128,000 on Claude Opus 5 and Claude Haiku 5.5, and streams the request behind the scenes, since a response that long can take more than 10 minutes. A [`timeout`][pydantic_ai.settings.ModelSettings.timeout] then limits the wait between streamed chunks rather than the whole response. A model whose maximum isn't known gets 16384, and models older than Claude Sonnet 4.5 get 4096, since they reject a request whose input plus `max_tokens` exceeds the context window. Models are recognized by name, so set `max_tokens` yourself if you reach one through a Bedrock ARN or a custom deployment name.
 
 ### Service tier
 
@@ -199,7 +199,7 @@ See [Anthropic's Microsoft Foundry documentation](https://platform.claude.com/do
 
 Anthropic's [task budgets](https://platform.claude.com/docs/en/build-with-claude/task-budgets) let you give Claude an advisory token budget for a full agentic loop — including thinking, tool calls, tool results, and output — so the model can pace itself and finish gracefully as the budget is consumed. Configure them with [`AnthropicModelSettings.anthropic_task_budget`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_task_budget], which takes an [`AnthropicTaskBudget`][pydantic_ai.models.anthropic.AnthropicTaskBudget] payload and maps to `output_config.task_budget`.
 
-Pydantic AI automatically enables Anthropic's required `task-budgets-2026-03-13` beta when this setting is present. Support is currently limited to native Anthropic `claude-fable-5`, `claude-fable-5-1`, `claude-mythos-5`, `claude-mythos-5-1`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-opus-5-5`, `claude-sonnet-5`, and `claude-sonnet-5-5` requests, not Bedrock, Vertex, or Microsoft Foundry Anthropic model IDs.
+Pydantic AI automatically enables Anthropic's required `task-budgets-2026-03-13` beta when this setting is present. See Anthropic's [task budget feature support](https://platform.claude.com/docs/en/build-with-claude/task-budgets#feature-support) for the current supported-model list. Task budgets are not currently documented as supported on Bedrock or Vertex. For Microsoft Foundry, check Microsoft's [Claude model capability list](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/claude-models#available-claude-models).
 
 ```python {title="anthropic_task_budget.py"}
 from pydantic_ai import Agent
@@ -239,13 +239,13 @@ The provider-agnostic way to enable prompt caching is the unified [`ModelSetting
 from pydantic_ai import Agent
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'anthropic:claude-opus-5-5',
     instructions='You are a helpful assistant.',
     model_settings={'cache': True},
 )
 ```
 
-On Anthropic, `cache=True` (or a retention like `cache='1h'`) uses automatic caching, exactly like `anthropic_cache` below; on the Bedrock and Vertex AI SDK clients, which don't support automatic caching, it places cache breakpoints at the end of the tool definitions, the static instructions and the conversation instead. Cache writes cost 1.25x the input price for the 5-minute cache and 2x for the 1-hour cache, and cache reads 0.1x; see [Prompt Caching](../capabilities/caching.md) for the trade-off. The provider-specific `anthropic_cache*` settings below take precedence when any is set, and offer finer control.
+On Anthropic, `cache=True` (or a retention like `cache='1h'`) places cache breakpoints at the end of the tool definitions and the static instructions, like `anthropic_cache_tool_definitions` and `anthropic_cache_instructions` below, so a new conversation reads back the prefix it shares with earlier ones. It caches the conversation with automatic caching, like `anthropic_cache`, or on the Bedrock and Vertex AI SDK clients, which don't support automatic caching, with a breakpoint at the end of the conversation. Cache writes cost 1.25x the input price for the 5-minute cache and 2x for the 1-hour cache, and cache reads 0.1x; see [Caching](../capabilities/caching.md) for the trade-off, Pydantic AI's prefix-stability guarantees and how to monitor cache efficiency. The provider-specific `anthropic_cache*` settings below take precedence when any is set, and offer finer control.
 
 ### Automatic Caching
 
@@ -255,22 +255,22 @@ The Anthropic-specific way to use automatic caching is [`AnthropicModelSettings.
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
+handbook = '...'  # a long document, above the model's minimum cacheable length
+
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
-    instructions='You are a helpful assistant.',
+    'anthropic:claude-opus-5-5',
+    instructions=f'Answer questions about this employee handbook:\n\n{handbook}',
     model_settings=AnthropicModelSettings(
         anthropic_cache=True,
     ),
 )
 
-result1 = agent.run_sync('What is the capital of France?')
+result1 = agent.run_sync('How many vacation days do new employees get?')
 
-result2 = agent.run_sync(
-    'What is the capital of Germany?', message_history=result1.all_messages()
-)
-print(f'Cache write: {result1.usage.cache_write_tokens}')
-print(f'Cache read: {result2.usage.cache_read_tokens}')
-print(f'Cache hit ratio: {result2.usage.cache_hit_ratio}')
+result2 = agent.run_sync('And after five years?', message_history=result1.all_messages())
+print(f'Cache write: {result1.response.usage.cache_write_tokens}')
+print(f'Cache read: {result2.response.usage.cache_read_tokens}')
+print(f'Cache hit ratio: {result2.response.usage.cache_hit_ratio}')
 ```
 
 This is ideal for multi-turn conversations where the cache breakpoint should move forward as the conversation grows. You can also specify a custom TTL with `anthropic_cache='1h'`.
@@ -319,6 +319,8 @@ In addition to automatic caching, Pydantic AI provides several ways to place cac
 2. **Cache the Final Message Block**: Set [`AnthropicModelSettings.anthropic_cache_messages`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_messages] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
 3. **Cache System Instructions**: Set [`AnthropicModelSettings.anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
 4. **Cache Tool Definitions**: Set [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
+
+Anthropic rejects a request where a one-hour breakpoint comes after a five-minute one (it processes tools, then system instructions, then messages), so when a one-hour breakpoint, including the automatic caching one at the end of the conversation, follows five-minute ones, those earlier breakpoints are raised to one hour.
 
 #### Example: Comprehensive Caching Strategy
 
@@ -609,18 +611,18 @@ On a model that doesn't support forcing, or while extended thinking is enabled:
 
 While adaptive thinking is on, an explicit forcing `tool_choice` is still sent, and that request comes back without thinking. A forced choice that Pydantic AI resolved on your behalf falls back to `'auto'` instead, as above, so the model keeps thinking.
 
-[Tool Output](../output.md#tool-output) forces a call to the output tool on every request that can't end with text, so a bare structured `output_type` uses [Native Output](../output.md#native-output), where the model supports it, whenever the request thinks: with a thinking setting, or with none on a model that [thinks by default](../capabilities/thinking.md#adaptive-thinking-effort), like Claude Opus 5 and later, Claude Sonnet 5, and the Claude Fable and Mythos models. On a model without JSON schema support, extended thinking falls back to [Prompted Output](../output.md#prompted-output), and adaptive thinking keeps Tool Output with the output tool offered under `tool_choice='auto'`. To keep Tool Output, turn thinking off with `thinking=False` where the model allows it. An explicit `ToolOutput(...)` keeps Tool Output, with the output tool offered under `tool_choice='auto'`.
+[Tool Output](../output.md#tool-output) forces a call to the output tool on every request that can't end with text, so a bare structured `output_type` uses [Native Output](../output.md#native-output), where the model supports it, whenever the request thinks: with a thinking setting, or with none on a model that [thinks by default](../capabilities/thinking.md#adaptive-thinking-effort), like Claude Opus 5 and later, Claude Sonnet 5, Claude Haiku 5.5, and the Claude Fable and Mythos models. On a model without JSON schema support, extended thinking falls back to [Prompted Output](../output.md#prompted-output), and adaptive thinking keeps Tool Output with the output tool offered under `tool_choice='auto'`. To keep Tool Output, turn thinking off with `thinking=False` where the model allows it. An explicit `ToolOutput(...)` keeps Tool Output, with the output tool offered under `tool_choice='auto'`.
 
 ## Thinking block binding
 
-**Claude Fable 5.1**, **Claude Opus 5.5**, and **Claude Sonnet 5.5** bind each thinking block to the conversation prefix that produced it. Replaying message history after that prefix changes fails with a 400 (`The block is bound to a different conversation`), and two ordinary Pydantic AI features change it:
+**Claude Fable 5.1**, **Claude Opus 5.5**, **Claude Sonnet 5.5**, and **Claude Haiku 5.5** bind each thinking block to the conversation prefix that produced it. Anthropic [documents a 400](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting) (`The block is bound to a different conversation`) when replaying history after `system`, `tools`, or earlier `messages` change. Two ordinary Pydantic AI features change the prefix:
 
 - a [dynamic instructions](../agent.md#instructions) function whose text differs between runs, and
 - a [filtered toolset](../toolsets.md#filtering-tools) that advertises a new tool mid-conversation, unless the tool uses [deferred loading](../toolsets.md#deferred-loading).
 
-Both are the same instability that costs you a provider's prompt cache: a request prefix that changes between turns. The thinking block turns it into a 400 you can see; the cache turns it into a bill you can't — every request after the change re-sends the whole conversation at uncached rates, silently. Where the prefix can be held stable, that is worth more than handling the rejection.
+Both are the same instability that [costs you a provider's prompt cache](../capabilities/caching.md#what-invalidates-a-cache): a request prefix that changes between turns. The thinking block turns it into a 400 you can see; the cache turns it into a bill you can't — every request after the change re-sends the whole conversation at uncached rates, silently. Where the prefix can be held stable, that is worth more than handling the rejection.
 
-Anthropic enforces the check for accounts created on or after 31 August 2026. For an older account it records the mismatch but acts on it only if the request sets `thinking.block_binding.prefix_mismatch_behavior`.
+Anthropic enforces the check for accounts created on or after 31 August 2026. For an older account it records the mismatch but returns the error only if the request sets `thinking.block_binding.prefix_mismatch_behavior`.
 
 **Pydantic AI sets nothing by default**, so an older account keeps replaying its reasoning untouched. Where the check is enforced, the rejected request is retried once with `prefix_mismatch_behavior='drop_block'`: the stale block is dropped, the run continues, and a [`AnthropicStaleThinkingBlockWarning`][pydantic_ai.models.anthropic.AnthropicStaleThinkingBlockWarning] explains what happened. **The model no longer sees that turn's reasoning** — the trade is one turn's thinking against a failed run. Models marked [`anthropic_binds_thinking_blocks=True`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_binds_thinking_blocks] are the only ones that retry. A request whose thinking type isn't `adaptive`, such as `anthropic_thinking={'type': 'between_tools'}`, is not retried, because Anthropic accepts `block_binding` only alongside adaptive thinking: keep that conversation's prefix stable instead.
 

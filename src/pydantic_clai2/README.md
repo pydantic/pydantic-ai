@@ -17,11 +17,12 @@ The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive wit
 token kept in `/keys`. `/google_workspace` opens its settings menu: the `/keys`
 entry to use (`GOOGLE_ACCESS_TOKEN` by default), products, and read-only tools; see
 [its settings](PLUGINS.md#google_workspace-gmail-calendar-and-drive-tools).
-`/plugins enable logfire_mcp` lets the agent query your Logfire telemetry and opens
-a settings menu (region, tools, and a key picked from `/keys`, never stored in plugin
-settings; otherwise browser sign-in, which also signs new users up and works over SSH:
-`/logfire_mcp login`). Reopen it with `/plugins configure logfire_mcp`; see
-[Logfire MCP](PLUGINS.md#logfire-mcp-query-your-telemetry).
+`/plugins enable logfire_mcp` turns on the Logfire plugin, which lets the agent query
+your Logfire telemetry through Logfire's MCP server, and opens a settings menu (which
+Logfire, tools, and a key picked from `/keys`, never stored in plugin settings;
+otherwise browser sign-in, which also signs new users up and works over SSH:
+`/logfire login`). Reopen it with `/plugins configure logfire_mcp`; see
+[Logfire](PLUGINS.md#logfire-query-your-telemetry).
 `/mcp` manages MCP servers the way Code Puppy's `/mcp` does. Bare `/mcp` shows a
 status dashboard. `/mcp install` opens a form where you name the server, pick
 `stdio`, `http`, or `sse`, type its URL or command, edit the rest of its JSON
@@ -138,6 +139,34 @@ Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W
 including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
 this shortcut; legacy and modified-key encodings are supported.
+
+## Undo and redo
+
+Ctrl+Z undoes the last change to your draft on macOS, Linux, and Windows. It
+brings back text removed with Backspace, Delete, word deletion, Ctrl+U, Ctrl+K,
+or Ctrl+C, and takes back a paste or a history recall. Typing undoes a word at a
+time, and a run of Backspace or Delete presses undoes in one step. Ctrl+Y or
+Ctrl+Shift+Z redoes. CLAI keeps the last 100 steps; submitting a message starts
+the next draft with none.
+
+The editor reads keys in raw mode, so Ctrl+Z reaches CLAI instead of suspending
+it to the shell. CLAI has no suspend shortcut; quit with Ctrl+D or `/exit`.
+Without kitty or xterm modified-key reporting, a terminal sends Ctrl+Shift+Z
+as Ctrl+Z, so use Ctrl+Y to redo there.
+
+Cmd+Z and Cmd+Shift+Z undo and redo too, when the terminal passes them on. CLAI
+asks for kitty keyboard reporting, which reports Cmd as Super, but most macOS
+terminals keep Cmd shortcuts for their own menus:
+
+- kitty passes Cmd+Z on with no setup.
+- Ghostty uses Cmd+Z to reopen a closed tab or split. Add
+  `keybind = cmd+z=text:\x1a` and `keybind = cmd+shift+z=csi:122;10u` to its config.
+- WezTerm: set `config.enable_kitty_keyboard = true`, or map SUPER+z to
+  `wezterm.action.SendString '\x1a'`.
+- iTerm2: in Settings > Profiles > Keys > Key Mappings, map Cmd+Z to
+  *Send Hex Codes* `0x1a`, and Cmd+Shift+Z to *Send Escape Sequence* `[122;10u`.
+- Terminal.app, VS Code, and tmux: use Ctrl+Z, or map Cmd+Z to `0x1a` in the
+  outer terminal as above.
 
 ## Option keys on macOS
 
@@ -521,7 +550,7 @@ takes its place, and a run's own `workspace=` replaces it for that run. Commands
 this process's environment minus LLM provider API keys. Model names resolve as in
 `clai2`, the agent's own and any a run passes, so `openai-codex:` and `github-copilot:`
 use the sign-ins saved with `/login`. CLAI's per-model defaults apply too, such as
-Anthropic prompt caching. Without `model`, every run must pass one.
+prompt caching. Without `model`, every run must pass one.
 
 Nothing else you saved for `clai2` applies: no saved, drop-in, or project plugins, no
 `.clai/settings.json`, no `/model settings`, and no `chain:` fallback chains. `ask_user`
@@ -990,10 +1019,12 @@ from the model's next request, even in a running turn. `r` resets a field; Esc
 or Ctrl-C goes back. Fixed choices
 open a picker; numeric fields accept typed values, and empty input resets.
 
-CLAI2 enables Anthropic conversation, static-instruction, and tool-schema caching by default:
-`anthropic:` and `gateway/anthropic:` use a 5-minute TTL, while `claude-code:` uses 1 hour.
-These are CLI defaults only; plain Pydantic AI agents are unchanged. Saved cache settings override
-the defaults. Automatic caching advances to the last cacheable block, including tool results.
+CLAI2 enables prompt caching by default for every model, with the unified `Prompt Caching`
+setting (`cache`). It covers Claude on the Anthropic API, `claude-code:`, Amazon Bedrock and
+OpenRouter, Nova on Bedrock, OpenRouter's Gemini routes, and OpenAI's GPT-5.6 and later; providers
+that cache implicitly or not at all ignore it. Set it to `false` to turn caching off for a model, or
+to `1h` to keep the cache longer. Saved `anthropic_cache*` settings still apply and take precedence
+over it. These are CLI defaults only; plain Pydantic AI agents are unchanged.
 
 `/effort` shows the active model's configured reasoning effort and supported values.
 `/effort high` (or another listed value) saves it for that model; `/effort reset`
@@ -2190,6 +2221,13 @@ Logfire instance, including their exception and traceback, even when `ui_events`
 reported after loading finishes, including those that happened before observability
 loaded. Disabling the plugin leaves these failures as terminal messages only.
 
+Other errors CLAI shows you and recovers from are sent the same way: a failed turn
+(for example, a model provider you have not logged in to), a slash command that
+fails unexpectedly (for example, `/update` hitting a GitHub rate limit), and a plugin
+handler that fails. Usage errors, such as a mistyped command, are not sent. An error
+inside the agent run is already on the run's span, so it is not sent twice. With
+`include_content` off, these records and load failures keep only the exception's type.
+
 This plugin was previously named `logfire`. Existing enabled/disabled choices,
 settings, and saved token references carry over without reconfiguration. Existing
 commands and project or drop-in declarations using `logfire` still target this
@@ -2205,6 +2243,9 @@ cannot choose the telemetry destination. Relative `XDG_CONFIG_HOME` values fall
 back to `~/.config`. Export uses `send_to_logfire='if-token-present'`: no credentials
 means no Logfire export and no interactive project setup. Logfire's
 terminal console output is disabled so it does not interfere with the editor.
+Warnings and errors Logfire and OpenTelemetry log about failed exports go to
+`telemetry.log` next to `config.db` instead of over the editor; CLAI names the
+file on exit when a session wrote to it. Headless `clai2 -p` keeps them on stderr.
 Standard SDK configuration, including explicitly configured OTLP exporters, still
 applies; disable the plugin to stop its instrumentation altogether.
 
@@ -2212,18 +2253,23 @@ Agent runs and recorded UI interactions nest under a `CLAI session` root span.
 Its `agent_session_id` attribute is the saved conversation ID.
 `/clear` selects a new root; `/resume` returns to that conversation's root if it
 was already opened by this plugin instance. Unloading the plugin ends its roots;
-reloading starts new traces with the same saved conversation IDs.
+reloading starts new traces with the same saved conversation IDs. A span is only
+exported when it ends, which a root does at exit, so each root also gets a
+`CLAI session opened` log right away, carrying the same `agent_session_id` and
+email: query that to find a session that is still running. With `--resume`, the
+log is repeated with the saved ID as soon as startup picks the conversation.
 
 Each session root is tagged with your email, as a Logfire tag and the
-`user.email` attribute, never on child spans or logs. `user_tag` picks where it
-comes from. The default, `logfire-account`, uses the account you signed in with
-when you set up the **Logfire project** (below); that account already has access
-to the project, so the tag reveals nothing new to it. With a token from
-`LOGFIRE_TOKEN`, the credentials file, a token changed since setup, a setup made
-before this setting existed, or a server that does not report your email, roots
-are not tagged until you run the setup again. `git-email` uses
-`git config user.email` instead (Git is only queried with this choice; a missing
-email leaves the tag out), and `false` turns the tag off. Choose **User tag** in
+`user.email` attribute; of its children, only the `CLAI session opened` log
+carries it. `user_tag` picks where it comes from. The default,
+`logfire-account`, uses the account you signed in with when you set up the
+**Logfire project** (below); that account already has access to the project, so
+the tag reveals nothing new to it. With a token from `LOGFIRE_TOKEN`, the
+credentials file, a token changed since setup, a setup made before this setting
+existed, or a server that does not report your email, roots are not tagged until
+you run the setup again. `git-email` uses `git config user.email` instead (Git
+is only queried with this choice; a missing email leaves the tag out), and
+`false` turns the tag off. Choose **User tag** in
 `/plugins configure observability`, or set `user_tag` in the plugin settings.
 Everything CLAI records itself (session roots, UI records, and plugin load
 failures) uses the `clai2` instrumentation scope.
@@ -2274,16 +2320,21 @@ never recorded, since both can hold secrets such as `/plugins add` settings.
 Choose **Logfire project** in the settings menu (`/plugins configure observability`, or
 `c` on `observability` in `/plugins`):
 
-1. Pick where traces go: Logfire US, Logfire EU, or a self-hosted Logfire URL.
+1. Pick which Logfire: Logfire US, Logfire EU, or **Another Logfire...** to type a
+   self-hosted or staging one as a host (`logfire.example.com`), the URL you open it
+   at, or its MCP URL (`https://logfire.example.com/mcp`); see
+   [Which Logfire](PLUGINS.md#which-logfire). Enter chooses; Esc cancels and changes
+   nothing.
 2. Sign in, or sign up, in the browser. CLAI prints the link too, so it works over SSH.
-3. Pick one of the projects you can write to.
+3. Pick one of the projects you can write to (`/` to search, Enter to use it).
 
 CLAI then creates a write token for that project, saves it in `/keys` as
 `LOGFIRE_TOKEN_<ORG>_<PROJECT>`, and points the plugin's `token` at it; the plugin
 reloads and the next turn is traced there. The sign-in itself is not kept, only
 your account's email, saved with the key name as `account` to tag session roots. The
-URL you picked is saved as the plugin's `base_url`, so `LOGFIRE_BASE_URL` cannot
-send the token elsewhere, and sending is turned on if it was off. Choose the row
+Logfire you picked is saved as the plugin's `base_url`, so `LOGFIRE_BASE_URL` cannot
+send the token elsewhere, and sending is turned on if it was off. The Logfire
+plugin's settings start from the same Logfire, so you pick the region once. Choose the row
 again to switch projects, or press `R` on it to go back to `LOGFIRE_TOKEN` or the
 credentials file.
 

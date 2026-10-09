@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.output import TextOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._usage import reserved_usage_limits
@@ -47,6 +48,7 @@ from pydantic_ai_harness.compaction._shared import (
     is_realtime_model,
     record_compaction_reclaim,
     resolve_token_trigger,
+    tool_return_text,
     validate_token_trigger,
 )
 
@@ -167,6 +169,19 @@ def _writes_text(model: AbstractModel) -> bool:
     return not isinstance(model, Model) or model.profile.get('supports_text_output', True)
 
 
+def _non_empty_summary(text: str) -> str:
+    """The summary without surrounding whitespace, retried when nothing is left.
+
+    Core already retries a response with no text at all, but whitespace-only text passes its
+    check. Accepting it would replace the summarized history with an empty summary, so it is
+    retried the same way, and raises `UnexpectedModelBehavior` once output retries run out.
+    """
+    summary = text.strip()
+    if not summary:
+        raise ModelRetry('The summary was empty. Write the summary of the conversation.')
+    return summary
+
+
 def _truncate_with_marker(text: str, max_chars: int) -> str:
     """Truncate *text* to *max_chars* characters, an explicit marker counted within the cap."""
     if len(text) <= max_chars:
@@ -201,7 +216,7 @@ def _format_messages(
                 ):
                     lines.append(f'System: {part.content}')
                 elif isinstance(part, ToolReturnPart):
-                    content_str = str(part.content)
+                    content_str = tool_return_text(part)
                     if tool_return_max_chars is not None:
                         content_str = _truncate_with_marker(content_str, tool_return_max_chars)
                     lines.append(f'Tool [{part.tool_name}]: {content_str}')
@@ -516,14 +531,18 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                     else:
                         break
                 extra = list(reversed(retained))
-            retained_tail_slots = self.keep_messages - len(extra)
+            retained_tail_slots = max(1, self.keep_messages - len(extra))
             if token_tail_budget is not None:
                 if token_tail_budget == 0:
-                    preserved = []
+                    # Retained user turns spent the whole token tail budget; reserve one
+                    # slot so the request being answered still survives compaction.
+                    preserved = preserved[find_safe_cutoff(preserved, 1) :]
                 else:
                     token_tail = preserved[find_token_cutoff(preserved, token_tail_budget, self.tokenizer) :]
                     preserved = (
-                        token_tail if estimate_token_count(token_tail, self.tokenizer) <= token_tail_budget else []
+                        token_tail
+                        if estimate_token_count(token_tail, self.tokenizer) <= token_tail_budget
+                        else preserved[find_safe_cutoff(preserved, 1) :]
                     )
             if len(preserved) > retained_tail_slots:
                 preserved = preserved[find_safe_cutoff(preserved, retained_tail_slots) :]
@@ -726,6 +745,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             cast('Model[Any] | str', model),
             name='summarizing_compaction',
             deps_type=type(None),
+            output_type=TextOutput(_non_empty_summary),
             instructions=self.instructions,
             model_settings=self.model_settings,
             capabilities=list(self.summarization_capabilities),
@@ -737,4 +757,4 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             usage_limits=reserved_usage_limits(ctx.usage_limits),
             event_stream_handler=self.event_stream_handler,
         )
-        return result.output.strip()
+        return result.output
