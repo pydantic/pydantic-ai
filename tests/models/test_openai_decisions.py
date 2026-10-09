@@ -648,6 +648,17 @@ async def test_too_many_routes(allow_model_requests: None):
     assert captured.requests == []
 
 
+async def test_output_enum_over_choice_limit_is_refused(allow_model_requests: None):
+    members: dict[str, str] = {f'option_{index}': f'option_{index}' for index in range(256)}
+    output_type: type[StrEnum] = StrEnum('ManyOptions', members)
+    captured = Captured(ticket_answers)
+
+    with pytest.raises(UserError, match=r"Output field 'response'.*at most 255 options.*256"):
+        await Agent(mock_model(captured), output_type=output_type).run('Pick an option.')
+
+    assert captured.requests == []
+
+
 @pytest.mark.parametrize(
     ('question', 'sent'),
     [
