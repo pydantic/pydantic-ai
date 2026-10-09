@@ -187,6 +187,7 @@ def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker:
     assert 'Could not load agent from bad_path' in capfd.readouterr().out
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio from an MCP config file')
 @pytest.mark.parametrize('stream', [False, True])
 def test_mcp_config(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path, stream: bool):
     """`--mcp-config` parses a Claude-Desktop-style config and connects to the MCP server.
@@ -213,6 +214,7 @@ def test_mcp_config(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path, st
     assert ('Called tool temp_get_weather_forecast' in output) is stream
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio from an MCP config file')
 def test_mcp_config_interactive(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, tmp_path: Path):
     """Interactive `clai --mcp-config` can invoke a configured server tool before exiting."""
     env.set('OPENAI_API_KEY', 'test')
@@ -235,6 +237,7 @@ def test_mcp_config_interactive(capfd: CaptureFixture[str], mocker: MockerFixtur
     assert 'The weather in a is sunny and 26 degrees Celsius.' in ' '.join(output.split())
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio from an MCP config file')
 def test_mcp_config_banner_omits_the_tool_count(
     capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, tmp_path: Path
 ):

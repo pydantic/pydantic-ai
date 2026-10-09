@@ -132,8 +132,6 @@ from pydantic_ai.workspaces import (
 try:
     from prefect import flow, task
     from prefect.context import FlowRunContext, TaskRunContext
-    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
-    from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import (
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
@@ -387,6 +385,7 @@ warnings.filterwarnings('ignore', message='`PrefectAgent` is deprecated', catego
 pytestmark = [
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
+    pytest.mark.usefixtures('prefect_test_server'),
     pytest.mark.filterwarnings(
         'ignore:`PrefectAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
     ),
@@ -412,18 +411,6 @@ def setup_logfire_instrumentation() -> Iterator[None]:
     logfire.configure(metrics=False, distributed_tracing=False)
 
     yield
-
-
-@pytest.fixture(autouse=True, scope='session')
-def setup_prefect_test_harness() -> Iterator[None]:
-    """Set up Prefect test harness for all tests."""
-    # The task-run recorder is a background writer against the same sqlite file the flows write to.
-    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
-    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
-    # here reads what it records: task run states reach the API through the task engine.
-    with temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}):
-        with prefect_test_harness(server_startup_timeout=60):
-            yield
 
 
 @pytest.fixture(autouse=True)
@@ -596,6 +583,7 @@ runtime_handler_stream_agent = Agent(
 runtime_handler_stream_prefect_agent = PrefectAgent(runtime_handler_stream_agent)  # pyright: ignore[reportDeprecated]
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: CaptureLogfire) -> None:
     """Test a complex agent with tools, MCP servers, and event stream handler."""
 
@@ -1113,6 +1101,7 @@ async def test_prefect_toolset_legacy_constructors() -> None:
     assert wrapped_mcp.id is None
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_task_server` over stdio')
 async def test_prefect_mcptoolset_preserves_task_routing() -> None:
     """Effective task routing forwards through Prefect task wrappers end-to-end.
 
@@ -3267,6 +3256,7 @@ async def test_prefect_durability_task_name_assembly_sequence() -> None:
     ]
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 @pytest.mark.parametrize('blockbuster_enabled', [False])
 async def test_prefect_durability_journals_mcp_discovery(blockbuster_enabled: bool) -> None:
     assert blockbuster_enabled is False
@@ -4286,6 +4276,7 @@ async def test_prefect_mcp_tool_metadata_false_is_rejected() -> None:
         await run_tool()
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 @pytest.mark.parametrize('blockbuster_enabled', [False])
 async def test_prefect_durability_mcp_tool_metadata_false_is_rejected(
     monkeypatch: pytest.MonkeyPatch, blockbuster_enabled: bool

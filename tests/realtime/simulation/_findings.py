@@ -174,20 +174,29 @@ LOST_RESPONSE_RESERVATION = Finding(
 )
 
 
+def _xai_push_to_talk(sim: Simulation) -> bool:
+    options = getattr(sim, 'openai', None)
+    return options is not None and options.dialect == 'xai' and options.turn_detection == 'manual'
+
+
 def _receive_loop_send_failed(sim: Simulation, violation: InvariantViolation) -> bool:
     network = getattr(getattr(sim, 'server', None), 'network', None)
+    # On xAI push-to-talk, the receive loop sends more once the `response.done` that ends a reply is handled (#9070):
+    # the audio held back behind the reply, and the clear a deferred request needs to be answered.
+    xai_frames = ('input_audio_buffer.append', 'input_audio_buffer.clear') if _xai_push_to_talk(sim) else ()
+    sent = ('response.create', *xai_frames)
     return network is not None and any(
-        frame == 'response.create' and last_read in ('response.done', 'error')
-        for frame, last_read, _ in network.failed_sends
+        frame in sent and last_read in ('response.done', 'error') for frame, last_read, _ in network.failed_sends
     )
 
 
 RECEIVE_LOOP_SEND_FAILURE = Finding(
     id='SIM-4',
     title=(
-        'a deferred `response.create` that the connection sends while handling a `response.done` (or a refusal) fails '
-        "on a dying socket, and the whole frame is dropped: that response's usage and terminal never reach the "
-        'session, and the deferred request is neither re-asked nor released'
+        'a deferred `response.create` (or, on xAI push-to-talk, audio held back behind the reply, or the clear the '
+        'request needs) that the connection sends while handling a `response.done` (or a refusal) fails on a dying '
+        "socket, and the whole frame is dropped: that response's usage and terminal never reach the session, and the "
+        'deferred request is neither re-asked nor released'
     ),
     tracked_by='an ordered outbox, so the receive loop never sends on the socket itself; found by this simulator',
     evidence='simulated',
@@ -727,11 +736,8 @@ def _hand_commit_unanswered_at_the_end(sim: Simulation) -> bool:
 
 
 def _push_to_talk_audio_after_a_repeated_terminal(sim: Simulation) -> bool:
-    options = getattr(sim, 'openai', None)
     return (
-        options is not None
-        and options.dialect == 'xai'
-        and options.turn_detection == 'manual'
+        _xai_push_to_talk(sim)
         and bool(sim.truth.repeated_terminals)
         and any(operation.name == 'send_audio' for operation in sim.operations)
     )

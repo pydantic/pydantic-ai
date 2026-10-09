@@ -746,6 +746,12 @@ class ModelHTTPError(ModelAPIError):
     suggested_model_id: str | None
     """A close known model identifier suggested from a provider-confirmed model-name error."""
 
+    hint: str | None
+    """Guidance on resolving the error, appended to the exception message.
+
+    For example, the account setting a provider requires.
+    """
+
     def __init__(
         self,
         status_code: int,
@@ -754,6 +760,7 @@ class ModelHTTPError(ModelAPIError):
         *,
         headers: Mapping[str, str] | None = None,
         suggested_model_id: str | None = None,
+        hint: str | None = None,
         provider_error_code: str | None = None,
         provider_error_type: str | None = None,
         retry_after: float | None = None,
@@ -762,9 +769,12 @@ class ModelHTTPError(ModelAPIError):
         self.status_code = status_code
         self.headers = {k.lower(): v for k, v in headers.items()} if headers is not None else None
         self.suggested_model_id = suggested_model_id
+        self.hint = hint
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
         if suggested_model_id is not None:
             message += f'. Did you mean {suggested_model_id!r}?'
+        if hint is not None:
+            message += f'. {hint}'
         super().__init__(
             model_name=model_name,
             message=message,
@@ -779,7 +789,12 @@ class ModelHTTPError(ModelAPIError):
         return self.__class__, (self.status_code, self.model_name, self.body), self.__getstate__()
 
     def __getstate__(self) -> dict[str, Any]:
-        return {**super().__getstate__(), 'headers': self.headers, 'suggested_model_id': self.suggested_model_id}
+        return {
+            **super().__getstate__(),
+            'headers': self.headers,
+            'suggested_model_id': self.suggested_model_id,
+            'hint': self.hint,
+        }
 
     def __setstate__(self, state: dict[str, Any]) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         super().__setstate__(state)
@@ -788,8 +803,12 @@ class ModelHTTPError(ModelAPIError):
         if 'retry_after' not in state:
             # Pickled before `retry_after` was stored, so `__init__` saw no headers to read it from.
             self.retry_after = _parse_retry_after(self.headers)
+        self.hint = state.get('hint')
         if self.suggested_model_id is not None:
             self.message += f'. Did you mean {self.suggested_model_id!r}?'
+        if self.hint is not None:
+            self.message += f'. {self.hint}'
+        if self.suggested_model_id is not None or self.hint is not None:
             self.args = (self.message,)
 
     @staticmethod
@@ -801,6 +820,7 @@ class ModelHTTPError(ModelAPIError):
         body: object | None = None,
         headers: Mapping[str, str] | None = None,
         suggested_model_id: str | None = None,
+        hint: str | None = None,
         provider_error_code: str | None = None,
         provider_error_type: str | None = None,
         retry_after: float | None = None,
@@ -832,6 +852,7 @@ class ModelHTTPError(ModelAPIError):
             body: The body of the error response.
             headers: The response headers.
             suggested_model_id: A close known model identifier, for a model-name error.
+            hint: Guidance on resolving the error, appended to the message.
             provider_error_code: The provider's machine-readable error code.
             provider_error_type: The provider's error type.
             retry_after: Seconds the provider asked to wait; read from `headers` when not given.
@@ -847,6 +868,7 @@ class ModelHTTPError(ModelAPIError):
             body,
             headers=headers,
             suggested_model_id=suggested_model_id,
+            hint=hint,
             provider_error_code=provider_error_code,
             provider_error_type=provider_error_type,
             retry_after=retry_after,

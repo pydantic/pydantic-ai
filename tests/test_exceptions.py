@@ -191,6 +191,32 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
                 'provider_error_code': 'context_length_exceeded',
             },
         ),
+        (
+            lambda: ModelHTTPError(400, 'model', hint='Check the provider account setting'),
+            {
+                'status_code': 400,
+                'model_name': 'model',
+                'body': None,
+                'headers': None,
+                'hint': 'Check the provider account setting',
+            },
+        ),
+        (
+            lambda: ModelHTTPError(
+                404,
+                'gpt-5x',
+                suggested_model_id='openai:gpt-5',
+                hint='Check the provider account setting',
+            ),
+            {
+                'status_code': 404,
+                'model_name': 'gpt-5x',
+                'body': None,
+                'headers': None,
+                'suggested_model_id': 'openai:gpt-5',
+                'hint': 'Check the provider account setting',
+            },
+        ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
     ],
     ids=[
@@ -215,6 +241,8 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelOverloadedError',
         'ModelTimeoutError',
         'ModelHTTPError-ModelContextWindowExceededError',
+        'ModelHTTPError-with-hint',
+        'ModelHTTPError-with-model-suggestion-and-hint',
         'IncompleteToolCall',
     ],
 )
@@ -715,6 +743,7 @@ def test_model_http_error_for_category(category: type[ModelAPIError]):
         model_name='gpt-4',
         body={'error': 'x'},
         headers={'Retry-After': '3'},
+        hint='Fix the setting',
         provider_error_code='code',
         provider_error_type='type',
         in_stream=True,
@@ -733,7 +762,12 @@ def test_model_http_error_for_category(category: type[ModelAPIError]):
     restored = pickle.loads(pickle.dumps(error))
     assert type(restored) is type(error)
     assert str(restored) == str(error)
-    assert (restored.status_code, restored.headers, restored.in_stream) == (503, {'retry-after': '3'}, True)
+    assert (restored.status_code, restored.headers, restored.hint, restored.in_stream) == (
+        503,
+        {'retry-after': '3'},
+        'Fix the setting',
+        True,
+    )
 
 
 def test_model_http_error_for_category_none_is_plain():

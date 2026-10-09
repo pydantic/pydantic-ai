@@ -172,6 +172,12 @@ if TYPE_CHECKING:
 # botocore parses a 200 body that's empty, not JSON, or JSON without the operation's fields to a response lacking them,
 # instead of raising.
 _MISSING_RESPONSE_FIELD = 'Response has no {field!r} field'
+_DATA_RETENTION_HINT = (
+    "Bedrock rejected this model under the account's data retention mode for this Region. Models that require human "
+    "review, such as Claude Fable 5 and 5.1, need the account's data retention mode set to `aws_review` (or the legacy "
+    "`provider_data_share`) with the Bedrock control plane's `PutAccountDataRetention` API, as it can't be set per "
+    'request. See https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html'
+)
 
 
 @contextmanager
@@ -194,6 +200,9 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
             suggested_model_id = None
             if message == 'The provided model identifier is invalid.':
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+            hint = (
+                _DATA_RETENTION_HINT if isinstance(message, str) and 'data retention mode' in message.lower() else None
+            )
             raise ModelHTTPError.for_category(
                 category or _model_errors.http_status_category(status_code, message),
                 status_code=status_code,
@@ -201,6 +210,7 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
                 body=e.response,
                 headers=metadata.get('HTTPHeaders'),
                 suggested_model_id=suggested_model_id,
+                hint=hint,
                 provider_error_code=provider_error_code,
                 in_stream=in_stream,
             ) from e

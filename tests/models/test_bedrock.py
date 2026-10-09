@@ -696,6 +696,45 @@ async def test_bedrock_count_tokens_error(allow_model_requests: None, bedrock_pr
     assert exc_info.value.status_code == 400
     assert exc_info.value.model_name == model_id
     assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
+    assert exc_info.value.hint is None
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_bedrock_data_retention_error_hint(allow_model_requests: None, stream: bool):
+    """A mock is required because reproducing this error requires an account without the required retention mode."""
+    error = ClientError(
+        {
+            'Error': {
+                'Code': 'ValidationException',
+                'Message': "data retention mode 'default' is not available for this model",
+            },
+            'ResponseMetadata': {
+                'RequestId': 'test-request-id',
+                'HostId': '',
+                'HTTPStatusCode': 400,
+                'HTTPHeaders': {},
+                'RetryAttempts': 0,
+            },
+        },
+        'converse_stream' if stream else 'converse',
+    )
+    model = _bedrock_model_with_error(error)
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        if stream:
+            async with agent.run_stream('hello'):
+                pass
+        else:
+            await agent.run('hello')
+
+    exc = exc_info.value
+    assert exc.status_code == 400
+    assert exc.body == error.response
+    assert str(exc) == snapshot(
+        "status_code: 400, model_name: us.amazon.nova-micro-v1:0, body: {'Error': {'Code': 'ValidationException', 'Message': \"data retention mode 'default' is not available for this model\"}, 'ResponseMetadata': {'RequestId': 'test-request-id', 'HostId': '', 'HTTPStatusCode': 400, 'HTTPHeaders': {}, 'RetryAttempts': 0}}. Bedrock rejected this model under the account's data retention mode for this Region. Models that require human review, such as Claude Fable 5 and 5.1, need the account's data retention mode set to `aws_review` (or the legacy `provider_data_share`) with the Bedrock control plane's `PutAccountDataRetention` API, as it can't be set per request. See https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html"
+    )
+    assert exc.hint is not None and str(exc).endswith(f'. {exc.hint}')
 
 
 async def test_bedrock_request_non_http_error(allow_model_requests: None):

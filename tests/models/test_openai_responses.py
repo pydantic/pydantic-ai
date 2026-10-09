@@ -14512,6 +14512,50 @@ async def test_response_error_event_first_falls_back(allow_model_requests: None)
     assert output == 'from fallback'
 
 
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize('call', ['request', 'retrieve', 'count_tokens', 'compact'])
+async def test_text_plain_response_body_raises_model_api_error(allow_model_requests: None, call: str):
+    """A 200 response with a `text/plain` body, which the SDK returns as a `str`, raises `ModelAPIError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9579
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'upstream connect error', headers={'content-type': 'text/plain'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+        with pytest.raises(ModelAPIError) as exc_info:
+            if call == 'request':
+                await Agent(model).run('Hello')
+            elif call == 'retrieve':
+                suspended = ModelResponse(
+                    parts=[], state='suspended', provider_name='openai', provider_response_id='resp_123'
+                )
+                await model.request([*messages, suspended], None, ModelRequestParameters())
+            elif call == 'count_tokens':
+                await model.count_tokens(messages, None, ModelRequestParameters())
+            else:
+                await model.compact_messages(
+                    ModelRequestContext(
+                        model=model,
+                        messages=messages,
+                        model_settings=None,
+                        model_request_parameters=ModelRequestParameters(),
+                    )
+                )
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == snapshot("Expected a JSON response, got: 'upstream connect error'")
+
+
 async def test_stream_response_incomplete_content_filter_finish_reason(allow_model_requests: None):
     """A terminal `response.incomplete` maps `content_filter` to 'content_filter', like the non-streaming path."""
 

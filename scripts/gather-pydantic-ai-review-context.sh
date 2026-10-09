@@ -577,6 +577,40 @@ value but a comment in the added test explains why the other side is
 unreachable on this path, or when the touched `profile.get(...)` read is not a
 new or modified branch (a pure move or rename).
 
+### Example 5 — test cost
+
+Trigger: the diff adds or changes tests under `tests/`. Every test runs on
+every push across the whole CI matrix, and the next test in the file copies the
+pattern, so cost is a review concern even when CI is green. The rules are in
+"Test cost" in `tests/AGENTS.md`; `tests/cost_guards.py` already fails an
+unmarked Python launch and (on one CI leg) a test over the time budget, so the
+review's job is the escape hatches and the patterns the guards cannot see.
+
+**Flag this (MEDIUM):**
+```python
+@pytest.mark.subprocess(reason='runs the CLI')
+def test_cli_prints_version(tmp_path: Path):
+    result = subprocess.run([sys.executable, '-m', 'pydantic_clai2', '--version'], ...)
+```
+*Why:* The claim (the version string) does not depend on the process
+boundary, so the marker only waves through a second-per-test interpreter
+launch; ask for the entry point to be called in-process. The same goes for a
+new `@pytest.mark.slow(reason=...)` whose cost could be designed away, and for
+a new test that waits out a real `sleep`/timeout/poll interval instead of
+injecting it, or proves a complexity bound with one huge input instead of a
+growth ratio across small sizes.
+
+**Don't flag this:**
+```python
+@pytest.mark.subprocess(reason='asserts what a fresh interpreter imports')
+def test_import_is_light():
+    ...
+```
+*Why:* What a fresh interpreter imports can only be observed in a fresh
+interpreter; the reason names the process-boundary property under test. Also
+don't flag a launch in a `session`- or `module`-scoped fixture (shared cost,
+the recommended pattern) or a short real wait whose duration is the claim.
+
 ## Sub-agent finding format
 
 When a Task sub-agent returns findings, use this exact format (one block

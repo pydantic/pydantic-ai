@@ -10,6 +10,7 @@ from keyring.errors import PasswordDeleteError
 
 from pydantic_ai import models
 from pydantic_clai2.config import credential_store
+from tests.clai2.cli_runner import CliRunner
 
 
 @pytest.fixture
@@ -135,3 +136,9 @@ def vault(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
     monkeypatch.setattr(keyring, 'set_password', set_value)
     monkeypatch.setattr(keyring, 'delete_password', delete)
     return entries
+
+
+@pytest.fixture
+def run_cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> CliRunner:
+    """Run `clai2` in this process; see `CliRunner`."""
+    return CliRunner(monkeypatch=monkeypatch, capsys=capsys)

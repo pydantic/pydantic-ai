@@ -337,6 +337,10 @@ suggestion is also available as
 best-effort guidance after the provider rejects a request, not local validation: unknown model
 identifiers remain valid so custom deployments and newly released models continue to work.
 
+When a provider error has a known fix outside the request, such as the [data retention](bedrock.md#data-retention)
+mode Amazon Bedrock requires for some models, Pydantic AI appends guidance to the error message. It is also
+available as [`hint`][pydantic_ai.exceptions.ModelHTTPError.hint].
+
 !!! note
     Some `ModelHTTPError`s don't come with an HTTP status of their own, and get the status the provider uses for
     the same error instead, so they're handled the same way:

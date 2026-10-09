@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import io
 import json
 import os
@@ -9,6 +10,7 @@ from collections.abc import Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Literal, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -90,23 +92,23 @@ with try_import() as google_imports_successful:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
-with try_import() as voyageai_imports_successful:
-    from pydantic_ai.embeddings.voyageai import (
-        LatestVoyageAIEmbeddingModelNames,
-        VoyageAIEmbeddingModel,
-        VoyageAIEmbeddingSettings,
-    )
-    from pydantic_ai.providers.voyageai import VoyageAIProvider
+# `sentence_transformers` imports `torch`, and `voyageai` imports both when `sentence-transformers` is installed, which
+# takes seconds: the tests that use them import them, so collecting this module stays cheap. See "Test cost" in
+# `tests/AGENTS.md`.
+voyageai_installed = find_spec('voyageai') is not None
+sentence_transformers_installed = find_spec('sentence_transformers') is not None
 
-with try_import() as sentence_transformers_imports_successful:
-    import torch
-    from sentence_transformers import SentenceTransformer
 
-    import pydantic_ai.embeddings.sentence_transformers as sentence_transformers_module
-    from pydantic_ai.embeddings.sentence_transformers import (
-        SentenceTransformerEmbeddingModel,
-        SentenceTransformersEmbeddingSettings,
-    )
+@pytest.fixture(scope='module')
+def voyageai_imported() -> None:
+    """Pay for importing `voyageai` in shared setup, outside each test's time budget."""
+    importlib.import_module('pydantic_ai.embeddings.voyageai')
+
+
+@pytest.fixture(scope='module')
+def sentence_transformers_imported() -> None:
+    """Pay for importing `sentence_transformers` and `torch` in shared setup, outside each test's time budget."""
+    importlib.import_module('pydantic_ai.embeddings.sentence_transformers')
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
@@ -145,8 +147,12 @@ async def test_bedrock_embedding_model_blocks_requests_when_disabled():
             await model.embed('hello', input_type='query')
 
 
-@pytest.mark.skipif(not voyageai_imports_successful(), reason='voyageai not installed')
+@pytest.mark.skipif(not voyageai_installed, reason='voyageai not installed')
+@pytest.mark.usefixtures('voyageai_imported')
 async def test_voyageai_embedding_model_blocks_requests_when_disabled():
+    from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+    from pydantic_ai.providers.voyageai import VoyageAIProvider
+
     model = VoyageAIEmbeddingModel('voyage-4', provider=VoyageAIProvider(api_key='test-key'))
 
     with pydantic_ai.models.override_allow_model_requests(False):
@@ -688,10 +694,14 @@ class TestCohere:
         )
 
 
-@pytest.mark.skipif(not voyageai_imports_successful(), reason='VoyageAI not installed')
+@pytest.mark.skipif(not voyageai_installed, reason='VoyageAI not installed')
+@pytest.mark.usefixtures('voyageai_imported')
 @pytest.mark.vcr
 class TestVoyageAI:
     async def test_infer_model(self, voyage_api_key: str):
+        from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+        from pydantic_ai.providers.voyageai import VoyageAIProvider
+
         with patch.dict(os.environ, {'VOYAGE_API_KEY': voyage_api_key}):
             model = infer_embedding_model('voyageai:voyage-3.5')
         assert isinstance(model, VoyageAIEmbeddingModel)
@@ -701,6 +711,9 @@ class TestVoyageAI:
         assert isinstance(model._provider, VoyageAIProvider)  # type: ignore[reportAttributeAccess]
 
     async def test_query(self, voyage_api_key: str):
+        from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+        from pydantic_ai.providers.voyageai import VoyageAIProvider
+
         model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         result = await embedder.embed_query('Hello, world!')
@@ -717,6 +730,9 @@ class TestVoyageAI:
         )
 
     async def test_query_voyage_4(self, voyage_api_key: str):
+        from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+        from pydantic_ai.providers.voyageai import VoyageAIProvider
+
         model = VoyageAIEmbeddingModel('voyage-4', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         result = await embedder.embed_query('Hello, world!')
@@ -733,6 +749,9 @@ class TestVoyageAI:
         )
 
     async def test_documents(self, voyage_api_key: str):
+        from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+        from pydantic_ai.providers.voyageai import VoyageAIProvider
+
         model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         result = await embedder.embed_documents(['hello', 'world'])
@@ -749,18 +768,27 @@ class TestVoyageAI:
         )
 
     async def test_max_input_tokens(self, voyage_api_key: str):
+        from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+        from pydantic_ai.providers.voyageai import VoyageAIProvider
+
         model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         max_input_tokens = await embedder.max_input_tokens()
         assert max_input_tokens == snapshot(32000)
 
     async def test_embed_error(self, voyage_api_key: str):
+        from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+        from pydantic_ai.providers.voyageai import VoyageAIProvider
+
         model = VoyageAIEmbeddingModel('nonexistent', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         with pytest.raises(ModelAPIError, match='not supported'):
             await embedder.embed_query('Hello, world!')
 
     async def test_query_with_truncate(self, voyage_api_key: str):
+        from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+        from pydantic_ai.providers.voyageai import VoyageAIProvider
+
         model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         result = await embedder.embed_query('Hello, world!', settings={'truncate': True})
@@ -777,6 +805,9 @@ class TestVoyageAI:
         )
 
     async def test_query_with_voyageai_input_type(self, voyage_api_key: str):
+        from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel, VoyageAIEmbeddingSettings
+        from pydantic_ai.providers.voyageai import VoyageAIProvider
+
         model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         settings: VoyageAIEmbeddingSettings = {'voyageai_input_type': 'none'}
@@ -2051,9 +2082,12 @@ class TestGoogle:
         )
 
 
-@pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
+@pytest.mark.skipif(not sentence_transformers_installed, reason='SentenceTransformers not installed')
+@pytest.mark.usefixtures('sentence_transformers_imported')
 class TestSentenceTransformers:
     def _load_stsb_bert_tiny_model(self):
+        from sentence_transformers import SentenceTransformer
+
         # The pinned commit revision lets huggingface_hub serve every model file
         # straight from a warm cache without revalidating it against the Hub.
         # Construction still fires a few metadata requests (model card, repo tree,
@@ -2081,7 +2115,9 @@ class TestSentenceTransformers:
         return self._load_stsb_bert_tiny_model()
 
     def test_model_unavailable(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setattr(f'{__name__}.SentenceTransformer', MagicMock(side_effect=httpx.ConnectTimeout('offline')))
+        monkeypatch.setattr(
+            'sentence_transformers.SentenceTransformer', MagicMock(side_effect=httpx.ConnectTimeout('offline'))
+        )
         skip = MagicMock(side_effect=RuntimeError('skipped'))
         monkeypatch.setattr(pytest, 'skip', skip)
 
@@ -2091,6 +2127,8 @@ class TestSentenceTransformers:
 
     @pytest.fixture
     def embedder(self, stsb_bert_tiny_model: Any) -> Embedder:
+        from pydantic_ai.embeddings.sentence_transformers import SentenceTransformerEmbeddingModel
+
         return Embedder(SentenceTransformerEmbeddingModel(stsb_bert_tiny_model))
 
     async def test_embed_is_exempt_from_request_guard(self, embedder: Embedder):
@@ -2104,6 +2142,8 @@ class TestSentenceTransformers:
         assert result.embeddings
 
     async def test_infer_model(self):
+        from pydantic_ai.embeddings.sentence_transformers import SentenceTransformerEmbeddingModel
+
         model = infer_embedding_model('sentence-transformers:all-MiniLM-L6-v2')
         assert isinstance(model, SentenceTransformerEmbeddingModel)
         assert model.model_name == 'all-MiniLM-L6-v2'
@@ -2112,6 +2152,15 @@ class TestSentenceTransformers:
 
     async def test_adapter_without_downloaded_model(self, monkeypatch: pytest.MonkeyPatch):
         """VCR cannot exercise a local adapter, so cover it without a downloaded model."""
+        import torch
+        from sentence_transformers import SentenceTransformer
+
+        import pydantic_ai.embeddings.sentence_transformers as sentence_transformers_module
+        from pydantic_ai.embeddings.sentence_transformers import (
+            SentenceTransformerEmbeddingModel,
+            SentenceTransformersEmbeddingSettings,
+        )
+
         st_model = MagicMock(spec=SentenceTransformer)
         st_model.model_card_data = MagicMock()
         st_model.model_card_data.model_id = 'test-model'
@@ -2230,11 +2279,14 @@ class TestSentenceTransformers:
     not openai_imports_successful()
     or not cohere_imports_successful()
     or not google_imports_successful()
-    or not voyageai_imports_successful()
+    or not voyageai_installed
     or not bedrock_imports_successful(),
     reason='some embedding package was not installed',
 )
+@pytest.mark.usefixtures('voyageai_imported')
 def test_known_embedding_model_names():  # pragma: lax no cover
+    from pydantic_ai.embeddings.voyageai import LatestVoyageAIEmbeddingModelNames
+
     # Coverage seems to be misbehaving..?
     def get_model_names(model_name_type: Any) -> Iterator[str]:
         for arg in get_args(model_name_type):
