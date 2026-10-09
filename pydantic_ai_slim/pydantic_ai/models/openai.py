@@ -4826,6 +4826,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             def finalize_function_call(item_id: str, final_args: str) -> ModelResponseStreamEvent | None:
                 if item_id in finalized_function_calls or not final_args:
                     return None
+                existing_part = self._parts_manager.get_part_by_vendor_id(item_id)
+                if not isinstance(existing_part, ToolCallPart):
+                    # A stream resumed after `output_item.added` has no complete part yet;
+                    # `output_item.done` creates it from the full item.
+                    return None
 
                 received_args = function_call_args.get(item_id, '')
                 if received_args == final_args:
@@ -4839,8 +4844,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         args=final_args[len(received_args) :],
                     )
                 else:
-                    existing_part = self._parts_manager.get_part_by_vendor_id(item_id)
-                    assert isinstance(existing_part, ToolCallPart)
                     event = self._parts_manager.handle_tool_call_part(
                         vendor_part_id=item_id,
                         tool_name=existing_part.tool_name,
@@ -4944,8 +4947,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get('failed')
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
-                    if chunk.item_id not in finalized_function_calls:
-                        function_call_args[chunk.item_id] = function_call_args.get(chunk.item_id, '') + chunk.delta
+                    # Without `output_item.added` (a resumed stream) the part has no tool name yet, so
+                    # skip its deltas and let `output_item.done` create it; never mutate finalized args.
+                    if chunk.item_id in function_call_args and chunk.item_id not in finalized_function_calls:
+                        function_call_args[chunk.item_id] += chunk.delta
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=chunk.item_id,
                             args=chunk.delta,
