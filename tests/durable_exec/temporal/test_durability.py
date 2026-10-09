@@ -4632,10 +4632,12 @@ async def test_durability_continuation_resume_from_history(client: Client):
     assert isinstance(response, ModelResponse)
     assert response.state == 'complete'
     assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
+    # The suspended response's 5 + 2 tokens were counted by the run that produced it, so this run counts only
+    # the continuation it requested; the completed response in history still reports the whole turn.
     usage = result.usage
     assert usage.requests == 1
-    assert usage.input_tokens == 8
-    assert usage.output_tokens == 6
+    assert (usage.input_tokens, usage.output_tokens) == (3, 4)
+    assert (response.usage.input_tokens, response.usage.output_tokens) == (8, 6)
     # The continuation request ran inside the boundary — the seed wasn't re-generated.
     assert _continuation_model.request_calls == 1
     assert _scheduled_activity_count(history) == 1
