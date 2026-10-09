@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.models.openai import OpenAIResponsesModelSettings
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import CacheRetention, ModelSettings
 from pydantic_clai2.models.custom_params import expand_params
 
 
@@ -45,7 +45,7 @@ class ModelSettingsForm(BaseModel):
     service_tier: Literal['auto', 'default', 'flex', 'priority'] | None = Field(
         default=None, description='Provider service tier (OpenAI).'
     )
-    cache: bool | Literal['5m', '30m', '1h'] | None = Field(
+    cache: bool | CacheRetention | None = Field(
         default=None,
         description='Prompt caching: off, on, or a retention (where the provider supports configuring it).',
     )
