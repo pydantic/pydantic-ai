@@ -31,7 +31,41 @@ class GraphRunContext(Generic[StateT, DepsT]):
 
 
 class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
-    """Base class for a node."""
+    """Base class for a graph node in a `GraphBuilder`-based state machine.
+
+    Each subclass of `BaseNode` represents a single step in the graph. When executed,
+    the graph runtime passes a [`GraphRunContext`][pydantic_graph.GraphRunContext]
+    containing the shared state and dependencies to the node's [`run`][pydantic_graph.basenode.BaseNode.run]
+    method. The method returns either the **next node** to execute or an
+    [`End`][pydantic_graph.basenode.End] marker to signal the graph is complete.
+
+    Nodes are registered in a [`GraphBuilder`][pydantic_graph.GraphBuilder] via
+    `g.node(MyNode)` which creates an edge path. The builder reads the return type
+    annotation of `run()` at runtime to determine which nodes can follow.
+
+    Type Parameters:
+        StateT: The type of the shared state passed through [`GraphRunContext`][pydantic_graph.GraphRunContext].
+            Use your state dataclass here.
+        DepsT: The type of the dependencies passed through [`GraphRunContext`][pydantic_graph.GraphRunContext].
+        NodeRunEndT: The output type carried by the [`End`][pydantic_graph.basenode.End] marker
+            returned by this node. Usually the same as `StateT`.
+
+    Example:
+        ```python
+        from dataclasses import dataclass
+        from pydantic_graph import BaseNode, End, GraphRunContext, GraphBuilder
+
+        @dataclass
+        class MyState:
+            count: int = 0
+
+        @dataclass
+        class Increment(BaseNode[MyState, None, MyState]):
+            async def run(self, ctx: GraphRunContext[MyState, None]) -> 'End[MyState]':
+                ctx.state.count += 1
+                return End(MyState(count=ctx.state.count))
+        ```
+    """
 
     @abstractmethod
     async def run(self, ctx: GraphRunContext[StateT, DepsT]) -> BaseNode[StateT, DepsT, Any] | End[NodeRunEndT]:
