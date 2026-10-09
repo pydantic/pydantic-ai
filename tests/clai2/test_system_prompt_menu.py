@@ -304,7 +304,6 @@ def test_edit_text_opens_visual_then_editor(tmp_path: Path, monkeypatch: pytest.
 def test_edit_text_falls_back_to_the_built_in_editor(
     monkeypatch: pytest.MonkeyPatch, platform: str, editor: str | None
 ) -> None:
-    monkeypatch.setattr(sys, 'platform', platform)
     monkeypatch.delenv('VISUAL', raising=False)
     if editor is None:
         monkeypatch.delenv('EDITOR', raising=False)
@@ -316,7 +315,11 @@ def test_edit_text_falls_back_to_the_built_in_editor(
         built_in.append(app)
         return 'built-in'
 
-    assert edit_text('text', title='Edit', run_area=area) == 'built-in'
+    # Its own session, made before patching `sys.platform`: otherwise the editor's input and output are created for
+    # the patched platform, unless an earlier test on this worker already created them.
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        monkeypatch.setattr(sys, 'platform', platform)
+        assert edit_text('text', title='Edit', run_area=area) == 'built-in'
     assert len(built_in) == 1
 
 
