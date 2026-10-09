@@ -373,7 +373,7 @@ class TestProcessEventStream:
         with anyio.fail_after(5):
             await torn_down.wait()
         assert held_streams
-        assert states[1] == snapshot('cancelled' if consumer_error else 'finished')
+        assert states[1] == snapshot('cancelled') if consumer_error else snapshot('finished')
 
     async def test_abandoned_stream_text_does_not_deadlock_run_stream(self):
         """Walking away from `stream_text()` mid-stream must not wedge the node's teardown.

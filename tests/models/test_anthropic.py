@@ -88,7 +88,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
 
-from .._inline_snapshot import snapshot
+from .._inline_snapshot import snapshot,Is
 from ..cassette_utils import single_request_body
 from ..conftest import (
     IsDatetime,
@@ -845,7 +845,7 @@ async def test_anthropic_cache_messages_uses_per_block_cache_control(
                     {
                         'text': 'Hello',
                         'type': 'text',
-                        'cache_control': {'type': 'ephemeral', 'ttl': expected_ttl},
+                        'cache_control': {'type': 'ephemeral', 'ttl': Is(expected_ttl)},
                     }
                 ],
             }
@@ -5576,6 +5576,11 @@ async def test_anthropic_explicit_extra_body_overrides_the_sampling_setting(allo
     assert kwargs['extra_body'] == snapshot({'temperature': 0.9, 'top_k': 40, 'metadata': {'keep': True}})
 
 
+
+class CityLocation_for_anthropic_adaptive_thinking_keeps_tool_output_unforced(BaseModel):
+    city: str
+    country: str
+
 @pytest.mark.vcr()
 @pytest.mark.parametrize(
     'provider_specific_thinking',
@@ -5608,14 +5613,11 @@ async def test_anthropic_adaptive_thinking_keeps_tool_output_unforced(
     )
     m = anthropic_model('claude-opus-4-6', capture=True)
 
-    class CityLocation(BaseModel):
-        city: str
-        country: str
 
-    agent = Agent(m, output_type=ToolOutput(CityLocation), model_settings=model_settings)
+    agent = Agent(m, output_type=ToolOutput(CityLocation_for_anthropic_adaptive_thinking_keeps_tool_output_unforced), model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
 
-    assert result.output == snapshot(CityLocation(city='Paris', country='France'))
+    assert result.output == snapshot(CityLocation_for_anthropic_adaptive_thinking_keeps_tool_output_unforced(city='Paris', country='France'))
     assert [(body['thinking'], body['tool_choice']) for body in request_capture.bodies()] == snapshot(
         [({'type': 'adaptive'}, {'type': 'auto'})]
     )
