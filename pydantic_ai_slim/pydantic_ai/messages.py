@@ -1413,6 +1413,14 @@ Distinct from [`ToolKind`][pydantic_ai.tools.ToolKind] (invocation semantics —
 """
 
 
+ToolKindLike: TypeAlias = 'ToolPartKind | type[BaseToolCallPart | BaseToolReturnPart]'
+"""How a tool declares its [`ToolPartKind`][pydantic_ai.messages.ToolPartKind]: the kind itself, or a typed tool part class that registers it.
+
+Accepted by `tool_kind` on [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], [`Tool`][pydantic_ai.tools.Tool]
+and the tool decorators. See [Typed tool parts](../tools-advanced.md#typed-tool-parts).
+"""
+
+
 _ToolPartClass: TypeAlias = 'type[ToolCallPart | NativeToolCallPart | ToolReturnPart | NativeToolReturnPart]'
 
 
@@ -1440,7 +1448,7 @@ def _register_typed_tool_part(
     namespace: str | None,
     tool_kind: str | None,
     core: bool,
-) -> None:
+) -> str | None:
     """Register `cls` as the typed subclass for `'{namespace}.{tool_kind}'`, the way capability events register.
 
     The kind is a class argument (`class LookupCallPart(ToolCallPart, namespace='inventory',
@@ -1449,7 +1457,7 @@ def _register_typed_tool_part(
     dataclass here with the kind as its `tool_kind` default, so it needs no decorator. Core's own kinds
     (`core=True`) predate this and stay un-namespaced, declared by the class body's `tool_kind` default
     on a class decorated as usual. A subclass with no kind (an intermediate base, or a subclass of a
-    typed part) registers nothing.
+    typed part) registers nothing. Returns the kind registered, if any.
     """
     recreated: str | None = (
         cls.__dict__.get('_registered_tool_kind') if namespace is None and tool_kind is None and not core else None
@@ -1474,7 +1482,7 @@ def _register_typed_tool_part(
                 f'Typed tool part {cls.__qualname__} must declare its kind with class arguments, e.g. '
                 f"`class {cls.__name__}({base.__name__}, namespace='my_capability', tool_kind='my_tool')`."
             )
-        return
+        return None
     base_fields = {f.name for f in dataclasses.fields(base)}
     # `cls` isn't a dataclass yet, so its own fields come from its annotations; fields it inherits
     # from dataclasses between it and `base` are already built.
@@ -1508,9 +1516,9 @@ def _register_typed_tool_part(
     if existing is None or not _keeps_canonical_registration():
         _TYPED_TOOL_PARTS[key] = _TypedToolPart(cls, base, payload_field)
         _REGISTERED_TOOL_KINDS.add(kind)
-    cls._registered_tool_kind = kind  # pyright: ignore[reportAttributeAccessIssue]
     if not core and recreated is None:
         _make_typed_part_dataclass(cls, kind)
+    return kind
 
 
 def _make_typed_part_dataclass(cls: _ToolPartClass, kind: str) -> None:
@@ -1738,6 +1746,9 @@ class BaseToolReturnPart:
     while an interruption means no result was produced. Both are sent as ordinary results; their
     content tells the model what happened without suggesting a transient tool failure.
     """
+
+    _registered_tool_kind: ClassVar[str | None] = None
+    """The kind a typed subclass registered; `None` on the base classes and on subclasses without a kind."""
 
     typed_content = TypedContent[ToolReturnContent](object)
     """The content validated against the shape a typed subclass declares, or `None` if it doesn't fit.
@@ -1981,7 +1992,12 @@ class ToolReturnPart(BaseToolReturnPart):
     ) -> None:
         """Register a typed `ToolReturnPart`: see [Typed tool parts](../tools-advanced.md#typed-tool-parts)."""
         super().__init_subclass__(**kwargs)
-        _register_typed_tool_part(cls, ToolReturnPart, 'content', namespace=namespace, tool_kind=tool_kind, core=_core)
+        if (
+            kind := _register_typed_tool_part(
+                cls, ToolReturnPart, 'content', namespace=namespace, tool_kind=tool_kind, core=_core
+            )
+        ) is not None:
+            cls._registered_tool_kind = kind
 
     @staticmethod
     def narrow_type(part: ToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> ToolReturnPart:
@@ -2030,9 +2046,12 @@ class NativeToolReturnPart(BaseToolReturnPart):
     ) -> None:
         """Register a typed `NativeToolReturnPart`: see [Typed tool parts](../tools-advanced.md#typed-tool-parts)."""
         super().__init_subclass__(**kwargs)
-        _register_typed_tool_part(
-            cls, NativeToolReturnPart, 'content', namespace=namespace, tool_kind=tool_kind, core=_core
-        )
+        if (
+            kind := _register_typed_tool_part(
+                cls, NativeToolReturnPart, 'content', namespace=namespace, tool_kind=tool_kind, core=_core
+            )
+        ) is not None:
+            cls._registered_tool_kind = kind
 
     @staticmethod
     def narrow_type(part: NativeToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> NativeToolReturnPart:
@@ -2418,7 +2437,7 @@ class ModelRequest:
     def __post_init__(self) -> None:
         # This runs for every message, so parts that need no check are passed over in one C-level pass.
         if not _CHECKED_PART_TYPES.isdisjoint(map(type, self.parts)):
-            self.parts = _check_parts(self.parts, 'user', 'ModelRequest')
+            self.parts = _check_parts(self.parts, 'user')
 
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
@@ -2755,6 +2774,9 @@ class BaseToolCallPart:
         # equality, repr, Pydantic JSON schema, and serialization.
         self.otel_metadata: _otel_messages.ToolCallPartOtelMetadata | None = None
 
+    _registered_tool_kind: ClassVar[str | None] = None
+    """The kind a typed subclass registered; `None` on the base classes and on subclasses without a kind."""
+
     typed_args = TypedArgs[Mapping[str, Any]](dict)
     """The arguments validated against the shape a typed subclass declares, or `None` if they don't fit yet.
 
@@ -2836,7 +2858,12 @@ class ToolCallPart(BaseToolCallPart):
     ) -> None:
         """Register a typed `ToolCallPart`: see [Typed tool parts](../tools-advanced.md#typed-tool-parts)."""
         super().__init_subclass__(**kwargs)
-        _register_typed_tool_part(cls, ToolCallPart, 'args', namespace=namespace, tool_kind=tool_kind, core=_core)
+        if (
+            kind := _register_typed_tool_part(
+                cls, ToolCallPart, 'args', namespace=namespace, tool_kind=tool_kind, core=_core
+            )
+        ) is not None:
+            cls._registered_tool_kind = kind
 
     @staticmethod
     def narrow_type(part: ToolCallPart, *, tool_kind: ToolPartKind | None = None) -> ToolCallPart:
@@ -2902,7 +2929,12 @@ class NativeToolCallPart(BaseToolCallPart):
     ) -> None:
         """Register a typed `NativeToolCallPart`: see [Typed tool parts](../tools-advanced.md#typed-tool-parts)."""
         super().__init_subclass__(**kwargs)
-        _register_typed_tool_part(cls, NativeToolCallPart, 'args', namespace=namespace, tool_kind=tool_kind, core=_core)
+        if (
+            kind := _register_typed_tool_part(
+                cls, NativeToolCallPart, 'args', namespace=namespace, tool_kind=tool_kind, core=_core
+            )
+        ) is not None:
+            cls._registered_tool_kind = kind
 
     @staticmethod
     def narrow_type(part: NativeToolCallPart, *, tool_kind: ToolPartKind | None = None) -> NativeToolCallPart:
@@ -2951,34 +2983,45 @@ def _narrow_call(part: _CallPartT, tool_kind: ToolPartKind | None) -> _CallPartT
     return _utils.copy_dataclass_fields(part, typed.cls, tool_kind=kind)
 
 
-def _check_parts(parts: Sequence[_AnyPartT], speaker: Literal['user', 'assistant'], owner: str) -> Sequence[_AnyPartT]:
+@overload
+def _check_parts(parts: Sequence[ModelRequestPart], speaker: Literal['user']) -> Sequence[ModelRequestPart]: ...
+
+
+@overload
+def _check_parts(parts: Sequence[ModelResponsePart], speaker: Literal['assistant']) -> Sequence[ModelResponsePart]: ...
+
+
+def _check_parts(
+    parts: Sequence[ModelRequestPart | ModelResponsePart], speaker: Literal['user', 'assistant']
+) -> Sequence[ModelRequestPart | ModelResponsePart]:
     """Check a message's speech parts and promote its base tool parts whose `tool_kind` is registered.
 
     A typed tool part passes through untouched. A list is updated in place, so whoever passed it sees
     the same parts as the message.
     """
-    promoted: list[_AnyPartT] | None = None
+    promoted: list[ModelRequestPart | ModelResponsePart] | None = None
     for index, part in enumerate(parts):
         if isinstance(part, SpeechPart):
             if part.speaker != speaker:
+                owner = 'ModelRequest' if speaker == 'user' else 'ModelResponse'
                 # `ValueError`, not `UserError`: `__post_init__` also runs when Pydantic deserializes
                 # message history, where a `ValueError` becomes a `ValidationError` with location info.
                 raise ValueError(
                     f'`SpeechPart` in `{owner}.parts` must have `speaker={speaker!r}`, got {part.speaker!r}'
                 )
-        elif type(part) in _BASE_TOOL_PART_TYPES and (new := _narrow_base_part(part)) is not part:
+            continue
+        if type(part) not in _BASE_TOOL_PART_TYPES:
+            continue
+        if isinstance(part, ToolCallPart | NativeToolCallPart):
+            new: ModelRequestPart | ModelResponsePart = _narrow_call(part, None)
+        else:
+            assert isinstance(part, ToolReturnPart | NativeToolReturnPart)
+            new = _narrow_return(part, None)
+        if new is not part:
             if promoted is None:
                 promoted = parts if isinstance(parts, list) else list(parts)
             promoted[index] = new
     return parts if promoted is None else promoted
-
-
-def _narrow_base_part(part: Any) -> Any:
-    if part.tool_kind is None:
-        return part
-    if isinstance(part, ToolCallPart | NativeToolCallPart):
-        return _narrow_call(part, None)
-    return _narrow_return(cast('ToolReturnPart | NativeToolReturnPart', part), None)
 
 
 def _narrow_return(part: _ReturnPartT, tool_kind: ToolPartKind | None) -> _ReturnPartT:
@@ -3301,7 +3344,7 @@ class ModelResponse:
     def __post_init__(self) -> None:
         # This runs for every message, so parts that need no check are passed over in one C-level pass.
         if not _CHECKED_PART_TYPES.isdisjoint(map(type, self.parts)):
-            self.parts = _check_parts(self.parts, 'assistant', 'ModelResponse')
+            self.parts = _check_parts(self.parts, 'assistant')
 
     @property
     def text(self) -> str | None:

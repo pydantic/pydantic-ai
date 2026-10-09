@@ -26,11 +26,7 @@ from ._json_schema import UseEnumMemberDocstrings
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import UserError
 from .function_signature import FunctionSignature
-from .messages import (
-    BaseToolCallPart,
-    BaseToolReturnPart,
-    ToolPartKind,
-)
+from .messages import ToolKindLike, ToolPartKind
 from .native_tools import AbstractNativeTool
 
 __all__ = (
@@ -379,7 +375,7 @@ class Tool(Generic[ToolAgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        tool_kind: ToolPartKind | type[BaseToolCallPart | BaseToolReturnPart] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -594,11 +590,11 @@ ToolKind: TypeAlias = Literal['function', 'output', 'external', 'unapproved']
 """Kind of tool."""
 
 
-def _tool_kind_of(value: ToolPartKind | type[BaseToolCallPart | BaseToolReturnPart] | None) -> ToolPartKind | None:
+def _tool_kind_of(value: ToolKindLike | None) -> ToolPartKind | None:
     """The kind a tool declares, given as the kind itself or as a typed tool part class that registers it."""
     if not isinstance(value, type):
         return value
-    kind: ToolPartKind | None = getattr(value, '_registered_tool_kind', None)
+    kind = value._registered_tool_kind  # pyright: ignore[reportPrivateUsage]
     if kind is None:
         raise UserError(
             f'`{value.__qualname__}` registers no tool kind; pass a typed tool part class, '
@@ -628,7 +624,7 @@ class _ToolKindField:
         # On the class, this is the field's default.
         return None if obj is None else obj.__dict__.get(self._name)
 
-    def __set__(self, obj: object, value: ToolPartKind | type[BaseToolCallPart | BaseToolReturnPart] | None) -> None:
+    def __set__(self, obj: object, value: ToolKindLike | None) -> None:
         obj.__dict__[self._name] = _tool_kind_of(value)
 
     @classmethod

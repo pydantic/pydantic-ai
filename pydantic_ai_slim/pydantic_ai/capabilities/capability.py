@@ -16,11 +16,9 @@ from pydantic_ai._instructions import (
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityDescription
 from pydantic_ai.messages import (
-    BaseToolCallPart,
-    BaseToolReturnPart,
     CapabilityInstructionSource,
     InstructionId,
-    ToolPartKind,
+    ToolKindLike,
 )
 from pydantic_ai.tools import (
     ArgsValidatorFunc,
@@ -196,7 +194,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        tool_kind: ToolPartKind | type[BaseToolCallPart | BaseToolReturnPart] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -219,7 +217,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        tool_kind: ToolPartKind | type[BaseToolCallPart | BaseToolReturnPart] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -269,7 +267,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        tool_kind: ToolPartKind | type[BaseToolCallPart | BaseToolReturnPart] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -292,7 +290,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        tool_kind: ToolPartKind | type[BaseToolCallPart | BaseToolReturnPart] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
