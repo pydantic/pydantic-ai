@@ -66,7 +66,7 @@ async def main():
 - An agent run from a tool, as in [agent delegation](multi-agent-applications.md#agent-delegation), inherits the deadline. Its own `timeout=` can make it earlier, but not later. When the shared deadline passes, the parent raises `RunTimedOut`; a sub-agent's own, shorter timeout fails just the delegate tool, like a sub-agent [cancelling itself](agent.md#cancellation-and-sub-agents).
 - Running out of time is cancellation, not a model error, so a [`FallbackModel`](models/overview.md#fallback-model) doesn't fall back on it.
 
-```python {title="run_timeout_delegation.py" test="skip"}
+```python {title="run_timeout_delegation.py"}
 from pydantic_ai import Agent, RunContext
 
 research_agent = Agent('openai:gpt-5.2')
