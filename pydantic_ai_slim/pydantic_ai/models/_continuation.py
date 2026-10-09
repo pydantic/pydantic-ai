@@ -11,6 +11,9 @@ glue for stitching those segments back into a single response/stream:
 - [`merge_mode`][pydantic_ai.models._continuation.merge_mode] reports whether a
   continuation *replaces* or *accumulates*, so the streamed composite can reindex
   parts consistently with the merge.
+- [`resumed_response`][pydantic_ai.models._continuation.resumed_response] and
+  [`billed_beyond`][pydantic_ai.models._continuation.billed_beyond] tell what a request that resumes a
+  suspended response from history billed, as opposed to what the run that suspended it already counted.
 - [`_ContinuationStreamedResponse`][pydantic_ai.models._continuation._ContinuationStreamedResponse]
   drives the streamed loop, presenting every segment as one continuous stream.
 
@@ -24,9 +27,10 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
 from contextvars import ContextVar
+from copy import copy
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -52,10 +56,13 @@ __all__ = [
     'MAX_BACKGROUND_POLLS',
     'MAX_GENERATION_CONTINUATIONS',
     'MergeMode',
+    'billed_beyond',
     'cancel_suspended_job',
     'merge_mode',
     'merge_responses',
     'observe_continuation_segments',
+    'resumed_response',
+    'usage_beyond',
     'report_continuation_segment',
     '_ContinuationStreamedResponse',
 ]
@@ -219,6 +226,58 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
     if stripped is not merged.metadata:
         merged = replace(merged, metadata=stripped)
     return merged
+
+
+def resumed_response(messages: Sequence[ModelMessage]) -> ModelResponse | None:
+    """The suspended response `messages` end in, which a request made with them resumes, if any.
+
+    A history ending in a `ModelResponse` with `state == 'suspended'` is the wire-truthful encoding of a
+    paused turn to resume; a normal request ends in a `ModelRequest`.
+    """
+    if messages and isinstance(last := messages[-1], ModelResponse) and last.state == 'suspended':
+        return last
+    return None
+
+
+def billed_beyond(response: ModelResponse, resumed: ModelResponse | None) -> ModelResponse:
+    """`response` with only the usage and failed attempts billed beyond the suspended response it `resumed`.
+
+    A run that resumes a suspended response from history merges it into the response it commits, so that
+    response's usage covers the whole turn. The run that produced the suspended response already counted
+    its usage and failed attempts, so the resuming run counts only what was billed beyond them: the
+    segments it requested itself. That is their summed usage for an accumulated turn (Anthropic
+    `pause_turn`), and the growth of the job's cumulative usage for a replaced one (OpenAI background mode).
+    """
+    if resumed is None:
+        return response
+    already_counted = len(resumed.failed_attempts or ())
+    return replace(
+        response,
+        usage=usage_beyond(response.usage, resumed.usage),
+        failed_attempts=(response.failed_attempts or [])[already_counted:] or None,
+    )
+
+
+def usage_beyond(usage: RequestUsage, baseline: RequestUsage) -> RequestUsage:
+    """`usage` less `baseline`, field by field, the inverse of `RequestUsage.incr`.
+
+    A cost is subtracted only when both are known: an unknown baseline cost leaves `usage`'s, which errs
+    towards counting too much rather than too little.
+    """
+    beyond = copy(usage)
+    # Usage carries arbitrary provider-specific counters next to its declared fields, so this walks them
+    # all the way `RequestUsage.incr` does.
+    for key in (usage.__dict__.keys() | baseline.__dict__.keys()) - {'details', 'cost'}:
+        value = getattr(usage, key, 0)
+        base = getattr(baseline, key, 0)
+        if isinstance(value, (int, float)) and isinstance(base, (int, float)):
+            setattr(beyond, key, value - base)
+    for key, base in baseline.details.items():
+        if isinstance(base, int):  # pragma: no branch
+            beyond.details[key] = beyond.details.get(key, 0) - base
+    if usage.cost is not None and baseline.cost is not None:
+        beyond.cost = usage.cost - baseline.cost
+    return beyond
 
 
 async def cancel_suspended_job(model: Model, response: ModelResponse) -> None:
@@ -509,7 +568,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 self._merged_response = merged
                 self._current_sub = None
                 self._usage = merged.usage
-                self.check_usage(merged.usage)
+                self.check_usage(self.usage)
                 response = merged
 
             self._merged_response = response
@@ -577,9 +636,16 @@ class _ContinuationStreamedResponse(StreamedResponse):
         plain segment, whose model updates `_usage` live during iteration — reading it mid
         segment would omit the in-flight sub's usage. Fold in the current sub's live snapshot
         so consumers (e.g. `AgentStream.usage`) see the running total at any point.
+
+        When the stream resumes a suspended response from history, that response's usage was counted
+        by the run that produced it, so this is only what was billed beyond it: see `billed_beyond`.
         """
         snapshot = self._snapshot()
-        return snapshot.usage if snapshot is not None else self._usage
+        if snapshot is None:
+            return self._usage
+        if (resumed := self.initial_suspended_response) is not None:
+            return usage_beyond(snapshot.usage, resumed.usage)
+        return snapshot.usage
 
     def get(self) -> ModelResponse:
         """Build the live merged [`ModelResponse`][pydantic_ai.messages.ModelResponse] across all segments so far.

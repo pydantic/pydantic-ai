@@ -18,21 +18,23 @@ import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 
-from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai import Agent, Conversation, capture_run_messages
 from pydantic_ai._agent_graph import _resolve_interrupted_stream_state  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks
+from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import SkipModelRequest, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
     ModelRequest,
+    ModelRequestAttempt,
     ModelResponse,
     ModelResponseStreamEvent,
     PartDeltaEvent,
@@ -41,13 +43,21 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models._continuation import usage_beyond
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RequestUsage, UsageLimits
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_graph import End
 
 from .._inline_snapshot import snapshot
+from ..conftest import try_import
+
+with try_import() as otel_imports_successful:
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 _TIMESTAMP = datetime(2024, 1, 1, tzinfo=UTC)
 
@@ -456,8 +466,12 @@ async def test_cost_limit_mid_continuation_cancels_job(
 
 
 @pytest.mark.parametrize('stream', [False, True])
-async def test_cost_limit_checked_before_resuming_suspended_history(stream: bool) -> None:
-    """A suspended response over the limit is rejected before the model is called again."""
+async def test_carried_cost_is_checked_before_resuming_suspended_history(stream: bool) -> None:
+    """A conversation whose carried usage is already over the limit is refused before the model is called again.
+
+    The suspended response's cost belongs to the run that produced it, so it reaches the resuming run's
+    limits through the usage that run carries in, not through the response.
+    """
     seed = _suspended(
         texts=['partial'],
         provider_response_id='r1',
@@ -472,15 +486,53 @@ async def test_cost_limit_checked_before_resuming_suspended_history(stream: bool
         model = _ScriptedModel(responses=[ModelResponse(parts=[TextPart('done')])])
 
     agent = Agent(model)
+    carried = RunUsage(requests=1, input_tokens=1, output_tokens=1, cost=Decimal('0.02'))
+    limits = UsageLimits(cost_limit=Decimal('0.01'))
     with pytest.raises(UsageLimitExceeded, match='cost_limit'):
         if stream:
-            async with agent.run_stream(message_history=history, usage_limits=UsageLimits(cost_limit=Decimal('0.01'))):
+            async with agent.run_stream(message_history=history, usage=carried, usage_limits=limits):
                 pass
         else:
-            await agent.run(message_history=history, usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+            await agent.run(message_history=history, usage=carried, usage_limits=limits)
 
     assert model.request_stream_calls == 0
     assert model.request_calls == 0
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_resuming_suspended_history_does_not_count_its_cost_again(stream: bool) -> None:
+    """Without carried usage, a resumed run's limits see only what it billed, not the response it resumed."""
+    seed = _suspended(
+        texts=['partial'],
+        provider_response_id='r1',
+        input_tokens=1,
+        output_tokens=1,
+        cost=Decimal('0.02'),
+    )
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='go')]), seed]
+    segment = _StreamSegment(['done'], 'complete', 'r2', input_tokens=2, output_tokens=1, cost=Decimal('0.003'))
+    if stream:
+        model = _ScriptedModel(segments=[segment])
+    else:
+        model = _ScriptedModel(
+            responses=[
+                ModelResponse(
+                    parts=[TextPart('done')],
+                    provider_response_id='r2',
+                    usage=RequestUsage(input_tokens=2, output_tokens=1, cost=Decimal('0.003')),
+                )
+            ]
+        )
+    limits = UsageLimits(cost_limit=Decimal('0.01'))
+
+    if stream:
+        async with Agent(model).run_stream(message_history=history, usage_limits=limits) as result:
+            await result.get_output()
+        usage = result.usage
+    else:
+        usage = (await Agent(model).run(message_history=history, usage_limits=limits)).usage
+
+    assert (usage.input_tokens, usage.output_tokens, usage.cost) == (2, 1, Decimal('0.003'))
 
 
 async def test_cancel_mid_continuation_cancels_job_and_stops() -> None:
@@ -1287,13 +1339,183 @@ async def test_interrupted_later_segment_cost_is_checked_before_resume(monkeypat
     assert isinstance(response, ModelResponse)
     assert response.state == 'suspended'
 
+    assert response.usage.cost == Decimal('0.011')
+    assert result.usage.cost == Decimal('0.011')
+
     resume_model = _ScriptedModel(
         responses=[ModelResponse(parts=[TextPart('done')], usage=RequestUsage(cost=Decimal('0.001')))]
     )
     with pytest.raises(UsageLimitExceeded, match='cost_limit'):
-        await Agent(resume_model).run(message_history=messages, usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
-    assert response.usage.cost == Decimal('0.011')
+        await Agent(resume_model).run(
+            message_history=messages, usage=result.usage, usage_limits=UsageLimits(cost_limit=Decimal('0.01'))
+        )
     assert resume_model.request_calls == 0
+
+
+_RESUMED_SHAPES: dict[str, tuple[list[_StreamSegment], int]] = {
+    # What the resuming run requests after the walk-away, and the tokens the provider billed for the whole turn.
+    # Anthropic `pause_turn`: every segment is a separately billed request, under a new response id.
+    'pause-turn': ([_StreamSegment(['b'], 'complete', 'r2', input_tokens=8, output_tokens=6)], 7 + 14),
+    # OpenAI background mode: polls of one job, whose final response reports the job's cumulative usage.
+    'background-poll': ([_StreamSegment(['b'], 'complete', 'r1', input_tokens=8, output_tokens=6)], 14),
+    'three-segment': (
+        [
+            _StreamSegment(['b'], 'suspended', 'r2', input_tokens=4, output_tokens=1),
+            _StreamSegment(['c'], 'complete', 'r3', input_tokens=3, output_tokens=1),
+        ],
+        7 + 5 + 4,
+    ),
+}
+
+
+def _resuming_model(stream: bool, segments: list[_StreamSegment]) -> _ScriptedModel:
+    if stream:
+        return _ScriptedModel(segments=list(segments))
+    return _ScriptedModel(
+        responses=[
+            ModelResponse(
+                parts=[TextPart(text) for text in segment.texts],
+                model_name='scripted',
+                provider_response_id=segment.provider_response_id,
+                usage=RequestUsage(input_tokens=segment.input_tokens, output_tokens=segment.output_tokens),
+                state=segment.state,
+            )
+            for segment in segments
+        ]
+    )
+
+
+async def _walk_away() -> tuple[list[ModelMessage], RunUsage]:
+    """Walk away from a streamed turn the provider suspended after billing 7 tokens, leaving it to resume."""
+    model = _ScriptedModel(segments=[_StreamSegment(['a'], 'suspended', 'r1', input_tokens=5, output_tokens=2)])
+    with capture_run_messages() as messages:
+        async with Agent(model).run_stream('go') as result:
+            async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+                break
+    assert isinstance(messages[-1], ModelResponse) and messages[-1].state == 'suspended'
+    return list(messages), result.usage
+
+
+async def _resume(stream: bool, segments: list[_StreamSegment], **kwargs: Any) -> tuple[RunUsage, ModelResponse]:
+    agent = Agent(_resuming_model(stream, segments))
+    if stream:
+        async with agent.run_stream(**kwargs) as result:
+            await result.get_output()
+        usage, messages = result.usage, result.all_messages()
+    else:
+        run_result = await agent.run(**kwargs)
+        usage, messages = run_result.usage, run_result.all_messages()
+    response = messages[-1]
+    assert isinstance(response, ModelResponse) and response.state == 'complete'
+    return usage, response
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('shape', list(_RESUMED_SHAPES))
+async def test_walk_away_and_resume_count_what_the_provider_billed(shape: str, stream: bool) -> None:
+    """The run that walked away counted the suspended response, so the run that resumes it counts only the rest."""
+    segments, billed = _RESUMED_SHAPES[shape]
+    messages, walked_away = await _walk_away()
+    assert walked_away.total_tokens == 7
+
+    resumed, response = await _resume(stream, segments, message_history=messages)
+
+    assert walked_away.total_tokens + resumed.total_tokens == billed
+    # The committed response still covers the whole turn, as it replaced the suspended one in history.
+    assert response.usage.total_tokens == billed
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('shape', list(_RESUMED_SHAPES))
+@pytest.mark.parametrize('carry', ['usage', 'conversation'])
+async def test_resuming_with_carried_usage_caps_the_conversation_total(shape: str, stream: bool, carry: str) -> None:
+    """Carried into the resuming run, the conversation's usage reaches the provider's total, and limits cap that."""
+    segments, billed = _RESUMED_SHAPES[shape]
+    messages, walked_away = await _walk_away()
+    # The tightest cap the conversation's true total stays within.
+    limits = UsageLimits(total_tokens_limit=billed)
+    if carry == 'usage':
+        kwargs: dict[str, Any] = {'message_history': messages, 'usage': walked_away}
+    else:
+        kwargs = {'conversation': Conversation(messages=messages, usage=walked_away)}
+
+    resumed, _ = await _resume(stream, segments, usage_limits=limits, **kwargs)
+
+    assert resumed.total_tokens == billed
+
+
+@pytest.mark.skipif(not otel_imports_successful(), reason='opentelemetry-sdk not installed')
+@pytest.mark.parametrize('shape', list(_RESUMED_SHAPES))
+async def test_walk_away_and_resume_spans_report_what_the_provider_billed(shape: str) -> None:
+    """Summed over a trace, the `chat` and agent run spans of a walk-away and its resume report the turn once."""
+    segments, billed = _RESUMED_SHAPES[shape]
+    exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    instrument = InstrumentationSettings(tracer_provider=tracer_provider)
+
+    model = _ScriptedModel(segments=[_StreamSegment(['a'], 'suspended', 'r1', input_tokens=5, output_tokens=2)])
+    with capture_run_messages() as messages:
+        async with Agent(model, capabilities=[Instrumentation(settings=instrument)]).run_stream('go') as result:
+            async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+                break
+    async with Agent(
+        _ScriptedModel(segments=list(segments)), capabilities=[Instrumentation(settings=instrument)]
+    ).run_stream(message_history=messages) as result:
+        await result.get_output()
+
+    def reported_tokens(prefix: str, input_key: str, output_key: str) -> int:
+        return sum(
+            int(cast(int, (span.attributes or {}).get(input_key, 0)))
+            + int(cast(int, (span.attributes or {}).get(output_key, 0)))
+            for span in exporter.get_finished_spans()
+            if span.name.startswith(prefix)
+        )
+
+    assert reported_tokens('chat ', 'gen_ai.usage.input_tokens', 'gen_ai.usage.output_tokens') == billed
+    assert (
+        reported_tokens(
+            'invoke_agent ', 'gen_ai.aggregated_usage.input_tokens', 'gen_ai.aggregated_usage.output_tokens'
+        )
+        == billed
+    )
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_resumed_run_does_not_count_the_attempts_of_the_response_it_resumes(stream: bool) -> None:
+    """Attempts that failed before the suspended response were counted with it, by the run that produced it."""
+    rejected = ModelRequestAttempt(
+        model_name='rejected',
+        outcome='rejected',
+        timestamp=_TIMESTAMP,
+        duration=timedelta(0),
+        usage=RequestUsage(input_tokens=100, output_tokens=10),
+    )
+    seed = replace(
+        _suspended(texts=['a'], provider_response_id='r1', input_tokens=5, output_tokens=2),
+        failed_attempts=[rejected],
+    )
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='go')]), seed]
+
+    resumed, response = await _resume(stream, _RESUMED_SHAPES['pause-turn'][0], message_history=history)
+
+    assert resumed.total_tokens == 14
+    assert response.failed_attempts == [rejected]
+
+
+def test_usage_beyond_subtracts_every_counter() -> None:
+    usage = RequestUsage(input_tokens=10, cache_read_tokens=4, details={'reasoning_tokens': 3}, cost=Decimal('0.5'))
+    usage.__dict__['provider_note'] = 'kept'
+    baseline = RequestUsage(input_tokens=6, cache_read_tokens=1, details={'reasoning_tokens': 1, 'gone': 2})
+
+    beyond = usage_beyond(usage, baseline)
+
+    assert (beyond.input_tokens, beyond.cache_read_tokens) == (4, 3)
+    assert beyond.details == {'reasoning_tokens': 2, 'gone': -2}
+    # An unknown baseline cost leaves the cost as reported.
+    assert beyond.cost == Decimal('0.5')
+    assert beyond.__dict__['provider_note'] == 'kept'
+    assert usage_beyond(usage, RequestUsage(cost=Decimal('0.2'))).cost == Decimal('0.3')
 
 
 async def test_run_stream_downstream_error_interrupts_and_cancels_job() -> None:

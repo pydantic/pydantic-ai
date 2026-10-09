@@ -16,7 +16,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import NoOpTracer, Tracer
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -2590,7 +2590,10 @@ class TestContinuationAccrual:
         ]
 
     async def test_a_resumed_chain_is_folded_from_the_response_it_resumes(self):
-        """The suspended response a history ends in seeds the fold, so the boundaries match core's merge."""
+        """The suspended response a history ends in seeds the fold, so the boundaries match core's merge.
+
+        That response was charged by the run that produced it, so only what was billed beyond it is accrued.
+        """
         seed = _segment('A', tokens=(7, 3), cost='0.010', suspended=True, response_id='a')
         store = _CountingStore()
         model = ScriptedContinuationModel(
@@ -2605,11 +2608,49 @@ class TestContinuationAccrual:
             message_history=[ModelRequest.user_text_prompt('go'), seed]
         )
 
-        assert (await limits.status())[0].spent.tokens == result.usage.total_tokens
+        assert (await limits.status())[0].spent.tokens == result.usage.total_tokens == 16
         assert [[(entry.tokens, entry.usd) for entry in batch] for batch in store.batches] == [
-            [(21, Decimal('0.021'))],
+            [(11, Decimal('0.011'))],
             [(5, Decimal('0.005'))],
         ]
+
+    @pytest.mark.parametrize(
+        ('resumed', 'billed'),
+        [
+            pytest.param([StreamSegment(['B'], 'complete', 'b', 8, 6)], 7 + 14, id='pause-turn'),
+            # A background job's final poll reports its cumulative usage.
+            pytest.param([StreamSegment(['B'], 'complete', 'a', 8, 6)], 14, id='background-poll'),
+            pytest.param(
+                [StreamSegment(['B'], 'suspended', 'b', 4, 1), StreamSegment(['C'], 'complete', 'c', 3, 1)],
+                7 + 5 + 4,
+                id='three-segment',
+            ),
+        ],
+    )
+    async def test_a_walk_away_and_the_run_resuming_it_charge_what_the_provider_billed(
+        self, resumed: list[StreamSegment], billed: int
+    ):
+        """The run that walked away from a suspended response charged it, so the run that resumes it charges the rest."""
+        limits = SpendLimits[None](
+            budgets=[Budget(window='conversation'), Budget(window='total')],
+            price=lambda response: Decimal(response.usage.total_tokens),
+        )
+        model = ScriptedContinuationModel(segments=[StreamSegment(['A'], 'suspended', 'a', 5, 2)])
+        with capture_run_messages() as messages:
+            async with Agent(model, deps_type=type(None), capabilities=[limits]).run_stream('go') as stream:
+                async for _ in stream.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+                    break
+        walked_away = messages[-1]
+        assert isinstance(walked_away, ModelResponse) and walked_away.state == 'suspended'
+
+        model = ScriptedContinuationModel(segments=resumed)
+        async with Agent(model, deps_type=type(None), capabilities=[limits]).run_stream(
+            message_history=messages
+        ) as stream:
+            await stream.get_output()
+
+        conversation, total = await limits.status(_run_ctx(conversation_id=walked_away.conversation_id))
+        assert conversation.spent == total.spent == Spent(usd=Decimal(billed), tokens=billed, requests=2)
 
     @pytest.mark.parametrize('failure', ['unpriced', 'raises'])
     async def test_a_boundary_that_cannot_be_priced_defers_to_the_merged_response(self, failure: str):
