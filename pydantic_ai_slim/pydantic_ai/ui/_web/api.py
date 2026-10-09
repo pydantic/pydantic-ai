@@ -3,7 +3,7 @@
 from collections.abc import Mapping, Sequence
 from typing import Literal, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from pydantic.alias_generators import to_camel
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -216,10 +216,18 @@ def create_api_app(
                 status_code=415,
             )
 
-        adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(
-            request, agent=agent, sdk_version=sdk_version
-        )
-        extra_data = ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
+        try:
+            adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(
+                request, agent=agent, sdk_version=sdk_version
+            )
+            extra_data = ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
+        except ValidationError as e:
+            try:
+                content = e.json()
+            except ValueError:
+                # Invalid UTF-8 cannot be echoed as JSON; match `dispatch_request`'s validation response.
+                content = e.json(include_input=False)
+            return Response(content=content, media_type='application/json', status_code=422)
 
         if error := validate_request_options(extra_data, model_ids, allowed_tool_ids):
             return JSONResponse({'error': error}, status_code=400)
