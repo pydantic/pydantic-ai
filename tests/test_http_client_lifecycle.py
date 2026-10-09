@@ -149,7 +149,7 @@ async def test_run_leaves_client_of_passed_model_open(provider_clients: list[htt
 
 
 async def test_names_resolved_through_capability_are_not_reused(provider_clients: list[httpx2.AsyncClient]):
-    """With a `resolve_model_id` capability, a name can resolve differently per run, so it's resolved every run."""
+    """With a `resolve_model_id` capability, a name is resolved every run, and a model built for it closed when the run ends."""
     seen: list[str] = []
 
     def resolve(ctx: ModelResolutionContext[Any], model_id: str) -> Model | None:
@@ -162,4 +162,4 @@ async def test_names_resolved_through_capability_are_not_reused(provider_clients
         await agent.run('What is the capital of France?', model='openai-chat:gpt-5.2')
         await agent.run('What is the capital of France?', model='openai-chat:gpt-5.2')
     assert seen == ['openai-chat:gpt-5.2', 'openai-chat:gpt-5.2']
-    assert len(provider_clients) == 2
+    assert [client.is_closed for client in provider_clients] == [True, True]

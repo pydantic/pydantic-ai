@@ -3139,8 +3139,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Resolve a concrete model selection through the capability chain.
 
         A name that only `infer_model` can resolve builds a new model, with its own provider and HTTP client.
-        While the agent is entered, that model is entered on the agent's exit stack and reused by later runs;
-        otherwise it's added to `run_built_models` so the run can enter it and close its client when it ends.
+        While the agent is entered and has no `resolve_model_id` capability, that model is entered on the agent's
+        exit stack and reused by later runs; otherwise it's added to `run_built_models` so the run can enter it
+        and close its client when it ends.
         """
         if not isinstance(selection, str):
             return selection
@@ -3150,14 +3151,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if capability.has_resolve_model_id:
             # Resolution can depend on the run's deps, so it isn't reused across runs.
             resolution_ctx = models.ModelResolutionContext(agent=self, deps=deps)
-            resolved = await capability.resolve_model_id(resolution_ctx, model_id=selection)
-            resolved_model = resolved if resolved is not None else models.infer_model(selection)
+            resolved_model = await capability.resolve_model_id(resolution_ctx, model_id=selection)
         else:
             resolved_model = await self._entered_model_for_name(selection)
-            if resolved_model is None:
-                resolved_model = models.infer_model(selection)
-                if run_built_models is not None:
-                    run_built_models.append(resolved_model)
+        if resolved_model is None:
+            resolved_model = models.infer_model(selection)
+            if run_built_models is not None:
+                run_built_models.append(resolved_model)
         if resolved_models is not None:
             resolved_models[cache_key] = resolved_model
         return resolved_model
