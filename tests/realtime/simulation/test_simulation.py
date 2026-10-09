@@ -1847,6 +1847,20 @@ def test_scenario_a_spoken_turn_whose_transcript_is_never_read() -> None:
     )
 
 
+def test_scenario_live_backend_report_read_while_closing_an_ended_session() -> None:
+    """A session that ended on its request limit accounts nothing more: not the backend report its close reads."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.delegate()
+        sim.settle()
+        sim.delegate()
+        sim.settle()
+        sim.delegate()
+        sim.backend_finish()
+
+    run_tolerant(LiveSimulation(options=SessionOptions(request_limit=1)), scenario)
+
+
 def test_every_finding_is_pinned() -> None:
     """Every known bug has a scenario that fails with it until the fix lands; accepted limitations have none."""
     assert {finding.id for finding in KNOWN_FINDINGS if not finding.accepted} == PINNED
