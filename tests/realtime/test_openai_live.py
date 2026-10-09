@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
     ImageUrl,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -2817,16 +2818,82 @@ async def test_a_sideband_refuses_idle_audio(model: OpenAILiveModel) -> None:
             pass  # pragma: no cover
 
 
-async def test_a_sideband_cannot_seed_history(model: OpenAILiveModel) -> None:
-    """Live takes its history when the session starts, which the offer already did."""
-    with pytest.raises(UserError, match='cannot seed `message_history`'):
+_HISTORY = [
+    ModelRequest(parts=[UserPromptPart(content='My name is Ada.')]),
+    ModelResponse(parts=[TextPart(content='Nice to meet you, Ada.')]),
+]
+_SEEDED_INPUT = [
+    {'role': 'user', 'content': [{'type': 'input_text', 'text': 'My name is Ada.'}]},
+    {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Nice to meet you, Ada.'}]},
+]
+
+
+async def test_answering_an_offer_seeds_the_history() -> None:
+    """Live takes history only when a session starts, which on a WebRTC call is the offer."""
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return _created()
+
+    await _webrtc_model(handler).answer_webrtc_offer('v=0', message_history=_HISTORY)
+
+    assert sent[0]['session']['input'] == _SEEDED_INPUT
+
+
+async def test_a_sideband_opened_with_the_offers_history_seeds_nothing(model: OpenAILiveModel) -> None:
+    """The history the offer seeded is already in the session Live replays, so the sideband adds nothing."""
+    ws = _FakeWebSocket([_started_frame(input=_SEEDED_INPUT)])
+    with _patched_connect(ws):
         async with model.connect_webrtc(
             WebRTCSession(provider_name='openai', session_id='live_test'),
-            messages=[ModelRequest(parts=[UserPromptPart(content='My name is Ada.')])],
+            # The trailing request is the one the session adds for the instructions; it seeds nothing.
+            messages=[*_HISTORY, ModelRequest(parts=[], instructions='Be brief.')],
             model_settings=None,
             model_request_parameters=ModelRequestParameters(),
         ):
-            pass  # pragma: no cover
+            pass
+    assert ws.sent == []
+
+
+async def test_a_sideband_accepts_history_live_echoes_with_other_whitespace(model: OpenAILiveModel) -> None:
+    """The check is that it is the same conversation, so whitespace Live might normalize doesn't fail a call."""
+    echoed = [
+        {'role': 'user', 'content': [{'type': 'input_text', 'text': 'My name  is\nAda.'}]},
+        _SEEDED_INPUT[1],
+    ]
+    with _patched_connect(_FakeWebSocket([_started_frame(input=echoed)])):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='openai', session_id='live_test'),
+            messages=_HISTORY,
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ):
+            pass
+
+
+@pytest.mark.parametrize(
+    ('started_input', 'sideband_history'),
+    [
+        pytest.param([], _HISTORY, id='offer-seeded-nothing'),
+        pytest.param(_SEEDED_INPUT[:1], _HISTORY, id='offer-seeded-other-history'),
+        # The other direction: the offer seeded history, and the sideband was opened without it.
+        pytest.param(_SEEDED_INPUT, [], id='sideband-opened-without-the-offers-history'),
+    ],
+)
+async def test_a_sideband_with_history_the_offer_did_not_seed_raises(
+    model: OpenAILiveModel, started_input: list[dict[str, Any]], sideband_history: list[ModelMessage]
+) -> None:
+    """Live can't take history after the session starts, so the model would never see what history records."""
+    with _patched_connect(_FakeWebSocket([_started_frame(input=started_input)])):
+        with pytest.raises(UserError, match='must be opened with the same `message_history`'):
+            async with model.connect_webrtc(
+                WebRTCSession(provider_name='openai', session_id='live_test'),
+                messages=sideband_history,
+                model_settings=None,
+                model_request_parameters=ModelRequestParameters(),
+            ):
+                pass  # pragma: no cover
 
 
 async def test_closing_a_session_records_the_seconds_live_reports_as_it_ends(model: OpenAILiveModel) -> None:
