@@ -291,14 +291,18 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     assert len(part.audio.data) > 0
 
 
-async def test_text_context_waits_for_next_turn(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
+async def test_text_context_waits_for_next_turn(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
+) -> None:
     provider, _ = openai_ws_cassette
     model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
     agent = Agent(instructions='Answer in one short sentence.')
 
     async with agent.realtime(model).session() as session:
         await session.send('The visitor is called Ada.', respond=False)
-        await asyncio.sleep(1)
+        # Gives a reply the model shouldn't have started time to arrive. Replay delivers the recorded frames
+        # back to back, so it needs only a moment.
+        await asyncio.sleep(1 if realtime_recording else 0.1)
         assert not [message for message in session.new_messages() if isinstance(message, ModelResponse)]
         await session.send('What is the visitor called?')
         with anyio.fail_after(30):
