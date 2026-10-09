@@ -154,6 +154,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         journal_discovery=True,
         sequential_tools_in_durable_context=False,
         tool_config_key='temporal',
+        # Workflow code and `@workflow.signal` handlers share Temporal's deterministic event loop, so a
+        # token created in the workflow and fired from a signal handler cancels the run at the same
+        # point on replay.
+        accepts_cancellation_token=True,
     )
 
     run_context_type: type[TemporalRunContext[AgentDepsT]]

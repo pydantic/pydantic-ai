@@ -28,6 +28,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
+from .exceptions import UserError
+
 if TYPE_CHECKING:
     from .run import AgentRun
 
@@ -66,8 +68,15 @@ class CancellationToken:
 
         # `RunCancellation.cancel()` is itself thread-safe: it delivers synchronously when called
         # on the run's own loop and marshals via `call_soon_threadsafe` otherwise.
-        for cancellation in registrations:
-            cancellation.cancel()
+        try:
+            for cancellation in registrations:
+                cancellation.cancel()
+        except UserError:
+            # A run's loop couldn't be reached from here (see `RunCancellation.cancel()`): leave the
+            # token uncancelled, so firing it again from the right place still cancels the run.
+            with self._lock:
+                self._cancelled = False
+            raise
 
     def _register(self, cancellation: RunCancellation) -> None:
         with self._lock:
@@ -151,23 +160,29 @@ class RunCancellation:
 
         Idempotent; a no-op once the run has finished.
         """
-        with self._lock:
-            if self._finished or self._requested:
-                return
-            self._requested = True
-            owner = self._owner
-            loop = self._loop
-            if owner is None or loop is None or owner.done():
-                return
-
         try:
             running_loop = asyncio.get_running_loop()
         except RuntimeError:
             running_loop = None
-        if running_loop is loop:
+        with self._lock:
+            if self._finished or self._requested:
+                return
+            owner = self._owner
+            loop = self._loop
+            if owner is not None and loop is not None and not owner.done() and running_loop is not loop:
+                try:
+                    loop.call_soon_threadsafe(self._deliver)
+                except NotImplementedError:
+                    # A loop that only its own code may drive, like a Temporal workflow's: a cancel
+                    # from elsewhere would land at a point the engine never recorded. Raise without
+                    # recording the request, so it isn't delivered at the next step boundary either.
+                    raise UserError(
+                        "This run's event loop can't be reached from another thread or loop. Cancel it "
+                        'from code running on that loop, such as a Temporal `@workflow.signal` handler.'
+                    ) from None
+            self._requested = True
+        if running_loop is loop and owner is not None and not owner.done():
             self._deliver()
-        else:
-            loop.call_soon_threadsafe(self._deliver)
 
     def _deliver(self) -> None:
         with self._lock:

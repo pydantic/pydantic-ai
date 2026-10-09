@@ -32,6 +32,7 @@ from pydantic_ai import (
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
+    CancellationToken,
     CapabilityEvent,
     CustomEvent,
     ExternalToolset,
@@ -465,6 +466,13 @@ async def test_prefect_agent_rejects_a_workspace_inside_a_flow(tmp_path: Path) -
         UserError, match='Workspaces are not supported inside a Prefect flow through the deprecated wrapper agent'
     ):
         await run_agent()
+
+
+async def test_prefect_agent_rejects_cancellation_token() -> None:
+    """A same-process `cancellation_token` can't cross the Prefect durable boundary, so the deprecated
+    wrapper rejects it up front."""
+    with pytest.raises(UserError, match='`cancellation_token` cannot be used with Prefect durable execution'):
+        await simple_prefect_agent.run('Hello', cancellation_token=CancellationToken())
 
 
 def test_prefect_agent_construction_warns_deprecated() -> None:

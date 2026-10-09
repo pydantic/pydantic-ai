@@ -802,6 +802,8 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
     The first four are **first-party**: Pydantic AI stops the run itself and raises `RunCancelled`, an ordinary catchable exception carrying the resumable history. The last is **external**: the `CancelledError` keeps propagating unchanged -- so `asyncio.timeout()` still raises `TimeoutError`, a `TaskGroup` still tears down, and Temporal still ends the workflow *Cancelled* -- with the same history *attached* for [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation]. Pydantic AI can't turn an external `CancelledError` into `RunCancelled` without breaking those semantics; that's why cancellation has two kinds, covered next.
 
+    Inside a [durable execution](durable_execution/overview.md) workflow or flow, a token is rejected, as it would cancel the run out of band and break replay. The exception is Temporal, where a token created in workflow code and fired from a workflow signal handler cancels the run deterministically; see [Temporal cancellation](durable_execution/temporal.md#cancellation).
+
 When the surrounding environment cancels the run -- for example through `asyncio.timeout()`, a [`TaskGroup`][asyncio.TaskGroup], or application shutdown -- the [`CancelledError`][asyncio.CancelledError] remains unchanged. [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] provides the attached run state:
 
 ```python {title="run_external_cancel.py"}
