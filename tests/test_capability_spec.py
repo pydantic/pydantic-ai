@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import pydantic
 import pytest
 
 from pydantic_ai import Capability as TopLevelCapability
@@ -646,11 +645,6 @@ def test_agent_from_spec_capabilities_merged():
     assert any(isinstance(c, ExtraCap) for c in children)
 
 
-@pytest.mark.skipif(
-    tuple(map(int, pydantic.VERSION.split('.')[:2])) < (2, 14),
-    reason='Pinned to pydantic 2.14 schemas, which add `additionalProperties: false` to closed dataclasses; '
-    'the lowest-versions job runs the older `pydantic>=2.12` floor.',
-)
 def test_model_json_schema_with_capabilities():
     # Unit (not VCR): this pins the generated JSON-schema/capabilities mapping, which is built internally
     # from the known-model enum and never produced by any API response — no cassette could exercise it.
@@ -660,7 +654,6 @@ def test_model_json_schema_with_capabilities():
         {
             '$defs': {
                 'AdvisorTool': {
-                    'additionalProperties': False,
                     'properties': {
                         'kind': {'default': 'advisor', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -726,7 +719,6 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'CodeExecutionTool': {
-                    'additionalProperties': False,
                     'properties': {
                         'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -740,7 +732,6 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'FileSearchTool': {
-                    'additionalProperties': False,
                     'properties': {
                         'kind': {'default': 'file_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -766,7 +757,6 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'ImageGenerationTool': {
-                    'additionalProperties': False,
                     'properties': {
                         'kind': {'default': 'image_generation', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1612,7 +1602,6 @@ def test_model_json_schema_with_capabilities():
                     'type': 'string',
                 },
                 'MCPServerTool': {
-                    'additionalProperties': False,
                     'properties': {
                         'kind': {'default': 'mcp_server', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1644,7 +1633,6 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'MemoryTool': {
-                    'additionalProperties': False,
                     'properties': {
                         'kind': {'default': 'memory', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1709,7 +1697,6 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'ToolOrOutput': {
-                    'additionalProperties': False,
                     'properties': {
                         'function_tools': {'items': {'type': 'string'}, 'title': 'Function Tools', 'type': 'array'}
                     },
@@ -1718,7 +1705,6 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'ToolSearchTool': {
-                    'additionalProperties': False,
                     'properties': {
                         'kind': {'default': 'tool_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1775,7 +1761,6 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'WebFetchTool': {
-                    'additionalProperties': False,
                     'properties': {
                         'kind': {'default': 'web_fetch', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1805,7 +1790,6 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'WebSearchTool': {
-                    'additionalProperties': False,
                     'properties': {
                         'kind': {'default': 'web_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1855,7 +1839,6 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'XSearchTool': {
-                    'additionalProperties': False,
                     'properties': {
                         'kind': {'default': 'x_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
