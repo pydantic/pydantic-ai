@@ -86,7 +86,6 @@ from ..usage import RequestUsage, RunUsage, UsageLimits
 from ._core import (
     AudioCleared,
     AudioSent,
-    AudioUnsent,
     Closed,
     CoreInput,
     ExchangeAbandoned,
@@ -2075,27 +2074,18 @@ class RealtimeSession:
         audio_was_uncommitted = self._audio_uncommitted
         self._held_commit.has_audio = True
         self._open_user_turn_for_audio()
-        previous_length: int | None = None
-        if self._retain_input:
-            # Buffer the raw input so the finalized user turn can retain it. A per-item speech-stopped
-            # boundary later cuts this into that turn's own segment (see `_segment_input_audio`); only the
-            # exact split at the boundary is approximate (see `audio_retention`).
-            previous_length = len(self._input_audio)
+        retained: bytes | None = None
         try:
-            # The extend lives inside the try so a chunk that is not bytes-like (possible since
-            # `send_audio` accepts an async iterable of chunks) rolls the user-turn state back below
-            # instead of leaving `_user_turn_active` set with nothing buffered or sent. A failing
-            # `bytearray.extend` leaves the buffer unchanged, so the length guard in the handler
-            # correctly skips the truncation for that case.
+            # Copied inside the try so a chunk that is not bytes-like (possible since `send_audio` accepts
+            # an async iterable of chunks) fails before it goes out and rolls the user-turn state back
+            # below, instead of leaving `_user_turn_active` set with nothing buffered or sent.
             if self._retain_input:
-                self._input_audio.extend(data)
+                retained = memoryview(data).tobytes()
             self._audio_uncommitted = True
             await self._send_frame(BinaryAudio(data=data, media_type='audio/pcm'))
         except BaseException as e:
             self._user_turn_active = user_turn_was_active
             self._audio_uncommitted = audio_was_uncommitted
-            if previous_length is not None and len(self._input_audio) == previous_length + len(data):
-                del self._input_audio[previous_length:]
             if (
                 isinstance(e, RealtimeError)
                 and isinstance(e.__cause__, self._connection.transport_errors)
@@ -2108,7 +2098,14 @@ class RealtimeSession:
                 # the reconnect fails, the next chunk raises again.
                 return
             raise
-        if self._retain_input:
+        if retained is not None:
+            # Buffer the raw input so the finalized user turn can retain it, once it has gone out (with no
+            # await since, so still in send order), as the session core takes it: a boundary the pump handled
+            # while the chunk was on its way was drawn without it, and a chunk whose send failed belongs to
+            # no turn. A per-item speech-stopped boundary later cuts this into that turn's own segment (see
+            # `_segment_input_audio`); only the exact split at the boundary is approximate (see
+            # `audio_retention`).
+            self._input_audio.extend(retained)
             self._bound_retained_audio()
 
     def _open_user_turn_for_audio(self) -> None:
@@ -2408,7 +2405,6 @@ class RealtimeSession:
         # which is a caller that asked to send.
         async with self._send_lock:
             first_input = self._inputs_sent
-            audio_sent_to_core = False
             try:
                 for position, content in enumerate(contents):
                     # Numbered before the call, and whether or not it raises, matching how
@@ -2426,17 +2422,15 @@ class RealtimeSession:
                             tool_call_id=content.tool_call_id if isinstance(content, ToolResult) else None,
                         )
                     )
-                    if isinstance(content, BinaryAudio):
-                        # Under the lock, so the core takes audio in the order it goes out and a failed send
-                        # takes back its own chunk; before the send, as the pump can end the turn meanwhile.
-                        self._apply_core(AudioSent(data=bytes(content.data)))
-                        audio_sent_to_core = True
                     await self._connection.send(content)
+                    if isinstance(content, BinaryAudio):
+                        # Under the lock, so the core takes audio in the order it goes out; only once it has
+                        # gone out, as a turn the provider ended while it was on its way (which the pump can
+                        # record meanwhile) was ended without it, and a chunk whose send fails is in no turn.
+                        self._apply_core(AudioSent(data=bytes(content.data)))
             except BaseException as e:
                 # The caller takes back what it sent, so the core does too.
                 self._apply_core(InputWithdrawn(input_ids=tuple(range(first_input, self._inputs_sent))))
-                if audio_sent_to_core:
-                    self._apply_core(AudioUnsent())
                 if not isinstance(e, self._connection.transport_errors):
                     raise
                 # A send that fails because the link is gone is the same failure the receive side
