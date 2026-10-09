@@ -880,9 +880,25 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     assert conn.conversation_id == 'conversation-2'
 
 
-async def test_max_duration_error_reconnects_into_a_new_conversation(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With a reconnect policy, a `max_duration` error re-dials into a new conversation, so the error is recoverable."""
-    ended = FakeWebSocket(
+class _StaysOpen(FakeWebSocket):
+    """Yields its frames, then stays open with nothing more to say."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        while self._incoming:
+            yield self._incoming.pop(0)
+        # The connection re-dials without reading on.
+        await asyncio.Event().wait()  # pragma: no cover
+
+
+@pytest.mark.parametrize('socket_class', [FakeWebSocket, _StaysOpen], ids=['closes', 'stays-open'])
+async def test_max_duration_error_reconnects_into_a_new_conversation(
+    monkeypatch: pytest.MonkeyPatch, socket_class: type[FakeWebSocket]
+) -> None:
+    """With a reconnect policy, a `max_duration` error re-dials into a new conversation, so the error is recoverable.
+
+    The connection doesn't wait for xAI to close the socket: whether or not it does, the re-dial closes it.
+    """
+    ended = socket_class(
         [
             _created(),
             _conversation_created(),
@@ -910,47 +926,6 @@ async def test_max_duration_error_reconnects_into_a_new_conversation(monkeypatch
         OutputTranscript(text='hi', is_final=True, response_id='response'),
     ]
     assert conn.conversation_id == 'conversation-2'
-
-
-class _StaysOpen(FakeWebSocket):
-    """Yields its frames, then stays open with nothing more to say."""
-
-    async def __aiter__(self) -> AsyncIterator[Any]:
-        while self._incoming:
-            yield self._incoming.pop(0)
-        # The connection re-dials without reading on.
-        await asyncio.Event().wait()  # pragma: no cover
-
-
-async def test_max_duration_error_reconnects_without_waiting_for_the_close(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The connection re-dials after a `max_duration` error even if xAI keeps the socket open, and closes it."""
-    ended = _StaysOpen(
-        [
-            _created(),
-            _conversation_created(),
-            _updated(),
-            json.dumps(_error_frame('max_duration', 'Maximum conversation duration exceeded.')),
-        ]
-    )
-    transcript = json.dumps({'type': 'response.output_audio_transcript.done', 'transcript': 'hi'})
-    fresh = FakeWebSocket([_created(), _conversation_created('conversation-2'), _updated(), transcript])
-    connect = _RecordingConnect([ended, fresh])
-    monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
-
-    model = _model(rt_xai.XaiRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1}))
-    async with _connect(model, 'x') as conn:
-        events = await collect_codec_events(conn)
-
-    assert events[:3] == [
-        RealtimeSessionErrorEvent(
-            message='Maximum conversation duration exceeded.',
-            type='max_duration',
-            code='max_duration',
-            recoverable=True,
-        ),
-        RealtimeSessionReconnectEvent(state_restored=False),
-        OutputTranscript(text='hi', is_final=True, response_id='response'),
-    ]
     assert connect.closed[0] is ended
 
 

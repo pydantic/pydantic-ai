@@ -301,8 +301,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             model_name_getter=model_name_getter,
         )
         self._conversation_id = conversation_id
-        # Set by a `max_duration` error a reconnect recovers from, so the frame carrying it re-dials.
-        self._conversation_ended = False
         # xAI reports `billable_audio_seconds` as the conversation's running total, not the response's own
         # share (live: three turns of 0.71s, 0.71s and 0.87s report 1, 2 and 3), so each response is
         # credited the increase since the last report. The total restarts with a new conversation, which
@@ -485,9 +483,8 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
 
     async def _decode_frame(self, raw: str) -> _DecodedFrame:
         events = await super()._decode_frame(raw)
-        if self._conversation_ended:
+        if any(_is_recoverable_max_duration(event) for event in events.codec):
             # Nothing more goes out on this socket: the re-dial replaces it.
-            self._conversation_ended = False
             events.redial = 'the conversation reached its maximum duration'
             return events
         if self._held_audio and not self._commit_held and not self._response_active:
@@ -559,8 +556,12 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             # The connection re-dials right away, without waiting for xAI to close the socket, and the new
             # conversation gets the history replayed into it, so the session carries on there.
             event = replace(event, recoverable=True)
-            self._conversation_ended = True
         return event
+
+
+def _is_recoverable_max_duration(event: RealtimeCodecEvent) -> bool:
+    """Whether the connection reported xAI's `max_duration` error as one its re-dial recovers from."""
+    return isinstance(event, RealtimeSessionErrorEvent) and event.type == 'max_duration' and event.recoverable
 
 
 @dataclass(init=False)
