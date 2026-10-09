@@ -161,9 +161,10 @@ def test_session_changes_saved_during_a_turn_wait_for_it_to_end() -> None:
         applied('model', Settings(model='test:second'))
         applied('run.tool_retries', Settings(tool_retries=7))
         applied('model', Settings(model='test:third'))
+        applied('run.instructions', Settings(instructions='Be brief.'))
         applied('display.theme', Settings(theme='default'))
-        assert (session.model, session.tool_retries) == ('test:first', None)
-    assert (session.model, session.tool_retries) == ('test:third', 7)
+        assert (session.model, session.tool_retries, session.instructions) == ('test:first', None, '')
+    assert (session.model, session.tool_retries, session.instructions) == ('test:third', 7, 'Be brief.')
     applied('run.request_limit', Settings(request_limit=12))
     assert session.usage_limits is not None and session.usage_limits.request_limit == 12
 
@@ -310,6 +311,78 @@ async def _open_menu_mid_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
             await done.wait()
     text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
     assert text.index('> /menu') < text.index('Finished work') < text.index('menu closed') < text.index('Goodbye.')
+
+
+def test_only_opted_in_available_commands_run_live() -> None:
+    commands = Commands()
+    commands.register(Command(name='slow', description='Slow', handler=lambda args: 'done', live=True))
+    commands.register(
+        Command(name='hidden', description='Hidden', handler=lambda args: 'done', live=True, available=lambda: False)
+    )
+    commands.register(Command(name='menu', description='Menu', handler=lambda args: 'done'))
+    assert commands.runs_live('/slow focus words')
+    assert not commands.runs_live('/hidden')
+    assert not commands.runs_live('/menu')
+    assert not commands.runs_live('/missing')
+    assert not commands.runs_live('/')
+
+
+async def test_live_command_keeps_the_editor_working_and_cancellable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A slow command such as `/compact` keeps the prompt on screen with the spinner and stops on Ctrl-C.
+
+    The draft typed meanwhile shows while it runs and is still there once it stops.
+    """
+    started, working, drafted, kept, done = (anyio.Event() for _ in range(5))
+
+    class Surface(PromptSurface):
+        def paint(self, rows: tuple[str, ...]) -> None:
+            plain = [Text.from_ansi(row).plain.rstrip() for row in rows]
+            busy = any(row.startswith(' Working ') for row in plain)
+            if started.is_set() and busy:
+                working.set()
+                if 'keep me' in plain:
+                    drafted.set()
+            elif drafted.is_set() and 'keep me' in plain:
+                kept.set()
+            super().paint(rows)
+
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
+
+    async def slow(args: list[str]) -> str:
+        if args:
+            return f'finished {args[0]}'
+        started.set()
+        await anyio.sleep_forever()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    output = io.StringIO()
+
+    async def run() -> None:
+        await chat(
+            Agent(TestModel(), deps_type=type(None)),
+            deps=None,
+            plugins=[_MenuCommand(Command(name='slow', description='Slow', handler=slow, live=True))],
+            console=Console(file=output, force_terminal=True, width=80, height=24),
+            store=SettingsStore(tmp_path / 'config.db'),
+        )
+        done.set()
+
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            pipe.send_text('/slow quickly\r')
+            pipe.send_text('/slow\r')
+            await working.wait()
+            pipe.send_text('keep me')
+            await drafted.wait()
+            pipe.send_text('\x1b')
+            await kept.wait()
+            pipe.send_text('\x15/exit\r')
+            await done.wait()
+    text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
+    assert text.index('finished quickly') < text.index('Command cancelled.') < text.index('Goodbye.')
 
 
 async def test_overlay_commands_take_the_screen_without_waiting_for_themselves() -> None:

@@ -43,6 +43,8 @@ class QuestionMenu:
     question: Question
     position: int
     total: int
+    asker: str | None = None
+    """Who asks, such as `Task [1a2b3c4d]`, when it is not the run the user prompted."""
     cursor: int = 0
     selected: set[int] = field(default_factory=set[int])
     custom: PromptBuffer = field(default_factory=PromptBuffer)
@@ -50,10 +52,11 @@ class QuestionMenu:
 
     @property
     def title(self) -> str:
-        """Include progress when the request contains several questions."""
+        """Include who asks, and progress when the request contains several questions."""
+        title = self.question.header if self.asker is None else f'{self.asker}: {self.question.header}'
         if self.total == 1:
-            return self.question.header
-        return f'{self.question.header} (question {self.position} of {self.total})'
+            return title
+        return f'{title} (question {self.position} of {self.total})'
 
     @property
     def hint(self) -> str:
@@ -99,12 +102,18 @@ class QuestionMenu:
         return None
 
     def frame(self, *, width: int, height: int) -> tuple[str, ...]:
-        """Bound the picker to half the viewport, scrolling choices around the cursor."""
+        """Bound the picker to half the viewport, scrolling choices around the cursor.
+
+        The question is pinned between the title and its choices: output that streams while it is
+        open, from a delegated task say, lands in the transcript above and cannot push it away.
+        """
         budget = max(3, height // 2)
+        question = self._question_rows(width=width, limit=max(1, (budget - 2) // 2))
         if self.editing_custom:
             return (
                 theme.sgr(theme.ACCENT) + truncate(f'{self.title}: Other (type answer)', width) + '\x1b[0m',
-                *self.custom.rows(width=width, limit=budget - 2),
+                *question,
+                *self.custom.rows(width=width, limit=max(1, budget - 2 - len(question))),
                 theme.sgr(theme.MUTED) + truncate(self.hint, width) + '\x1b[0m',
             )
         choices: list[str] = []
@@ -117,23 +126,29 @@ class QuestionMenu:
         choices.append(f'{len(choices) + 1}. Other (type answer)')
         lines: list[str] = []
         focus = 0
-        console = Console()
         for index, choice in enumerate(choices):
             if index == self.cursor:
                 focus = len(lines)
-            wrapped = Text(choice).wrap(console, width=max(1, width - 2), overflow='fold')
-            for line_index, line in enumerate(wrapped):
+            for line_index, line in enumerate(_wrap(choice, width=width - 2)):
                 prefix = '> ' if index == self.cursor and line_index == 0 else '  '
                 role = theme.ACCENT if index == self.cursor else theme.INFO
-                lines.append(theme.sgr(role) + truncate(prefix + line.plain, width) + '\x1b[0m')
-        visible = max(1, budget - 2)
+                lines.append(theme.sgr(role) + truncate(prefix + line, width) + '\x1b[0m')
+        visible = max(1, budget - 2 - len(question))
         start = min(focus, max(0, len(lines) - visible))
         title = truncate(self.title, width)
         return (
             theme.sgr(theme.ACCENT, bold=True) + title + '\x1b[0m',
+            *question,
             *lines[start : start + visible],
             theme.sgr(theme.MUTED) + truncate(self.hint, width) + '\x1b[0m',
         )
+
+    def _question_rows(self, *, width: int, limit: int) -> list[str]:
+        """The question's wrapped text, cut to `limit` rows with an ellipsis so the choices keep room."""
+        rows = _wrap(self.question.question, width=width)
+        if len(rows) > limit:
+            rows = [*rows[: limit - 1], rows[limit - 1] + '…']
+        return [truncate(row, width) for row in rows]
 
     def run(self, *, console: Console, key_source: Callable[[], QuestionKey]) -> tuple[str, ...] | str | None:
         """Borrow the released editor's live panel, or open one for this question alone."""
@@ -143,7 +158,6 @@ class QuestionMenu:
             surface = PromptSurface(output=surface, size=lambda: console.size)
             console = Console(file=surface, width=console.width, height=console.height)
         try:
-            console.print(Text(self.question.question, style=theme.color(theme.ACCENT)))
             with raw_mode():
                 while True:
                     surface.paint(self.frame(width=console.width, height=console.height))
@@ -158,6 +172,8 @@ class QuestionMenu:
                     if result is not None:
                         return result
         finally:
+            # The panel showed the question while it was open; the transcript keeps it above the answer.
+            console.print(Text(self.question.question, style=theme.color(theme.ACCENT)))
             if owned:
                 surface.restore()
             else:
@@ -184,18 +200,19 @@ class TerminalAnswerer:
         """Answer every question or decline the entire request."""
         async with self._terminal, self._full_screen():
             child_id = DelegationTasks.child_id()
-            if child_id is not None:
-                self._console.print(f'Task [{child_id[:8]}] requests your input', markup=False)
+            asker = None if child_id is None else f'Task [{child_id[:8]}]'
+            if asker is not None:
+                self._console.print(f'{asker} requests your input', markup=False)
             with question_input() if self._runner is None else nullcontext(None) as key_source:
-                return await self.answer_questions(request=request, key_source=key_source)
+                return await self.answer_questions(request=request, key_source=key_source, asker=asker)
 
     async def answer_questions(
-        self, *, request: AskUserRequest, key_source: Callable[[], QuestionKey] | None
+        self, *, request: AskUserRequest, key_source: Callable[[], QuestionKey] | None, asker: str | None = None
     ) -> AskUserResponse:
         """Keep one decoder for the batch so pasted text cannot escape to the next question."""
         answers: list[AskUserAnswer] = []
         for position, question in enumerate(request.questions, start=1):
-            menu = QuestionMenu(question=question, position=position, total=len(request.questions))
+            menu = QuestionMenu(question=question, position=position, total=len(request.questions), asker=asker)
             if self._runner is not None:
                 operation = partial(self._runner, menu)
             else:
@@ -210,6 +227,11 @@ class TerminalAnswerer:
                 else AskUserAnswer(header=question.header, selected=selected)
             )
         return AskUserResponse(answers=tuple(answers))
+
+
+def _wrap(text: str, *, width: int) -> list[str]:
+    """Fold `text` to plain rows of at most `width` cells, keeping its own line breaks."""
+    return [line.plain for line in Text(text).wrap(Console(), width=max(1, width), overflow='fold')]
 
 
 class _Header(BaseModel):

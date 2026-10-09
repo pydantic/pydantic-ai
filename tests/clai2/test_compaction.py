@@ -9,10 +9,24 @@ from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai import Agent, ModelHTTPError, capture_run_messages
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.compaction import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
+from pydantic_ai_harness.compaction import (
+    FallbackCompaction,
+    SlidingWindowCompaction,
+    SummarizingCompaction,
+    estimate_token_count,
+)
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import DEFAULT_PLUGINS, Session, chat
 from pydantic_clai2.builtin_plugins import compaction as compaction_plugin
@@ -48,11 +62,15 @@ def summary_prompt(summary_run: Sequence[ModelMessage]) -> str:
     return prompt.content
 
 
+REPLY = 'hi, ' + 'here is what I found. ' * 10
+"""Long enough that a short summary of it makes the history smaller."""
+
+
 def two_turns() -> list[ModelMessage]:
     """Two request/response pairs; the chain always keeps the newest pair intact."""
     return [
         ModelRequest.user_text_prompt('hello there'),
-        ModelResponse(parts=[TextPart('hi')]),
+        ModelResponse(parts=[TextPart(REPLY)]),
         ModelRequest.user_text_prompt('and again'),
         ModelResponse(parts=[TextPart('yo')]),
     ]
@@ -75,12 +93,12 @@ async def test_compact_sends_the_history_and_focus_to_the_summariser(focus: str)
     with capture_run_messages() as summary_run:
         notice = await plugin.commands.execute_async(f'/compact {focus}')
     prompt = summary_prompt(summary_run)
-    assert 'User: hello there\nAssistant: hi\nUser: and again' in prompt
+    assert f'User: hello there\nAssistant: {REPLY}\nUser: and again' in prompt
     if focus:
         assert prompt.endswith(f'Give particular weight to: {focus}')
     else:
         assert 'Give particular weight to:' not in prompt
-    assert notice.startswith('Compacted 4 messages down to 3; about ') and notice.endswith(' tokens saved.')
+    assert notice == 'Compacted 4 messages down to 3; about 47 of 61 tokens saved.'
     summary, first_request, last_response = transcript.messages
     assert isinstance(summary, ModelRequest) and isinstance(first_request, ModelRequest)
     [summary_part], [request_part] = summary.parts, first_request.parts
@@ -92,16 +110,51 @@ async def test_compact_sends_the_history_and_focus_to_the_summariser(focus: str)
 
 
 async def test_compact_says_when_there_is_nothing_to_do() -> None:
-    assert await make_plugin().commands.execute_async('/compact') == 'Nothing to compact: the conversation is empty.'
+    plugin = make_plugin()
+    assert plugin.commands.runs_live('/compact'), 'a long summary must keep the spinner up and stay cancellable'
+    assert await plugin.commands.execute_async('/compact') == 'Nothing to compact: the conversation is empty.'
     short = Transcript(messages=[ModelRequest.user_text_prompt('hi')], model='test')
     plugin = make_plugin(short)
     with capture_run_messages() as summary_run:
         notice = await plugin.commands.execute_async('/compact')
-    assert notice == 'Nothing to compact: the last 50,000 tokens are always kept.' and not summary_run
+    assert notice == 'Nothing to compact: compacting would not make the conversation smaller.' and not summary_run
     with pytest.raises(ValueError, match='Choose a model first'):
         await make_plugin(
             Transcript(messages=[ModelRequest.user_text_prompt('hi')]), protected_tokens=0
         ).commands.execute_async('/compact')
+
+
+def tool_rounds(rounds: int, return_chars: int) -> list[ModelMessage]:
+    """One prompt, then `rounds` tool calls and returns of `return_chars` characters each, then an answer."""
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('fix the bug ' * 50)]
+    for index in range(rounds):
+        messages.append(ModelResponse(parts=[ToolCallPart('read', {'n': index}, tool_call_id=f'call{index}')]))
+        messages.append(ModelRequest(parts=[ToolReturnPart('read', 'x' * return_chars, tool_call_id=f'call{index}')]))
+    messages.append(ModelResponse(parts=[TextPart('done')]))
+    return messages
+
+
+@pytest.mark.parametrize('strategy', ['summarization', 'truncation'])
+async def test_compact_shrinks_a_history_just_over_the_protected_tail(strategy: str) -> None:
+    """186 messages a little over 50,000 tokens once became 187 with nothing saved; now half is compacted."""
+    before = tool_rounds(92, 2160)
+    assert len(before) == 186 and estimate_token_count(before) == 50_127
+    transcript = Transcript(messages=before, model=TestModel(custom_output_text='the gist'))
+    notice = await make_plugin(transcript, strategy=strategy).commands.execute_async('/compact')
+    after = transcript.messages
+    saved = 50_127 - estimate_token_count(after)
+    assert len(after) < 100 and 24_000 < saved < 25_063
+    assert notice == f'Compacted 186 messages down to {len(after)}; about {saved:,} of 50,127 tokens saved.'
+
+
+async def test_compact_keeps_the_history_when_the_summary_is_no_smaller() -> None:
+    before = two_turns()
+    transcript = Transcript(messages=before, model=TestModel(custom_output_text='gist ' * 500))
+    with capture_run_messages() as summary_run:
+        notice = await make_plugin(transcript, protected_tokens=0).commands.execute_async('/compact')
+    assert notice == 'Nothing to compact: compacting would not make the conversation smaller.'
+    assert summary_run, 'the summary was written, then discarded'
+    assert transcript.messages == before and len(before) == 4
 
 
 def assert_truncated_without_a_summary(transcript: Transcript) -> None:
@@ -225,7 +278,7 @@ async def test_compact_is_saved_without_another_turn(tmp_path: Path, strategy: s
     agent = Agent(TestModel(custom_output_text='the gist'))
     session = Session(agent, deps=None, conversations=store, workspace=tmp_path)
     await session.prompt('first')
-    await session.prompt('second')
+    await session.prompt('second ' * 20)
     before = session.messages
     plugin = make_plugin(session, strategy=strategy, protected_tokens=0)
 
@@ -239,7 +292,7 @@ async def test_compact_is_saved_without_another_turn(tmp_path: Path, strategy: s
 
 
 async def test_shell_loads_the_plugin_and_compacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    inputs(monkeypatch, ['first', 'second', '/compact don\'t lose the "auth" notes', '/plugins list', '/exit'])
+    inputs(monkeypatch, ['first', 'second ' * 20, '/compact don\'t lose the "auth" notes', '/plugins list', '/exit'])
     output = io.StringIO()
     await chat(
         Agent(TestModel()),

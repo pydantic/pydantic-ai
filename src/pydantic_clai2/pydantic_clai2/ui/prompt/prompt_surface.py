@@ -4,15 +4,16 @@ import io
 import math
 import re
 import time
+import webbrowser
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from threading import RLock
+from threading import RLock, Thread
 from typing import IO
 
 from termflow.live import Rect, ScreenBuffer, render_diff
 from termflow.tui.layout import truncate
 
-from pydantic_clai2.ui.prompt.prompt_selection import WHEEL_DOWN, WHEEL_UP, Selection, mouse_report
+from pydantic_clai2.ui.prompt.prompt_selection import LEFT, WHEEL_DOWN, WHEEL_UP, Selection, mouse_report, url_at
 from pydantic_clai2.ui.prompt.prompt_transcript import MarkdownBlock, Render, TranscriptBuffer
 from pydantic_clai2.ui.prompt.text_clipboard import copy_text
 from pydantic_clai2.ui.prompt.transcript_view import TranscriptView
@@ -39,6 +40,11 @@ TRANSCRIPT_KEYS = frozenset({'pageup', 'pagedown', 'mouse'})
 WHEEL_ROWS = 3
 
 
+def open_in_browser(url: str) -> None:
+    """Open `url` without stalling input on a slow browser launch."""
+    Thread(target=webbrowser.open, args=(url,), daemon=True).start()
+
+
 class PromptSurface(io.StringIO):
     """Own the terminal: every write lands in the transcript, and frames show it.
 
@@ -55,12 +61,14 @@ class PromptSurface(io.StringIO):
         size: Callable[[], tuple[int, int]],
         clock: Callable[[], float] = time.monotonic,
         transcript: TranscriptBuffer | None = None,
+        open_url: Callable[[str], object] = open_in_browser,
     ) -> None:
         """Bind terminal IO and injectable geometry/time sources."""
         super().__init__()
         self.output = output
         self.size = size
         self.clock = clock
+        self.open_url = open_url
         self.transcript = transcript if transcript is not None else TranscriptBuffer()
         self.view = TranscriptView(self.transcript)
         self._lock = RLock()
@@ -184,10 +192,12 @@ class PromptSurface(io.StringIO):
                 self._paint()
 
     def transcript_key(self, key: str, data: str = '') -> str | None:
-        """Page, wheel, or drag-select for one of `TRANSCRIPT_KEYS`; return the text a drag copied.
+        """Page, wheel, drag-select, or click a URL for one of `TRANSCRIPT_KEYS`; return the text a drag copied.
 
         Reporting the wheel stops most terminals from selecting text themselves, so a left-button
-        drag highlights cells here and its release copies them to the clipboard.
+        drag highlights cells here and its release copies them to the clipboard. It also stops them
+        opening links on Cmd/Ctrl+click, and mouse reports cannot say Cmd was held, so a click
+        without a drag on a URL opens it here.
         """
         if key != 'mouse':
             self.scroll(self.page if key == 'pageup' else -self.page)
@@ -199,14 +209,23 @@ class PromptSurface(io.StringIO):
             self.scroll(WHEEL_ROWS if report.button == WHEEL_UP else -WHEEL_ROWS)
             return None
         with self._lock:
+            clicked = report.released and report.button == LEFT and self.selection.held and self.selection.head is None
             if self.selection.feed(report) and self._frame is not None:
                 text = self.selection.text(self._frame, rows=self._transcript_rows)
                 if text.strip():
                     copy_text(text, output=self.output)
                     return text
+            elif clicked and self._frame is not None and (url := self._url_at(report.cell)):
+                self.open_url(url)
             elif self._live and not self._holds:
                 self._paint()
         return None
+
+    def _url_at(self, cell: tuple[int, int]) -> str | None:
+        assert self._frame is not None
+        # The scrolled-away hint covers the bottom transcript row, so a URL there reads as cut off.
+        rows = self._transcript_rows - (self.view.anchor is not None)
+        return url_at(self._frame, cell, rows=rows, joins=self.view.joins())
 
     @property
     def page(self) -> int:
