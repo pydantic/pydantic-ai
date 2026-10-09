@@ -155,7 +155,7 @@ class GeminiLifecycle:
             elif output:
                 # The stall didn't end in the tool call it was for: the filler was a response of its own, which
                 # this one carries on.
-                self._end_deferred(before, continued=True)
+                self._end_deferred(before)
             elif isinstance(event, RealtimeResponseInterruptedEvent):
                 # The user cut in: the exchange is over, and the filler is ended by the terminal that follows.
                 self._deferred = None
@@ -291,14 +291,13 @@ class GeminiLifecycle:
             self._close_turn(events)
         self._place_held(events)
 
-    def _end_deferred(self, events: list[LifecycleEvent], *, continued: bool) -> None:
+    def _end_deferred(self, events: list[LifecycleEvent]) -> None:
+        """End the held filler as the model carries the exchange on in a response of its own, starting now."""
         deferred, self._deferred = self._deferred, None
         assert deferred is not None
         held = self._open
         self._end(events, status='completed', finish_reason=deferred.finish_reason or 'stop')
-        if continued:
-            # The exchange goes on past it, in the response starting now.
-            self._continues = held
+        self._continues = held
 
     # --- user turns and inputs ----------------------------------------------------------------------
 
