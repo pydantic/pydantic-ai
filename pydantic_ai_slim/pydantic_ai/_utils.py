@@ -1103,6 +1103,8 @@ def is_text_like_media_type(media_type: str) -> bool:
 
     Returns True for `text/*`, JSON, XML, YAML, TOML, and their structured syntax suffixes.
     """
+    # Media types may carry parameters (RFC 2045); classify on the bare type.
+    media_type = media_type.split(';', 1)[0].strip()
     return (
         media_type.startswith('text/')
         or media_type == 'application/json'
