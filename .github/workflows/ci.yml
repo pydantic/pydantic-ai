@@ -48,6 +48,7 @@ jobs:
       docs_changed: ${{ steps.classify.outputs.docs_changed }}
       clai2_only: ${{ steps.classify.outputs.clai2_only }}
       clai2_changed: ${{ steps.classify.outputs.clai2_changed }}
+      harness_only: ${{ steps.classify.outputs.harness_only }}
       pyright_changed: ${{ steps.classify.outputs.pyright_changed }}
     steps:
       - name: Classify pull request changes
@@ -62,6 +63,7 @@ jobs:
             echo 'docs_changed=false' >> "$GITHUB_OUTPUT"
             echo 'clai2_only=false' >> "$GITHUB_OUTPUT"
             echo 'clai2_changed=true' >> "$GITHUB_OUTPUT"
+            echo 'harness_only=false' >> "$GITHUB_OUTPUT"
             echo 'pyright_changed=true' >> "$GITHUB_OUTPUT"
           }
 
@@ -134,6 +136,25 @@ jobs:
             esac
           }
 
+          # Outside its own suite, only `pydantic-clai2` and the gh-aw shim (tested in `quality`, which
+          # still runs) import `pydantic-ai-harness`; core and its tests merely probe whether it is
+          # installed. So a change confined to the two packages and content runs the harness and
+          # CLAI 2 suites -- on every install shape, resolution, and Temporal leg -- and skips the jobs
+          # that exercise only the rest of the workspace. That includes a `pydantic-clai2` change that
+          # also touches content. The harness `pyproject.toml` stays on the full path: its dependency
+          # bounds feed the environment every package is tested in.
+          is_harness() {
+            case "$1" in
+              src/pydantic_ai_harness/pyproject.toml) return 1 ;;
+              src/pydantic_ai_harness/*|tests/harness/*|docs/harness/*) ;;
+              *) return 1 ;;
+            esac
+          }
+
+          is_harness_tier() {
+            is_harness "$1" || is_clai2 "$1" || is_non_test_content "$1"
+          }
+
           # `test-clai2-clipboard` runs on macOS and Windows runners, so only for a change that reaches
           # `pydantic-clai2` or the job itself.
           is_clai2_input() {
@@ -153,6 +174,7 @@ jobs:
           docs_changed=false
           clai2_only=true
           clai2_changed=false
+          harness_tier=true
           pyright_changed=false
           for changed_file in "${changed_files[@]}"; do
             IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
@@ -172,6 +194,10 @@ jobs:
               { [ -n "$previous_filename" ] && is_clai2_input "$previous_filename"; }; then
               clai2_changed=true
             fi
+            if ! is_harness_tier "$filename" || \
+              { [ -n "$previous_filename" ] && ! is_harness_tier "$previous_filename"; }; then
+              harness_tier=false
+            fi
             if is_pyright_input "$filename" || \
               { [ -n "$previous_filename" ] && is_pyright_input "$previous_filename"; }; then
               pyright_changed=true
@@ -181,6 +207,12 @@ jobs:
           echo "docs_changed=$docs_changed" >> "$GITHUB_OUTPUT"
           echo "clai2_only=$clai2_only" >> "$GITHUB_OUTPUT"
           echo "clai2_changed=$clai2_changed" >> "$GITHUB_OUTPUT"
+          # The narrower tiers take precedence, so at most one of the three `*_only` outputs is true.
+          harness_only=false
+          if [ "$harness_tier" = true ] && [ "$content_only" = false ] && [ "$clai2_only" = false ]; then
+            harness_only=true
+          fi
+          echo "harness_only=$harness_only" >> "$GITHUB_OUTPUT"
           echo "pyright_changed=$pyright_changed" >> "$GITHUB_OUTPUT"
 
   quality:
@@ -381,7 +413,10 @@ jobs:
   # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
     needs: classify
-    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: >-
+      needs.classify.outputs.content_only != 'true'
+      && needs.classify.outputs.clai2_only != 'true'
+      && needs.classify.outputs.harness_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -429,10 +464,13 @@ jobs:
   # Documentation examples are runtime-checked on one representative Python version. A
   # version-specific miss is low-impact and easy to repair, while multiplying this job across
   # the support matrix would recreate much of the CI cost this reduced path avoids.
+  # A harness-only change runs it too: its reduced `test-all-extras` cells skip the docs tests.
   docs-only:
     name: docs-only checks on Python 3.13
     needs: classify
-    if: needs.classify.outputs.content_only == 'true' && needs.classify.outputs.docs_changed == 'true'
+    if: >-
+      (needs.classify.outputs.content_only == 'true' || needs.classify.outputs.harness_only == 'true')
+      && needs.classify.outputs.docs_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -524,9 +562,11 @@ jobs:
             paths: tests/clai2
           - name: standard
             command: ""
-        # A single-value dimension, so the `exclude` below can drop every cell but
-        # `pydantic-clai2` when `classify` found a change confined to it.
+        # Single-value dimensions, so the `exclude` below can drop every cell but `pydantic-clai2`
+        # when `classify` found a change confined to it, and every cell but `pydantic-ai-harness`
+        # and `pydantic-clai2` for one confined to those two.
         clai2_only: ["${{ needs.classify.outputs.clai2_only }}"]
+        harness_only: ["${{ needs.classify.outputs.harness_only }}"]
         exclude:
           - clai2_only: "true"
             install: { name: pydantic-ai-slim }
@@ -535,6 +575,12 @@ jobs:
           - clai2_only: "true"
             install: { name: pydantic-ai-harness }
           - clai2_only: "true"
+            install: { name: standard }
+          - harness_only: "true"
+            install: { name: pydantic-ai-slim }
+          - harness_only: "true"
+            install: { name: pydantic-evals }
+          - harness_only: "true"
             install: { name: standard }
     env:
       CI: true
@@ -675,8 +721,13 @@ jobs:
   # `all-extras` is the slowest install shape by a wide margin -- it alone pulls in every
   # optional dependency -- so it gets its own job, split into shards, instead of sharing the
   # `test` job's timeout budget with the three much lighter install shapes.
+  # A `pydantic-ai-harness`-only change runs just `tests/harness` and `tests/clai2` here, in one
+  # shard per version.
   test-all-extras:
-    name: test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/${{ matrix.python-version == '3.11' && 3 || 2 }})
+    name: >-
+      test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/${{
+        needs.classify.outputs.harness_only == 'true' && 1 || matrix.python-version == '3.11' && 3 || 2
+      }})
     needs: [classify, test-durations-baseline]
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
@@ -685,16 +736,18 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
-        shard: [1, 2]
-        include:
-          - python-version: "3.11"
-            shard: 3
+        shard: ${{ fromJSON(needs.classify.outputs.harness_only == 'true' && '[1]' || '[1, 2]') }}
+        include: >-
+          ${{ fromJSON(needs.classify.outputs.harness_only == 'true' && '[]' || '[{"python-version": "3.11", "shard": 3}]') }}
     env:
       CI: true
       # Collect 3.14 for fast coverage and 3.11 for branches and extras unavailable on 3.14.
       # The 3.11 legacy tracer needs a third shard to stay within the job timeout.
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.python-version == '3.11' }}
-      SPLITS: ${{ matrix.python-version == '3.11' && 3 || 2 }}
+      # Computed from `classify`'s output, so passed to the shell through the environment.
+      SHARD: ${{ matrix.shard }}
+      SPLITS: ${{ needs.classify.outputs.harness_only == 'true' && 1 || matrix.python-version == '3.11' && 3 || 2 }}
+      TEST_PATHS: ${{ needs.classify.outputs.harness_only == 'true' && 'tests/harness tests/clai2' || '' }}
       DURATIONS_PREFIX: test-durations-${{ matrix.python-version }}-all-extras-
       DURATIONS_BASELINE: test-durations-baseline/${{ matrix.python-version }}-all-extras.json
       # Rebenchmark after https://github.com/cbornet/blockbuster/pull/61 is released in a
@@ -819,11 +872,12 @@ jobs:
           # `--all-packages` so the extras of every workspace member are installed, not just the
           # root package's: that is where `pydantic-ai-harness`'s optional integrations get tested.
           uv run --no-project python .github/scripts/shard_durations.py select --durations "$RUNNER_TEMP/$DURATIONS_BASELINE" \
-            --shards "$SPLITS" --shard ${{ matrix.shard }} --exclude tests/durable_exec > "$RUNNER_TEMP/shard-args.txt"
+            --shards "$SPLITS" --shard "$SHARD" --exclude tests/durable_exec > "$RUNNER_TEMP/shard-args.txt"
           mapfile -t shard_args < "$RUNNER_TEMP/shard-args.txt"
+          read -ra test_paths <<< "$TEST_PATHS"
           # `--store-durations` (from `pytest-split`) records this shard's durations for the next run.
           uv run --all-packages --all-extras --no-extra mcp-tasks "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
-            --ignore=tests/durable_exec -m "not temporal" "${shard_args[@]}" \
+            --ignore=tests/durable_exec -m "not temporal" "${shard_args[@]}" "${test_paths[@]}" \
             --store-durations --clean-durations --durations-path "$RUNNER_TEMP/test-durations.json"
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
@@ -845,7 +899,7 @@ jobs:
         run: >-
           uv run --no-project python .github/scripts/shard_durations.py report
           --baseline "$RUNNER_TEMP/$DURATIONS_BASELINE" --current "$RUNNER_TEMP/test-durations.json"
-          --title "all-extras on ${{ matrix.python-version }}, shard ${{ matrix.shard }}"
+          --title "all-extras on ${{ matrix.python-version }}, shard $SHARD"
 
       - name: cover Absurd without a database URL
         if: matrix.python-version == '3.14' && matrix.shard == 1
@@ -961,11 +1015,15 @@ jobs:
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
-            "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
+          # A `pydantic-ai-harness`-only change runs only the harness `temporal` tests.
+          if [[ "$HARNESS_ONLY" != "true" ]]; then
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+              "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
+          fi
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
             "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
         env:
+          HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
       # See the matching step in the `test` job.
@@ -985,8 +1043,13 @@ jobs:
           path: .coverage
           include-hidden-files: true
 
+  # The harness declares minimum bounds for its own dependencies, so a `pydantic-ai-harness`-only
+  # change still proves them here, running just `tests/harness` and `tests/clai2` in one shard.
   test-lowest-versions:
-    name: test on ${{ matrix.python-version }} (lowest-versions, shard ${{ matrix.shard }}/2)
+    name: >-
+      test on ${{ matrix.python-version }} (lowest-versions, shard ${{ matrix.shard }}/${{
+        needs.classify.outputs.harness_only == 'true' && 1 || 2
+      }})
     needs: [classify, test-durations-baseline]
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
@@ -995,7 +1058,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
-        shard: [1, 2]
+        shard: ${{ fromJSON(needs.classify.outputs.harness_only == 'true' && '[1]' || '[1, 2]') }}
     env:
       CI: true
       # Python 3.14's sys.monitoring coverage core is substantially cheaper than the legacy tracer.
@@ -1007,6 +1070,10 @@ jobs:
       TYPECHECK_EXAMPLES: false
       DURATIONS_PREFIX: test-durations-${{ matrix.python-version }}-lowest-versions-
       DURATIONS_BASELINE: test-durations-baseline/${{ matrix.python-version }}-lowest-versions.json
+      # Computed from `classify`'s output, so passed to the shell through the environment.
+      SHARD: ${{ matrix.shard }}
+      SPLITS: ${{ needs.classify.outputs.harness_only == 'true' && 1 || 2 }}
+      TEST_PATHS: ${{ needs.classify.outputs.harness_only == 'true' && 'tests/harness tests/clai2' || '' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -1082,10 +1149,11 @@ jobs:
             runner=(pytest)
           fi
           uv run --no-project python .github/scripts/shard_durations.py select --durations "$RUNNER_TEMP/$DURATIONS_BASELINE" \
-            --shards 2 --shard ${{ matrix.shard }} --exclude tests/durable_exec > "$RUNNER_TEMP/shard-args.txt"
+            --shards "$SPLITS" --shard "$SHARD" --exclude tests/durable_exec > "$RUNNER_TEMP/shard-args.txt"
           mapfile -t shard_args < "$RUNNER_TEMP/shard-args.txt"
+          read -ra test_paths <<< "$TEST_PATHS"
           uv run --no-sync "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
-            --ignore=tests/durable_exec -m "not temporal" "${shard_args[@]}" \
+            --ignore=tests/durable_exec -m "not temporal" "${shard_args[@]}" "${test_paths[@]}" \
             --store-durations --clean-durations --durations-path "$RUNNER_TEMP/test-durations.json"
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
@@ -1118,7 +1186,10 @@ jobs:
   test-temporal-latest:
     name: test Temporal latest on Python 3.11
     needs: classify
-    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: >-
+      needs.classify.outputs.content_only != 'true'
+      && needs.classify.outputs.clai2_only != 'true'
+      && needs.classify.outputs.harness_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -1144,7 +1215,10 @@ jobs:
   test-examples:
     name: test examples on ${{ matrix.python-version }}
     needs: classify
-    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: >-
+      needs.classify.outputs.content_only != 'true'
+      && needs.classify.outputs.clai2_only != 'true'
+      && needs.classify.outputs.harness_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -1270,7 +1344,10 @@ jobs:
   test-fastmcp-4:
     name: test FastMCP 4 compatibility
     needs: classify
-    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: >-
+      needs.classify.outputs.content_only != 'true'
+      && needs.classify.outputs.clai2_only != 'true'
+      && needs.classify.outputs.harness_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -1492,8 +1569,8 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4, test-harness-browser-use]
-    # A `pydantic-clai2`-only change skips every test job but `test`, and a skipped need would
-    # otherwise skip this job too.
+    # A `pydantic-clai2`-only change skips every test job but `test`, a `pydantic-ai-harness`-only
+    # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too.
     if: ${{ !failure() && !cancelled() && needs.classify.outputs.content_only != 'true' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -1515,13 +1592,18 @@ jobs:
       - run: uv sync --group dev --group coverage
       - run: uv run --no-sync coverage combine
       # Only the `pydantic-clai2` cells ran for a change confined to it, so they can only vouch
-      # for its own tests: the rest of the workspace is covered on the full path.
+      # for its own tests; a `pydantic-ai-harness`-only change ran the harness and CLAI 2 suites,
+      # which vouch for those and the harness source. The rest of the workspace is covered on the
+      # full path. (`pydantic-clai2`'s source is not measured: see `[tool.coverage.run]`.)
       - name: coverage report
         env:
           CLAI2_ONLY: ${{ needs.classify.outputs.clai2_only }}
+          HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
         run: |
           if [ "$CLAI2_ONLY" = true ]; then
             uv run --no-sync coverage report --include='tests/clai2/*'
+          elif [ "$HARNESS_ONLY" = true ]; then
+            uv run --no-sync coverage report --include='src/pydantic_ai_harness/*,tests/harness/*,tests/clai2/*'
           else
             uv run --no-sync coverage report
           fi
@@ -1568,7 +1650,8 @@ jobs:
           # Each reduced path must run its selected checks.
           # The harness integration jobs run only when their paths change (always on tags), and
           # LocalStack also skips where its secret is unreadable. `test-clai2-clipboard` runs only when
-          # a change reaches `pydantic-clai2` (always on pushes to `main`), and never on tags.
+          # a change reaches `pydantic-clai2` (always on pushes to `main`), and never on tags. A
+          # `pydantic-ai-harness`-only change runs `docs-only` exactly when it changes documentation.
           allowed-failures: latest-versions-canary
           allowed-skips: >-
             ${{
@@ -1580,6 +1663,11 @@ jobs:
               && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
               && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              || needs.classify.outputs.harness_only == 'true'
+              && needs.classify.outputs.docs_changed == 'true'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              || needs.classify.outputs.harness_only == 'true'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
               || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
