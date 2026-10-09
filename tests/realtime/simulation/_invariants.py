@@ -342,7 +342,8 @@ class Checker:
         self._previous = current
 
     def _describe(self, message: ModelMessage) -> str:
-        if isinstance(message, ModelRequest):
+        # Only for a violation's message: which of these a run reaches depends on what it finds.
+        if isinstance(message, ModelRequest):  # pragma: lax no cover
             return f'request {request_keys(message) or [part.part_kind for part in message.parts]}'
         return f'response {message.provider_response_id} {response_text(message)!r}'  # pragma: lax no cover
 

@@ -9,6 +9,7 @@ import pytest
 from ...conftest import try_import
 
 with try_import() as imports_successful:
+    from . import _findings
     from ._openai_simulation import OpenAISimulation
     from ._simulation import InvariantViolation, Operation
 
@@ -74,3 +75,16 @@ def test_reconnect_without_replay_loses_the_history() -> None:
             sim.settle()
         first, second = sim.server.sessions
         assert first.conversation.isdisjoint(second.conversation)
+
+
+def test_findings_need_what_they_are_about() -> None:
+    """A finding's trigger needs the input or response its violation names; a violation naming neither isn't one."""
+    with OpenAISimulation(strict=True) as sim:
+        sim.send_text()
+        sim.call_tool()
+        sim.settle()
+        nothing = InvariantViolation('history.order', 'detail', sim.trace)
+        assert not _findings._sent_before_reply_content(sim, nothing)  # pyright: ignore[reportPrivateUsage]
+        assert not _findings._reply_taken_by_earlier_response(sim, nothing)  # pyright: ignore[reportPrivateUsage]
+        spoken = InvariantViolation('wait.early', 'detail', sim.trace, {'response': 'resp_2'})
+        assert not _findings._reply_taken_by_earlier_response(sim, spoken)  # pyright: ignore[reportPrivateUsage]
