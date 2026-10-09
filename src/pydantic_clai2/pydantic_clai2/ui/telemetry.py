@@ -40,12 +40,12 @@ MAX_CONTENT_CHARS = 64_000
 class _Sink:
     instance: logfire.Logfire
     root: Callable[[], Span | None]
-    ui: bool
     include_content: bool
+    ui_events: bool
 
 
 _sinks: list[_Sink] = []
-"""Subscribed instances, newest last; only the newest receives each kind of telemetry."""
+"""Subscribed instances, newest last; handled errors go to the newest, UI telemetry to the newest with `ui_events`."""
 _emitting: ContextVar[bool] = ContextVar('_emitting', default=False)
 """Set while a UI record is handed to its sink, which is when Logfire scrubs it: `keep_names` checks it."""
 
@@ -54,17 +54,18 @@ def subscribe(
     sink: logfire.Logfire,
     *,
     root: Callable[[], Span | None] = lambda: None,
-    ui: bool = True,
     include_content: bool = False,
+    ui_events: bool = True,
 ) -> Callable[[], None]:
     """Send telemetry to `sink` until the returned function is called; calling it again does nothing.
 
     The caller supplies an instance in `SCOPE`. Handled errors go to the most recently subscribed instance, and UI
-    telemetry to the most recent one with `ui`, so each destination gets whole, correctly nested traces; when it
-    unsubscribes, the previous one takes over. Without `include_content`, handled errors keep only the exception's type and `prompt_text`
-    adds nothing, like `InstrumentationSettings.include_content`.
+    telemetry to the most recent one with `ui_events`, so each destination gets whole, correctly nested traces; when
+    it unsubscribes, the previous one takes over. Without `include_content`, handled errors keep only the exception's
+    type and `prompt_text` adds nothing, like `InstrumentationSettings.include_content`. With `ui_events=False`,
+    `sink` gets no UI telemetry, but still gets handled errors, and `conversation_selected` still calls `root`.
     """
-    subscribed = _Sink(instance=sink, root=root, ui=ui, include_content=include_content)
+    subscribed = _Sink(instance=sink, root=root, include_content=include_content, ui_events=ui_events)
     _sinks.append(subscribed)
 
     def unsubscribe() -> None:
@@ -74,8 +75,18 @@ def subscribe(
     return unsubscribe
 
 
-def _ui_sink() -> _Sink | None:
-    return next((sink for sink in reversed(_sinks) if sink.ui), None)
+def conversation_selected() -> None:
+    """Call every subscriber's `root` once startup has selected the conversation to resume.
+
+    A session root opened before then has a provisional ID; binding it right away makes the running session
+    findable by its saved ID, instead of only once a turn runs or CLAI exits.
+    """
+    for sink in list(_sinks):
+        sink.root()
+
+
+def _newest() -> _Sink | None:
+    return next((sink for sink in reversed(_sinks) if sink.ui_events), None)
 
 
 @contextmanager
@@ -99,7 +110,7 @@ def _exempt() -> Generator[None]:
 
 def prompt_text(text: str) -> dict[str, Attribute]:
     """A submitted prompt as the `PROMPT` attribute, cut to `MAX_CONTENT_CHARS`, if the subscriber records content."""
-    sink = _ui_sink()
+    sink = _newest()
     if sink is None or not sink.include_content:
         return {}
     return {PROMPT: text[:MAX_CONTENT_CHARS]}
@@ -107,7 +118,7 @@ def prompt_text(text: str) -> dict[str, Attribute]:
 
 def record(msg_template: str, /, **attributes: Attribute) -> None:
     """Log one UI interaction, such as a setting change or a key saved."""
-    if (sink := _ui_sink()) is not None:
+    if (sink := _newest()) is not None:
         with parent_span(sink.root()), _exempt():
             sink.instance.log('info', msg_template, attributes=dict(attributes))
 
@@ -173,7 +184,7 @@ def span(msg_template: str, /, **attributes: Attribute) -> Generator[UiSpan]:
     An exception propagates, but the span records only its type as `error`: messages can quote what was typed,
     such as a token a plugin's settings rejected.
     """
-    sink = _ui_sink()
+    sink = _newest()
     if sink is None:
         yield UiSpan(None)
         return

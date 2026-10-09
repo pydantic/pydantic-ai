@@ -214,9 +214,9 @@ termflow-md = "2026-10-02T15:05:25Z"
 # TODO(dsfaccini): Remove after 2026-10-05 18:04 UTC. https://github.com/pydantic/pydantic-ai/issues/8972
 # This admits only the reviewed 1.9.0 artifacts; later Anthropic artifacts remain quarantined.
 anthropic = "2026-09-28T18:04:04Z"
-# OpenAI 3.19.0 is the first release listing `gpt-rosalind-research`, and the `openai` floor.
-# TODO(adtyavrdhn): Remove after 2026-09-30 00:09 UTC.
-openai = "2026-09-23T00:08:49Z"
+# OpenAI 3.26.0 is the first release with `client.decisions`, and the `openai` floor.
+# TODO(dsfaccini): Remove after 2026-10-13 21:32 UTC.
+openai = "2026-10-06T21:31:20Z"
 # google-genai 2.25.0 is the `google-genai` floor: it sends Gemini blob fields as `mime_type`/`file_uri`.
 # TODO(adtyavrdhn): Remove after 2026-09-29 17:24 UTC.
 google-genai = "2026-09-22T17:23:02Z"

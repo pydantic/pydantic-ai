@@ -8,11 +8,13 @@ from urllib.parse import parse_qs
 
 import anyio
 import httpx
+import httpx2
 import keyring
 import pytest
 from keyring.errors import KeyringError
 from pydantic import JsonValue
 
+import pydantic_clai2.mcp._settings as mcp_settings
 from pydantic_clai2 import logfire_oauth
 from pydantic_clai2.config.credential_store import save_codex_credentials
 from pydantic_clai2.logfire_oauth import DeviceAuth, SignInError, Tokens, forget, load, sign_in, status
@@ -525,6 +527,29 @@ class TestDeviceAuth:
         with pytest.raises(SignInError, match='Signed out of Logfire while signing in'):
             await self.mcp(logfire)
         assert load(RESOURCE) is None
+
+    async def test_fastmcp_4_connections_accept_it(self) -> None:
+        """FastMCP 4 connects with `httpx2`, which rejected a legacy `httpx.Auth` as an invalid `auth`."""
+        remember(stored())
+        logfire = Logfire()
+        logfire.refreshes = [granted('access-2')]
+        auth = DeviceAuth(resource=RESOURCE, read_only=True, announce=print, http=logfire.client, sleep=no_wait)
+        bearers: list[str] = []
+
+        def mcp(request: httpx2.Request) -> httpx2.Response:
+            bearers.append(request.headers['Authorization'])
+            return httpx2.Response(200 if bearers[-1] == 'Bearer access-2' else 401)
+
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(mcp), auth=auth) as client:
+            assert (await client.post(RESOURCE)).status_code == 200
+        assert bearers == ['Bearer access-1', 'Bearer access-2'], 'a 401 is refreshed and retried once'
+
+    async def test_sign_in_failures_are_reported_under_fastmcp_4(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The device flow keeps its own client: FastMCP 4's SDK builds `httpx2` ones, whose errors it would miss."""
+        monkeypatch.setattr(mcp_settings, 'create_mcp_http_client', httpx2.AsyncClient)
+        auth = DeviceAuth(resource='http://127.0.0.1:1/mcp', read_only=True, announce=print)
+        with pytest.raises(SignInError, match='Logfire sign-in failed: ConnectError'):
+            await auth.sign_in()
 
     def test_sync_clients_are_refused(self) -> None:
         auth = DeviceAuth(resource=RESOURCE, read_only=True, announce=print)

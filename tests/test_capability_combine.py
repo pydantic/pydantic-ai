@@ -25,6 +25,7 @@ from pydantic_ai import Agent, FunctionToolset, RunContext, Tool
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
+    Caching,
     Capability,
     CapabilityOrdering,
     Hooks,
@@ -90,6 +91,10 @@ class Combines:
 Policy = Anonymous | Combines
 
 
+def _check_caching(merged: Caching) -> None:
+    assert merged.retention == '1h', 'a scalar takes the later value'
+
+
 def _check_thinking(merged: Thinking) -> None:
     assert merged.effort == 'high', 'a scalar takes the later value'
 
@@ -151,6 +156,11 @@ def _check_thread_executor(merged: UseThreadExecutor) -> None:
 
 COMBINE_POLICY: dict[str, Policy] = {
     # -- One per agent: a default `id`, and `combine` says what two of them mean. --
+    'Caching': Combines(
+        'an agent has one caching configuration',
+        lambda: (Caching('5m'), Caching('1h')),
+        _check_caching,
+    ),
     'Thinking': Combines(
         'an agent has one thinking configuration',
         lambda: (Thinking(effort='low'), Thinking(effort='high')),

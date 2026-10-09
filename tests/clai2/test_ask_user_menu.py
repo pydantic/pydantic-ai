@@ -106,6 +106,25 @@ def test_multi_select_enter_toggles_and_done_submits() -> None:
     assert menu.choose('3') == ('api.py', 'db.py')
 
 
+def test_question_is_pinned_between_title_and_choices() -> None:
+    menu = QuestionMenu(question=APPROACH, position=1, total=1)
+    rows = [Text.from_ansi(row).plain for row in menu.frame(width=80, height=24)]
+    assert rows[:3] == ['Approach', 'How should we do it?', '> 1. Refactor - Rewrite the module']
+    menu.choose('3')
+    rows = [Text.from_ansi(row).plain for row in menu.frame(width=80, height=24)]
+    assert rows[:2] == ['Approach: Other (type answer)', 'How should we do it?']
+
+
+def test_long_question_is_cut_so_choices_stay_visible() -> None:
+    question = APPROACH.model_copy(update={'question': 'word ' * 200})
+    menu = QuestionMenu(question=question, position=1, total=1)
+    rows = [Text.from_ansi(row).plain for row in menu.frame(width=40, height=24)]
+    assert len(rows) <= 12
+    assert rows[5].endswith('…')
+    assert rows[6:9] == ['> 1. Refactor - Rewrite the module', '  2. Patch', '  3. Other (type answer)']
+    assert all(cell_len(row) <= 40 for row in rows)
+
+
 def test_inline_frame_shows_context_selection_and_navigation() -> None:
     menu = QuestionMenu(question=TARGETS, position=1, total=1)
     menu.choose('1')
@@ -310,14 +329,15 @@ async def test_declining_reaches_the_model_through_the_plugin() -> None:
 
 async def test_a_delegated_task_names_itself_before_asking() -> None:
     """The user did not prompt a child task, so its question first says which task is asking."""
-    answers = iter([('Patch',)])
+    titles: list[str] = []
     output = io.StringIO()
+
+    def answer(menu: QuestionMenu) -> tuple[str, ...]:
+        titles.append(menu.title)
+        return ('Patch',)
+
     capabilities: list[AbstractCapability[object]] = [
-        AskUser(
-            answerer=TerminalAnswerer(
-                full_screen=ScreenLog(), console=Console(file=output), runner=lambda menu: next(answers)
-            )
-        )
+        AskUser(answerer=TerminalAnswerer(full_screen=ScreenLog(), console=Console(file=output), runner=answer))
     ]
 
     async def child(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -345,6 +365,8 @@ async def test_a_delegated_task_names_itself_before_asking() -> None:
     (record,) = owner.records.values()
     assert record.output == 'child done'
     assert output.getvalue() == f'Task [{record.id[:8]}] requests your input\n'
+    # The pinned title names the task too, since streamed output can push that line away.
+    assert titles == [f'Task [{record.id[:8]}]: Approach']
 
 
 async def test_default_runner_reuses_editor_surface(question_pipe: PipeInput) -> None:
@@ -453,7 +475,7 @@ def test_option_description_preserves_explicit_line_breaks() -> None:
     )
     menu = QuestionMenu(question=question, position=1, total=1)
     rows = [Text.from_ansi(row).plain for row in menu.frame(width=80, height=24)]
-    assert rows[1:4] == ['> 1. First - First step', '  ', '  Second step']
+    assert rows[1:5] == ['Which sequence?', '> 1. First - First step', '  ', '  Second step']
 
 
 def test_wide_characters_wrap_without_losing_choice_text() -> None:
@@ -627,6 +649,38 @@ async def test_custom_decoder_cancellation_detaches_before_editor_resumes(
                 )
             assert scope.cancelled_caught
     assert screen.events == ['taken', 'attached', 'detached', 'released']
+
+
+def test_output_streamed_while_answering_stays_above_the_pinned_question() -> None:
+    """A delegated task's question once scrolled away under the parent's streamed thinking and tool calls."""
+    terminal = SurfaceTerminal(width=80, height=24)
+    surface = PromptSurface(output=terminal, size=lambda: (80, 24))
+    surface.write('Earlier conversation\n')
+    console = Console(file=surface, width=80, height=24, color_system=None)
+    seen: list[list[str]] = []
+
+    def keys() -> Generator[str]:
+        for index in range(40):
+            surface.write(f'streamed {index}\n')
+        yield ''
+        seen.append(terminal.lines())
+        yield '2'
+
+    menu = QuestionMenu(question=APPROACH, position=1, total=1)
+    assert menu.run(console=console, key_source=keys().__next__) == ('Patch',)
+    (screen,) = seen
+    assert screen[-6:] == [
+        'Approach',
+        'How should we do it?',
+        '> 1. Refactor - Rewrite the module',
+        '  2. Patch',
+        '  3. Other (type answer)',
+        'Up/Down move - number/Enter select - Esc decline',
+    ]
+    assert screen.index('streamed 39') < screen.index('Approach')
+    assert screen.count('How should we do it?') == 1
+    # Once answered, the transcript records the question after what streamed meanwhile.
+    assert [line for line in terminal.lines() if line][-2:] == ['streamed 39', 'How should we do it?']
 
 
 async def test_wheel_and_page_keys_scroll_the_transcript_while_answering(question_pipe: PipeInput) -> None:

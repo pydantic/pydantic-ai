@@ -56,7 +56,7 @@ class LogfireSettings(BaseModel):
     user_tag: Literal['logfire-account', 'git-email', False] = Field(
         default='logfire-account',
         description='Tag session roots with the email of the Logfire account that signed in during project setup, '
-        'or with git config user.email. Never added to child spans or logs.',
+        'or with git config user.email. Only the root and its `CLAI session opened` log carry it.',
     )
     account: LogfireAccount | None = Field(
         default=None,
@@ -104,6 +104,9 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 token=token,
                 service_name=settings.service_name,
                 console=False,
+                # CLAI passes attributes, never f-strings. Inspecting the caller's source fails once that file
+                # changes on disk mid-session, and the warning it prints to stderr tears through the live display.
+                inspect_arguments=False,
                 config_dir=private_dir,
                 data_dir=private_dir,
                 # UI events and handled errors name settings, keys, plugins, and events, such as `sessions.naming`,
@@ -152,16 +155,18 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     # The UI lifecycle goes only to this plugin's own instance: every enabled copy of the plugin hears these events.
     async def on_session_start(self, event: SessionStart) -> None:
         self._session_tracing.start(await _user_email(self.settings))
-        self._unsubscribe = telemetry.subscribe(
-            self._clai2,
-            root=self._session_tracing.root,
-            ui=self.settings.ui_events,
-            include_content=self.settings.include_content,
-        )
         if self.settings.httpx:
             if not self._active_httpx:
                 self._instrument_httpx()
             self._active_httpx.append(self)
+        # Subscribed even without `ui_events`, so handled errors are recorded and the root is bound as soon as
+        # startup selects the conversation.
+        self._unsubscribe = telemetry.subscribe(
+            self._clai2,
+            root=self._session_tracing.root,
+            include_content=self.settings.include_content,
+            ui_events=self.settings.ui_events,
+        )
         if self.settings.ui_events:
             model = event.settings.model or 'agent default'
             with telemetry.parent_span(self._session_tracing.root()):
