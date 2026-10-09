@@ -80,6 +80,7 @@ from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, task_row
 from pydantic_clai2.runtime.worktrees import Worktree
+from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
@@ -908,12 +909,13 @@ class _Shell(Generic[DepsT, OutputT]):
 
     @contextmanager
     def defer_identity(self) -> Generator[None]:
-        """Keep startup telemetry unassigned until the requested conversation is selected."""
+        """Keep startup telemetry unassigned until the requested conversation is selected, then bind roots to it."""
         self._identity_pending = True
         try:
             yield
         finally:
             self._identity_pending = False
+        telemetry.conversation_selected()
 
     def __post_init__(self) -> None:
         self.tasks = Tasks(

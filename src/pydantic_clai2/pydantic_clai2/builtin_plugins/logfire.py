@@ -53,7 +53,7 @@ class LogfireSettings(BaseModel):
     user_tag: Literal['logfire-account', 'git-email', False] = Field(
         default='logfire-account',
         description='Tag session roots with the email of the Logfire account that signed in during project setup, '
-        'or with git config user.email. Never added to child spans or logs.',
+        'or with git config user.email. Only the root and its `CLAI session opened` log carry it.',
     )
     account: LogfireAccount | None = Field(
         default=None,
@@ -154,10 +154,14 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             if not self._active_httpx:
                 self._instrument_httpx()
             self._active_httpx.append(self)
+        # Subscribed even without `ui_events`, so the root is bound as soon as startup selects the conversation.
+        self._unsubscribe = telemetry.subscribe(
+            self._clai2,
+            root=self._session_tracing.root,
+            include_content=self.settings.include_content,
+            ui_events=self.settings.ui_events,
+        )
         if self.settings.ui_events:
-            self._unsubscribe = telemetry.subscribe(
-                self._clai2, root=self._session_tracing.root, include_content=self.settings.include_content
-            )
             model = event.settings.model or 'agent default'
             with telemetry.parent_span(self._session_tracing.root()):
                 self._clai2.log('info', 'session started', attributes={'model': model})
