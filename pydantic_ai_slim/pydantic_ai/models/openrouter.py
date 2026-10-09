@@ -9,6 +9,7 @@ from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, override
 
 from .. import usage
+from .._utils import is_str_dict
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
@@ -27,7 +28,12 @@ from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 from ..settings import CacheSetting, ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
-from ._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
+from ._prompt_cache import (
+    excess_cache_points,
+    previous_tail_needing_breakpoint,
+    raise_earlier_cache_ttls,
+    split_cache_setting,
+)
 from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
 from ._tool_choice import support_tool_forcing, tool_forcing_unavailable_reason
 
@@ -810,6 +816,30 @@ class OpenRouterModel(OpenAIChatModel):
             description='downstream provider',
         ):
             del part_dict['cache_control']
+
+    @override
+    def _finalize_cache_breakpoints(
+        self, tools: list[chat.ChatCompletionToolParam], openai_messages: list[chat.ChatCompletionMessageParam]
+    ) -> None:
+        """Raise each breakpoint's TTL to the longest TTL of a breakpoint after it.
+
+        Anthropic rejects a request where a one-hour breakpoint comes after a five-minute one, processing `tools`, then
+        `system`, then `messages` (https://platform.claude.com/docs/en/build-with-claude/prompt-caching), and OpenRouter
+        passes that error through. Walking the tools and then the messages matches that order: the only `system`
+        messages are the leading ones that become Anthropic's `system`, since a mid-conversation system prompt is sent
+        as a `<system>`-wrapped user message (`supports_inline_system_prompts=False`).
+        """
+        if not self._resolved_profile.get('openrouter_supports_cache_ttl', False):
+            return
+        blocks: list[object] = [*tools]
+        for message in openai_messages:
+            content = message.get('content')
+            blocks.extend(content if isinstance(content, list) else [])
+        carriers = [block for block in blocks if is_str_dict(block) and block.get('cache_control')]
+        ttls: list[Literal['5m', '1h']] = [carrier['cache_control'].get('ttl', '5m') for carrier in carriers]
+        for carrier, ttl, raised_ttl in zip(carriers, ttls, raise_earlier_cache_ttls(ttls), strict=True):
+            if raised_ttl != ttl:
+                carrier['cache_control'] = self._build_cache_control(raised_ttl)
 
     def _add_cache_control(self, params: list[ChatCompletionContentPartParam], ttl: OpenRouterCacheTTL = '5m') -> None:
         """Add `cache_control` to the last content part.

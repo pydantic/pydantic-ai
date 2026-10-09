@@ -1,8 +1,10 @@
 """A plugin-owned session root, shared by UI events and agent instrumentation."""
 
+from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from uuid import uuid4
+from weakref import ref
 
 import logfire
 from anyio import move_on_after, run_process
@@ -13,6 +15,15 @@ from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation, WrapRunHandler
 from pydantic_clai2.plugins import SessionEndReason
 from pydantic_clai2.ui.telemetry import SCOPE, parent_span
+
+_TRACINGS: list[ref['SessionTracing']] = []
+"""Every started session tracing, weakly: each enabled copy of the `observability` plugin has one."""
+
+
+def _live_tracings() -> list['SessionTracing']:
+    live = [tracing for weak in _TRACINGS if (tracing := weak()) is not None]
+    _TRACINGS[:] = [ref(tracing) for tracing in live]
+    return live
 
 
 @dataclass(kw_only=True)
@@ -26,9 +37,13 @@ class SessionTracing(AbstractCapability[None]):
     _active: bool = field(default=False, init=False)
     _roots: dict[str, Span] = field(default_factory=dict[str, Span], init=False)
     _fallback_id: str = field(default_factory=lambda: str(uuid4()), init=False)
+    # Bounded: a nested run's error that its parent handled never reaches a turn's end to be looked up.
+    _run_errors: deque[Exception] = field(default_factory=lambda: deque[Exception](maxlen=16), init=False)
 
     def start(self, email: str | None) -> None:
         """Open the current conversation's root; `email`, when known, identifies the user on roots only."""
+        if self not in _live_tracings():
+            _TRACINGS.append(ref(self))
         self._email = email
         self._active = True
         self.root()
@@ -88,6 +103,7 @@ class SessionTracing(AbstractCapability[None]):
     def end(self, reason: SessionEndReason) -> None:
         self._bind_identity()
         self._active = False
+        _TRACINGS[:] = [weak for weak in _TRACINGS if weak() is not self]
         for span in self._roots.values():
             span.set_attribute('reason', reason)
             span.end()
@@ -101,9 +117,27 @@ class SessionTracing(AbstractCapability[None]):
         """Match instrumentation's last-instance precedence, preserving that instance's live roots."""
         return capabilities[-1]
 
+    def raised_in_run(self, error: BaseException) -> bool:
+        """Whether `error` left an agent run, so the `Instrumentation` this wraps recorded it on the run's span.
+
+        A match is forgotten, so the same exception raised again outside a run is not mistaken for this one.
+        """
+        for index, raised in enumerate(self._run_errors):
+            if raised is error:
+                del self._run_errors[index]
+                return True
+        return False
+
     async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
         with parent_span(self.root()):
-            return await handler()
+            try:
+                return await handler()
+            except Exception as error:
+                # Every enabled copy of the plugin looks the error up at turn end, but `combine` keeps only the last
+                # copy's `wrap_run`, so this one tells them all.
+                for tracing in _live_tracings():
+                    tracing._run_errors.append(error)
+                raise
 
 
 async def git_email() -> str | None:

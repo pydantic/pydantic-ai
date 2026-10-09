@@ -8166,6 +8166,82 @@ def test_dynamic_true_reevaluate_system_prompt():
     assert res_two.new_messages() == res_two.all_messages()[-2:]
 
 
+def test_dynamic_system_prompt_does_not_mutate_caller_message_history():
+    """Test that dynamic system-prompt re-evaluation does not rewrite caller-owned history objects."""
+    agent = Agent('test', system_prompt='Foobar')
+
+    dynamic_value = 'A'
+
+    @agent.system_prompt(dynamic=True)
+    async def dynamic_func() -> str:
+        return dynamic_value
+
+    res_one = agent.run_sync('Hello')
+    history = res_one.all_messages()
+    caller_requests = [(msg, msg.parts) for msg in history if isinstance(msg, ModelRequest)]
+
+    dynamic_value = 'B'
+    res_two = agent.run_sync('World', message_history=history)
+
+    # The re-evaluated value still reaches the run's own messages.
+    assert [
+        part.content
+        for msg in res_two.all_messages()
+        for part in msg.parts
+        if isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+    ] == ['B']
+
+    # The caller's history objects are left untouched.
+    assert [
+        part.content
+        for _, parts in caller_requests
+        for part in parts
+        if isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+    ] == ['A']
+    for msg, parts in caller_requests:
+        assert msg.parts is parts
+
+
+async def test_concurrent_runs_sharing_history_isolate_dynamic_system_prompts():
+    """Test that concurrent runs sharing one history list do not leak dynamic system prompts into each other."""
+    agent = Agent('test', system_prompt='Foobar')
+
+    counter = [0]
+
+    @agent.system_prompt(dynamic=True)
+    async def dynamic_func() -> str:
+        counter[0] += 1
+        return f'D{counter[0]}'
+
+    res_one = await agent.run('Hello')
+    history = res_one.all_messages()
+    caller_requests = [(msg, msg.parts) for msg in history if isinstance(msg, ModelRequest)]
+
+    results = await asyncio.gather(
+        agent.run('A', message_history=history),
+        agent.run('B', message_history=history),
+    )
+
+    # Each run re-evaluated to its own fresh value.
+    assert sorted(
+        part.content
+        for result in results
+        for msg in result.all_messages()
+        for part in msg.parts
+        if isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+    ) == ['D2', 'D3']
+
+    # The shared history objects are left untouched.
+    assert [
+        part.content
+        for _, parts in caller_requests
+        for part in parts
+        if isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+    ] == ['D1']
+    for msg, parts in caller_requests:
+        assert msg.parts is parts
+
+
 def test_dynamic_system_prompt_no_changes():
     """Test coverage for _reevaluate_dynamic_prompts branch where no parts are changed
     and the messages loop continues after replacement of parts.

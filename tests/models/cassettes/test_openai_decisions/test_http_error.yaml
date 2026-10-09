@@ -1,0 +1,66 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/decisions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "431"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5
+        input: Charged twice.
+        questions:
+        - type: predicate
+          name: urgent
+          instructions: "{\"field\": \"urgent\", \"question\": \"Does this need a reply within the hour?\", \"goal\": \"Triage a support ticket.\"}"
+        - type: choice
+          name: area
+          instructions: "{\"field\": \"area\", \"question\": \"Which team owns it?\", \"goal\": \"Triage a support ticket.\"}"
+          choices:
+          - value: billing
+          - value: bug
+  response:
+    status: 404
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - x-request-id,retry-after,server-timing-total
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1"
+      server-timing-total:
+      - "1.139"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        error:
+          message: The model `gpt-5` does not exist or you do not have access to it.
+          type: invalid_request_error
+          param: null
+          code: model_not_found
+  recorded_at: 2026-10-07T07:54:26.720886+00:00

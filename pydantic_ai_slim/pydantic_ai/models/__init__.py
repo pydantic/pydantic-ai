@@ -40,7 +40,7 @@ from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
@@ -321,6 +321,7 @@ class ModelRequestParameters:
 @dataclass
 class _ModelRequestUsageLedger:
     responses: list[ModelResponse] = field(default_factory=list[ModelResponse])
+    attempts: list[ModelRequestAttempt] = field(default_factory=list[ModelRequestAttempt])
 
 
 @dataclass(kw_only=True)
@@ -414,6 +415,22 @@ class ModelRequestContext:
         `SpendLimits`, which pins this package's exact version.
         """
         return tuple(self._usage_response_ledger.responses)
+
+    @property
+    def _usage_attempts(self) -> tuple[ModelRequestAttempt, ...]:
+        """The attempts of a request that failed with no response to carry them.
+
+        Filled from a `FallbackExceptionGroup` when every model of a `FallbackModel` failed on a non-streaming
+        request, before any `on_model_request_error` hook runs and before `wrap_model_request` unwinds. A
+        streamed request has none: `FallbackModel` only rejects responses outside streaming, so its failed
+        stream attempts were never billed. Attempts that preceded a
+        response are on that response's `failed_attempts` instead, and a nested `FallbackModel`'s attempts
+        are already flattened into its outer group, so each attempt appears once. An attempt with `usage`
+        was billed. Request contexts copied with `dataclasses.replace()` see the same attempts.
+
+        Private for now, like `_usage_responses`: read by the Pydantic AI Harness's `SpendLimits`.
+        """
+        return tuple(self._usage_response_ledger.attempts)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1341,6 +1358,10 @@ class StreamedResponse(ABC):
                 except self.get_stream_cancel_errors():
                     if not self.cancelled:
                         raise
+                except ModelAPIError as e:
+                    # Adapters map transport errors to `ModelAPIError`, so one caused by `cancel()` arrives wrapped.
+                    if not (self.cancelled and isinstance(e.__cause__, self.get_stream_cancel_errors())):
+                        raise
                 else:
                     # Only natural `StopAsyncIteration` on a stream that wasn't
                     # cancelled flips `_finished`. Early `break` / `aclose()` (raising
@@ -1949,6 +1970,13 @@ def infer_model(  # noqa: C901
         if not isinstance(provider, SystemOneProvider):
             raise UserError('System One models require a `SystemOneProvider`.')
         return SystemOneModel(model_name, provider=provider)
+    elif model_kind == 'openai-decisions':
+        from ..providers.openai_decisions import OpenAIDecisionsProvider
+        from .openai_decisions import OpenAIDecisionsModel
+
+        if not isinstance(provider, OpenAIDecisionsProvider):
+            raise UserError('OpenAI Decisions models require an `OpenAIDecisionsProvider`.')
+        return OpenAIDecisionsModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 

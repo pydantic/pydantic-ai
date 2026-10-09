@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-import io
+import base64
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
@@ -100,8 +100,14 @@ from . import (
 )
 from ._anthropic_containers import is_tool_result_only as _is_tool_result_only
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
-from ._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
+from ._prompt_cache import (
+    excess_cache_points,
+    previous_tail_needing_breakpoint,
+    raise_earlier_cache_ttls,
+    split_cache_setting,
+)
 from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
+from ._transport_errors import transport_error_message
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
     'compaction': 'stop',
@@ -427,6 +433,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> G
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
         raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except httpx2.TransportError as e:
+        # `anthropic` wraps transport failures in `APIConnectionError` only until the response starts; one that breaks
+        # off a stream mid-way surfaces as the raw `httpx2` error.
+        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
 
 
 LatestAnthropicModelNames = ModelParam
@@ -1118,20 +1128,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
-        # A non-streaming request's transport errors reach us as the SDK's `APIConnectionError`, but a stream's don't.
-        try:
-            response = await self._messages_create(messages, False, model_settings, model_request_parameters)
-            if isinstance(response, BetaMessage):
-                return self._process_response(response, model_request_parameters, model_settings)
-            # The request was streamed behind the scenes, see `_messages_create`.
-            async with response.source:
-                streamed_response = await self._process_streamed_response(
-                    response, model_request_parameters, model_settings
-                )
-                async for _ in streamed_response:
-                    pass
-        except httpx2.TransportError as e:
-            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+        response = await self._messages_create(messages, False, model_settings, model_request_parameters)
+        if isinstance(response, BetaMessage):
+            return self._process_response(response, model_request_parameters, model_settings)
+        # The request was streamed behind the scenes, see `_messages_create`. `_map_api_errors` maps a transport error
+        # that breaks the stream off, both while it opens and while it's read.
+        async with response.source:
+            streamed_response = await self._process_streamed_response(
+                response, model_request_parameters, model_settings
+            )
+            async for _ in streamed_response:
+                pass
         return streamed_response.get()
 
     async def count_tokens(
@@ -1328,6 +1335,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
+        _raise_earlier_cache_ttls(system_prompt, anthropic_messages, tools, auto_cache_control)
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
         thinking = self._translate_thinking(model_settings, model_request_parameters)
@@ -1711,6 +1719,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
+        _raise_earlier_cache_ttls(system_prompt, anthropic_messages, tools, auto_cache_control)
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
         thinking = self._translate_thinking(model_settings, model_request_parameters)
@@ -2862,21 +2871,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Map the unified `cache` setting onto Anthropic cache settings.
 
         Only called when no explicit `anthropic_cache*` setting is present (those take
-        precedence in `prepare_request`). Uses automatic caching where the client supports it;
-        on Bedrock and Vertex the library places breakpoints at the end of the static
-        instructions, the tool definitions and the conversation instead. Automatic caching
-        breakpoints the end of the conversation, so caching only the stable prefix
-        (`messages=False`) uses the instruction and tool definition breakpoints everywhere.
+        precedence in `prepare_request`). The static instructions and tool definitions always get
+        breakpoints, since Anthropic only reads cache entries written at a breakpoint and a new
+        conversation can only share that prefix. The conversation is cached with automatic caching
+        where the client supports it, and with a breakpoint on its last block on Bedrock and Vertex.
         """
         retention, messages = split_cache_setting(cache)
         ttl: Literal['5m', '1h'] = retention if retention in ('5m', '1h') else '5m'
         translated = model_settings.copy()
-        if messages and self.profile.get('supports_auto_cache', False):
-            translated['anthropic_cache'] = ttl
-        else:
-            translated['anthropic_cache_instructions'] = ttl
-            translated['anthropic_cache_tool_definitions'] = ttl
-            if messages:
+        translated['anthropic_cache_instructions'] = ttl
+        translated['anthropic_cache_tool_definitions'] = ttl
+        if messages:
+            if self.profile.get('supports_auto_cache', False):
+                translated['anthropic_cache'] = ttl
+            else:
                 translated['anthropic_cache_messages'] = ttl
         return translated
 
@@ -3015,13 +3023,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _map_binary_data(data: bytes, media_type: str) -> BetaImageBlockParam | BetaRequestDocumentBlockParam:
         if media_type.startswith('image/'):
             return BetaImageBlockParam(
-                source={'data': io.BytesIO(data), 'media_type': media_type, 'type': 'base64'},  # pyright: ignore[reportArgumentType]
+                source={'data': base64.b64encode(data).decode(), 'media_type': media_type, 'type': 'base64'},  # pyright: ignore[reportArgumentType]
                 type='image',
             )
         elif media_type == 'application/pdf':
             return BetaRequestDocumentBlockParam(
                 source=BetaBase64PDFSourceParam(
-                    data=io.BytesIO(data),
+                    data=base64.b64encode(data).decode(),
                     media_type='application/pdf',
                     type='base64',
                 ),
@@ -4431,6 +4439,32 @@ def _support_tool_forcing(
         unavailable_reason,
         disables_thinking=thinking_type == 'adaptive' and profile.get('forced_tool_choice_disables_thinking', False),
     )
+
+
+def _raise_earlier_cache_ttls(
+    system_prompt: str | list[BetaTextBlockParam],
+    anthropic_messages: list[BetaMessageParam],
+    tools: list[BetaToolUnionParam],
+    automatic_cache_control: BetaCacheControlEphemeralParam | None,
+) -> None:
+    """Raise each breakpoint's TTL to the longest TTL of a breakpoint after it, as Anthropic requires.
+
+    Anthropic processes `tools`, then `system`, then `messages`, and the top-level automatic breakpoint lands on the
+    last cacheable block, after all of them.
+    """
+    blocks: list[object] = [*tools, *(system_prompt if isinstance(system_prompt, list) else [])]
+    for message in anthropic_messages:
+        content = message['content']
+        blocks.extend([] if isinstance(content, str) else content)
+    carriers = [block for block in blocks if is_str_dict(block) and block.get('cache_control')]
+    ttls: list[Literal['5m', '1h']] = [carrier['cache_control'].get('ttl', '5m') for carrier in carriers]
+    automatic_ttls: list[Literal['5m', '1h']] = (
+        [automatic_cache_control.get('ttl', '5m')] if automatic_cache_control is not None else []
+    )
+    raised = raise_earlier_cache_ttls([*ttls, *automatic_ttls])
+    for carrier, ttl, raised_ttl in zip(carriers, ttls, raised[: len(carriers)], strict=True):
+        if raised_ttl != ttl:
+            carrier['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=raised_ttl)
 
 
 def _last_cacheable_block_has_cache_control(anthropic_messages: list[BetaMessageParam]) -> bool:

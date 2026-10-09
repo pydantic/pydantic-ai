@@ -64,6 +64,7 @@ from . import (
 )
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream, NotGiven
@@ -78,6 +79,10 @@ except ImportError as _import_error:
         'Please install `groq` to use the Groq model, '
         'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
     ) from _import_error
+
+# Below the guard on purpose: `groq` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
 
 
 @contextmanager
@@ -105,6 +110,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
         # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
         # been received, so there is no status code to report.
         raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except httpx.TransportError as e:
+        # `groq` wraps transport failures in `APIConnectionError` only until the response starts; one that breaks
+        # off a stream mid-way surfaces as the raw `httpx` error.
+        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
 
 
 ProductionGroqModelNames = Literal[
