@@ -17,8 +17,8 @@ def resolve_tool_choice(  # noqa: C901
 
     Pydantic AI distinguishes between function tools (e.g. user-registered via @agent.tool)
     and output tools (framework-internal for structured output). The user-facing
-    `tool_choice` setting controls function tools only - this function resolves that
-    into a canonical form that providers can use, incorporating output tools as needed.
+    `tool_choice` setting controls which tools the model may call, and this function resolves
+    that into a canonical form that providers can use.
 
     Args:
         model_settings: Optional settings containing the tool_choice value.
@@ -30,7 +30,8 @@ def resolve_tool_choice(  # noqa: C901
         - `'none'` / `[]`: Disables function tools. If output tools exist, returns them with
             appropriate mode. Otherwise returns `'none'`.
         - `'required'`: Requires function tool use. Raises if no function tools are defined.
-        - `list[str]`: Restricts to specified tools with `'required'` mode. Validates tool names.
+        - `list[str]`: Restricts to exactly the specified function and/or output tools with
+            `'required'` mode. Validates tool names against all known tools.
         - `ToolOrOutput`: Combines specified function tools with all output tools.
             Returns `'auto'` mode if direct output is allowed, otherwise `'required'`.
 
