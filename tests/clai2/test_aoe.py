@@ -494,7 +494,6 @@ async def test_unusable_mapping_starts_fresh(env: Fixture, tmp_path: Path, saved
     [
         'tied worktree',
         'linked worktree',
-        'submodule',
         'other profile',
         'unreadable',
         'not current',
@@ -507,10 +506,9 @@ async def test_title_push_failures_are_benign(
 ) -> None:
     if failure == 'tied worktree':
         env.system.rename_error = 'Stop the session before renaming its worktree directory or branch.'
-    elif failure in ('linked worktree', 'submodule'):
-        # AoE would move an idle worktree-tied session's directory to follow the title; a submodule is not one.
-        kind = 'worktrees' if failure == 'linked worktree' else 'modules'
-        (tmp_path / '.git').write_text(f'gitdir: /elsewhere/.git/{kind}/proj\n')
+    elif failure == 'linked worktree':
+        # Not a failure: the rename is tried in a linked worktree too, and AoE decides what to do with it.
+        (tmp_path / '.git').write_text('gitdir: /elsewhere/.git/worktrees/proj\n')
         (tmp_path / 'sub').mkdir()
         monkeypatch.chdir(tmp_path / 'sub')
     elif failure == 'timeout':
@@ -532,11 +530,11 @@ async def test_title_push_failures_are_benign(
     session = make_session(tmp_path)
     loaded = await load(session)
     await session.prompt('first title')
-    calls = {'tied worktree': 1, 'submodule': 1, 'timeout': 1}.get(failure, 0)
+    calls = {'tied worktree': 1, 'linked worktree': 1, 'timeout': 1}.get(failure, 0)
     if calls or failure in ('other profile', 'unreadable', 'not current'):
         await env.aoe('rename' if calls else 'current')
     await session.renamed(conversation_id=session.conversation_id, title='-second title')
-    if failure in ('submodule', 'timeout'):
+    if failure in ('linked worktree', 'timeout'):
         # Only a refusal stops renames; a timed-out one tries again with the next title.
         assert (await env.aoe('rename'))[-1] == '--title=-second title'
         calls += 1
@@ -624,12 +622,6 @@ async def test_an_id_aoe_would_reject_is_only_mapped(env: Fixture, tmp_path: Pat
     await loaded.dispatch(SessionEnd(reason='exit'))
     assert (env.state / INSTANCE).read_text() == '-dash-first\n'
     assert not (env.directory / 'session_id').exists()
-
-
-def test_a_main_checkout_is_not_a_linked_worktree(tmp_path: Path) -> None:
-    (tmp_path / '.git').mkdir()
-    (tmp_path / 'src').mkdir()
-    assert not aoe.linked_worktree(tmp_path / 'src')
 
 
 async def test_a_failed_mapping_write_is_tried_again(

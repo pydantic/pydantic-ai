@@ -260,23 +260,6 @@ def aoe_profile(aoe: str, instance_id: str) -> str | None:
     return current.profile if current.id == instance_id else None
 
 
-def linked_worktree(directory: Path) -> bool:
-    """Whether `directory` is in a linked Git worktree, whose `.git` is a file rather than a directory.
-
-    AoE moves an AoE-managed worktree to follow a new title (`session.tie_workdir_to_name`, on by
-    default) unless the agent is running, which would pull the directory out from under CLAI.
-    """
-    for parent in (directory, *directory.parents):
-        marker = parent / '.git'
-        if marker.is_dir():
-            return False
-        if marker.is_file():
-            # A submodule's `.git` file points into `.git/modules/`, a linked worktree's into `.git/worktrees/`.
-            gitdir = marker.read_text(encoding='utf-8', errors='replace').partition('gitdir:')[2].strip()
-            return '/worktrees/' in gitdir.replace(os.sep, '/')
-    return False
-
-
 def rename(aoe: str, profile: str, instance_id: str, title: str) -> bool | None:
     """Set the AoE session title: `False` when AoE refuses, `None` when `aoe` did not run to completion."""
     # `--title=` keeps a title that starts with `-` from reading as an option.
@@ -351,7 +334,6 @@ class _Reporter:
         self.hooks = hooks
         self.mappings = mappings
         self.aoe = aoe
-        self.titles = not await run_sync(linked_worktree, Path.cwd())
         self.worker = asyncio.create_task(self.publish(), name='clai2-aoe')
 
     async def publish(self) -> None:

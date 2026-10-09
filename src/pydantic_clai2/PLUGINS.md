@@ -344,10 +344,10 @@ directory, such as after AoE moved a worktree, is not resumed; use `/resume`. Ao
 own resume, `--fork-from`, and smart rename apply to its built-in agents only.
 
 **Title.** When the conversation's title changes (its first prompt, background naming,
-or a rename in `/resume`), the plugin runs `aoe session rename ID --title=TITLE`. It skips this
-in a linked Git worktree (not a submodule), because AoE's `session.tie_workdir_to_name`
-(on by default) would move an AoE-managed worktree out from under the running CLAI2,
-and stops trying for the session once AoE refuses a rename; a rename that times out is
+or a rename in `/resume`), the plugin runs `aoe session rename ID --title=TITLE`, in a linked
+Git worktree too. There, AoE's `session.tie_workdir_to_name` (on by default) refuses the
+rename while a turn runs, and otherwise may move an AoE-managed worktree to follow the title.
+The plugin stops trying for the session once AoE refuses a rename; a rename that times out is
 tried again with the next title. AoE renames the tmux session to match.
 
 All file and process work runs off the event loop, and failures are logged at debug
