@@ -29,6 +29,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Plugin, TurnEnd, TurnStart
 from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
 from pydantic_clai2.ui.rendering.splash import Splash
+from tests.clai2.cli_runner import CliRunner
 
 
 async def test_existing_handler_and_structured_output() -> None:
@@ -346,17 +347,13 @@ async def test_prompt_loop_commands(tmp_path: Path) -> None:
     assert output.getvalue().count('/new starts a session') == 2
 
 
-def test_cli_settings(tmp_path: Path) -> None:
-    base = [sys.executable, '-m', 'pydantic_clai2', '--database', str(tmp_path / 'config.db')]
-    result = subprocess.run(
-        [*base, 'config', 'set', 'display.thinking', 'false'], check=False, capture_output=True, text=True
-    )
+def test_cli_settings(tmp_path: Path, run_cli: CliRunner) -> None:
+    database = str(tmp_path / 'config.db')
+    result = run_cli('--database', database, 'config', 'set', 'display.thinking', 'false')
     assert result.returncode == 0, result.stderr
-    result = subprocess.run([*base, 'config', 'get', 'display.thinking'], check=False, capture_output=True, text=True)
+    result = run_cli('--database', database, 'config', 'get', 'display.thinking')
     assert result.stdout.strip() == 'false'
-    result = subprocess.run(
-        [*base, 'config', 'set', 'run.request_limit', '-1'], check=False, capture_output=True, text=True
-    )
+    result = run_cli('--database', database, 'config', 'set', 'run.request_limit', '-1')
     assert result.returncode != 0
 
 
