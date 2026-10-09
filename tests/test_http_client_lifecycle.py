@@ -16,7 +16,7 @@ import httpx2
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai._http import create_async_httpx2_client
+from pydantic_ai._http import create_async_httpx2_client as create_uncached_client
 from pydantic_ai.capabilities import AbstractCapability, ResolveModelId
 from pydantic_ai.models import Model, ModelResolutionContext
 from pydantic_ai.models.test import TestModel
@@ -28,10 +28,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
-]
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
 _OPENAI_RESPONSE: dict[str, Any] = {
     'id': 'chatcmpl-1',
@@ -51,7 +48,8 @@ async def provider_clients(
     clients: list[httpx2.AsyncClient] = []
 
     def create_client() -> httpx2.AsyncClient:
-        client = create_async_httpx2_client()
+        # Imported under another name, so the autouse `track_httpx_clients` fixture doesn't swap in its client cache.
+        client = create_uncached_client()
         clients.append(client)
         return client
 
@@ -94,6 +92,7 @@ async def test_entered_agent_reuses_model_built_from_name(provider_clients: list
             agent.run('What is the capital of France?', model='openai-chat:gpt-5-mini'),
         )
         assert [client.is_closed for client in provider_clients] == [False, False]
+        assert provider_clients[0] is not provider_clients[1]
     assert [client.is_closed for client in provider_clients] == [True, True]
 
     # Entering the agent again starts over with new models.
