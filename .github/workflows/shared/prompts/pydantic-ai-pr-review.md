@@ -53,7 +53,7 @@ the rest briefly in the review body.
 
 ## Targeted checks
 
-Beyond free-form review, run this check proactively on every model-touching PR:
+Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests:
 
 - **Profile-flag test pinning.** When the diff adds or modifies a
   `profile.get(...)` read under `pydantic_ai_slim/pydantic_ai/models/`, verify
@@ -63,6 +63,13 @@ Beyond free-form review, run this check proactively on every model-touching PR:
   pair are in `.review-context/review-instructions.md` (Example 4).
   Cap this finding at **MEDIUM**: it is advisory and must never drive
   `REQUEST_CHANGES`.
+- **Test cost.** When the diff adds or changes tests, check every new
+  `@pytest.mark.subprocess(reason=...)` and `@pytest.mark.slow(reason=...)`:
+  the reason must name a property that needs the process boundary or the
+  duration, not just describe what the test does. Also flag new tests that wait
+  out real sleeps, timeouts or poll intervals instead of injecting them, or that
+  feed one huge input to prove a complexity bound. Calibration is Example 5 in
+  `.review-context/review-instructions.md`. Cap at **MEDIUM**.
 
 ## Review process
 

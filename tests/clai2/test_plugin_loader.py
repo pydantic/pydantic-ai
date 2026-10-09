@@ -808,6 +808,7 @@ async def test_failed_load_cleanup_is_bounded_and_continues_after_timeout(
     StalledCleanup.__module__ = module.__name__
     module.__dict__['StalledCleanup'] = StalledCleanup
     monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setattr('pydantic_clai2.plugins.loader.FAILED_SESSION_END_TIMEOUT', 0.05)
     harness = Harness(tmp_path, builtin=(PluginSettings(id='stalled', factory=module.__name__),))
 
     async def load() -> None:

@@ -69,6 +69,7 @@ def test_known_realtime_model_names() -> None:  # pragma: lax no cover
     assert generated_transcription_names == sorted(get_args(KnownRealtimeTranscriptionModelName.__value__))
 
 
+@pytest.mark.subprocess(reason='asserts what a fresh interpreter imports')
 def test_star_import_does_not_load_optional_providers() -> None:
     code = """
 import sys

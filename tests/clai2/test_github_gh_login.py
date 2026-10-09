@@ -24,6 +24,10 @@ from pydantic_clai2.plugins.loader import PluginLoader
 from tests.clai2.conftest import FakeGh
 from tests.clai2.menu_script import Script, pick
 
+pytestmark = pytest.mark.subprocess(
+    reason='drives the fake `gh` CLI (`tests/clai2/fake_gh_cli.py`) as a real child process'
+)
+
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'github')
 CLOSE = MenuResult(cancelled=True)
 DEVICE = 'https://github.com/login/device'
