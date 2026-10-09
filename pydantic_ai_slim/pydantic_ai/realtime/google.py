@@ -22,7 +22,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager, suppress
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, Literal, assert_never, cast
+from typing import Any, ClassVar, Literal, assert_never, cast
 
 from anyio import Lock
 from anyio.lowlevel import RunVar
@@ -107,6 +107,8 @@ from ..providers import Provider, infer_provider
 from ..settings import ThinkingEffort, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+from ._google_lifecycle import GeminiLifecycle
+from ._lifecycle import LIFECYCLE_EVENT_TYPES, TaggedEvent
 from ._utils import (
     DEFAULT_MAX_RECONNECTS,
     inject_trace_context,
@@ -1448,6 +1450,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
     transport_errors = (ConnectionClosed, genai_errors.APIError, OSError)
     # How this provider names itself in error messages.
     _provider_label = 'Gemini Live'
+    _lifecycle_version: ClassVar[int] = 2
 
     def __init__(
         self,
@@ -1538,6 +1541,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # anyway), and only the first time: the next boundary always ends the turn, so an empty answer
         # completes.
         self._tool_call_turn_unanswered = False
+        # Which response, user turn, and input each message is about (see `_tagged_frames()`).
+        self._lifecycle = GeminiLifecycle(transcribes=input_transcription_enabled)
 
     @property
     def _can_reconnect(self) -> bool:
@@ -1580,9 +1585,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
         turn = _TypedTurn(input_index) if isinstance(content, str) and self._reconnect is not None else None
         if turn is not None:
             self._uncovered_typed_turns.append(turn)
+        self._lifecycle.input_sent(input_index, content)
         try:
             await self._send(content)
         except BaseException:
+            self._lifecycle.input_failed(input_index)
             # A reconnect noticed meanwhile has already let go of the list it was in.
             if turn is not None and turn in self._uncovered_typed_turns:
                 self._uncovered_typed_turns.remove(turn)
@@ -1730,6 +1737,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
         )
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async for frame in self._tagged_frames():
+            for event, _ in frame:
+                if not isinstance(event, LIFECYCLE_EVENT_TYPES):
+                    yield event
+
+    async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:
         # `session.receive()` yields a single model turn and then returns, so loop to keep serving
         # subsequent turns. When the server closes the WebSocket — its connection-time limit, or on
         # teardown — `receive()` raises (the SDK surfaces a closed socket as an `APIError`). Without a
@@ -1739,16 +1752,18 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # Coverage cannot attribute the normal async-generator exhaustion back to this outer
                 # loop; `test_connect_continues_after_empty_server_turn` exercises that continuation.
                 async for message in self._session.receive():  # pragma: no branch
-                    for event in self._map_message(message):
-                        yield event
+                    yield self._lifecycle.message(self._map_message(message))
             except self.transport_errors as e:
+                # Nothing under way on the dropped connection will finish, whether or not it is re-dialed.
+                lost: list[TaggedEvent] = [(event, False) for event in self._lifecycle.connection_lost()]
                 if self._dial is None or self._reconnect is None:
                     # No reconnect policy: a dropped connection is fatal. Surface it as a
                     # non-recoverable error and end the stream cleanly, rather than returning silently
                     # (mirroring the OpenAI provider), so callers don't treat a truncated turn as complete.
-                    yield RealtimeSessionErrorEvent(
+                    error = RealtimeSessionErrorEvent(
                         message=f'{self._provider_label} connection closed: {e}', recoverable=False
                     )
+                    yield [*lost, (error, False)]
                     return
                 # Gemini issues no resumption handle while a call is executing, so the re-dialed session
                 # never has a call still running at the drop, and won't answer its result (verified live:
@@ -1770,6 +1785,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # Losing a call or a turn loses the exchange it belongs to, so that isn't a restored state.
                 state_restored = state_resumed and not lost_tool_calls and not uncovered
                 if await self._try_reconnect():
+                    reconnect_frame: list[TaggedEvent] = [
+                        *lost,
+                        *((event, False) for event in self._lifecycle.take_pending()),
+                    ]
                     # The new session hasn't been answered for anything yet.
                     self._lost_tool_calls_answered = False
                     if not state_resumed:
@@ -1785,7 +1804,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                             self._tool_calls.pop(call_id, None)
                             if state_resumed:
                                 self._unanswered_lost_tool_calls.append(call)
-                        yield ToolCallCancelled(tool_call_ids=list(lost_tool_calls))
+                        reconnect_frame.append((ToolCallCancelled(tool_call_ids=list(lost_tool_calls)), False))
                     if self._turn_open:
                         # The dropped connection was mid-turn. Gemini never continues an in-flight
                         # generation on the re-dialed connection (resumption restores conversation
@@ -1796,13 +1815,15 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         self._turn_interrupted = False
                         self._tool_call_turn_unanswered = False
                         self._native_part_index = 0
-                        yield ResponseDone(interrupted=True)
+                        # The lifecycle already lost the response: this terminal is the codec stream's alone.
+                        reconnect_frame.append((ResponseDone(interrupted=True), True))
                     for input_index in lost_typed_turns:
                         # Nothing will answer it, so the reply it asked for is released rather than awaited
                         # forever; the turn stays in history, and `state_restored=False` tells the app to
                         # send it again.
-                        yield InputRejected(input_index=input_index, refused='response')
-                    yield RealtimeSessionReconnectEvent(state_restored=state_restored)
+                        reconnect_frame.append((InputRejected(input_index=input_index, refused='response'), False))
+                    reconnect_frame.append((RealtimeSessionReconnectEvent(state_restored=state_restored), False))
+                    yield reconnect_frame
                     if self._unanswered_lost_tool_calls:
                         # Answered right away rather than only ahead of the next input, so the resumed
                         # session has closed the stale exchange by the time the user speaks. A new socket
@@ -1813,9 +1834,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     continue
                 # Out of attempts: no reconnect is coming any more.
                 self._gave_up = True
-                yield RealtimeSessionErrorEvent(
+                lost += [(event, False) for event in self._lifecycle.take_pending()]
+                error = RealtimeSessionErrorEvent(
                     message=f'{self._provider_label} connection closed; reconnect failed: {e}', recoverable=False
                 )
+                yield [*lost, (error, False)]
                 return
             # `receive()` returned normally → the turn ended; loop for the next one.
 
