@@ -183,7 +183,7 @@ def test_timeout_run_stream_sync():
     chunks: list[str] = []
     with pytest.raises(RunTimedOut):
         with agent.run_stream_sync('go', timeout=SHORT_TIMEOUT) as result:
-            for chunk in result.stream_text(delta=True, debounce_by=None):
+            for chunk in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
                 chunks.append(chunk)
     assert chunks == ['partial ', 'output']
 
@@ -334,7 +334,7 @@ async def test_nested_timeout_reaching_the_run_edge_keeps_its_type():
 
     with pytest.raises(RunTimedOut) as exc_info:
         async with agent.iter('go') as agent_run:
-            async for _node in agent_run:
+            async for _node in agent_run:  # pragma: no branch
                 await sub_agent.run('sub', timeout=SHORT_TIMEOUT)
 
     assert str(exc_info.value) == 'The agent run timed out in a nested run.'
