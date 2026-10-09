@@ -18,34 +18,32 @@ from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart
-from pydantic_clai2.plugins.loader import PluginError, PluginLoader, PluginSettingsError
+from pydantic_clai2.plugins import Plugin, SessionEnd, SessionStart, TurnEnd, TurnStart
+from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginError, PluginLoader, PluginSettingsError
 
 RECORDER = """
 from pydantic_clai2.commands import Command
-from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart
+from pydantic_clai2.plugins import Plugin, SessionEnd, SessionStart, TurnEnd, TurnStart
 
 LOADS = globals().get('LOADS', 0) + 1
 
 
-def activate(host: PluginHost) -> None:
-    host.commands.register(Command(name='{command}', description='From plugin', handler=lambda _: 'ok'))
+class Recorder(Plugin):
+    def get_commands(self):
+        return [Command(name='{command}', description='From plugin', handler=lambda _: 'ok')]
 
-    @host.on('session_start')
-    async def started(event: SessionStart) -> None:
-        host.console.print('{name} started')
+    async def on_session_start(self, event: SessionStart) -> None:
+        self.host.console.print('{name} started')
 
-    @host.on('session_end')
-    async def stopped(event: SessionEnd) -> None:
+    async def on_session_end(self, event: SessionEnd) -> None:
+        host = self.host
         host.console.print('{name} stopped ' + event.reason)
         {end_body}
 
-    @host.on('turn_start')
-    async def before(event: TurnStart) -> None:
+    async def on_turn_start(self, event: TurnStart) -> None:
         {start_body}
 
-    @host.on('turn_end')
-    async def after(event: TurnEnd) -> None:
+    async def on_turn_end(self, event: TurnEnd) -> None:
         {turn_end_body}
 """
 
@@ -99,13 +97,12 @@ class Harness:
 
 
 SEGMENT = """
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import Plugin
 
 
-def activate(host: PluginHost) -> None:
-    @host.status_segment
-    def where() -> str:
-        return 'in {name}'
+class Segment(Plugin):
+    def get_status_segments(self):
+        return [lambda: 'in {name}']
 """
 
 
@@ -119,7 +116,8 @@ async def test_status_segments_follow_load_and_unload(tmp_path: Path) -> None:
     assert harness.loader.status_segments() == []
 
 
-async def test_registration_order_follows_the_shipped_declarations(tmp_path: Path) -> None:
+@pytest.mark.parametrize(('first', 'shown'), [('zulu', 'zulu'), ('logfire', 'observability')])
+async def test_registration_order_follows_the_shipped_declarations(tmp_path: Path, first: str, shown: str) -> None:
     """Names order the menu and the list; the built-in declarations order what a turn sees first."""
 
     def shipped(name: str) -> PluginSettings:
@@ -129,11 +127,11 @@ async def test_registration_order_follows_the_shipped_declarations(tmp_path: Pat
         )
         return PluginSettings(id=name, factory=name, path=str(path))
 
-    harness = Harness(tmp_path, builtin=(shipped('zulu'), shipped('alpha')))
+    harness = Harness(tmp_path, builtin=(shipped(first), shipped('alpha')))
     harness.write('mike')
     await harness.loader.load_all()
-    assert [entry.name for entry in harness.loader.entries()] == ['alpha', 'mike', 'zulu']
-    assert harness.text.index('zulu started') < harness.text.index('alpha started')
+    assert [entry.name for entry in harness.loader.entries()] == ['alpha', 'mike', shown]
+    assert harness.text.index(f'{first} started') < harness.text.index('alpha started')
     assert harness.text.index('alpha started') < harness.text.index('mike started')
 
 
@@ -172,12 +170,12 @@ async def test_folder_discovery_and_load_order(tmp_path: Path) -> None:
     (harness.store.plugins_dir / 'not-a-name.py').write_text('raise AssertionError')
     (harness.store.plugins_dir / 'pkg').mkdir()
     (harness.store.plugins_dir / 'pkg' / '__init__.py').write_text(
-        'from pydantic_clai2.plugins import PluginHost\ndef activate(host: PluginHost) -> None:\n    pass\n'
+        'from pydantic_clai2.plugins import Plugin\nclass Empty(Plugin):\n    pass\n'
     )
     (harness.store.plugins_dir / 'empty').mkdir()
     await harness.loader.load_all()
     assert [entry.name for entry in harness.loader.entries()] == ['alpha', 'beta', 'pkg']
-    assert all(entry.host is not None for entry in harness.loader.entries())
+    assert all(entry.loaded is not None for entry in harness.loader.entries())
     assert harness.text.index('alpha started') < harness.text.index('beta started')
     assert {command.name for command in harness.commands} == {'help', 'alpha', 'beta'}
     await harness.loader.close('eof')
@@ -193,15 +191,13 @@ async def test_add_saves_settings_only_once_activation_accepts_them(
     package.mkdir(parents=True)
     (package / '__init__.py').write_text(
         'from pydantic import BaseModel, ConfigDict\n'
-        'from pydantic_clai2.plugins import PluginHost, SessionStart\n'
+        'from pydantic_clai2.plugins import Plugin, SessionStart\n'
         'class Settings(BaseModel):\n'
         "    model_config = ConfigDict(extra='forbid')\n"
         '    fail_on_start: bool = False\n'
-        'def activate(host: PluginHost) -> None:\n'
-        '    settings = host.settings(Settings)\n'
-        "    @host.on('session_start')\n"
-        '    async def started(event: SessionStart) -> None:\n'
-        '        if settings.fail_on_start:\n'
+        'class Strict(Plugin[Settings]):\n'
+        '    async def on_session_start(self, event: SessionStart) -> None:\n'
+        '        if self.settings.fail_on_start:\n'
         "            Settings.model_validate({'unexpected': 1})\n"
     )
     monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
@@ -223,11 +219,13 @@ async def test_add_keeps_settings_the_plugin_saves_while_activating(
     package.mkdir(parents=True)
     (package / '__init__.py').write_text(
         'from pydantic import BaseModel\n'
-        'from pydantic_clai2.plugins import PluginHost\n'
+        'from pydantic_clai2.plugins import Plugin\n'
         'class Settings(BaseModel):\n'
         '    version: int = 1\n'
-        'def activate(host: PluginHost) -> None:\n'
-        '    host.save_settings(host.settings(Settings).model_copy(update={"version": 2}))\n'
+        'class Migrating(Plugin[Settings]):\n'
+        '    def __init__(self, host, settings):\n'
+        '        super().__init__(host, settings)\n'
+        '        host.save_settings(settings.model_copy(update={"version": 2}))\n'
     )
     monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
     harness = Harness(tmp_path)
@@ -237,20 +235,33 @@ async def test_add_keeps_settings_the_plugin_saves_while_activating(
     assert [plugin.settings for plugin in harness.store.plugins()] == [{'version': 2}]
 
 
-async def test_declared_capability_class_and_activate_function(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_declared_plugin_and_capability_classes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     package = tmp_path / 'site' / 'clai_extras'
     package.mkdir(parents=True)
     (package / '__init__.py').write_text('')
     (package / 'caps.py').write_text(
         'from pydantic_ai.capabilities import Capability\n'
-        'from pydantic_clai2.plugins import PluginHost\n'
+        'from pydantic_clai2.plugins import Plugin\n'
         'class Greeter(Capability[None]):\n'
         "    def __init__(self, *, greeting: str = 'hi') -> None:\n"
         '        super().__init__(instructions=greeting)\n'
-        'def install(host: PluginHost) -> None:\n'
-        "    host.add(Greeter(greeting='yo'))\n"
+        'class Installer(Plugin):\n'
+        '    def get_capabilities(self):\n'
+        "        return [Greeter(greeting='yo')]\n"
+        'class Other(Plugin):\n'
+        '    pass\n'
         'NOT_A_PLUGIN = 3\n'
     )
+    (package / 'single.py').write_text(
+        'from clai_extras.caps import Installer\n'
+        'from pydantic_clai2.plugins import Plugin\n'
+        'class _Base(Plugin):\n'
+        '    pass\n'
+        'class Single(_Base):\n'
+        '    def get_capabilities(self):\n'
+        '        return Installer.get_capabilities(self)\n'
+    )
+    (package / 'legacy.py').write_text('def activate(host):\n    pass\n')
     monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
     harness = Harness(tmp_path)
     assert (
@@ -258,24 +269,37 @@ async def test_declared_capability_class_and_activate_function(tmp_path: Path, m
         == 'Added and loaded greeter.'
     )
     assert (
-        await harness.loader.command(['add', 'installer', 'clai_extras.caps:install']) == 'Added and loaded installer.'
+        await harness.loader.command(['add', 'installer', 'clai_extras.caps:Installer'])
+        == 'Added and loaded installer.'
     )
-    assert len(harness.loader.capabilities()) == 2
-    with pytest.raises(PluginError, match='no callable'):
+    assert await harness.loader.command(['add', 'single', 'clai_extras.single']) == 'Added and loaded single.'
+    assert len(harness.loader.capabilities()) == 3
+    with pytest.raises(PluginError, match='neither a `Plugin` nor a capability class'):
         await harness.loader.command(['add', 'number', 'clai_extras.caps:NOT_A_PLUGIN'])
-    with pytest.raises(PluginError, match='not a capability class'):
+    with pytest.raises(PluginError, match='neither a `Plugin` nor a capability class'):
         await harness.loader.command(['add', 'wrong', 'pathlib:Path'])
-    with pytest.raises(PluginError, match="no callable 'activate'"):
-        await harness.loader.command(['add', 'noactivate', 'clai_extras'])
+    with pytest.raises(PluginError, match='neither a `Plugin` nor a capability class'):
+        await harness.loader.command(['add', 'empty', 'clai_extras'])
+    with pytest.raises(PluginError, match=r'defines several plugins \(Installer, Other\); name one as'):
+        await harness.loader.command(['add', 'several', 'clai_extras.caps'])
+    for name, factory in [('legacy', 'clai_extras.legacy'), ('legacy_attr', 'clai_extras.legacy:activate')]:
+        with pytest.raises(PluginError) as legacy:
+            await harness.loader.command(['add', name, factory])
+        assert str(legacy.value) == (
+            f'Plugin {name!r}: TypeError: {factory} is an `activate(host)` function; plugins are now `Plugin`'
+            ' subclasses. See "What a plugin declares" in PLUGINS.md.'
+        )
+    plugins_md = Path(__file__).parents[2] / 'src' / 'pydantic_clai2' / 'PLUGINS.md'
+    assert '\n## What a plugin declares\n' in plugins_md.read_text()
     with pytest.raises(PluginError, match='ModuleNotFoundError'):
         await harness.loader.command(['add', 'missing', 'clai_extras.nope'])
     listing = await harness.loader.command(['list'])
     assert 'greeter: clai_extras.caps:Greeter (enabled, loaded)' in listing
     assert 'missing: clai_extras.nope (enabled, failed: ModuleNotFoundError' in listing
     await harness.loader.command(['reload', 'greeter'])
-    assert len(harness.loader.capabilities()) == 2
+    assert len(harness.loader.capabilities()) == 3
     assert await harness.loader.command(['remove', 'greeter']) == 'Removed greeter.'
-    assert len(harness.loader.capabilities()) == 1
+    assert len(harness.loader.capabilities()) == 2
 
 
 async def test_load_all_skips_missing_plugin_modules_quietly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -304,11 +328,11 @@ async def test_failed_load_leaves_nothing_registered(tmp_path: Path) -> None:
     harness.write('explode', end_body='pass', start_body='pass')
     (harness.store.plugins_dir / 'explode.py').write_text(
         'from pydantic_clai2.commands import Command\n'
-        'from pydantic_clai2.plugins import PluginHost, SessionStart\n'
-        'def activate(host: PluginHost) -> None:\n'
-        "    host.commands.register(Command(name='boom', description='x', handler=lambda _: ''))\n"
-        "    @host.on('session_start')\n"
-        '    async def started(event: SessionStart) -> None:\n'
+        'from pydantic_clai2.plugins import Plugin, SessionStart\n'
+        'class Explode(Plugin):\n'
+        '    def get_commands(self):\n'
+        "        return [Command(name='boom', description='x', handler=lambda _: '')]\n"
+        '    async def on_session_start(self, event: SessionStart) -> None:\n'
         "        raise RuntimeError('start failed')\n"
     )
     (harness.store.plugins_dir / 'syntax.py').write_text('def activate(host):\n    return (\n')
@@ -328,14 +352,13 @@ async def test_saved_settings_persist_and_a_failed_start_after_saving_can_load_a
     harness = Harness(tmp_path)
     (harness.store.plugins_dir / 'tuned.py').write_text(
         'from pydantic import BaseModel\n'
-        'from pydantic_clai2.plugins import PluginHost, SessionStart\n'
+        'from pydantic_clai2.plugins import Plugin, SessionStart\n'
         'class Tuned(BaseModel):\n'
         '    level: int = 1\n'
-        'def activate(host: PluginHost) -> None:\n'
-        "    @host.on('session_start')\n"
-        '    async def started(event: SessionStart) -> None:\n'
-        '        level = host.settings(Tuned).level\n'
-        '        host.save_settings(Tuned(level=level + 1))\n'
+        'class TunedPlugin(Plugin[Tuned]):\n'
+        '    async def on_session_start(self, event: SessionStart) -> None:\n'
+        '        level = self.settings.level\n'
+        '        self.host.save_settings(Tuned(level=level + 1))\n'
         '        if level == 1:\n'
         "            raise RuntimeError('first start fails')\n"
     )
@@ -376,6 +399,47 @@ async def test_enable_disable_reload_persist_and_refresh_module(tmp_path: Path) 
     assert harness.loader.entries()[0].state == 'disabled'
 
 
+async def test_plugins_unloaded_during_a_turn_end_after_it(tmp_path: Path) -> None:
+    """The running agent still holds what they declared, so `session_end` waits for the turn."""
+    harness = Harness(tmp_path)
+    harness.write('alpha', end_body="host.console.print('alpha cleaned')")
+    harness.write('beta', end_body="raise RuntimeError('beta cleanup')")
+    (harness.store.plugins_dir / 'gamma.py').write_text(
+        'from pydantic_ai.capabilities import Hooks\nfrom pydantic_clai2.plugins import Plugin\n\n\n'
+        'class Gamma(Plugin):\n    def get_capabilities(self):\n        return (Hooks(),)\n'
+    )
+    await harness.loader.load_all()
+    async with harness.loader.turn():
+        assert await harness.loader.command(['disable', 'alpha']) == 'Disabled alpha.'
+        assert await harness.loader.command(['disable', 'gamma']) == f'Disabled gamma.\n{TURN_NOTICE}'
+        assert await harness.loader.command(['reload', 'beta']) == 'Reloaded beta.'
+        assert 'alpha' not in harness.commands
+        assert [plugin.enabled for plugin in harness.store.plugins()] == [False, False]
+        assert harness.loader.capabilities() == []
+        assert harness.text.count('beta started') == 2
+        assert 'stopped' not in harness.text
+    assert harness.text.index('alpha stopped exit') < harness.text.index('alpha cleaned')
+    assert harness.text.index('alpha cleaned') < harness.text.index('beta stopped exit')
+    assert "Plugin 'beta': RuntimeError: beta cleanup" in harness.text
+    await harness.loader.disable('beta')
+    assert harness.text.count('beta stopped exit') == 2
+
+
+async def test_a_cancelled_turn_still_ends_the_plugins_it_unloaded(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    harness.write(
+        'alpha', end_body="await __import__('anyio').lowlevel.checkpoint()\n        host.console.print('cleaned')"
+    )
+    await harness.loader.load_all()
+    with anyio.CancelScope() as scope:
+        async with harness.loader.turn():
+            await harness.loader.disable('alpha')
+            scope.cancel()
+            await anyio.lowlevel.checkpoint()
+    assert scope.cancelled_caught
+    assert 'alpha stopped exit\ncleaned' in harness.text
+
+
 async def test_save_settings_keeps_a_declaration_saved_after_load(tmp_path: Path) -> None:
     """Another CLAI process may replace the declaration while this one has the plugin loaded."""
 
@@ -385,11 +449,11 @@ async def test_save_settings_keeps_a_declaration_saved_after_load(tmp_path: Path
     harness = Harness(tmp_path)
     path = harness.write('counter')
     await harness.loader.load('counter')
-    newer = PluginSettings(id='counter', factory='counter:activate', path=str(path), settings={'level': 1})
+    newer = PluginSettings(id='counter', factory='counter:Recorder', path=str(path), settings={'level': 1})
     harness.store.save_plugin(newer)
-    host = harness.loader.entries()[0].host
-    assert host is not None
-    host.save_settings(Chosen(level=2))
+    loaded = harness.loader.entries()[0].loaded
+    assert loaded is not None
+    loaded.host.save_settings(Chosen(level=2))
     assert harness.store.plugins() == [newer.model_copy(update={'settings': {'level': 2}})]
 
 
@@ -431,7 +495,7 @@ async def test_loaded_entry_survives_file_removal_until_unloaded(tmp_path: Path)
     await harness.loader.load_all()
     path.unlink()
     entry = harness.loader.entries()[0]
-    assert entry.name == 'ephemeral' and entry.host is not None
+    assert entry.name == 'ephemeral' and entry.loaded is not None
     await harness.loader.unload('ephemeral')
     assert harness.loader.entries() == []
     harness.store.save_plugin(PluginSettings(id='ephemeral', factory='ephemeral'))
@@ -543,9 +607,7 @@ async def test_project_declarations_sit_above_builtins_and_below_the_store(tmp_p
 async def test_remove_restores_a_project_plugin_that_names_a_file(tmp_path: Path) -> None:
     path = tmp_path / 'repo' / 'filed.py'
     path.parent.mkdir()
-    path.write_text(
-        'from pydantic_clai2.plugins import PluginHost\ndef activate(host: PluginHost) -> None:\n    pass\n'
-    )
+    path.write_text('from pydantic_clai2.plugins import Plugin\nclass Filed(Plugin):\n    pass\n')
     project = (PluginSettings(id='filed', factory='filed', path=str(path), enabled=False),)
     harness = Harness(tmp_path, project=project)
     await harness.loader.load_all()
@@ -564,7 +626,7 @@ async def test_remove_restores_a_project_plugin_that_names_a_file(tmp_path: Path
         'repo_context',
         'compaction',
         'persistence',
-        'logfire',
+        'observability',
         'notifications',
         'github',
         'slack',
@@ -576,11 +638,10 @@ async def test_remove_restores_a_project_plugin_that_names_a_file(tmp_path: Path
 def test_saved_builtin_factory_paths_upgrade_without_losing_toggles(tmp_path: Path, plugin_id: str) -> None:
     """Previously saved built-ins follow their new import paths; user replacements do not."""
     builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == plugin_id)
-    old_factory = (
-        'pydantic_clai2.sessions'
-        if plugin_id == 'persistence'
-        else builtin.factory.replace('pydantic_clai2.builtin_plugins.', 'pydantic_clai2.')
-    )
+    old_factory = {
+        'persistence': 'pydantic_clai2.sessions',
+        'ask_user': 'pydantic_clai2.ask_user_menu:activate',
+    }.get(plugin_id, builtin.factory.replace('pydantic_clai2.builtin_plugins.', 'pydantic_clai2.'))
     harness = Harness(tmp_path, builtin=(builtin,))
     harness.store.save_plugin(builtin.model_copy(update={'factory': old_factory, 'enabled': False}))
     entry = harness.loader.entries()[0]
@@ -596,6 +657,16 @@ def test_saved_builtin_factory_paths_upgrade_without_losing_toggles(tmp_path: Pa
     assert (
         next(item for item in harness.loader.entries() if item.name == 'plain').declaration.factory == builtin.factory
     )
+
+
+def test_saved_activate_factory_upgrades_to_the_plugin_module(tmp_path: Path) -> None:
+    """`ask_user` was declared as `module:activate` before plugins were `Plugin` classes."""
+    builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'ask_user')
+    harness = Harness(tmp_path, builtin=(builtin,))
+    old_factory = f'{builtin.factory}:activate'
+    harness.store.save_plugin(builtin.model_copy(update={'factory': old_factory, 'enabled': False}))
+    entry = harness.loader.entries()[0]
+    assert entry.builtin and entry.declaration.factory == builtin.factory and not entry.declaration.enabled
 
 
 async def test_repo_context_builtin_loads_the_workspace_instructions(
@@ -646,29 +717,24 @@ async def test_repo_context_builtin_loads_the_workspace_instructions(
 async def test_failed_start_reports_cleanup_error_without_masking_start_failure(tmp_path: Path, error: str) -> None:
     harness = Harness(tmp_path)
     (harness.store.plugins_dir / 'broken_start.py').write_text(
-        'from asyncio import CancelledError, sleep\n'
+        'from asyncio import CancelledError\n'
         'from pydantic_clai2.commands import Command\n'
-        'def activate(host):\n'
-        '    host.commands.register(Command(name="temporary", description="temporary", handler=lambda _: "ok"))\n'
-        '    @host.on("session_start")\n'
-        '    async def start(event):\n'
+        'from pydantic_clai2.plugins import Plugin\n'
+        'class BrokenStart(Plugin):\n'
+        '    def get_commands(self):\n'
+        '        return [Command(name="temporary", description="temporary", handler=lambda _: "ok")]\n'
+        '    async def on_session_start(self, event):\n'
         '        raise RuntimeError("start failed")\n'
-        '    @host.on("session_end")\n'
-        '    async def end(event):\n'
-        '        host.console.print("cleanup reason " + event.reason)\n'
+        '    async def on_session_end(self, event):\n'
+        '        self.host.console.print("cleanup reason " + event.reason)\n'
         f'        raise {error}("cleanup failed")\n'
-        '    @host.on("session_end")\n'
-        '    async def remaining(event):\n'
-        '        await sleep(0)\n'
-        '        host.console.print("remaining cleanup")\n'
     )
     with pytest.raises(PluginError, match='start failed'):
         await harness.loader.load('broken_start')
     assert 'cleanup reason error' in harness.text
     assert 'cleanup failed' in harness.text
-    assert 'remaining cleanup' in harness.text
     assert 'temporary' not in {command.name for command in harness.commands}
-    assert harness.loader.entries()[0].host is None
+    assert harness.loader.entries()[0].loaded is None
     assert harness.loader.entries()[0].error == 'RuntimeError: start failed'
 
 
@@ -681,20 +747,19 @@ async def test_external_cancellation_during_failed_start_cleanup_propagates(
     task: asyncio.Task[None] | None = None
     module = ModuleType('cancel_during_cleanup')
 
-    def activate(host: PluginHost[None]) -> None:
-        @host.on('session_start')
-        async def start(event: SessionStart) -> None:
+    class CancelDuringCleanup(Plugin):
+        async def on_session_start(self, event: SessionStart) -> None:
             raise RuntimeError('startup failed')
 
-        @host.on('session_end')
-        async def end(event: SessionEnd) -> None:
+        async def on_session_end(self, event: SessionEnd) -> None:
             try:
                 entered.set()
                 await anyio.sleep_forever()
             finally:
                 cleaned.set()
 
-    module.__dict__['activate'] = activate
+    CancelDuringCleanup.__module__ = module.__name__
+    module.__dict__['CancelDuringCleanup'] = CancelDuringCleanup
     monkeypatch.setitem(sys.modules, module.__name__, module)
     harness = Harness(tmp_path, builtin=(PluginSettings(id='cancel', factory=module.__name__),))
 
@@ -715,7 +780,7 @@ async def test_external_cancellation_during_failed_start_cleanup_propagates(
             task.cancel()
             await cancelled.wait()
     assert cleaned.is_set()
-    assert harness.loader.entries()[0].host is None
+    assert harness.loader.entries()[0].loaded is None
     assert not harness.loader.capabilities()
 
 
@@ -725,30 +790,23 @@ async def test_failed_load_cleanup_is_bounded_and_continues_after_timeout(
 ) -> None:
     entered = anyio.Event()
     stopped = anyio.Event()
-    remaining = anyio.Event()
     failed = anyio.Event()
     cancelled = anyio.Event()
     module = ModuleType('stalled_cleanup')
 
-    def activate(host: PluginHost[None]) -> None:
-        @host.on('session_start')
-        async def start(event: SessionStart) -> None:
+    class StalledCleanup(Plugin):
+        async def on_session_start(self, event: SessionStart) -> None:
             raise RuntimeError('startup failed')
 
-        @host.on('session_end')
-        async def stall(event: SessionEnd) -> None:
+        async def on_session_end(self, event: SessionEnd) -> None:
             try:
                 entered.set()
                 await anyio.sleep_forever()
             finally:
                 stopped.set()
 
-        @host.on('session_end')
-        async def finish(event: SessionEnd) -> None:
-            await anyio.sleep(0)
-            remaining.set()
-
-    module.__dict__['activate'] = activate
+    StalledCleanup.__module__ = module.__name__
+    module.__dict__['StalledCleanup'] = StalledCleanup
     monkeypatch.setitem(sys.modules, module.__name__, module)
     harness = Harness(tmp_path, builtin=(PluginSettings(id='stalled', factory=module.__name__),))
 
@@ -772,6 +830,6 @@ async def test_failed_load_cleanup_is_bounded_and_continues_after_timeout(
             else:
                 await failed.wait()
     assert cancelled.is_set() == cancel_scope
-    assert stopped.is_set() and remaining.is_set()
+    assert stopped.is_set()
     assert 'TimeoutError' in harness.text
-    assert harness.loader.entries()[0].host is None
+    assert harness.loader.entries()[0].loaded is None

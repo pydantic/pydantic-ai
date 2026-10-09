@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import warnings
-from collections.abc import Mapping, Sequence
-from datetime import datetime, timedelta, timezone
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
 from typing import Any
 
@@ -20,25 +21,27 @@ from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CapabilityOrdering,
-    CombinedCapability,
-    Hooks,
     WrapModelRequestHandler,
-    WrapperCapability,
+)
+from pydantic_ai.durable_exec import (
+    JSON_CODEC,
+    BaseDurabilityCapability,
+    DurabilityEngineSpec,
+    JournalCallableOperationBackend,
+    RoleBasedOperationConfig,
 )
 from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UsageLimitExceeded, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
-from pydantic_ai_harness import HarnessDeprecationWarning
-from pydantic_ai_harness.guardrails import GuardrailResult, InputGuardrail
+from pydantic_ai_harness import HarnessDeprecationWarning, spend
 from pydantic_ai_harness.spend import (
     Budget,
     InMemorySpendStore,
     RedisSpendStore,
-    SpendCompositionWarning,
     SpendEntry,
     SpendLimitExceeded,
     SpendLimits,
@@ -47,13 +50,15 @@ from pydantic_ai_harness.spend import (
     UnpricedModelError,
     UnpricedModelWarning,
 )
+from pydantic_ai_harness.spend._exceptions import SpendCompositionWarning
+from tests.continuation_utils import ScriptedContinuationModel, StreamSegment
 
 pytestmark = [
     pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
 ]
 
 
-_EPOCH = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+_EPOCH = datetime(2026, 7, 26, 12, 0, tzinfo=UTC)
 
 
 class Clock:
@@ -94,6 +99,15 @@ def _run_ctx(
     return ctx
 
 
+def _guard_ctx(guard: SpendLimits[Any], ctx: RunContext[Any] | None = None) -> RunContext[Any]:
+    """A run context `guard` can emit its capability events from, as its hooks see during a run."""
+    run_ctx = ctx if ctx is not None else _run_ctx()
+    run_ctx._event_stream_buffer = []  # pyright: ignore[reportPrivateUsage]
+    run_ctx._capability = guard  # pyright: ignore[reportPrivateUsage]
+    run_ctx.capabilities = {'spend_limits': guard}
+    return run_ctx
+
+
 def _request_context() -> ModelRequestContext:
     return ModelRequestContext(
         model=TestModel(),
@@ -101,6 +115,12 @@ def _request_context() -> ModelRequestContext:
         model_settings=None,
         model_request_parameters=ModelRequestParameters(),
     )
+
+
+class _UsageRequestContext:
+    """Stands in for the provider-response record core keeps on a `ModelRequestContext`."""
+
+    _usage_responses: tuple[ModelResponse, ...] = ()
 
 
 def _response(
@@ -129,17 +149,16 @@ async def _record(
 ) -> ModelResponse:
     """Drive one accrual by standing in for the provider call the capability wraps."""
     recorded = response if response is not None else _response(**kwargs)
+    request_context: Any = _UsageRequestContext()
 
     async def handler(request_context: ModelRequestContext) -> ModelResponse:
+        usage_responses: tuple[ModelResponse, ...] = getattr(request_context, '_usage_responses')
+        setattr(request_context, '_usage_responses', (*usage_responses, recorded))
         return recorded
 
-    run_ctx = ctx if ctx is not None else _run_ctx()
-    run_ctx._event_stream_buffer = []  # pyright: ignore[reportPrivateUsage]
-    run_ctx._capability = guard  # pyright: ignore[reportPrivateUsage]
-    run_ctx.capabilities = {'spend_limits': guard}
     return await guard.wrap_model_request(
-        run_ctx,
-        request_context=_request_context(),
+        _guard_ctx(guard, ctx),
+        request_context=request_context,
         handler=handler,
     )
 
@@ -537,113 +556,6 @@ class _RetryOnceInnermost(AbstractCapability[None]):
         return response
 
 
-class _InnermostWithAWrapper(AbstractCapability[None]):
-    """Innermost with a `wrap_model_request` of its own, which is all the report is about."""
-
-    def get_ordering(self) -> CapabilityOrdering:
-        return CapabilityOrdering(position='innermost')
-
-    async def wrap_model_request(
-        self,
-        ctx: RunContext[None],
-        *,
-        request_context: ModelRequestContext,
-        handler: WrapModelRequestHandler,
-    ) -> ModelResponse:
-        return await handler(request_context)
-
-
-class _InnermostRejector(AbstractCapability[None]):
-    """Innermost, and rejects every response it has already awaited."""
-
-    def get_ordering(self) -> CapabilityOrdering:
-        return CapabilityOrdering(position='innermost')
-
-    async def wrap_model_request(
-        self,
-        ctx: RunContext[None],
-        *,
-        request_context: ModelRequestContext,
-        handler: WrapModelRequestHandler,
-    ) -> ModelResponse:
-        await handler(request_context)
-        raise RuntimeError('rejected after the provider had already been paid')
-
-
-class _InnermostWithoutAWrapper(AbstractCapability[None]):
-    """Innermost, like `ToolGuardrail`, but with no `wrap_model_request` of its own."""
-
-    def get_ordering(self) -> CapabilityOrdering:
-        return CapabilityOrdering(position='innermost')
-
-
-class _DurabilityLookalike(AbstractCapability[None]):
-    """Carries the attribute names a durability capability carries, without being one."""
-
-    engine_name = 'not a durable engine'
-    in_durable_context = False
-
-    def get_ordering(self) -> CapabilityOrdering:
-        return CapabilityOrdering(position='innermost')
-
-    async def wrap_model_request(
-        self,
-        ctx: RunContext[None],
-        *,
-        request_context: ModelRequestContext,
-        handler: WrapModelRequestHandler,
-    ) -> ModelResponse:
-        return await handler(request_context)
-
-
-class _InnermostWrapper(WrapperCapability[None]):
-    """A wrapper that reaches the innermost tier and leaves `wrap_model_request` delegating.
-
-    `WrapperCapability.apply` registers a wrapper over a leaf as itself, not as the leaf, so a
-    bare wrapper does not inherit the wrapped capability's `innermost` position. Declaring it
-    is what puts a wrapper after `SpendLimits` at all.
-    """
-
-    def get_ordering(self) -> CapabilityOrdering:
-        return CapabilityOrdering(position='innermost')
-
-
-class _WrapperWithItsOwnWrapper(_InnermostWrapper):
-    """A wrapper subclass that supplies `wrap_model_request` instead of delegating it."""
-
-    async def wrap_model_request(
-        self,
-        ctx: RunContext[None],
-        *,
-        request_context: ModelRequestContext,
-        handler: WrapModelRequestHandler,
-    ) -> ModelResponse:
-        return await handler(request_context)
-
-
-class _HooksWithItsOwnWrapper(Hooks[None]):
-    """A `Hooks` subclass that supplies the method instead of dispatching to a registry."""
-
-    async def wrap_model_request(
-        self,
-        ctx: RunContext[None],
-        *,
-        request_context: ModelRequestContext,
-        handler: WrapModelRequestHandler,
-    ) -> ModelResponse:
-        return await handler(request_context)
-
-
-async def _passthrough(
-    ctx: RunContext[None],
-    /,
-    *,
-    request_context: ModelRequestContext,
-    handler: WrapModelRequestHandler,
-) -> ModelResponse:
-    return await handler(request_context)
-
-
 class TestOrdering:
     """Nothing may reject a response before it is counted."""
 
@@ -718,23 +630,244 @@ class TestOrdering:
         assert result.output == 'cached'
         assert (await guard.status())[0].spent == Spent()
 
-    async def test_an_innermost_capability_listed_after_leaves_a_billed_response_uncounted(self):
-        """Innermost members are not ordered among themselves, so the later one nests further in.
+    async def test_every_committed_provider_response_is_counted_instead_of_the_middleware_result(self):
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+        first = _response(input_tokens=10, output_tokens=1, provider_response_id='first')
+        second = _response(input_tokens=20, output_tokens=2, provider_response_id='second')
+        transformed = _response(input_tokens=900, output_tokens=99, provider_response_id='transformed')
+        request_context: Any = _UsageRequestContext()
 
-        The provider bills both requests and the counter sees one. This is the arrangement
-        `get_ordering` cannot rule out, and the reason it reports itself.
-        """
+        async def handler(request_context: ModelRequestContext) -> ModelResponse:
+            setattr(request_context, '_usage_responses', (first, second))
+            return transformed
+
+        result = await guard.wrap_model_request(_guard_ctx(guard), request_context=request_context, handler=handler)
+
+        assert result is transformed
+        spent = (await guard.status())[0].spent
+        assert spent.requests == 2
+        assert spent.tokens == 33
+
+    async def test_identical_provider_responses_accrue_separately_and_replay_once(self):
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda response: Decimal('1'))
+        first = _response()
+        second = replace(first)
+        request_context: Any = _UsageRequestContext()
+
+        async def handler(request_context: ModelRequestContext) -> ModelResponse:
+            setattr(request_context, '_usage_responses', (first, second))
+            return second
+
+        for _ in range(2):
+            request_context = _UsageRequestContext()
+            await guard.wrap_model_request(_guard_ctx(guard), request_context=request_context, handler=handler)
+
+        spent = (await guard.status())[0].spent
+        assert spent.requests == 2
+        assert spent.usd == Decimal('2')
+
+    async def test_every_committed_response_accrues_before_the_first_policy_error_is_raised(self):
+        guard = SpendLimits(budgets=[Budget(window='total')], on_unpriced='raise')
+        first = _response(model_name='unknown:first', provider_response_id='first')
+        second = _response(model_name='unknown:second', provider_response_id='second')
+        request_context: Any = _UsageRequestContext()
+
+        async def handler(request_context: ModelRequestContext) -> ModelResponse:
+            setattr(request_context, '_usage_responses', (first, second))
+            return second
+
+        with pytest.raises(UnpricedModelError):
+            await guard.wrap_model_request(_guard_ctx(guard), request_context=request_context, handler=handler)
+
+        spent = (await guard.status())[0].spent
+        assert spent.requests == 2
+        assert spent.unpriced_requests == 2
+
+    async def test_every_committed_response_accrues_before_a_callback_error_is_raised(self):
+        def reject_snapshot(snapshot: SpendSnapshot) -> None:
+            raise RuntimeError('reporting failed')
+
+        guard = SpendLimits(
+            budgets=[Budget(window='total')],
+            price=lambda response: Decimal('1'),
+            on_spend=reject_snapshot,
+        )
+        first = _response(provider_response_id='first')
+        second = _response(provider_response_id='second')
+        request_context: Any = _UsageRequestContext()
+
+        async def handler(request_context: ModelRequestContext) -> ModelResponse:
+            setattr(request_context, '_usage_responses', (first, second))
+            return second
+
+        with pytest.raises(RuntimeError, match='reporting failed'):
+            await guard.wrap_model_request(_guard_ctx(guard), request_context=request_context, handler=handler)
+
+        assert (await guard.status())[0].spent.requests == 2
+
+    @pytest.mark.parametrize('invalid_price', [False, True])
+    async def test_falsy_callback_error_outranks_pricing_error(self, invalid_price: bool):
+        class ReportingError(Exception):
+            def __bool__(self) -> bool:
+                return False
+
+        error = ReportingError('reporting failed')
+        assert not error
+
+        def reject_snapshot(snapshot: SpendSnapshot) -> None:
+            raise error
+
+        guard = SpendLimits(
+            budgets=[Budget(window='total')],
+            price=lambda response: Decimal('-1') if invalid_price else None,
+            on_unpriced='raise',
+            on_spend=reject_snapshot,
+        )
+        with pytest.raises(ReportingError) as caught:
+            await _record(guard, model_name='unknown:model')
+
+        assert caught.value is error
+        assert (await guard.status())[0].spent.requests == 1
+
+    @pytest.mark.parametrize('callback_fails', [False, True])
+    async def test_unpriced_warning_does_not_hide_an_existing_error(self, callback_fails: bool):
+        def record(snapshot: SpendSnapshot) -> None:
+            if callback_fails:
+                raise LookupError('callback failed')
+
+        guard = SpendLimits(
+            budgets=[Budget(window='total', usd=Decimal('10'))],
+            price=lambda response: Decimal('-1'),
+            on_spend=record,
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', UnpricedModelWarning)
+            with pytest.raises(LookupError if callback_fails else UserError):
+                await Agent(TestModel(), capabilities=[guard]).run('hello')
+
+        assert (await guard.status())[0].spent.requests == 1
+
+    async def test_a_failed_request_outranks_an_accrual_error(self):
+        """A retryable rejection keeps propagating; a reporting error must not turn it into a dead run."""
+
+        def reject_snapshot(snapshot: SpendSnapshot) -> None:
+            raise RuntimeError('reporting failed')
+
+        guard = SpendLimits(
+            budgets=[Budget(window='total')],
+            price=lambda response: Decimal('1'),
+            on_spend=reject_snapshot,
+        )
+        billed = _response(provider_response_id='billed')
+        request_context: Any = _UsageRequestContext()
+
+        async def handler(request_context: ModelRequestContext) -> ModelResponse:
+            setattr(request_context, '_usage_responses', (billed,))
+            raise ModelRetry('rejected after billing')
+
+        with pytest.raises(ModelRetry, match='rejected after billing'):
+            await guard.wrap_model_request(_guard_ctx(guard), request_context=request_context, handler=handler)
+
+        assert (await guard.status())[0].spent.requests == 1
+
+    async def test_each_wrapper_invocation_accrues_only_new_provider_responses(self):
+        snapshots: list[SpendSnapshot] = []
+        guard = SpendLimits(
+            budgets=[Budget(window='total')],
+            price=lambda response: Decimal('1'),
+            on_spend=snapshots.append,
+        )
+        request_context: Any = _UsageRequestContext()
+        responses = iter(
+            [
+                _response(provider_response_id='first'),
+                _response(provider_response_id='second'),
+            ]
+        )
+
+        async def handler(request_context: ModelRequestContext) -> ModelResponse:
+            response = next(responses)
+            usage_responses: tuple[ModelResponse, ...] = getattr(request_context, '_usage_responses')
+            setattr(request_context, '_usage_responses', (*usage_responses, response))
+            return response
+
+        await guard.wrap_model_request(_guard_ctx(guard), request_context=request_context, handler=handler)
+        await guard.wrap_model_request(_guard_ctx(guard), request_context=request_context, handler=handler)
+
+        assert (await guard.status())[0].spent.requests == 2
+        assert len(snapshots) == 2
+
+    async def test_warning_errors_are_deferred_until_every_provider_response_accrues(self):
+        guard = SpendLimits(budgets=[Budget(usd=Decimal('10'), window='total')])
+        first = _response(model_name='unknown:first', provider_response_id='first')
+        second = _response(model_name='unknown:second', provider_response_id='second')
+        request_context: Any = _UsageRequestContext()
+
+        async def handler(request_context: ModelRequestContext) -> ModelResponse:
+            setattr(request_context, '_usage_responses', (first, second))
+            return second
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', UnpricedModelWarning)
+            with pytest.raises(UnpricedModelWarning):
+                await guard.wrap_model_request(_guard_ctx(guard), request_context=request_context, handler=handler)
+
+        spent = (await guard.status())[0].spent
+        assert spent.requests == 2
+        assert spent.unpriced_requests == 2
+
+    async def test_pricing_errors_are_deferred_until_every_provider_response_accrues(self):
+        def price(response: ModelResponse) -> Decimal:
+            if response.provider_response_id == 'first':
+                raise RuntimeError('pricing failed')
+            return Decimal('1')
+
+        guard = SpendLimits(budgets=[Budget(window='total')], price=price)
+        first = _response(provider_response_id='first')
+        second = _response(provider_response_id='second')
+        request_context: Any = _UsageRequestContext()
+
+        async def handler(request_context: ModelRequestContext) -> ModelResponse:
+            setattr(request_context, '_usage_responses', (first, second))
+            return second
+
+        with pytest.raises(UserError, match='raised RuntimeError: pricing failed'):
+            await guard.wrap_model_request(_guard_ctx(guard), request_context=request_context, handler=handler)
+
+        spent = (await guard.status())[0].spent
+        assert spent.requests == 2
+        assert spent.unpriced_requests == 1
+
+    async def test_an_innermost_capability_listed_after_still_counts_every_billed_response(self):
         guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
         agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[guard, _RetryOnceInnermost()])
 
-        with pytest.warns(SpendCompositionWarning):
-            result = await agent.run('hi')
+        result = await agent.run('hi')
 
         assert result.usage.requests == 2
+        assert (await guard.status())[0].spent.requests == 2
+
+    async def test_outer_spend_observes_usage_through_an_inner_context_copy(self):
+
+        class CopyContext(AbstractCapability[None]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[None],
+                *,
+                request_context: ModelRequestContext,
+                handler: WrapModelRequestHandler,
+            ) -> ModelResponse:
+                return await handler(replace(request_context, messages=list(request_context.messages)))
+
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda response: Decimal('1'))
+        agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[guard, CopyContext()])
+
+        await agent.run('hi')
+
         assert (await guard.status())[0].spent.requests == 1
 
     async def test_listing_spend_limits_last_counts_every_billed_response(self):
-        """The documented fix: the rejecting capability wraps outside the accrual again."""
+        """The opposite wrapper ordering produces the same complete accrual."""
         guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
         agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[_RetryOnceInnermost(), guard])
 
@@ -745,234 +878,6 @@ class TestOrdering:
 
     def test_it_declares_innermost(self):
         assert SpendLimits[None]().get_ordering() == CapabilityOrdering(position='innermost')
-
-
-class TestCompositionWarning:
-    """The arrangement that can leave a billed response uncounted reports itself."""
-
-    async def test_it_names_the_nested_capability_and_the_fix(self):
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
-        agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[guard, _InnermostRejector()])
-
-        with pytest.warns(SpendCompositionWarning, match=r'_InnermostRejector.*List `SpendLimits` last'):
-            with pytest.raises(RuntimeError):
-                await agent.run('hi')
-
-    async def test_it_reports_one_arrangement_once_across_runs(self):
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
-        agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[guard, _InnermostWithAWrapper()])
-
-        with warnings.catch_warnings(record=True) as reported:
-            warnings.simplefilter('always')
-            await agent.run('hi')
-            await agent.run('hi')
-
-        assert [str(w.message) for w in reported if w.category is SpendCompositionWarning] == [
-            'These capabilities are listed after `SpendLimits`, so they wrap inside it: _InnermostWithAWrapper. '
-            'If one of them rejects a response it has already awaited, the provider billed that response and '
-            'the accrual never sees it. This reads the ordering, not what those capabilities do with it. '
-            'List `SpendLimits` last among the innermost capabilities to rule it out.'
-        ]
-
-    async def test_listing_spend_limits_last_reports_nothing(self):
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
-        agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[_InnermostWithAWrapper(), guard])
-
-        await agent.run('hi')
-
-    async def test_a_capability_with_no_wrapper_of_its_own_is_not_reported(self):
-        """Nesting only matters for a capability that can reject the response on the way out."""
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
-        agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[guard, _InnermostWithoutAWrapper()])
-
-        await agent.run('hi')
-
-    async def test_a_hooks_capability_is_not_reported(self):
-        """`Hooks` defines the method unconditionally, so its definition cannot answer the question.
-
-        The cost is a missed report for a `Hooks` that did register a `model_request` hook,
-        which is preferred over reporting one that did not: that arrangement is correct, and
-        the user could only silence the warning by changing correct code.
-        """
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
-        hooks = Hooks[None](ordering=CapabilityOrdering(position='innermost'), model_request=_passthrough)
-        agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[guard, hooks])
-
-        await agent.run('hi')
-
-    async def test_a_durable_execution_capability_is_not_reported(self):
-        """A durability capability is excluded even though it wraps the model request.
-
-        Core also requires its dispatch to be the innermost wrapper, so listing `SpendLimits`
-        after it is the one correction a reader must not make. Durable capability operations pass
-        through outside a durable container, so the run completes and accrues normally.
-        """
-        pytest.importorskip('temporalio')
-        from pydantic_ai.durable_exec.temporal import TemporalDurability  # needs the temporal extra
-
-        guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
-        agent = Agent(
-            _scripted_usage(),
-            name='durable',
-            deps_type=type(None),
-            capabilities=[guard, TemporalDurability[None]()],
-        )
-
-        with warnings.catch_warnings(record=True) as caught:
-            await agent.run('hi')
-            assert (await guard.status())[0].spent.usd == Decimal('1')
-
-        assert not [warning for warning in caught if isinstance(warning.message, SpendCompositionWarning)]
-
-    async def test_a_capability_that_only_looks_durable_is_still_reported(self):
-        """The exclusion matches the durability base type, not attributes anything could carry."""
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
-        agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[guard, _DurabilityLookalike()])
-
-        with pytest.warns(SpendCompositionWarning, match='_DurabilityLookalike'):
-            await agent.run('hi')
-
-    async def test_a_hooks_subclass_with_its_own_wrapper_is_reported(self):
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
-        hooks = _HooksWithItsOwnWrapper(ordering=CapabilityOrdering(position='innermost'))
-        agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[guard, hooks])
-
-        with pytest.warns(SpendCompositionWarning, match='_HooksWithItsOwnWrapper'):
-            await agent.run('hi')
-
-    async def test_a_capability_added_for_one_run_is_reported(self):
-        """`agent.run(capabilities=...)` is why the chain is read per run rather than at binding."""
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
-        agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[guard])
-
-        with pytest.warns(SpendCompositionWarning, match='_InnermostWithAWrapper'):
-            await agent.run('hi', capabilities=[_InnermostWithAWrapper()])
-
-    async def test_a_run_that_adds_one_later_is_still_reported(self):
-        """A safe first run must not mark every chain that follows it as read.
-
-        Nothing is reported on the first run, so a flag set by merely having checked would
-        suppress the second. What is remembered is the arrangement, and the first run has none.
-        """
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
-        agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[guard])
-
-        await agent.run('hi')
-        with pytest.warns(SpendCompositionWarning, match='_InnermostWithAWrapper'):
-            await agent.run('hi', capabilities=[_InnermostWithAWrapper()])
-
-    async def test_a_second_arrangement_reports_even_though_the_first_already_warned(self):
-        """Remembering that a warning fired is not the same as remembering which arrangement fired it.
-
-        A flag set when the warning fires passes both tests above, and loses this one: the same
-        `SpendLimits` instance is surrounded by a different capability on the second run, which
-        is a different arrangement and has never been reported.
-        """
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
-        agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[guard])
-
-        with pytest.warns(SpendCompositionWarning, match='_InnermostWithAWrapper'):
-            await agent.run('hi', capabilities=[_InnermostWithAWrapper()])
-        with pytest.warns(SpendCompositionWarning, match='_InnermostRejector'):
-            with pytest.raises(RuntimeError):
-                await agent.run('hi', capabilities=[_InnermostRejector()])
-
-    async def test_an_arrangement_escalated_to_an_error_is_refused_on_every_run(self):
-        """Escalating the category is a refusal, so it cannot stop refusing after one run.
-
-        `warnings.warn` raises under `filterwarnings('error', ...)`, so an arrangement recorded
-        before the call would be marked reported by the run the raise came from and skipped
-        after it. Recording it after the call returns is what keeps the second run refused.
-        """
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
-        agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[guard])
-
-        with warnings.catch_warnings():
-            warnings.simplefilter('error', SpendCompositionWarning)
-            for _ in range(2):
-                with pytest.raises(SpendCompositionWarning):
-                    await agent.run('hi', capabilities=[_InnermostWithAWrapper()])
-
-    async def test_a_wrapper_is_answered_on_what_it_wraps(self):
-        """`WrapperCapability.wrap_model_request` only delegates, so defining it says nothing."""
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
-        agent = Agent(
-            _scripted_usage(),
-            deps_type=type(None),
-            capabilities=[guard, _InnermostWrapper(_InnermostWithoutAWrapper())],
-        )
-
-        await agent.run('hi')
-
-    async def test_a_wrapper_over_a_real_wrapper_is_reported(self):
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
-        agent = Agent(
-            _scripted_usage(),
-            deps_type=type(None),
-            capabilities=[guard, _InnermostWrapper(_InnermostWithAWrapper())],
-        )
-
-        with pytest.warns(SpendCompositionWarning, match='_InnermostWrapper'):
-            await agent.run('hi')
-
-    async def test_a_wrapper_subclass_with_its_own_wrapper_is_reported(self):
-        """Overriding the method supplies one, so the wrapped capability stops being the answer."""
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
-        agent = Agent(
-            _scripted_usage(),
-            deps_type=type(None),
-            capabilities=[guard, _WrapperWithItsOwnWrapper(_InnermostWithoutAWrapper())],
-        )
-
-        with pytest.warns(SpendCompositionWarning, match='_WrapperWithItsOwnWrapper'):
-            await agent.run('hi')
-
-    async def test_a_sequential_input_guardrail_is_reported_although_it_cannot_under_count(self):
-        """The shipped default trips the check, and the docs say so.
-
-        `InputGuardrail(parallel=False)` runs its guard before calling the handler, so it never
-        holds a billed response to reject. The report reads the ordering, not `parallel`.
-        """
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
-        agent = Agent(
-            _scripted_usage(),
-            deps_type=type(None),
-            capabilities=[guard, InputGuardrail[None](guard=lambda ctx, text: GuardrailResult.allow())],
-        )
-
-        with pytest.warns(SpendCompositionWarning, match='InputGuardrail'):
-            await agent.run('hi')
-
-    async def test_nothing_is_reported_without_a_capability_chain(self):
-        """`RunContext.root_capability` is unset outside a run, leaving nothing to compare against."""
-        await _gate(SpendLimits[None](budgets=[Budget(window='total')]))
-
-    async def test_nothing_is_reported_when_the_chain_does_not_list_it(self):
-        """A chain this `SpendLimits` has no position in leaves nothing to compare against."""
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
-        ctx = _run_ctx(root_capability=CombinedCapability[None]([_InnermostWithAWrapper()]))
-
-        await _gate(guard, ctx=ctx)
-
-    async def test_a_wrapped_spend_limits_is_still_located_in_the_chain(self):
-        """The chain holds the wrapper, and the accrual it delegates to runs at that position.
-
-        Comparing chain members by identity alone reads this as "not in the chain" and reports
-        nothing, while the rejector listed after the wrapper still nests inside the accrual:
-        the provider bills the response and the counter never sees it.
-        """
-        guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
-        agent = Agent(
-            _scripted_usage(),
-            deps_type=type(None),
-            capabilities=[_InnermostWrapper(guard), _InnermostRejector()],
-        )
-
-        with pytest.warns(SpendCompositionWarning, match='_InnermostRejector'):
-            with pytest.raises(RuntimeError):
-                await agent.run('hi')
-
-        assert (await guard.status())[0].spent.requests == 0
 
 
 class TestPricing:
@@ -2113,6 +2018,343 @@ class TestIdempotentAccrual:
         assert (await guard.status())[0].spent.requests == 2
 
 
+class _Journal(JournalCallableOperationBackend[None]):
+    """Replay recorded durable units by name and occurrence, the way Temporal and DBOS do.
+
+    With `journal_capabilities=False` the capability operations are not recorded, so a
+    replayed accrual reaches the store again and only its token can recognise it.
+    """
+
+    def __init__(self, *, journal_capabilities: bool = True) -> None:
+        super().__init__(
+            agent_name='journal', config=RoleBasedOperationConfig(model=None, event=None, capability=None, tool=None)
+        )
+        self.journal_capabilities = journal_capabilities
+        self.results: dict[tuple[str, int], object] = {}
+        self.occurrences: dict[str, int] = {}
+
+    async def execute(
+        self,
+        *,
+        operation_id: object,
+        name: str,
+        body: Callable[[], Awaitable[object]],
+        cache_key: tuple[object, ...],
+        config: None,
+    ) -> object:
+        occurrence = self.occurrences.get(name, 0)
+        self.occurrences[name] = occurrence + 1
+        if not self.journal_capabilities and '__capability__' in name:
+            return await body()
+        key = (name, occurrence)
+        if key not in self.results:
+            self.results[key] = await body()
+        return self.results[key]
+
+    def replay(self) -> None:
+        """Start the run over from the beginning of the journal, as recovery does."""
+        self.occurrences.clear()
+
+
+class _JournalDurability(BaseDurabilityCapability[None]):
+    engine_spec = DurabilityEngineSpec(
+        engine_name='journal', durable_unit_noun='step', durable_container_noun='journal', codec=JSON_CODEC
+    )
+
+    def __init__(self, journal: _Journal) -> None:
+        super().__init__()
+        self.journal = journal
+
+    @property
+    def in_durable_context(self) -> bool:
+        return True
+
+    def get_durable_operation_backend(self) -> _Journal:
+        return self.journal
+
+
+class _CountingStore(InMemorySpendStore):
+    """Count the accruals that reach the store, as opposed to the ones a journal replays."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.batches: list[tuple[SpendEntry, ...]] = []
+
+    async def add_many(self, entries: Sequence[SpendEntry]) -> Mapping[str, Spent]:
+        self.batches.append(tuple(entries))
+        return await super().add_many(entries)
+
+
+def _segment(
+    content: str, *, tokens: tuple[int, int], cost: str, suspended: bool, response_id: str | None
+) -> ModelResponse:
+    return ModelResponse(
+        parts=[TextPart(content)],
+        model_name='scripted',
+        state='suspended' if suspended else 'complete',
+        provider_response_id=response_id,
+        usage=RequestUsage(input_tokens=tokens[0], output_tokens=tokens[1], cost=Decimal(cost)),
+    )
+
+
+def _paused_then_finished(*, response_ids: bool = True, fail_between: bool = False) -> list[ModelResponse | Exception]:
+    """An Anthropic `pause_turn` style chain: two separately billed segments merged into one turn.
+
+    With `fail_between`, the request continuing the first segment fails once before it succeeds.
+    """
+    first = _segment('A', tokens=(7, 3), cost='0.010', suspended=True, response_id='a' if response_ids else None)
+    second = _segment('B', tokens=(8, 3), cost='0.011', suspended=False, response_id='b' if response_ids else None)
+    return [first, RuntimeError('continuation failed'), second] if fail_between else [first, second]
+
+
+def _billed_cost(response: ModelResponse) -> Decimal | None:
+    return response.usage.cost
+
+
+def _failing_chains() -> dict[str, tuple[list[ModelResponse | Exception], list[list[tuple[int, Decimal]]], Spent]]:
+    """Chains whose continuation fails once: the script, the store writes across both attempts, and the total.
+
+    `three-segments` fails after a boundary was already accrued. `background-job` polls one job id
+    and fails between two polls that carry no usage, so only the final poll adds to the first write.
+    """
+    failed = RuntimeError('continuation failed')
+    return {
+        'pause-turn': (
+            _paused_then_finished(fail_between=True),
+            [[(10, Decimal('0.010'))], [(11, Decimal('0.011'))]],
+            Spent(usd=Decimal('0.021'), tokens=21, requests=1),
+        ),
+        'three-segments': (
+            [
+                _segment('A', tokens=(7, 3), cost='0.010', suspended=True, response_id='a'),
+                _segment('B', tokens=(8, 3), cost='0.011', suspended=True, response_id='b'),
+                failed,
+                _segment('C', tokens=(4, 1), cost='0.005', suspended=False, response_id='c'),
+            ],
+            [[(10, Decimal('0.010'))], [(11, Decimal('0.011'))], [(5, Decimal('0.005'))]],
+            Spent(usd=Decimal('0.026'), tokens=26, requests=1),
+        ),
+        'background-job': (
+            [
+                _segment('', tokens=(0, 0), cost='0', suspended=True, response_id='job'),
+                failed,
+                _segment('', tokens=(0, 0), cost='0', suspended=True, response_id='job'),
+                _segment('done', tokens=(40, 2), cost='0.05', suspended=False, response_id='job'),
+            ],
+            [[(0, Decimal('0'))], [(42, Decimal('0.05'))]],
+            Spent(usd=Decimal('0.05'), tokens=42, requests=1),
+        ),
+    }
+
+
+class TestContinuationAccrual:
+    """A continuation chain is merged into one response but billed segment by segment."""
+
+    @pytest.mark.parametrize('chain', ['pause-turn', 'three-segments', 'background-job'])
+    async def test_a_durable_retry_accrues_the_continuation_it_newly_billed(self, chain: str):
+        """The segments charged before a failure are replayed on retry, and only the rest is billed.
+
+        Regression test for https://github.com/pydantic/pydantic-ai/issues/9935: the retry accrued
+        the merged response at the journal position the failed attempt had recorded for the
+        segments it completed, so the journal replayed that record and the segments the retry
+        billed never reached the store.
+        """
+        responses, batches, spent = _failing_chains()[chain]
+        provider_calls = len(responses)
+        journal = _Journal()
+        store = _CountingStore()
+        model = ScriptedContinuationModel(responses=responses)
+        limits = SpendLimits[None](budgets=[Budget(window='total')], store=store, price=_billed_cost)
+        agent = Agent(model, name='journal', deps_type=type(None), capabilities=[_JournalDurability(journal), limits])
+
+        with pytest.raises(RuntimeError, match='continuation failed'):
+            await agent.run('go', run_id='same-durable-task')
+        journal.replay()
+        usage = RunUsage()
+        await agent.run('go', run_id='same-durable-task', usage=usage)
+
+        assert model.request_calls == provider_calls
+        assert (usage.total_tokens, usage.cost) == (spent.tokens, spent.usd)
+        assert (await limits.status())[0].spent == spent
+        assert [[(entry.tokens, entry.usd) for entry in batch] for batch in store.batches] == batches
+
+    @pytest.mark.parametrize('chain', ['pause-turn', 'three-segments', 'background-job'])
+    async def test_a_retry_whose_accruals_reach_the_store_again_charges_completed_segments_once(self, chain: str):
+        """Recovery that cannot consult the recorded accruals is left to the store's tokens.
+
+        Accruing the merged response whole presented a token the store had never seen and charged
+        the completed segments twice.
+        """
+        responses, _, spent = _failing_chains()[chain]
+        journal = _Journal(journal_capabilities=False)
+        limits = SpendLimits[None](budgets=[Budget(window='total')], price=_billed_cost)
+        agent = Agent(
+            ScriptedContinuationModel(responses=responses),
+            name='journal',
+            deps_type=type(None),
+            capabilities=[_JournalDurability(journal), limits],
+        )
+
+        with pytest.raises(RuntimeError, match='continuation failed'):
+            await agent.run('go', run_id='same-durable-task')
+        journal.replay()
+        await agent.run('go', run_id='same-durable-task')
+
+        assert (await limits.status())[0].spent == spent
+
+    async def test_a_retry_without_provider_response_ids_charges_the_replayed_segment_once(self):
+        """The token is derived from the run position and the response content, not the provider's id."""
+        journal = _Journal(journal_capabilities=False)
+        limits = SpendLimits[None](budgets=[Budget(window='total')], price=_billed_cost)
+        agent = Agent(
+            ScriptedContinuationModel(responses=_paused_then_finished(response_ids=False, fail_between=True)),
+            name='journal',
+            deps_type=type(None),
+            capabilities=[_JournalDurability(journal), limits],
+        )
+
+        with pytest.raises(RuntimeError, match='continuation failed'):
+            await agent.run('go', run_id='same-durable-task')
+        journal.replay()
+        await agent.run('go', run_id='same-durable-task')
+
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('0.021'), tokens=21, requests=1)
+
+    @pytest.mark.parametrize('journal_capabilities', [True, False], ids=['journaled', 'store-token'])
+    async def test_replaying_a_completed_chain_charges_nothing_again(self, journal_capabilities: bool):
+        journal = _Journal(journal_capabilities=journal_capabilities)
+        store = _CountingStore()
+        model = ScriptedContinuationModel(responses=_paused_then_finished())
+        limits = SpendLimits[None](budgets=[Budget(window='total')], store=store, price=_billed_cost)
+        agent = Agent(model, name='journal', deps_type=type(None), capabilities=[_JournalDurability(journal), limits])
+
+        await agent.run('go', run_id='same-durable-task')
+        journal.replay()
+        await agent.run('go', run_id='same-durable-task')
+
+        final = (await limits.status())[0].spent
+        assert model.request_calls == 2
+        assert (final.tokens, final.usd, final.requests) == (21, Decimal('0.021'), 1)
+        assert len(store.batches) == (2 if journal_capabilities else 4)
+
+    async def test_a_chain_is_reported_once_with_its_combined_usage(self):
+        """Accruing at each boundary changes what reaches the store, not what is reported."""
+        snapshots: list[SpendSnapshot] = []
+        store = _CountingStore()
+        model = ScriptedContinuationModel(responses=_paused_then_finished())
+        limits = SpendLimits[None](
+            budgets=[Budget(window='total')], store=store, price=_billed_cost, on_spend=snapshots.append
+        )
+
+        result = await Agent(model, deps_type=type(None), capabilities=[limits]).run('go')
+
+        assert [(s.usage.total_tokens, s.usd) for s in snapshots] == [(21, Decimal('0.021'))]
+        assert snapshots[0].budgets[0].spent == Spent(usd=Decimal('0.021'), tokens=21, requests=1)
+        assert result.usage.total_tokens == 21
+        assert len(store.batches) == 2
+
+    async def test_a_streamed_chain_is_accrued_at_each_boundary(self):
+        """The streamed composite reports its segments to the observers present when it was opened."""
+        store = _CountingStore()
+        model = ScriptedContinuationModel(
+            segments=[
+                StreamSegment(
+                    texts=['A'], state='suspended', provider_response_id='a', input_tokens=7, output_tokens=3
+                ),
+                StreamSegment(texts=['B'], state='complete', provider_response_id='b', input_tokens=8, output_tokens=3),
+            ]
+        )
+        limits = SpendLimits[None](
+            budgets=[Budget(window='total')], store=store, price=lambda response: Decimal(response.usage.total_tokens)
+        )
+
+        async with Agent(model, deps_type=type(None), capabilities=[limits]).run_stream('go') as stream:
+            assert await stream.get_output() == 'AB'
+
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('21'), tokens=21, requests=1)
+        assert [[(entry.tokens, entry.requests) for entry in batch] for batch in store.batches] == [
+            [(10, 1)],
+            [(11, 0)],
+        ]
+
+    async def test_idle_polls_of_one_background_job_are_not_accrued(self):
+        """Polls of one job replace the response, so only growth in its usage is new spend."""
+        store = _CountingStore()
+        polls: list[ModelResponse | Exception] = [
+            _segment('', tokens=(0, 0), cost='0', suspended=True, response_id='job'),
+            _segment('', tokens=(0, 0), cost='0', suspended=True, response_id='job'),
+            _segment('done', tokens=(40, 2), cost='0.05', suspended=False, response_id='job'),
+        ]
+        limits = SpendLimits[None](budgets=[Budget(window='total')], store=store, price=_billed_cost)
+
+        await Agent(ScriptedContinuationModel(responses=polls), deps_type=type(None), capabilities=[limits]).run('go')
+
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('0.05'), tokens=42, requests=1)
+        assert [[(entry.tokens, entry.requests) for entry in batch] for batch in store.batches] == [
+            [(0, 1)],
+            [(42, 0)],
+        ]
+
+    async def test_a_resumed_chain_is_folded_from_the_response_it_resumes(self):
+        """The suspended response a history ends in seeds the fold, so the boundaries match core's merge."""
+        seed = _segment('A', tokens=(7, 3), cost='0.010', suspended=True, response_id='a')
+        store = _CountingStore()
+        model = ScriptedContinuationModel(
+            responses=[
+                _segment('B', tokens=(8, 3), cost='0.011', suspended=True, response_id='b'),
+                _segment('C', tokens=(4, 1), cost='0.005', suspended=False, response_id='c'),
+            ]
+        )
+        limits = SpendLimits[None](budgets=[Budget(window='total')], store=store, price=_billed_cost)
+
+        result = await Agent(model, deps_type=type(None), capabilities=[limits]).run(
+            message_history=[ModelRequest.user_text_prompt('go'), seed]
+        )
+
+        assert (await limits.status())[0].spent.tokens == result.usage.total_tokens
+        assert [[(entry.tokens, entry.usd) for entry in batch] for batch in store.batches] == [
+            [(21, Decimal('0.021'))],
+            [(5, Decimal('0.005'))],
+        ]
+
+    @pytest.mark.parametrize('failure', ['unpriced', 'raises'])
+    async def test_a_boundary_that_cannot_be_priced_defers_to_the_merged_response(self, failure: str):
+        """Pricing outcomes belong to the response that is reported, not to an intermediate merge."""
+
+        def price(response: ModelResponse) -> Decimal | None:
+            if response.state == 'complete':
+                return Decimal('3')
+            if failure == 'raises':
+                raise RuntimeError('cannot price a partial turn')
+            return None
+
+        model = ScriptedContinuationModel(responses=_paused_then_finished())
+        limits = SpendLimits[None](budgets=[Budget(window='total')], price=price, on_unpriced='raise')
+
+        await Agent(model, deps_type=type(None), capabilities=[limits]).run('go')
+
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('3'), tokens=21, requests=1)
+
+    async def test_an_unpriced_chain_counts_one_unpriced_request(self):
+        model = ScriptedContinuationModel(responses=_paused_then_finished())
+        limits = SpendLimits[None](budgets=[Budget(window='total')], price=lambda response: None)
+
+        await Agent(model, deps_type=type(None), capabilities=[limits]).run('go')
+
+        assert (await limits.status())[0].spent == Spent(tokens=21, requests=1, unpriced_requests=1)
+
+    async def test_a_boundary_priced_above_the_whole_chain_posts_no_credit(self):
+        def price(response: ModelResponse) -> Decimal:
+            return Decimal('5') if response.state == 'suspended' else Decimal('3')
+
+        model = ScriptedContinuationModel(responses=_paused_then_finished())
+        limits = SpendLimits[None](budgets=[Budget(window='total')], price=price)
+
+        await Agent(model, deps_type=type(None), capabilities=[limits]).run('go')
+
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('5'), tokens=21, requests=1)
+
+
 class TestDeprecatedStore:
     """A store written against the released `SpendStore` keeps working, and says what it costs."""
 
@@ -2682,3 +2924,15 @@ class TestDurableClock:
 
         with pytest.raises(ZeroDivisionError, match='the clock is broken'):
             await _gate(guard)
+
+
+def test_spend_composition_warning_is_a_deprecated_alias() -> None:
+    """`SpendCompositionWarning` is no longer emitted, but importing it keeps working with a deprecation warning."""
+    with pytest.warns(
+        HarnessDeprecationWarning, match='`pydantic_ai_harness.spend.SpendCompositionWarning` is deprecated'
+    ):
+        alias = spend.SpendCompositionWarning
+    assert alias is SpendCompositionWarning
+
+    with pytest.raises(AttributeError, match='has no attribute'):
+        _ = spend.NotAnExport

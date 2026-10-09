@@ -29,6 +29,8 @@ from pytest_mock import MockerFixture
 import pydantic_ai._http
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder, ImageGenerator
+from pydantic_ai._cache_health import ConversationCacheMarkStore
+from pydantic_ai.capabilities import instrumentation as instrumentation_capability
 from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
@@ -47,7 +49,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
+from pydantic_ai.models import Model
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from . import cassette_hooks
@@ -106,6 +108,10 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         'markers',
         'realtime_ws_hold_open: keep a replay WebSocket open after its last recorded frame',
+    )
+    config.addinivalue_line(
+        'markers',
+        'shadow_divergence(reason): the realtime session cores are known to disagree on this trace; reason required',
     )
 
 
@@ -658,6 +664,13 @@ def no_instrumentation_by_default():
     ImageGenerator.instrument_all(False)
 
 
+@pytest.fixture(autouse=True)
+def fresh_cache_mark_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prompt-cache marks are kept process-wide per conversation; tests that reuse a fixed conversation
+    id (or pin the clock) must not see each other's."""
+    monkeypatch.setattr(instrumentation_capability, '_conversation_cache_marks', ConversationCacheMarkStore())
+
+
 try:
     import logfire
     from opentelemetry import context as otel_context
@@ -865,15 +878,14 @@ async def request_capture(anyio_backend: str) -> AsyncIterator[RequestCapture]:
 
 
 _HttpClient: TypeAlias = 'httpx.AsyncClient | httpx2.AsyncClient'
-_HttpClientCache: TypeAlias = 'dict[tuple[str, int, int], _HttpClient]'
+_HttpClientCache: TypeAlias = 'dict[tuple[str, str], _HttpClient]'
 
 
 @pytest.fixture(autouse=True)
 def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClientCache]:
     """Monkeypatch the HTTP client factories in all loaded modules and track created clients.
 
-    Within a single test, calls with the same (timeout, connect) args reuse the same
-    client. On teardown, all clients are closed — no process-global state leaks.
+    Within a single test, calls with the same arguments reuse the same client. On teardown, all clients are closed — no process-global state leaks.
 
     This is a sync fixture so it applies to both sync and async tests. For async tests, the
     companion `close_httpx_clients` fixture handles async cleanup first.
@@ -886,7 +898,8 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
         family: str, factory: Callable[..., _HttpClient], expected: type[_HttpClient]
     ) -> Callable[..., _HttpClient]:
         def cached_per_test(**kwargs: Any) -> _HttpClient:
-            key = (family, kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
+            # `repr`, because `Timeout` and `Limits` arguments compare by value but aren't hashable.
+            key = (family, repr(sorted(kwargs.items())))
             if key not in cache or cache[key].is_closed:
                 cache[key] = factory(**kwargs)
             client = cache[key]

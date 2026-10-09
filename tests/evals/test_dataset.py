@@ -4,7 +4,6 @@ import asyncio
 import inspect
 import json
 import math
-import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
@@ -21,6 +20,8 @@ from ..conftest import IsStr, try_import
 from .utils import render_table
 
 with try_import() as imports_successful:
+    from rich.table import Table
+
     from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import (
@@ -75,12 +76,6 @@ needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logf
 _any_trace_id: str | None = IsOneOf(IsStr(), None)  # type: ignore[assignment]
 _any_span_id: str | None = IsOneOf(IsStr(), None)  # type: ignore[assignment]
 _any_duration: float = IsNumber()  # type: ignore[assignment]
-
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 
 if logfire_import_successful():
@@ -1522,6 +1517,68 @@ async def test_dataset_evaluate_with_non_finite_evaluator_result(
         assert failure.error_type == 'ValueError'
         assert 'returned a value of an invalid type' in failure.error_message
         assert repr(output) in failure.error_message
+
+
+async def test_nonfinite_metric_renders_in_report():
+    """Non-finite metric values render in the report, and against a finite baseline show `old → new` with no diff text.
+
+    A `nan` change has no direction, so it gets neither the increase nor the decrease style.
+    """
+    dataset = Dataset[str, str, None](
+        name='non_finite',
+        cases=[Case(name=name, inputs=name) for name in ('inf', '-inf', 'nan')],
+    )
+
+    async def baseline_task(inputs: str) -> str:
+        increment_eval_metric('ratio', 1.5)
+        return inputs
+
+    async def task(inputs: str) -> str:
+        increment_eval_metric('ratio', float(inputs))
+        return inputs
+
+    baseline = await dataset.evaluate(baseline_task)
+    report = await dataset.evaluate(task)
+
+    assert render_table(report.console_table(include_durations=False)) == snapshot("""\
+ Evaluation Summary: task
+┏━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ Case ID  ┃ Metrics     ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│ inf      │ ratio: inf  │
+├──────────┼─────────────┤
+│ -inf     │ ratio: -inf │
+├──────────┼─────────────┤
+│ nan      │ ratio: nan  │
+├──────────┼─────────────┤
+│ Averages │ ratio: nan  │
+└──────────┴─────────────┘
+""")
+    diff_table = report.console_table(baseline=baseline, include_durations=False)
+    assert isinstance(diff_table, Table)
+    assert render_table(diff_table) == snapshot("""\
+Evaluation Diff: baseline_task →
+              task
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
+┃ Case ID  ┃ Metrics            ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
+│ -inf     │ ratio: 1.50 → -inf │
+├──────────┼────────────────────┤
+│ inf      │ ratio: 1.50 → inf  │
+├──────────┼────────────────────┤
+│ nan      │ ratio: 1.50 → nan  │
+├──────────┼────────────────────┤
+│ Averages │ ratio: 1.50 → nan  │
+└──────────┴────────────────────┘
+""")
+    assert list(diff_table.columns[1].cells) == snapshot(
+        [
+            '[bold]ratio[/]: [green]1.50 → -inf[/]',
+            '[bold]ratio[/]: [red]1.50 → inf[/]',
+            'ratio: 1.50 → nan',
+            'ratio: 1.50 → nan',
+        ]
+    )
 
 
 async def test_dataset_evaluate_with_custom_name(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):

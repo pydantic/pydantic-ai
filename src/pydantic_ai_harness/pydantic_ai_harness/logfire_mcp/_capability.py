@@ -9,7 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, is_read_only, one_connection
+from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -26,8 +26,13 @@ LOGFIRE_EU_MCP_URL = 'https://logfire-eu.pydantic.dev/mcp'
 _INSTRUCTIONS = (
     'Timestamps in tool schemas and examples, and project creation timestamps, are examples or metadata rather than '
     'the current time. Query transport bounds apply in addition to SQL time predicates and default to a short '
-    'window, so widen them explicitly when needed. Create a Logfire link only when the user asks for one.'
+    'window, so widen them explicitly when needed. Create a Logfire link only when the user asks for one. '
+    "Logfire tool names here start with `logfire_`, which the server's own text leaves out: `query_run` is "
+    '`logfire_query_run`.'
 )
+
+_TOOL_PREFIX = 'logfire'
+"""Every tool is named `logfire_<server tool name>`, so Logfire's tools never collide with another toolset's."""
 
 
 _ID = 'logfire-mcp'
@@ -68,7 +73,7 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
         return one_connection(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
-        """Build the LogfireMCP connection and optional read-only selection."""
+        """Build the LogfireMCP connection and optional read-only selection, with tool names prefixed `logfire_`."""
         id = self.id or _ID
         if self.client is not None:
             toolset: AbstractToolset[AgentDepsT] = MCPToolset(
@@ -80,8 +85,8 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
         else:
             toolset = self._connect(self.auth)
         if self.read_only:
-            return toolset.filtered(lambda _ctx, tool: is_read_only(tool))
-        return toolset
+            toolset = read_only_toolset(toolset)
+        return toolset.prefixed(_TOOL_PREFIX)
 
     def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
         auth = self.auth(ctx) if callable(self.auth) else self.auth

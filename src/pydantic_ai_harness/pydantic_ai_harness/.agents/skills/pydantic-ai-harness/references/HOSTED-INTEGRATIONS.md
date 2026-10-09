@@ -190,7 +190,8 @@ print(workspace.id)
 
 **LogfireMCP.** `url=LOGFIRE_EU_MCP_URL` for EU data, or a self-hosted MCP URL (import the constants
 from `pydantic_ai_harness.logfire_mcp`). With `include_instructions=True` it also adds query guidance and
-the current UTC time (taken from the request timestamp, so Temporal-safe) to the instructions.
+the current UTC time (taken from the request timestamp, so Temporal-safe) to the instructions. Its tool
+names are prefixed `logfire_` (`query_run` becomes `logfire_query_run`).
 
 **PostHog.** By default the server exposes a single command-driven `posthog` tool. `features='flags'`
 or `['flags', 'insights']` limits the server to those feature groups. `features=[]` raises (the server

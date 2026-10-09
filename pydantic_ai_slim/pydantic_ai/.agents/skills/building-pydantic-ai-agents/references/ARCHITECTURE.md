@@ -172,6 +172,7 @@ Need deterministic, fast tests?
 | Mistral | `mistral:` | `mistral:mistral-large-latest` |
 | Cohere | `cohere:` | `cohere:command-r-plus-08-2024` |
 | TypeSafe (Jev, structured output only) | `typesafe:` | `typesafe:jev-latest` |
+| Decision models on the `/v1/systemone` API (CLM, Laya; structured output only; needs `SYSTEM_ONE_BASE_URL`) | `system-one:` | `system-one:clm-latest` |
 | AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-6` |
 | AWS Bedrock Mantle | `bedrock-mantle:` | `bedrock-mantle:openai.gpt-oss-120b` |
 | Azure | `azure:` | `azure:gpt-5.2` |
@@ -252,7 +253,7 @@ See [Run Methods and Streaming](./AGENTS-CORE.md#run-methods-and-streaming) for 
 
 **Capabilities** are the primary extension point — they bundle tools, lifecycle hooks, instructions, and model settings into reusable units. Built-in capabilities include `Thinking`, `WebSearch`, `WebFetch`, `Hooks`, `MCP`, and more.
 
-**Lifecycle hooks** (via `Hooks` or `AbstractCapability`) intercept every stage: `before_run` → `before_model_request` → `before_tool_execute` → `after_tool_execute` → `after_model_request` → `after_run`
+**Lifecycle hooks** (via `Hooks` or `AbstractCapability`) intercept every stage. Each stage follows `wrap_X(handler: before_X → core operation / on_X_error recovery → after_X)`: `wrap_X` is outermost, and a wrapper that does not call its handler skips the inner lifecycle. `agent.run_stream()` is the node-hook exception: it fires `before_node_run` before streaming, wraps only later graph advancement for non-final nodes, and skips `wrap_node_run`/`after_node_run` for the final streamed `ModelRequestNode`.
 
 **Model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5.2"`, `"anthropic:claude-sonnet-4-6"`, `"google:gemini-3-pro-preview"`)
 

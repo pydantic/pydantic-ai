@@ -14,7 +14,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaita
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from datetime import datetime as _datetime, timezone
+from datetime import datetime as _datetime
 from types import TracebackType
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
@@ -120,8 +120,8 @@ async def test_streamed_text_response():
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
-                    timestamp=IsNow(tz=timezone.utc),
+                    parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=datetime.UTC))],
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -129,7 +129,7 @@ async def test_streamed_text_response():
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                     usage=RequestUsage(input_tokens=51),
                     model_name='test',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -137,10 +137,10 @@ async def test_streamed_text_response():
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                            tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=datetime.UTC), tool_call_id=IsStr()
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -157,12 +157,12 @@ async def test_streamed_text_response():
         response = await result.get_output()
         assert response == snapshot('{"ret_a":"a-apple"}')
         assert result.is_complete
-        assert result.timestamp == IsNow(tz=timezone.utc)
+        assert result.timestamp == IsNow(tz=datetime.UTC)
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
-                    timestamp=IsNow(tz=timezone.utc),
+                    parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=datetime.UTC))],
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -170,7 +170,7 @@ async def test_streamed_text_response():
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                     usage=RequestUsage(input_tokens=51),
                     model_name='test',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -178,10 +178,10 @@ async def test_streamed_text_response():
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                            tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=datetime.UTC), tool_call_id=IsStr()
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -189,7 +189,7 @@ async def test_streamed_text_response():
                     parts=[TextPart(content='{"ret_a":"a-apple"}')],
                     usage=RequestUsage(input_tokens=52, output_tokens=11),
                     model_name='test',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -223,8 +223,8 @@ def test_streamed_text_sync_response():
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=datetime.UTC))],
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -232,7 +232,7 @@ def test_streamed_text_sync_response():
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -240,10 +240,10 @@ def test_streamed_text_sync_response():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                        tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=datetime.UTC), tool_call_id=IsStr()
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -261,7 +261,7 @@ def test_streamed_text_sync_response():
     response = result.get_output()
     assert response == snapshot('{"ret_a":"a-apple"}')
     assert result.is_complete
-    assert result.timestamp == IsNow(tz=timezone.utc)
+    assert result.timestamp == IsNow(tz=datetime.UTC)
     assert result.response == snapshot(
         ModelResponse(
             parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -274,8 +274,8 @@ def test_streamed_text_sync_response():
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=datetime.UTC))],
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -283,7 +283,7 @@ def test_streamed_text_sync_response():
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -291,10 +291,10 @@ def test_streamed_text_sync_response():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                        tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=datetime.UTC), tool_call_id=IsStr()
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -302,7 +302,7 @@ def test_streamed_text_sync_response():
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
                 usage=RequestUsage(input_tokens=52, output_tokens=11),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1503,7 +1503,7 @@ async def test_run_stream_cancel_during_debounce_from_another_task():
 
         @property
         def timestamp(self) -> _datetime:
-            return _datetime(2024, 1, 1, tzinfo=timezone.utc)
+            return _datetime(2024, 1, 1, tzinfo=datetime.UTC)
 
     class CancellableModel(models.Model):
         @property
@@ -1689,7 +1689,7 @@ async def test_streamed_text_stream():
                     parts=[TextPart(content='The ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=1),
                     model_name='test',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     state='incomplete',
                 ),
@@ -1697,7 +1697,7 @@ async def test_streamed_text_stream():
                     parts=[TextPart(content='The cat ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='test',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     state='incomplete',
                 ),
@@ -1705,7 +1705,7 @@ async def test_streamed_text_stream():
                     parts=[TextPart(content='The cat sat ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='test',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     state='incomplete',
                 ),
@@ -1713,7 +1713,7 @@ async def test_streamed_text_stream():
                     parts=[TextPart(content='The cat sat on ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='test',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     state='incomplete',
                 ),
@@ -1721,7 +1721,7 @@ async def test_streamed_text_stream():
                     parts=[TextPart(content='The cat sat on the ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=5),
                     model_name='test',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     state='incomplete',
                 ),
@@ -1729,7 +1729,7 @@ async def test_streamed_text_stream():
                     parts=[TextPart(content='The cat sat on the mat.')],
                     usage=RequestUsage(input_tokens=51, output_tokens=7),
                     model_name='test',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     state='incomplete',
                 ),
@@ -1737,7 +1737,7 @@ async def test_streamed_text_stream():
                     parts=[TextPart(content='The cat sat on the mat.')],
                     usage=RequestUsage(input_tokens=51, output_tokens=7),
                     model_name='test',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     state='incomplete',
                 ),
@@ -1820,7 +1820,7 @@ def test_streamed_text_stream_sync():
                 parts=[TextPart(content='The ')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 state='incomplete',
             ),
@@ -1828,7 +1828,7 @@ def test_streamed_text_stream_sync():
                 parts=[TextPart(content='The cat ')],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 state='incomplete',
             ),
@@ -1836,7 +1836,7 @@ def test_streamed_text_stream_sync():
                 parts=[TextPart(content='The cat sat ')],
                 usage=RequestUsage(input_tokens=51, output_tokens=3),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 state='incomplete',
             ),
@@ -1844,7 +1844,7 @@ def test_streamed_text_stream_sync():
                 parts=[TextPart(content='The cat sat on ')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 state='incomplete',
             ),
@@ -1852,7 +1852,7 @@ def test_streamed_text_stream_sync():
                 parts=[TextPart(content='The cat sat on the ')],
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 state='incomplete',
             ),
@@ -1860,7 +1860,7 @@ def test_streamed_text_stream_sync():
                 parts=[TextPart(content='The cat sat on the mat.')],
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 state='incomplete',
             ),
@@ -1868,7 +1868,7 @@ def test_streamed_text_stream_sync():
                 parts=[TextPart(content='The cat sat on the mat.')],
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 state='incomplete',
             ),
@@ -1966,8 +1966,8 @@ async def test_call_tool():
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                    timestamp=IsNow(tz=timezone.utc),
+                    parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=datetime.UTC))],
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -1975,7 +1975,7 @@ async def test_call_tool():
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}', tool_call_id=IsStr())],
                     usage=RequestUsage(input_tokens=50, output_tokens=5),
                     model_name='function::stream_structured_function',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -1984,11 +1984,11 @@ async def test_call_tool():
                         ToolReturnPart(
                             tool_name='ret_a',
                             content='hello world',
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                             tool_call_id=IsStr(),
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -1998,8 +1998,8 @@ async def test_call_tool():
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                    timestamp=IsNow(tz=timezone.utc),
+                    parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=datetime.UTC))],
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2007,7 +2007,7 @@ async def test_call_tool():
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}', tool_call_id=IsStr())],
                     usage=RequestUsage(input_tokens=50, output_tokens=5),
                     model_name='function::stream_structured_function',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2016,11 +2016,11 @@ async def test_call_tool():
                         ToolReturnPart(
                             tool_name='ret_a',
                             content='hello world',
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                             tool_call_id=IsStr(),
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2034,7 +2034,7 @@ async def test_call_tool():
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=7),
                     model_name='function::stream_structured_function',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2043,11 +2043,11 @@ async def test_call_tool():
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                             tool_call_id=IsStr(),
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2080,7 +2080,7 @@ async def test_empty_response():
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2100,7 +2100,7 @@ async def test_empty_response():
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2130,8 +2130,8 @@ async def test_run_stream_allows_none_output_empty_response():
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                    timestamp=IsNow(tz=timezone.utc),
+                    parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=datetime.UTC))],
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2169,8 +2169,8 @@ async def test_call_tool_wrong_name():
     assert messages == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=datetime.UTC))],
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2178,13 +2178,13 @@ async def test_call_tool_wrong_name():
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=50, output_tokens=1),
                 model_name='function::stream_structured_function',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -2624,8 +2624,8 @@ class TestMultipleToolCalls:
         assert messages == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='test early strategy', timestamp=IsNow(tz=timezone.utc))],
-                    timestamp=IsNow(tz=timezone.utc),
+                    parts=[UserPromptPart(content='test early strategy', timestamp=IsNow(tz=datetime.UTC))],
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2638,7 +2638,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=13),
                     model_name='function::sf',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2647,29 +2647,29 @@ class TestMultipleToolCalls:
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                             tool_call_id=IsStr(),
                         ),
                         ToolReturnPart(
                             tool_name='regular_tool',
                             content='Tool not executed - a final result was already processed.',
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                             tool_call_id=IsStr(),
                         ),
                         ToolReturnPart(
                             tool_name='another_tool',
                             content='Tool not executed - a final result was already processed.',
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                             tool_call_id=IsStr(),
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
                             content='Tool not executed - a final result was already processed.',
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                             tool_call_id=IsStr(),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2771,8 +2771,8 @@ class TestMultipleToolCalls:
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='test early output tools', timestamp=IsNow(tz=timezone.utc))],
-                    timestamp=IsNow(tz=timezone.utc),
+                    parts=[UserPromptPart(content='test early output tools', timestamp=IsNow(tz=datetime.UTC))],
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2783,7 +2783,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::stream_function',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2793,16 +2793,16 @@ class TestMultipleToolCalls:
                             tool_name='first_output',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
                             content='Output tool not used - a final result was already processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2828,8 +2828,8 @@ class TestMultipleToolCalls:
         assert messages == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
-                    timestamp=IsNow(tz=timezone.utc),
+                    parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=datetime.UTC))],
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2840,7 +2840,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::sf',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2849,17 +2849,17 @@ class TestMultipleToolCalls:
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                             tool_call_id=IsStr(),
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Output tool not used - a final result was already processed.',
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                             tool_call_id=IsStr(),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2914,10 +2914,10 @@ class TestMultipleToolCalls:
                     parts=[
                         UserPromptPart(
                             content='test early strategy with final result in middle',
-                            timestamp=IsNow(tz=datetime.timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2951,7 +2951,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=17),
                     model_name='function::sf',
-                    timestamp=IsNow(tz=datetime.timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -2961,34 +2961,34 @@ class TestMultipleToolCalls:
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=datetime.timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='regular_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=datetime.timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='another_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=datetime.timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             content='Tool not executed - a final result was already processed.',
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=datetime.timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=datetime.timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3058,10 +3058,10 @@ class TestMultipleToolCalls:
                     parts=[
                         UserPromptPart(
                             content='test early strategy with external tool call',
-                            timestamp=IsNow(tz=datetime.timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3081,7 +3081,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=7),
                     model_name='function::sf',
-                    timestamp=IsNow(tz=datetime.timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3091,16 +3091,16 @@ class TestMultipleToolCalls:
                             tool_name='final_result',
                             content='Output tool not used - a final result was already processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=datetime.timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='regular_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=datetime.timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3148,10 +3148,10 @@ class TestMultipleToolCalls:
                     parts=[
                         UserPromptPart(
                             content='test early strategy with external tool call',
-                            timestamp=IsNow(tz=datetime.timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3166,7 +3166,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=3),
                     model_name='function::sf',
-                    timestamp=IsNow(tz=datetime.timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3176,10 +3176,10 @@ class TestMultipleToolCalls:
                             tool_name='regular_tool',
                             content=1,
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=datetime.timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3212,10 +3212,10 @@ class TestMultipleToolCalls:
                     parts=[
                         UserPromptPart(
                             content='test early strategy with regular tool calls',
-                            timestamp=IsNow(tz=datetime.timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3229,7 +3229,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=57),
                     model_name='test',
-                    timestamp=IsNow(tz=datetime.timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3240,10 +3240,10 @@ class TestMultipleToolCalls:
                             tool_name='regular_tool',
                             content=0,
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=datetime.timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3257,7 +3257,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=58, output_tokens=4),
                     model_name='test',
-                    timestamp=IsNow(tz=datetime.timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     provider_name='test',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3268,10 +3268,10 @@ class TestMultipleToolCalls:
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=datetime.timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3314,8 +3314,8 @@ class TestMultipleToolCalls:
         assert messages == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='test graceful strategy', timestamp=IsNow(tz=timezone.utc))],
-                    timestamp=IsNow(tz=timezone.utc),
+                    parts=[UserPromptPart(content='test graceful strategy', timestamp=IsNow(tz=datetime.UTC))],
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3327,7 +3327,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=10),
                     model_name='function::sf',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3336,20 +3336,20 @@ class TestMultipleToolCalls:
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                             tool_call_id=IsStr(),
                         ),
                         ToolReturnPart(
                             tool_name='regular_tool',
                             content=42,
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
-                            tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                            tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=datetime.UTC)
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3398,8 +3398,8 @@ class TestMultipleToolCalls:
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='test graceful output tools', timestamp=IsNow(tz=timezone.utc))],
-                    timestamp=IsNow(tz=timezone.utc),
+                    parts=[UserPromptPart(content='test graceful output tools', timestamp=IsNow(tz=datetime.UTC))],
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3410,7 +3410,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::stream_function',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3420,16 +3420,16 @@ class TestMultipleToolCalls:
                             tool_name='first_output',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
                             content='Output tool not used - a final result was already processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3455,8 +3455,8 @@ class TestMultipleToolCalls:
         assert messages == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
-                    timestamp=IsNow(tz=timezone.utc),
+                    parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=datetime.UTC))],
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3467,7 +3467,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::sf',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3476,17 +3476,17 @@ class TestMultipleToolCalls:
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                             tool_call_id=IsStr(),
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Output tool not used - a final result was already processed.',
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                             tool_call_id=IsStr(),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3542,10 +3542,10 @@ class TestMultipleToolCalls:
                     parts=[
                         UserPromptPart(
                             content='test graceful strategy with final result in middle',
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3579,7 +3579,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=17),
                     model_name='function::sf',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3589,34 +3589,34 @@ class TestMultipleToolCalls:
                             tool_name='regular_tool',
                             content=1,
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='another_tool',
                             content=2,
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         RetryPromptPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3672,8 +3672,8 @@ class TestMultipleToolCalls:
         assert messages == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc))],
-                    timestamp=IsNow(tz=timezone.utc),
+                    parts=[UserPromptPart(content='test exhaustive strategy', timestamp=IsNow(tz=datetime.UTC))],
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3688,7 +3688,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=21),
                     model_name='function::sf',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3697,41 +3697,41 @@ class TestMultipleToolCalls:
                         ToolReturnPart(
                             tool_name='regular_tool',
                             content=42,
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                             tool_call_id=IsStr(),
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                             tool_call_id=IsStr(),
                         ),
                         ToolReturnPart(
                             tool_name='another_tool',
                             content=2,
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Output tool processed, but its value will not be the final result of the agent run.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         RetryPromptPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3780,8 +3780,8 @@ class TestMultipleToolCalls:
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='test exhaustive output tools', timestamp=IsNow(tz=timezone.utc))],
-                    timestamp=IsNow(tz=timezone.utc),
+                    parts=[UserPromptPart(content='test exhaustive output tools', timestamp=IsNow(tz=datetime.UTC))],
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3792,7 +3792,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::stream_function',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3802,16 +3802,16 @@ class TestMultipleToolCalls:
                             tool_name='first_output',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
                             content='Output tool processed, but its value will not be the final result of the agent run.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3861,7 +3861,7 @@ class TestMultipleToolCalls:
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='test invalid first valid second', timestamp=IsNow(tz=timezone.utc))],
+                    parts=[UserPromptPart(content='test invalid first valid second', timestamp=IsNow(tz=datetime.UTC))],
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3871,7 +3871,7 @@ class TestMultipleToolCalls:
                         ToolCallPart(tool_name='second_output', args='{"value": "valid"}', tool_call_id=IsStr()),
                     ],
                     model_name='function:stream_function:',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3881,13 +3881,13 @@ class TestMultipleToolCalls:
                             content='First output validation failed',
                             tool_name='first_output',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                     ],
                     run_id=IsStr(),
@@ -3939,8 +3939,8 @@ class TestMultipleToolCalls:
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='test valid first invalid second', timestamp=IsNow(tz=timezone.utc))],
-                    timestamp=IsNow(tz=timezone.utc),
+                    parts=[UserPromptPart(content='test valid first invalid second', timestamp=IsNow(tz=datetime.UTC))],
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3951,7 +3951,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::stream_function',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -3961,16 +3961,16 @@ class TestMultipleToolCalls:
                             tool_name='first_output',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
                             content='Output tool not used - output function execution failed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4020,12 +4020,8 @@ class TestMultipleToolCalls:
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content='test exhaustive with tool retry', timestamp=IsNow(tz=datetime.timezone.utc)
-                        )
-                    ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    parts=[UserPromptPart(content='test exhaustive with tool retry', timestamp=IsNow(tz=datetime.UTC))],
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4036,7 +4032,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::stream_function',
-                    timestamp=IsNow(tz=datetime.timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4046,16 +4042,16 @@ class TestMultipleToolCalls:
                             tool_name='first_output',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=datetime.timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         RetryPromptPart(
                             content='Second output validation failed',
                             tool_name='second_output',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=datetime.timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4109,7 +4105,7 @@ class TestMultipleToolCalls:
         assert messages == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
+                    parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=datetime.UTC))],
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4120,7 +4116,7 @@ class TestMultipleToolCalls:
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::stream_function',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4137,12 +4133,12 @@ class TestMultipleToolCalls:
                             ],
                             tool_name='final_result',
                             tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
+                            timestamp=IsNow(tz=datetime.UTC),
                             tool_call_id=IsStr(),
                         ),
                     ],
@@ -4680,7 +4676,7 @@ async def test_iter_stream_response():
                 parts=[TextPart(content=text)],
                 usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 state='incomplete',
             )
@@ -4690,7 +4686,7 @@ async def test_iter_stream_response():
             parts=[TextPart(content='The cat sat on the mat.')],
             usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
             model_name='test',
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=datetime.UTC),
             provider_name='test',
         ),
     ]
@@ -4775,7 +4771,7 @@ async def test_unknown_tool_call_events():
                     content="Unknown tool name: 'unknown_tool'. Available tools: 'known_tool'",
                     tool_name='unknown_tool',
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                 ),
             ),
             FunctionToolResultEvent(
@@ -4783,7 +4779,7 @@ async def test_unknown_tool_call_events():
                     tool_name='known_tool',
                     content=10,
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                 ),
             ),
             FunctionToolCallEvent(
@@ -4833,7 +4829,7 @@ async def test_output_tool_success_events():
                     tool_name='final_result',
                     content='Final result processed.',
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                 )
             ),
         ]
@@ -4885,7 +4881,7 @@ async def test_output_tool_events():
                     ],
                     tool_name='final_result',
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                 )
             ),
             OutputToolCallEvent(
@@ -4901,7 +4897,7 @@ async def test_output_tool_events():
                     tool_name='final_result',
                     content='Final result processed.',
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                 )
             ),
         ]
@@ -5123,7 +5119,7 @@ async def test_tool_raises_call_deferred():
             DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
         )
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=0))
-        assert result.timestamp == IsNow(tz=timezone.utc)
+        assert result.timestamp == IsNow(tz=datetime.UTC)
         assert result.is_complete
 
 
@@ -5166,7 +5162,7 @@ async def test_tool_raises_approval_required():
                             timestamp=IsDatetime(),
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -5187,7 +5183,7 @@ async def test_tool_raises_approval_required():
                             timestamp=IsDatetime(),
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -5459,7 +5455,7 @@ async def test_run_event_stream_handler():
                     tool_name='ret_a',
                     content='a-apple',
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
@@ -5500,6 +5496,31 @@ async def test_tool_availability_delta_event_stream_handler(
             part=ToolAvailabilityDeltaPart(tools_added=['hidden_tool'], tool_call_id='pyd_ai_tool_call_id__ret_a')
         )
     ]
+
+
+@pytest.mark.parametrize('end_strategy', ['graceful', 'exhaustive'])
+async def test_run_stream_usage_includes_tools_run_after_final_result(
+    end_strategy: Literal['graceful', 'exhaustive'],
+) -> None:
+    """Function tools run after the final result, and the agents they delegate to, count towards `result.usage`."""
+
+    async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall('final_result', '{"value": "done"}')}
+        yield {1: DeltaToolCall('delegate', '{}')}
+
+    delegate_agent = Agent(TestModel())
+    agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy=end_strategy)
+
+    @agent.tool
+    async def delegate(ctx: RunContext) -> str:
+        result = await delegate_agent.run('hi', usage=ctx.usage)
+        return result.output
+
+    usage = RunUsage()
+    async with agent.run_stream('go', usage=usage) as result:
+        await result.get_output()
+        assert result.usage == snapshot(RunUsage(requests=2, input_tokens=101, output_tokens=9, tool_calls=1))
+    assert result.usage == usage == snapshot(RunUsage(requests=2, input_tokens=101, output_tokens=9, tool_calls=1))
 
 
 async def test_event_stream_handler_propagates_tool_error():
@@ -5568,7 +5589,7 @@ def test_run_sync_event_stream_handler():
                     tool_name='ret_a',
                     content='a-apple',
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
@@ -5619,7 +5640,7 @@ async def test_run_stream_event_stream_handler():
                     tool_name='ret_a',
                     content='a-apple',
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
@@ -5761,7 +5782,7 @@ async def test_stream_tool_returning_user_content():
                         url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
                     ),
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
@@ -5820,7 +5841,7 @@ async def test_run_stream_events():
                     tool_name='ret_a',
                     content='a-apple',
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
@@ -5876,10 +5897,10 @@ async def test_get_output_after_stream_output():
                 parts=[
                     UserPromptPart(
                         content='Hello',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=datetime.UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5893,7 +5914,7 @@ async def test_get_output_after_stream_output():
                 ],
                 usage=RequestUsage(input_tokens=51),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5904,10 +5925,10 @@ async def test_get_output_after_stream_output():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=datetime.UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5992,7 +6013,7 @@ async def test_args_validator_failure_events():
                     content='Validation failed: x must be positive',
                     tool_name='add_numbers',
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                 ),
             ),
             PartStartEvent(
@@ -6012,7 +6033,7 @@ async def test_args_validator_failure_events():
                     tool_name='add_numbers',
                     content=0,
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                 ),
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
@@ -6535,7 +6556,7 @@ async def test_stream_cancel_guard_suppresses_httpx2_transport_error():
 
         @property
         def timestamp(self) -> _datetime:
-            return _datetime.now(tz=timezone.utc)
+            return _datetime.now(tz=datetime.UTC)
 
     stream = _HTTPX2Stream(models.ModelRequestParameters())
     iterator = stream.__aiter__()
@@ -6614,7 +6635,7 @@ async def test_stream_cancel_with_natural_drain_reports_interrupted():
 
         @property
         def timestamp(self) -> _datetime:
-            return _datetime.now(tz=timezone.utc)
+            return _datetime.now(tz=datetime.UTC)
 
     stream = _NaturalDrainStream(models.ModelRequestParameters())
     iterator = stream.__aiter__()
@@ -6660,7 +6681,7 @@ async def test_stream_cancel_outranks_incomplete_state_hint():
 
         @property
         def timestamp(self) -> _datetime:
-            return _datetime.now(tz=timezone.utc)
+            return _datetime.now(tz=datetime.UTC)
 
     stream = _InProgressStream(models.ModelRequestParameters())
     iterator = stream.__aiter__()
@@ -6686,7 +6707,7 @@ async def test_completed_streamed_response_cancel_noop():
 
 async def test_completed_streamed_response_metadata():
     """`CompletedStreamedResponse` forwards `model_name`/`provider_name`/`provider_url`/`timestamp`/`usage` to the response."""
-    ts = datetime.datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    ts = datetime.datetime(2026, 1, 15, 12, 0, 0, tzinfo=datetime.UTC)
     response = ModelResponse(
         parts=[TextPart(content='done')],
         model_name='test-model',
@@ -6726,7 +6747,7 @@ def replay_mrp() -> models.ModelRequestParameters:
 
 @pytest.fixture
 def replay_timestamp() -> datetime.datetime:
-    return datetime.datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    return datetime.datetime(2026, 1, 15, 12, 0, 0, tzinfo=datetime.UTC)
 
 
 @pytest.fixture

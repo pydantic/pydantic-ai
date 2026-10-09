@@ -1,5 +1,6 @@
 """The `logfire_mcp` built-in: its settings menu, keys kept in `/keys`, credential order, and OAuth."""
 
+import inspect
 import io
 import threading
 import webbrowser
@@ -15,20 +16,20 @@ from rich.console import Console
 from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
-from typing_extensions import TypeIs
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LogfireMCP
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2.builtin_plugins.logfire_mcp import SETUP, LogfireMCPSource, activate
+from pydantic_clai2.builtin_plugins.logfire_mcp import SETUP, LogfireMCPPlugin, LogfireMCPSource
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import api_keys
 from pydantic_clai2.config.api_keys import KeyReference, SavedKey
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.logfire_oauth import SIGN_IN_TIMEOUT, DeviceAuth, SignInError, Tokens
-from pydantic_clai2.plugins import PluginHost, SessionStart
+from pydantic_clai2.plugins import PluginHost, SessionStart, load_plugin
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.ui.menus.field_menu import CUSTOM, is_save_and_close
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
@@ -60,13 +61,12 @@ class Shell:
         return declaration.settings
 
     def capability(self) -> LogfireMCP[None]:
-        [capability] = self.loader.capabilities()
-        assert is_logfire_mcp(capability)
-        return capability
-
-
-def is_logfire_mcp(capability: object) -> TypeIs[LogfireMCP[None]]:
-    return isinstance(capability, LogfireMCP)
+        """The connection chosen at session start, before a run resolves its saved key."""
+        [factory] = self.loader.capabilities()
+        assert inspect.ismethod(factory)
+        plugin = factory.__self__
+        assert isinstance(plugin, LogfireMCPPlugin) and plugin.capability is not None
+        return plugin.capability
 
 
 def script(
@@ -290,6 +290,52 @@ async def test_conventional_saved_key_beats_browser_sign_in_and_resolves_each_ru
         capability.auth(None)
 
 
+def stub_connections(monkeypatch: pytest.MonkeyPatch) -> list[str | None]:
+    """Serve `query_run` in-process, recording the token each run connects with."""
+    connected: list[str | None] = []
+
+    def connect(self: LogfireMCP[None], auth: str | None) -> FunctionToolset[None]:
+        connected.append(auth)
+        toolset = FunctionToolset[None]()
+
+        @toolset.tool_plain
+        def query_run(query: str) -> str:
+            return 'rows'
+
+        return toolset
+
+    monkeypatch.setattr(LogfireMCP, '_connect', connect)
+    return connected
+
+
+async def test_a_chosen_saved_key_gives_an_agent_run_the_logfire_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connected = stub_connections(monkeypatch)
+    api_keys.save_key(name='SHARED', value='shared-secret')
+    shell = Shell(tmp_path, {'key': {'name': 'SHARED'}, 'read_only': False})
+    await shell.loader.enable('logfire_mcp')
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=shell.loader.capabilities())
+    assert (await agent.run('Query Logfire.')).output == '{"logfire_query_run":"rows"}'
+    assert connected == ['shared-secret']
+    api_keys.delete_key(name='SHARED')
+    with pytest.raises(UserError, match=r'Saved API key SHARED is missing\. Run /plugins configure logfire_mcp'):
+        await agent.run('Query Logfire.')
+
+
+async def test_an_environment_key_gives_an_agent_run_the_logfire_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connected = stub_connections(monkeypatch)
+    monkeypatch.setenv('LOGFIRE_API_KEY', 'env-key')
+    shell = Shell(tmp_path, {'read_only': False})
+    await shell.loader.enable('logfire_mcp')
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=shell.loader.capabilities())
+    assert (await agent.run('Query Logfire.')).output == '{"logfire_query_run":"rows"}'
+    # `None` lets `LogfireMCP` read the environment itself.
+    assert connected == [None]
+
+
 async def test_browser_sign_in_is_the_default_and_waits_long_enough_for_the_code(tmp_path: Path) -> None:
     shell = Shell(tmp_path, {'url': LOGFIRE_EU_MCP_URL})
     await shell.loader.enable('logfire_mcp')
@@ -318,8 +364,7 @@ def logfire_command(
 ) -> tuple[Callable[[list[str]], Awaitable[str]], io.StringIO]:
     output = io.StringIO()
     host = PluginHost[None](name='logfire_mcp', console=Console(file=output, width=200), settings=settings or {})
-    activate(host)
-    [command] = host.commands
+    [command] = load_plugin(LogfireMCPPlugin, host).commands
 
     async def run(args: list[str]) -> str:
         result = command.handler(args)
@@ -395,8 +440,8 @@ async def test_registers_the_logout_command(tmp_path: Path) -> None:
     api_keys.save_key(name='LOGFIRE_API_KEY', value='kept')
     shell = Shell(tmp_path)
     await shell.loader.enable('logfire_mcp')
-    [host] = [entry.host for entry in shell.loader.entries() if entry.host]
-    assert [c.name for c in host.commands] == ['logfire_mcp']
+    [loaded] = [entry.loaded for entry in shell.loader.entries() if entry.loaded]
+    assert [c.name for c in loaded.commands] == ['logfire_mcp']
 
 
 async def test_add_replacing_the_builtin_opens_the_menu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -508,8 +553,9 @@ async def test_keys_are_read_at_session_start_off_the_event_loop(
 
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire_mcp.load_keys', load_keys)
     host = PluginHost[None](name='logfire_mcp', console=Console(file=io.StringIO()), settings={})
-    activate(host)
-    assert (host.capabilities, threads) == ([], [])
+    plugin = load_plugin(LogfireMCPPlugin, host)
+    assert isinstance(plugin.plugin, LogfireMCPPlugin) and plugin.plugin.capability is None
+    assert threads == []
     shell = Shell(tmp_path)
     await shell.loader.enable('logfire_mcp')
     assert len(threads) == 1

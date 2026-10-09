@@ -4,11 +4,10 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Genera
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, cast
 
 import pydantic_core
 from pydantic import JsonValue
-from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
@@ -928,7 +927,9 @@ class MistralStreamedResponse(StreamedResponse):
 
             param_schema = properties.get(param, {})
             param_type = param_schema.get('type')
-            param_items_type = param_schema.get('items', {}).get('type')
+            param_items = param_schema.get('items', {})
+            # Drafts before 2020-12 spell a tuple as an `items` list, which has no single item type to check.
+            param_items_type = None if isinstance(param_items, list) else param_items.get('type')
             param_value = json_dict[param]
 
             if param_type == 'array' and param_items_type:
