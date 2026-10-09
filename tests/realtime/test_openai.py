@@ -661,8 +661,7 @@ def test_map_conversation_item_lifecycle_events_carry_identifiers(event_type: st
     assert map_conversation_event(
         {'type': event_type, 'item': {'id': 'item-2', 'type': 'function_call', 'call_id': 'call-1'}}
     ) == ConversationItemCreated(item_id='item-2', tool_call_id='call-1', replayed=False)
-    # `replayed=True` is set only by the reconnect handshake's burst capture, and marks the item as
-    # already-seen history rather than a live event.
+    # `replayed=True` marks the item as already-seen history rather than a live event.
     assert map_conversation_event({'type': event_type, 'item': {'id': 'item-3'}}, replayed=True) == (
         ConversationItemCreated(item_id='item-3', tool_call_id=None, replayed=True)
     )

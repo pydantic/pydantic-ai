@@ -676,37 +676,6 @@ EXTENDED_THINKING_PARALLEL_CALLS = Finding(
 )
 
 
-def _refusal_around_a_reconnect(sim: Simulation) -> bool:
-    """A refusal the next connection loss followed with no response started in between: nothing released its request."""
-    truth = sim.truth
-
-    def unreleased(refused: int) -> bool:
-        loss = next((loss for loss in truth.connection_losses if loss > refused), None)
-        return loss is not None and not any(
-            refused < response.seq_start < loss for response in truth.responses.values()
-        )
-
-    return any(input_.refused_at is not None and unreleased(input_.refused_at) for input_ in truth.inputs)
-
-
-LOST_REFUSAL = Finding(
-    id='SIM-21',
-    title=(
-        'a request for a response the provider refuses around a reconnect (the refusal lost with the connection, or '
-        'read just before it drops) leaves a reservation neither re-asked nor released, so `wait_for_reply()` hangs: '
-        'xAI resumes the conversation, so the connection still expects the reply there'
-    ),
-    tracked_by=(
-        'a reconnect resolving the reply obligations its connection lost, also where the provider resumes the '
-        'conversation (fixed by the session core elsewhere); found by this simulator'
-    ),
-    evidence='simulated',
-    codes=frozenset({'wait.hang'}),
-    providers=frozenset({'xai'}),
-    matches=lambda sim, violation: _refusal_around_a_reconnect(sim),
-)
-
-
 def _terminal_read_as_the_connection_dropped(sim: Simulation, violation: InvariantViolation) -> bool:
     # Read off its connection right before that connection dropped (within a few clock ticks), or after, from what
     # it had already received: either way the session handles it on a connection it already gave up on.
@@ -982,7 +951,6 @@ KNOWN_FINDINGS.extend(
         PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL,
         HAND_COMMIT_UNANSWERED_AT_THE_END,
         DEFERRED_REQUEST_DROPPED_AFTER_SPEECH,
-        LOST_REFUSAL,
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
         PARKED_ERROR_LEAVES_REQUEST_OWED,
         EXTENDED_THINKING_PARALLEL_CALLS,
