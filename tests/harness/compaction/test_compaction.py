@@ -267,6 +267,26 @@ class TestEstimateContextTokens:
         msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
         assert estimate_context_tokens(msgs) == 50_500 + 10 + 1_000
 
+    def test_changed_instructions_replace_the_anchored_set(self):
+        # The next request sends the new set instead of the one the anchor paid for, as when
+        # an hourly clock in the instructions ticks over: count the difference, not both sets.
+        request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='o' * 4_000)
+        request_after = ModelRequest(parts=[UserPromptPart(content='a' * 40)], instructions='n' * 4_400)
+        msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
+        assert estimate_context_tokens(msgs) == 50_500 + 10 + 100
+
+    def test_shorter_instructions_lower_the_estimate(self):
+        request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='o' * 4_000)
+        request_after = ModelRequest(parts=[UserPromptPart(content='a' * 40)], instructions='n' * 400)
+        msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
+        assert estimate_context_tokens(msgs) == 50_500 + 10 - 900
+
+    def test_changed_instructions_are_swapped_with_a_tokenizer(self):
+        request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='one two')
+        request_after = ModelRequest(parts=[UserPromptPart(content='three')], instructions='one two three four')
+        msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
+        assert estimate_context_tokens(msgs, tokenizer=lambda s: len(s.split())) == 50_500 + 1 + 2
+
     def test_tokenizer_applies_to_the_suffix(self):
         msgs: list[ModelMessage] = [
             _assistant_with_usage('short', 50_000, 500),
@@ -2698,6 +2718,21 @@ class TestHelperBranchCoverage:
         ]
         assert estimate_token_count(msgs) == 0
         assert _format_messages(msgs) == ''
+
+    def test_a_file_returned_by_a_tool_is_not_counted_as_characters(self):
+        """A screenshot from an MCP or browser tool travels as an attachment; only the text is counted."""
+
+        image = BinaryContent(data=b'\x89PNG' * 75_000, media_type='image/png')
+        msgs: list[ModelMessage] = [
+            ModelRequest(parts=[ToolReturnPart(tool_name='screenshot', content=[image, 'c' * 40], tool_call_id='c1')]),
+            ModelResponse(parts=[NativeToolReturnPart(tool_name='image_generation', content=image, tool_call_id='c2')]),
+        ]
+        assert estimate_token_count(msgs) == (40 + len('image_generation')) // 4
+
+    def test_a_structured_tool_return_is_counted_as_the_json_it_is_sent_as(self):
+        part = ToolReturnPart(tool_name='lookup', content={'key': 'v' * 100}, tool_call_id='c1')
+        msgs: list[ModelMessage] = [ModelRequest(parts=[part])]
+        assert estimate_token_count(msgs) == len('{"key":"' + 'v' * 100 + '"}') // 4
 
     def test_user_prompt_text_skips_non_text_content(self):
 

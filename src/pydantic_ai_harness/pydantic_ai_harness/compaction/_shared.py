@@ -120,9 +120,13 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
     # Match the discriminator so this remains importable before the new core part is released.
     elif part.part_kind == 'instruction-delta':  # pyright: ignore[reportUnnecessaryComparison]
         return [part.render()]  # pragma: lax no cover - requires core instruction updates
-    elif isinstance(part, (ToolReturnPart, RetryPromptPart)):
-        # Both are sent in full. The tool-search and capability-load returns subclass
-        # `ToolReturnPart`, so they arrive here too.
+    elif isinstance(part, ToolReturnPart):
+        # Sent in full. The tool-search and capability-load returns subclass `ToolReturnPart`,
+        # so they arrive here too. Counted as the text the provider receives: a returned image
+        # or document travels as an attachment, like `FilePart`, and `str(part.content)` would
+        # spell its bytes out, a 300 KB screenshot reading as some 200K tokens.
+        return [part.model_response_str()]
+    elif isinstance(part, RetryPromptPart):
         return [str(part.content)]
     # Control bookkeeping rather than message text: it records which tools became available, and
     # the schemas themselves travel in the request's tool definitions. Those schemas are not free
@@ -168,7 +172,7 @@ def _response_part_text(part: ModelResponsePart) -> list[str]:
     elif isinstance(part, NativeToolCallPart):
         return [part.tool_name, str(part.args)]
     elif isinstance(part, NativeToolReturnPart):
-        return [part.tool_name, str(part.content)]
+        return [part.tool_name, part.model_response_str()]
     elif isinstance(part, SpeechPart):
         # `SpeechPart` is in both unions; a realtime assistant turn lands here. Count its
         # transcript for the same reason as on the request side.
@@ -214,6 +218,13 @@ def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = Non
     return len(text) // _CHARS_PER_TOKEN
 
 
+def _count_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
+    """Token count of text segments: per segment with *tokenizer*, otherwise the heuristic over their total."""
+    if tokenizer is not None:
+        return sum(tokenizer(s) for s in segments)
+    return sum(len(s) for s in segments) // _CHARS_PER_TOKEN
+
+
 def estimate_token_count(
     messages: Sequence[ModelMessage],
     tokenizer: Callable[[str], int] | None = None,
@@ -225,10 +236,7 @@ def estimate_token_count(
         tokenizer: Optional callable that returns the token count for a string.
             When `None`, falls back to a ~4 characters-per-token heuristic.
     """
-    segments = _collect_text(messages)
-    if tokenizer is not None:
-        return sum(tokenizer(s) for s in segments)
-    return sum(len(s) for s in segments) // _CHARS_PER_TOKEN
+    return _count_segments(_collect_text(messages), tokenizer)
 
 
 def estimate_context_tokens(
@@ -245,8 +253,9 @@ def estimate_context_tokens(
     the response's own parts, so their sum is ground truth for the history up to and including
     that response. Only the messages after the anchor are estimated with the character
     heuristic (or *tokenizer*), without re-counting instructions, which the anchor already
-    covers. Tool schemas named by availability deltas after the anchor are estimated from the
-    pending request parameters. This is what makes the estimate robust where the pure heuristic
+    covers; when the instructions changed since the anchor, the estimate swaps the old set for
+    the new one rather than adding the new set on top. Tool schemas named by availability
+    deltas after the anchor are estimated from the pending request parameters. This is what makes the estimate robust where the pure heuristic
     is not: token-dense content (minified JSON, base64, non-Latin scripts) and the tool
     definitions the heuristic cannot see at all are both inside the provider's number.
 
@@ -265,22 +274,24 @@ def estimate_context_tokens(
     if anchor := _latest_usage_anchor(messages):
         index, message = anchor
         anchored = message.usage.input_tokens + message.usage.output_tokens
-        segments = _collect_message_text(messages[index + 1 :])
+        segments = [
+            *_collect_message_text(messages[index + 1 :]),
+            *_revealed_tool_schema_text(messages[index + 1 :], model_request_parameters),
+        ]
         # The anchor paid for the instructions in force when its request was made. When the
-        # latest instructions differ (dynamic instructions, or a persisted history resumed
-        # under a new prompt), the new set is absent from both the anchor and the message
-        # text, so count it; when unchanged, counting it would double what the anchor holds.
+        # latest instructions differ (dynamic instructions such as a clock, or a persisted
+        # history resumed under a new prompt), the next request sends the new set *instead of*
+        # the old one: swap one estimate for the other. Adding the new set on top would count
+        # the instructions twice, and when unchanged neither needs counting.
         current_instructions = _instructions_text(messages)
-        if current_instructions != _instructions_text(messages[: index + 1]):
-            segments = [*segments, *current_instructions]
-        segments.extend(_revealed_tool_schema_text(messages[index + 1 :], model_request_parameters))
-        if tokenizer is not None:
-            return anchored + sum(tokenizer(s) for s in segments)
-        return anchored + sum(len(s) for s in segments) // _CHARS_PER_TOKEN
-    segments = [*_collect_text(messages), *_revealed_tool_schema_text(messages, model_request_parameters)]
-    if tokenizer is not None:
-        return sum(tokenizer(s) for s in segments)
-    return sum(len(s) for s in segments) // _CHARS_PER_TOKEN
+        anchored_instructions = _instructions_text(messages[: index + 1])
+        if current_instructions != anchored_instructions:
+            anchored += _count_segments(current_instructions, tokenizer)
+            anchored -= _count_segments(anchored_instructions, tokenizer)
+        return max(anchored + _count_segments(segments, tokenizer), 0)
+    return _count_segments(
+        [*_collect_text(messages), *_revealed_tool_schema_text(messages, model_request_parameters)], tokenizer
+    )
 
 
 def has_context_usage_anchor(messages: Sequence[ModelMessage]) -> bool:
