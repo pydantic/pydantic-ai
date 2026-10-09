@@ -655,7 +655,8 @@ class FakeSandbox:
 
         E2B's proxy answers a request for a killed sandbox with a 502, which the SDK raises as
         a `TimeoutException` blaming the sandbox timeout -- the same type it uses for a slow
-        request, so only the health probe tells the two apart.
+        request, so only the health probe tells the two apart. From e2b 2.53.1 it is the
+        `SandboxNotRunningException` subclass, which the backend still probes as a timeout.
         """
         if self.killed:
             raise format_sandbox_unavailable_exception('The sandbox was not found')
