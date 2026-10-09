@@ -289,11 +289,11 @@ def default_model_settings(*, model: str, saved: Mapping[str, JsonValue]) -> Mod
     return ModelSettingsForm.model_validate(defaults).to_model_settings()
 
 
-def model_settings_from_json(values: dict[str, JsonValue], *, model: str = '') -> ModelSettingsForm:
+def model_settings_from_json(values: dict[str, JsonValue], *, model: str | None = None) -> ModelSettingsForm:
     """Read shared preferences, ignoring keys from newer versions without changing the store.
 
-    Known fields still validate normally. New edits use the strict form directly. Without `model`,
-    the saved values alone, without any defaults.
+    Known fields still validate normally. New edits use the strict form directly. With `model`, its
+    family defaults fill the fields `values` leaves unset; without it, only `values` are read.
     """
-    defaults = model_defaults(model=model) if model else {}
+    defaults = model_defaults(model=model) if model is not None else {}
     return ModelSettingsForm.model_validate({**defaults, **values}, extra='ignore')
