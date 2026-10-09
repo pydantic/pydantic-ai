@@ -32,6 +32,7 @@ from pydantic_ai._utils import (
     get_first_param_type,
     group_by_temporal,
     is_async_callable,
+    is_str_dict,
     merge_json_schema_defs,
     replace_no_init,
     run_in_executor,
@@ -1116,11 +1117,10 @@ def _chain_schema(
 
 
 def _assert_all_json_schema_refs_resolve(value: Any, defs: dict[str, dict[str, Any]]) -> None:
-    if isinstance(value, dict):
-        mapping = cast(dict[str, Any], value)
-        if ref := mapping.get('$ref'):
+    if is_str_dict(value):
+        if ref := value.get('$ref'):
             assert str(ref).removeprefix('#/$defs/') in defs
-        for nested in mapping.values():
+        for nested in value.values():
             _assert_all_json_schema_refs_resolve(nested, defs)
     elif isinstance(value, list):
         for nested in cast(list[Any], value):

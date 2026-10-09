@@ -998,8 +998,8 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
         renames: dict[str, str] = {}
         new_names: list[str] = []
 
-        # New names are kept; same-named defs with a different body get a unique name.
-        # Both reserve their name in `all_defs` now and are replaced by a ref-rewritten copy below.
+        # New names are kept; same-named defs with a different body get a unique name. Both point
+        # `all_defs` at this schema's own copy of the def, whose refs are rewritten in place below.
         for name, def_schema in defs.items():
             if name not in all_defs:
                 all_defs[name] = def_schema
@@ -1030,7 +1030,6 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
         # name only reference unrenamed defs, so the earlier schema's copy is already correct.
         for name in [*new_names, *renames]:
             _update_mapped_json_schema_refs(defs[name], renames)
-            all_defs[renames.get(name, name)] = defs[name]
 
         _update_mapped_json_schema_refs(schema, renames)
         rewritten_schemas.append(schema)
