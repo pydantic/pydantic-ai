@@ -993,63 +993,47 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
             rewritten_schemas.append(schema)
             continue
 
-        schema = schema.copy()
-        defs = schema.pop('$defs', None)
-        schema_name_mapping: dict[str, str] = {}
-        new_def_names: set[str] = set()
+        schema = copy.deepcopy(schema)
+        defs = schema.pop('$defs')
+        renames: dict[str, str] = {}
+        new_names: list[str] = []
 
-        # Process definitions and build mapping
+        # New names are kept; same-named defs with a different body get a unique name.
+        # Both reserve their name in `all_defs` now and are replaced by a ref-rewritten copy below.
         for name, def_schema in defs.items():
             if name not in all_defs:
                 all_defs[name] = def_schema
-                new_def_names.add(name)
-                schema_name_mapping[name] = name
+                new_names.append(name)
             elif def_schema != all_defs[name]:
-                # Different def with same name — assign a unique name
-                schema_name_mapping[name] = _unique_def_name(name, schema, all_defs)
-                all_defs[schema_name_mapping[name]] = def_schema
-            # else: structurally equal — handled below
+                renames[name] = _unique_def_name(name, schema, all_defs)
+                all_defs[renames[name]] = def_schema
 
-        # Defs that are structurally equal (same dict) may still be semantically
-        # different if they contain $refs that point to defs that were renamed in
-        # this schema. Revisit every definition until a full pass makes no new
-        # mapping, so transitive references are resolved regardless of definition
-        # order.
+        # A def equal to an earlier schema's def ("shared") can reuse it only if none of the defs it
+        # transitively references were renamed; otherwise its `$ref`s resolve differently and it needs
+        # its own copy. Iterate to a fixpoint before keeping any shared def, so the result does not
+        # depend on the order of `$defs`.
+        shared = [name for name in defs if name not in renames and name not in new_names]
         changed = True
         while changed:
             changed = False
-            for name, def_schema in defs.items():
-                updated = copy.deepcopy(def_schema)
-                _update_mapped_json_schema_refs(updated, schema_name_mapping)
-                mapped_name = schema_name_mapping.get(name)
-                if updated != def_schema:
-                    if mapped_name is None:
-                        # Structurally equal to an earlier schema's def, but its
-                        # $refs now resolve differently: it needs its own copy
-                        # under a new name.
-                        new_name = _unique_def_name(name, schema, all_defs)
-                        schema_name_mapping[name] = new_name
-                        all_defs[new_name] = updated
-                        changed = True
-                    elif mapped_name == name and name in new_def_names:
-                        # The current schema introduced this def, so it is not
-                        # shared with an earlier schema: keep the name and
-                        # update its $refs in place.
-                        _update_mapped_json_schema_refs(all_defs[name], schema_name_mapping)
-                        changed = True
-                elif mapped_name is None:
-                    schema_name_mapping[name] = name
+            for name in shared:
+                if name in renames:
+                    continue
+                updated = copy.deepcopy(defs[name])
+                _update_mapped_json_schema_refs(updated, renames)
+                if updated != defs[name]:
+                    renames[name] = _unique_def_name(name, schema, all_defs)
+                    all_defs[renames[name]] = defs[name]
                     changed = True
 
-        # Update refs inside renamed definitions using copies so definitions shared
-        # with earlier schemas are not mutated in place.
-        for name, new_name in schema_name_mapping.items():
-            if new_name != name:
-                updated = copy.deepcopy(defs[name])
-                _update_mapped_json_schema_refs(updated, schema_name_mapping)
-                all_defs[new_name] = updated
+        # Store a ref-rewritten copy of every def this schema contributes. Shared defs left under their
+        # name only reference unrenamed defs, so the earlier schema's copy is already correct.
+        for name in [*new_names, *renames]:
+            updated = copy.deepcopy(defs[name])
+            _update_mapped_json_schema_refs(updated, renames)
+            all_defs[renames.get(name, name)] = updated
 
-        _update_mapped_json_schema_refs(schema, schema_name_mapping)
+        _update_mapped_json_schema_refs(schema, renames)
         rewritten_schemas.append(schema)
 
     return rewritten_schemas, all_defs
