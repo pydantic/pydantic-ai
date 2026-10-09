@@ -945,18 +945,9 @@ async def test_session_carries_on_past_max_duration(monkeypatch: pytest.MonkeyPa
     ]
 
 
-@pytest.mark.parametrize(
-    'settings',
-    [
-        pytest.param(None, id='no-policy'),
-        pytest.param(
-            rt_xai.XaiRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_reconnects': 0}),
-            id='reconnects-used-up',
-        ),
-    ],
-)
+@pytest.mark.parametrize('reconnects_used_up', [False, True])
 async def test_max_duration_error_without_a_reconnect_ends_the_session(
-    monkeypatch: pytest.MonkeyPatch, settings: rt_xai.XaiRealtimeModelSettings | None
+    monkeypatch: pytest.MonkeyPatch, reconnects_used_up: bool
 ) -> None:
     """Without a reconnect policy, or with its reconnects used up, a `max_duration` error ends the session.
 
@@ -973,6 +964,11 @@ async def test_max_duration_error_without_a_reconnect_ends_the_session(
     connect = _RecordingConnect([ended])
     monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
 
+    settings = (
+        rt_xai.XaiRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_reconnects': 0})
+        if reconnects_used_up
+        else None
+    )
     model = _model(settings)
     async with _connect(model, 'x') as conn:
         events = [event async for event in conn]
