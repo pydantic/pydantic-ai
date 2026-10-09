@@ -2699,6 +2699,19 @@ class TestHelperBranchCoverage:
         assert estimate_token_count(msgs) == 0
         assert _format_messages(msgs) == ''
 
+    def test_a_file_in_a_tool_return_counts_as_its_reference(self):
+        """A tool return's file is measured and summarized as the reference the model gets, not its `repr`."""
+        image = BinaryContent(data=b'\x00' * 4_000, media_type='image/png')
+        reference = f'See file {image.identifier}.'
+        bare = ToolReturnPart(tool_name='screenshot', content=image, tool_call_id='c1')
+        mixed = ToolReturnPart(tool_name='screenshot', content=['taken', image], tool_call_id='c2')
+
+        assert estimate_token_count([ModelRequest(parts=[bare])]) == len(reference) // 4
+        assert estimate_token_count([ModelRequest(parts=[mixed])]) == len(f'taken {reference}') // 4
+        assert _format_messages([ModelRequest(parts=[bare, mixed])], tool_return_max_chars=None) == (
+            f'Tool [screenshot]: {reference}\nTool [screenshot]: taken {reference}'
+        )
+
     def test_user_prompt_text_skips_non_text_content(self):
 
         part = UserPromptPart(content=[ImageUrl(url='https://example.com/y.png'), 'hello'])
