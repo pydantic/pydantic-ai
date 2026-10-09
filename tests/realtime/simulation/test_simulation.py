@@ -1402,6 +1402,24 @@ def test_scenario_openai_connection_faults() -> None:
     run_tolerant(OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
 
 
+def test_scenario_failed_audio_commit_after_an_unacknowledged_commit() -> None:
+    """A failed second commit removes only its own bookkeeping before the socket reconnects."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.commit_audio()
+        sim.send_audio()
+        sim.fail_next_send()
+        sim.commit_audio()
+        commits = [operation for operation in sim.operations if operation.name == 'commit_audio']
+        assert len(commits) == 2
+        assert commits[0].done and commits[0].error is None
+        assert commits[1].done and commits[1].error is not None
+        assert sim.server.network.failed_sends[-1][0] == 'input_audio_buffer.commit'
+
+    run_tolerant(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', transcription=False)), scenario)
+
+
 def test_scenario_xai_resumption() -> None:
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()

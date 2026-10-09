@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+from builtins import BaseExceptionGroup
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from io import StringIO
@@ -30,9 +31,6 @@ from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.session_naming import SessionNamer
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup
 
 
 async def test_reload_keeps_saved_conversation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -201,7 +199,8 @@ async def test_startup_restore_and_new_session_are_persisted(tmp_path: Path) -> 
     assert len(entries) == 2
     assert (await store.get(conversation_id=prior.summary.id)).summary.message_count > prior.summary.message_count
     assert 'Resumed' in output.getvalue()
-    assert 'Previous session remains saved' in output.getvalue()
+    # `/new` is `/clear`, so the banner follows the resumed conversation.
+    assert '/resume restores one' in output.getvalue().rsplit('Resumed', 1)[1]
 
 
 async def test_empty_startup_browser_and_invalid_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

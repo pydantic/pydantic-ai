@@ -203,7 +203,7 @@ def _undefined_names(example: CodeExample) -> list[str]:
             '--select',
             'F821',
             '--target-version',
-            'py310',
+            'py311',
             '--output-format',
             'concise',
             '-',
