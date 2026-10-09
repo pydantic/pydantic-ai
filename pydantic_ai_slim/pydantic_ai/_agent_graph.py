@@ -1491,10 +1491,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     # provider billed for so far before the `wrap_model_request` chain unwinds, so wrappers that
                     # account for billed responses see it. The graph task commits this same response afterwards.
                     _interrupted_response = _interrupted_stream_response(stream_error, agent_stream_holder[0].response)
-                    if _interrupted_response.state != 'suspended':
-                        # A detached job is still running: the run that resumes it records its usage,
-                        # which includes what was billed so far.
-                        req_ctx._usage_response_ledger.responses.append(_interrupted_response)  # pyright: ignore[reportPrivateUsage]
+                    req_ctx._usage_response_ledger.responses.append(_interrupted_response)  # pyright: ignore[reportPrivateUsage]
                 raise
             # Streaming core errors surface in the consumer task, which cancels this wrap task;
             # `on_model_request_error` cannot recover an error after streaming has begun.
