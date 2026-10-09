@@ -109,10 +109,6 @@ def pytest_configure(config: pytest.Config) -> None:
         'markers',
         'realtime_ws_hold_open: keep a replay WebSocket open after its last recorded frame',
     )
-    config.addinivalue_line(
-        'markers',
-        'shadow_divergence(reason): the realtime session cores are known to disagree on this trace; reason required',
-    )
 
 
 if TYPE_CHECKING:
