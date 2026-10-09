@@ -239,13 +239,13 @@ The provider-agnostic way to enable prompt caching is the unified [`ModelSetting
 from pydantic_ai import Agent
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'anthropic:claude-opus-5-5',
     instructions='You are a helpful assistant.',
     model_settings={'cache': True},
 )
 ```
 
-On Anthropic, `cache=True` (or a retention like `cache='1h'`) uses automatic caching, exactly like `anthropic_cache` below; on the Bedrock and Vertex AI SDK clients, which don't support automatic caching, it places cache breakpoints at the end of the tool definitions, the static instructions and the conversation instead. Cache writes cost 1.25x the input price for the 5-minute cache and 2x for the 1-hour cache, and cache reads 0.1x; see [Prompt Caching](../capabilities/caching.md) for the trade-off. The provider-specific `anthropic_cache*` settings below take precedence when any is set, and offer finer control.
+On Anthropic, `cache=True` (or a retention like `cache='1h'`) uses automatic caching, exactly like `anthropic_cache` below; on the Bedrock and Vertex AI SDK clients, which don't support automatic caching, it places cache breakpoints at the end of the tool definitions, the static instructions and the conversation instead. Cache writes cost 1.25x the input price for the 5-minute cache and 2x for the 1-hour cache, and cache reads 0.1x; see [Caching](../capabilities/caching.md) for the trade-off, Pydantic AI's prefix-stability guarantees and how to monitor cache efficiency. The provider-specific `anthropic_cache*` settings below take precedence when any is set, and offer finer control.
 
 ### Automatic Caching
 
@@ -255,22 +255,22 @@ The Anthropic-specific way to use automatic caching is [`AnthropicModelSettings.
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
+handbook = '...'  # a long document, above the model's minimum cacheable length
+
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
-    instructions='You are a helpful assistant.',
+    'anthropic:claude-opus-5-5',
+    instructions=f'Answer questions about this employee handbook:\n\n{handbook}',
     model_settings=AnthropicModelSettings(
         anthropic_cache=True,
     ),
 )
 
-result1 = agent.run_sync('What is the capital of France?')
+result1 = agent.run_sync('How many vacation days do new employees get?')
 
-result2 = agent.run_sync(
-    'What is the capital of Germany?', message_history=result1.all_messages()
-)
-print(f'Cache write: {result1.usage.cache_write_tokens}')
-print(f'Cache read: {result2.usage.cache_read_tokens}')
-print(f'Cache hit ratio: {result2.usage.cache_hit_ratio}')
+result2 = agent.run_sync('And after five years?', message_history=result1.all_messages())
+print(f'Cache write: {result1.response.usage.cache_write_tokens}')
+print(f'Cache read: {result2.response.usage.cache_read_tokens}')
+print(f'Cache hit ratio: {result2.response.usage.cache_hit_ratio}')
 ```
 
 This is ideal for multi-turn conversations where the cache breakpoint should move forward as the conversation grows. You can also specify a custom TTL with `anthropic_cache='1h'`.
@@ -618,7 +618,7 @@ While adaptive thinking is on, an explicit forcing `tool_choice` is still sent, 
 - a [dynamic instructions](../agent.md#instructions) function whose text differs between runs, and
 - a [filtered toolset](../toolsets.md#filtering-tools) that advertises a new tool mid-conversation, unless the tool uses [deferred loading](../toolsets.md#deferred-loading).
 
-Both are the same instability that costs you a provider's prompt cache: a request prefix that changes between turns. The thinking block turns it into a 400 you can see; the cache turns it into a bill you can't — every request after the change re-sends the whole conversation at uncached rates, silently. Where the prefix can be held stable, that is worth more than handling the rejection.
+Both are the same instability that [costs you a provider's prompt cache](../capabilities/caching.md#what-invalidates-a-cache): a request prefix that changes between turns. The thinking block turns it into a 400 you can see; the cache turns it into a bill you can't — every request after the change re-sends the whole conversation at uncached rates, silently. Where the prefix can be held stable, that is worth more than handling the rejection.
 
 Anthropic enforces the check for accounts created on or after 31 August 2026. For an older account it records the mismatch but acts on it only if the request sets `thinking.block_binding.prefix_mismatch_behavior`.
 
