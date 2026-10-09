@@ -201,6 +201,7 @@ assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modu
 """
 
 
+@pytest.mark.subprocess(reason='needs an interpreter where legacy `httpx` cannot be imported')
 @pytest.mark.skipif(not MCP_SDK_V2, reason='fastmcp 3 is itself built on legacy httpx')
 def test_mcp_runs_without_legacy_httpx() -> None:
     result = subprocess.run(
@@ -1977,6 +1978,7 @@ class TestLoadMCPToolsets:
         with pytest.raises(FileNotFoundError):
             load_mcp_toolsets('/nonexistent/path/to/config.json')
 
+    @pytest.mark.subprocess(reason='serves a Streamable HTTP MCP server from a separate process')
     async def test_load_mcp_toolsets_http_entry(self):
         """A URL-configured toolset completes a real Streamable HTTP tool call."""
         process = await anyio.open_process(

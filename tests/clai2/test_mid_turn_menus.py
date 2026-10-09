@@ -233,7 +233,7 @@ async def test_model_settings_saved_mid_turn_reach_the_running_models_next_reque
             await streamed.wait()
             pipe.send_text('/exit\r')
             await done.wait()
-    assert seen == [{'seed': 1}, {'seed': 1, 'max_tokens': 42}]
+    assert seen == [{'cache': True, 'seed': 1}, {'cache': True, 'seed': 1, 'max_tokens': 42}]
     assert 'Saved max_tokens for test.' in output.getvalue()
 
 

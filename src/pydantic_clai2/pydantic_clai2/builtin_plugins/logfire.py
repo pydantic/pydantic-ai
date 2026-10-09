@@ -2,7 +2,10 @@
 
 The default-enabled `observability` plugin: Logfire instrumentation owned by the plugin, not the process.
 
-With `ui_events` on, the same instance also records CLAI's UI interactions (see `pydantic_clai2.ui.telemetry`).
+The same instance records failures CLAI reports and recovers from: startup plugin load failures, failed turns,
+failed slash commands other than usage errors, and failing plugin handlers; with `include_content` off, these
+keep only the exception's type. With `ui_events` on, it also records
+CLAI's UI interactions (see `pydantic_clai2.ui.telemetry`).
 With `token` naming a `/keys` entry, everything goes to that key's Logfire project, such as one a team shares.
 
 `configure` opens the settings menu (turning the plugin on, `c` in `/plugins`, or `/plugins configure
@@ -110,8 +113,10 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 inspect_arguments=False,
                 config_dir=private_dir,
                 data_dir=private_dir,
-                # UI events name settings and keys, such as `sessions.naming` or `OPENAI_API_KEY`, that look like secrets.
-                scrubbing=logfire.ScrubbingOptions(callback=telemetry.keep_names) if settings.ui_events else None,
+                # UI events and handled errors name settings, keys, plugins, and events, such as `sessions.naming`,
+                # `OPENAI_API_KEY`, or `SessionEnd`, that look like secrets. The callback only keeps those names, and
+                # only on CLAI's own records, so everything else is scrubbed as usual.
+                scrubbing=logfire.ScrubbingOptions(callback=telemetry.keep_names),
                 advanced=logfire.AdvancedOptions(base_url=settings.base_url) if settings.base_url else None,
             )
         finally:
@@ -158,7 +163,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             if not self._active_httpx:
                 self._instrument_httpx()
             self._active_httpx.append(self)
-        # Subscribed even without `ui_events`, so the root is bound as soon as startup selects the conversation.
+        # Subscribed even without `ui_events`, so handled errors are recorded and the root is bound as soon as
+        # startup selects the conversation.
         self._unsubscribe = telemetry.subscribe(
             self._clai2,
             root=self._session_tracing.root,
@@ -182,13 +188,21 @@ class LogfirePlugin(Plugin[LogfireSettings]):
 
     async def on_plugin_load_failed(self, event: PluginLoadFailed) -> None:
         with telemetry.parent_span(self._session_tracing.root()):
-            self._clai2.log(
-                'error', 'Plugin {plugin!r} failed to load', attributes={'plugin': event.plugin}, exc_info=event.error
+            telemetry.log_error(
+                self._clai2,
+                'Plugin {plugin!r} failed to load',
+                event.error,
+                content=self.settings.include_content,
+                attributes={'plugin': event.plugin},
             )
 
     async def on_turn_end(self, event: TurnEnd) -> None:
-        if self.settings.ui_events:
-            with telemetry.parent_span(self._session_tracing.root()):
+        with telemetry.parent_span(self._session_tracing.root()):
+            # An error that left the agent run is already on the run's span; this records the rest, such as a
+            # model that could not be resolved or a failing `on_turn_start`, which fail the turn before the run.
+            if event.error is not None and not self._session_tracing.raised_in_run(event.error):
+                telemetry.log_error(self._clai2, 'Turn failed', event.error, content=self.settings.include_content)
+            if self.settings.ui_events:
                 self._clai2.log('info', 'turn {outcome}', attributes={'outcome': event.outcome})
 
     async def on_session_end(self, event: SessionEnd) -> None:

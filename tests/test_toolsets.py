@@ -741,6 +741,7 @@ async def test_comprehensive_toolset_composition():
     )
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_context_manager():
     try:
         from fastmcp.client.transports import StdioTransport
@@ -767,6 +768,7 @@ class InitializationError(Exception):
     pass
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_context_manager_failed_initialization():
     """Test if MCP servers stop if any MCP server fails to initialize."""
     try:

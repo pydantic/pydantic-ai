@@ -1516,13 +1516,16 @@ class TestRedisStore:
         assert (await store.get_many(['k']))['k'] == added
 
     async def test_repeated_adds_do_not_drift(self):
-        """A price with a fractional sub-unit, since a whole one cannot detect rounding at all."""
+        """A price with a fractional sub-unit, since a whole one cannot detect rounding at all.
+
+        Float accumulation of this price already drifts by the 7th add, so 1000 is ample.
+        """
         store = RedisSpendStore(FakeRedis())
         price = Decimal('0.000000675')  # a cheap model's real per-request cost
-        for _ in range(100_000):
+        for _ in range(1000):
             await store.add_many([SpendEntry(key='k', usd=price, requests=1)])
 
-        assert (await store.get_many(['k']))['k'].usd == price * 100_000
+        assert (await store.get_many(['k']))['k'].usd == price * 1000
 
     async def test_a_ttl_is_applied_and_the_key_is_namespaced(self):
         client = FakeRedis()
@@ -2477,6 +2480,42 @@ class TestContinuationAccrual:
         await agent.run('go', run_id='same-durable-task')
 
         assert (await limits.status())[0].spent == Spent(usd=Decimal('0.021'), tokens=21, requests=1)
+
+    @pytest.mark.parametrize('chain', ['pause-turn', 'three-segments', 'background-job'])
+    @pytest.mark.parametrize('journal_capabilities', [True, False], ids=['journaled', 'store-token'])
+    async def test_a_retry_charges_a_response_rejected_before_the_chain_once(
+        self, chain: str, journal_capabilities: bool
+    ):
+        """A `FallbackModel` rejection ahead of the first segment is charged once when the chain fails partway.
+
+        The failed run committed the rejection on the response merged up to the failure, which the retry
+        reaches again only as a boundary: keyed to the retry's whole merged response, it was charged twice.
+        """
+        responses, _, spent = _failing_chains()[chain]
+
+        def reject(response: ModelResponse) -> bool:
+            return response.model_name == 'gpt-4o-mini'
+
+        model = FallbackModel(
+            FunctionModel(lambda messages, info: _usage_response(100, 10, Decimal('0.5')), model_name='gpt-4o-mini'),
+            ScriptedContinuationModel(responses=responses),
+            fallback_on=reject,
+        )
+        journal = _Journal(journal_capabilities=journal_capabilities)
+        limits = SpendLimits[None](budgets=[Budget(window='total')], price=_billed_cost)
+        agent = Agent(model, name='journal', deps_type=type(None), capabilities=[_JournalDurability(journal), limits])
+
+        with pytest.raises(RuntimeError, match='continuation failed'):
+            await agent.run('go', run_id='same-durable-task')
+        journal.replay()
+        result = await agent.run('go', run_id='same-durable-task')
+
+        answer = result.all_messages()[-1]
+        assert isinstance(answer, ModelResponse)
+        assert [attempt.model_name for attempt in answer.failed_attempts or []] == ['gpt-4o-mini']
+        assert (await limits.status())[0].spent == Spent(
+            usd=spent.usd + Decimal('0.5'), tokens=spent.tokens + 110, requests=2
+        )
 
     @pytest.mark.parametrize('journal_capabilities', [True, False], ids=['journaled', 'store-token'])
     async def test_replaying_a_completed_chain_charges_nothing_again(self, journal_capabilities: bool):

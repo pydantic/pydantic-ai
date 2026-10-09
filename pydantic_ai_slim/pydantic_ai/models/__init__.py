@@ -40,7 +40,7 @@ from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
@@ -1358,6 +1358,10 @@ class StreamedResponse(ABC):
                 except self.get_stream_cancel_errors():
                     if not self.cancelled:
                         raise
+                except ModelAPIError as e:
+                    # Adapters map transport errors to `ModelAPIError`, so one caused by `cancel()` arrives wrapped.
+                    if not (self.cancelled and isinstance(e.__cause__, self.get_stream_cancel_errors())):
+                        raise
                 else:
                     # Only natural `StopAsyncIteration` on a stream that wasn't
                     # cancelled flips `_finished`. Early `break` / `aclose()` (raising
@@ -1966,6 +1970,13 @@ def infer_model(  # noqa: C901
         if not isinstance(provider, SystemOneProvider):
             raise UserError('System One models require a `SystemOneProvider`.')
         return SystemOneModel(model_name, provider=provider)
+    elif model_kind == 'openai-decisions':
+        from ..providers.openai_decisions import OpenAIDecisionsProvider
+        from .openai_decisions import OpenAIDecisionsModel
+
+        if not isinstance(provider, OpenAIDecisionsProvider):
+            raise UserError('OpenAI Decisions models require an `OpenAIDecisionsProvider`.')
+        return OpenAIDecisionsModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 

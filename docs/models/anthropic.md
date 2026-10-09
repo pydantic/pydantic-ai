@@ -320,6 +320,8 @@ In addition to automatic caching, Pydantic AI provides several ways to place cac
 3. **Cache System Instructions**: Set [`AnthropicModelSettings.anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
 4. **Cache Tool Definitions**: Set [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
 
+Anthropic rejects a request where a one-hour breakpoint comes after a five-minute one (it processes tools, then system instructions, then messages), so when a one-hour breakpoint, including the automatic caching one at the end of the conversation, follows five-minute ones, those earlier breakpoints are raised to one hour.
+
 #### Example: Comprehensive Caching Strategy
 
 Combine automatic caching with explicit breakpoints for maximum savings. Automatic caching handles the conversation, while explicit breakpoints pin system instructions and tool definitions:
