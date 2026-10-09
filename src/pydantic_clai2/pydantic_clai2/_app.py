@@ -1199,10 +1199,11 @@ class _Shell(Generic[DepsT, OutputT]):
         self.submitted = submitted = list[str]()
         try:
             if self.editor is not None and self.commands.runs_live(text):
-                exiting = await self._live_command(text, self.editor)
+                completed = await self._live_command(text, self.editor)
+                exiting = self.interrupts.exit_requested
             else:
                 async with self.forks.busy(), self._released():
-                    await self.interrupts.run(
+                    completed = await self.interrupts.run(
                         _execute_command(self.commands, text, console=self.console, status=self.status)
                     )
                 exiting = (
@@ -1213,7 +1214,8 @@ class _Shell(Generic[DepsT, OutputT]):
                 )
         finally:
             self.submitted = None
-        while submitted and not exiting:
+        # A cancelled command's prompts are cancelled with it.
+        while completed and submitted and not exiting:
             exiting = await self._prompt(submitted.pop(0))
         return exiting
 
@@ -1222,6 +1224,8 @@ class _Shell(Generic[DepsT, OutputT]):
 
         Suspending the editor instead would freeze its last frame, an idle prompt and a `ready`
         footer, for as long as the command runs, and echo keys raw into the terminal.
+
+        Returns whether the command completed: `False` when the user cancelled it.
         """
         async with self.forks.busy():
             self.status.activity = 'working'
@@ -1235,7 +1239,7 @@ class _Shell(Generic[DepsT, OutputT]):
         if not completed:
             self.console.print('Command cancelled.', style=theme.color(theme.MUTED))
             self.console.print()
-        return self.interrupts.exit_requested
+        return completed
 
     async def _turn(self, text: str | None) -> bool:
         automated = text is None
