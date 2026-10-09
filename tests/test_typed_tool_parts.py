@@ -405,16 +405,16 @@ def test_a_shape_defined_in_a_function_works() -> None:
 def test_a_typed_part_with_lazy_annotations() -> None:
     """On Python 3.14+ a module without `from __future__ import annotations` keeps annotations lazy (PEP 649).
 
-    The class is built from source, as this module's annotations are strings.
+    The class is built from source, as this module's annotations are strings; before 3.14 they're eager.
     """
     namespace: dict[str, Any] = {'ToolCallPart': ToolCallPart, 'ClassVar': ClassVar}
     source = textwrap.dedent(
         """
-        class LazyCallPart(ToolCallPart, namespace='test', tool_kind='lazy'):
-            label: ClassVar[DefinedLater]
-
-        class DefinedLater:
+        class Label:
             pass
+
+        class LazyCallPart(ToolCallPart, namespace='test', tool_kind='lazy'):
+            label: ClassVar[Label]
         """
     )
     # `dont_inherit` keeps this module's `from __future__ import annotations` out of the compiled source.
