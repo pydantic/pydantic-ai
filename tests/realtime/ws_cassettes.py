@@ -371,6 +371,11 @@ class ReplayWebSocket:
         self._normalizer = _SentFrameNormalizer()
         self._condition = asyncio.Condition()
         self._readers = 0
+        # Whether the connection streams its own idle audio (see `_patched_idle_audio`), whose recorded
+        # frames other sends must wait behind rather than claim. Set once the pump starts. A recording in
+        # which the application also streams audio can't tell its frames from the pump's, so replay only
+        # supports the pump in sessions that send no audio of their own.
+        self.pumps_audio = False
         self._closed = False
         self._now = 0.0
         # When each inbound frame handed out and not yet taken up by `begin_handling_frame()` was recorded.
@@ -391,8 +396,13 @@ class ReplayWebSocket:
             # that calls `recv()` directly (GPT-Live keeps a single read in flight as its own task) is
             # only visible by the frames it consumes, so wait while it keeps consuming them. With nobody
             # consuming them at all, this is the genuine "sent a frame the recording doesn't have" case.
-            while isinstance(interaction, CassetteMessage) and interaction.direction == 'received':
-                if self._readers:
+            # A recorded frame of idle audio belongs to the connection's pump, which sends it on its own
+            # turn: another send waits for it to go out first, then drains whatever follows it the same way.
+            while isinstance(interaction, CassetteMessage) and (
+                interaction.direction == 'received'
+                or (self.pumps_audio and not _is_audio_send(actual) and _is_audio_send(interaction.data))
+            ):
+                if interaction.direction == 'received' and self._readers:
                     await self._condition.wait()
                 elif not await self._progressed():
                     break
@@ -449,6 +459,20 @@ class ReplayWebSocket:
             ):
                 if not await self._progressed():
                     return
+
+    async def wait_for_pumped_audio_turn(self) -> None:
+        """Wait until the recording's next interaction is a frame of idle audio, which the pump then sends.
+
+        Stands in for the pump's real-time wait, so replay sends exactly the frames the recording has, in
+        their recorded places. Once none are left, the pump waits for good, until the connection cancels it.
+        """
+        async with self._condition:
+            while not (
+                isinstance(upcoming := self._peek(), CassetteMessage)
+                and upcoming.direction == 'sent'
+                and _is_audio_send(upcoming.data)
+            ):
+                await self._condition.wait()
 
     async def _progressed(self) -> bool:
         """Wait for the replay position to move, reporting whether it did within the grace period."""
@@ -657,7 +681,41 @@ def patched_ws_connect(
                 cassette.bind_disconnect(disconnect)
                 yield recording
 
-    with mock.patch.object(target, attr, connect), _patched_turn_clock(provider, replay):
+    with (
+        mock.patch.object(target, attr, connect),
+        _patched_turn_clock(provider, replay),
+        _patched_idle_audio(provider, replay),
+    ):
+        yield
+
+
+@contextmanager
+def _patched_idle_audio(provider: ProviderName, replay: ReplayWebSocket | None) -> Generator[None]:
+    """Pace GPT-Live's idle-audio pump by the recording rather than by the clock.
+
+    The pump sends a frame of silence every 100 ms of wall-clock time, and replay runs far faster than the
+    recording did, so on the real clock it would send a different number of frames in different places.
+    Instead each frame waits for the recording's next idle-audio frame to come up.
+    """
+    if replay is None or provider != 'openai_live':
+        yield
+        return
+    from pydantic_ai.realtime import openai_live as rt_openai_live
+
+    connection = rt_openai_live.OpenAILiveConnection
+    start_idle_audio = connection._start_idle_audio  # pyright: ignore[reportPrivateUsage]
+
+    def start_pumping(self: rt_openai_live.OpenAILiveConnection) -> None:
+        replay.pumps_audio = True
+        start_idle_audio(self)
+
+    async def wait_for_recorded_frame(self: rt_openai_live.OpenAILiveConnection) -> None:
+        await replay.wait_for_pumped_audio_turn()
+
+    with (
+        mock.patch.object(connection, '_start_idle_audio', start_pumping),
+        mock.patch.object(connection, '_wait_for_idle_frame', wait_for_recorded_frame),
+    ):
         yield
 
 
