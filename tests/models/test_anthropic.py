@@ -2051,8 +2051,9 @@ async def test_unified_cache_uses_automatic_caching(
     assert completion_kwargs['cache_control'] == cache_control
     assert completion_kwargs['system'][-1]['cache_control'] == cache_control
     assert completion_kwargs['tools'][-1]['cache_control'] == cache_control
+    # The `CachePoint` defaults to five minutes, but comes before the automatic breakpoint, so it gets its TTL.
     assert [block.get('cache_control') for block in completion_kwargs['messages'][-1]['content']] == [
-        {'type': 'ephemeral', 'ttl': '5m'},
+        cache_control,
         None,
     ]
 
@@ -2186,7 +2187,7 @@ def _cache_breakpoint_ttls(kwargs: Mapping[str, Any]) -> list[str]:
         pytest.param(
             {'cache': '1h'},
             '5m',
-            ['1h', '1h (automatic)'],
+            ['1h', '1h', '1h', '1h (automatic)'],
             id='unified-1h-after-cache-point-5m',
         ),
         pytest.param(
