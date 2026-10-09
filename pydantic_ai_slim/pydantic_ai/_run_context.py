@@ -237,13 +237,19 @@ class RunContext(Generic[RunContextAgentDepsT]):
     partial_output: bool = False
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None
-    """"Unique identifier for the agent run."""
+    """Unique identifier for the agent run.
+
+    The `run_id` argument to `Agent.run` (etc.), or a fresh UUID7. Inside a durable workflow or flow,
+    the default is derived from the workflow or flow run instead, so it stays the same when the engine
+    re-executes the run.
+    """
     conversation_id: str | None = None
     """Unique identifier for the conversation this run belongs to.
 
     A conversation spans potentially multiple agent runs that share message history.
     Resolved at the start of `Agent.run` (etc.) from the explicit `conversation_id`
-    argument, the most recent `conversation_id` on `message_history`, or a fresh UUID7.
+    argument, the most recent `conversation_id` on `message_history`, or a fresh UUID7
+    (inside a durable workflow or flow, a UUID derived from `run_id`).
     """
     metadata: dict[str, Any] | None = None
     """Metadata associated with this agent run, if configured."""

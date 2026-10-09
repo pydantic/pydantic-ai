@@ -231,4 +231,10 @@ Good defaults:
 - same prompt/output contract across both models
 - per-model settings only when the user actually needs them
 
+The answering response's `failed_attempts` lists the attempts the fallback moved on from (model, provider,
+`'error'` or `'rejected'` outcome, error, start time, duration, usage); when every model fails they're on
+`FallbackExceptionGroup.attempts`. A rejected response's tokens and cost count in `RunUsage` and towards token and
+cost limits, but not in the answering response's `usage`. Neither they nor failed attempts count towards
+`UsageLimits.request_limit`, which bounds the model responses the agent acts on, not requests sent to the provider.
+
 To react to a specific kind of failure regardless of provider, catch an error category rather than inspecting status codes or provider exceptions: `ModelRateLimitError` (with `retry_after`), `ModelOverloadedError`, `ModelConnectionError` (and its `ModelTimeoutError`), or `ContextWindowExceeded`. All are `ModelAPIError`s, so `FallbackModel` falls back on them by default; one that came with an HTTP status is also a `ModelHTTPError`. An error inside an already open stream gets the status the same error has before the stream opens, with `in_stream=True`, so errors don't depend on whether the request was streamed. Provider details are on `provider_error_code`, `provider_error_type`, and `body`; `retry_after` is on every `ModelAPIError`, `ModelHTTPError.should_retry` reads `x-should-retry`, and `ModelConnectionError.phase` (`'pool'`, `'connect'`, `'write'`, `'read'`) says whether the request may have reached the provider.
