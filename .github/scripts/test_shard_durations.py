@@ -4,6 +4,7 @@ import io
 import json
 import sys
 import zipfile
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -98,5 +99,60 @@ def test_fetch_failure_does_not_fail_the_job(
     monkeypatch.delenv('GITHUB_REPOSITORY', raising=False)
     output = tmp_path / 'durations.json'
     assert shard_durations.main(['fetch', '--prefix', PREFIX, '--shards', '2', '--output', str(output)]) == 0
-    assert not output.exists()
-    assert 'splitting shards by test count' in capsys.readouterr().out
+    # Every shard reads this file, so an empty one still makes them all fall back the same way.
+    assert json.loads(output.read_text()) == {}
+    assert 'splitting by module size' in capsys.readouterr().out
+
+
+def test_module_weights_sum_tests_and_estimate_new_modules(tmp_path: Path):
+    durations = {
+        'tests/test_a.py::test_one': 1.0,
+        'tests/test_a.py::test_two[x::y]': 2.0,
+        'tests/test_b.py::TestB::test_one': 5.0,
+        'tests/test_c.py::test_one': 7.0,
+        'tests/test_removed.py::test_one': 100.0,
+    }
+    modules = ['tests/test_a.py', 'tests/test_b.py', 'tests/test_c.py', 'tests/test_new.py']
+    assert shard_durations.module_weights(modules, durations, tmp_path) == {
+        'tests/test_a.py': 3.0,
+        'tests/test_b.py': 5.0,
+        'tests/test_c.py': 7.0,
+        'tests/test_new.py': 5.0,
+    }
+
+    (tmp_path / 'tests').mkdir()
+    (tmp_path / 'tests' / 'test_a.py').write_text('x' * 10)
+    assert shard_durations.module_weights(['tests/test_a.py'], {}, tmp_path) == {'tests/test_a.py': 10.0}
+
+
+def test_assign_puts_every_module_in_exactly_one_balanced_shard():
+    weights = {'tests/test_a.py': 9.0, 'tests/test_b.py': 5.0, 'tests/test_c.py': 4.0, 'tests/test_d.py': 4.0}
+    assert shard_durations.assign(weights, 2) == [
+        ['tests/test_a.py', 'tests/test_d.py'],
+        ['tests/test_b.py', 'tests/test_c.py'],
+    ]
+
+
+def test_select_ignores_the_other_shards_modules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    durations = tmp_path / 'durations.json'
+    durations.write_text(json.dumps({'tests/test_slow.py::test': 10.0, 'tests/test_fast.py::test': 1.0}))
+
+    def find_test_modules(root: Path, exclude: Sequence[str]) -> list[str]:
+        return ['tests/test_fast.py', 'tests/test_slow.py']
+
+    monkeypatch.setattr(shard_durations, 'find_test_modules', find_test_modules)
+    args = ['select', '--durations', str(durations), '--shards', '2', '--shard', '1']
+    assert shard_durations.main(args) == 0
+    out, err = capsys.readouterr()
+    assert out.split() == ['--ignore=tests/test_fast.py']
+    assert '* shard 1: 1 modules, estimated 10s' in err
+
+
+def test_find_test_modules_lists_this_repo():
+    root = Path(__file__).parents[2]
+    modules = shard_durations.find_test_modules(root, ['tests/durable_exec'])
+    assert 'tests/test_agent.py' in modules
+    assert 'tests/conftest.py' not in modules
+    assert not any(path.startswith('tests/durable_exec/') for path in modules)
