@@ -1,9 +1,10 @@
 """Replay a recorded WebSocket cassette's provider frames through the real connection class, alone.
 
 The conformance check needs only the codec events an adapter makes of a real provider trace, not the
-conversation that produced it, so the recorded client frames are ignored and there is no session: the
-provider's frames are fed, in order, to a fresh connection, one connection per recorded socket (a
-cassette of a reconnect holds several), and whatever it yields is collected.
+conversation that produced it, so there is no session: the provider's frames are fed, in order, to a
+fresh connection, one connection per recorded socket (a cassette of a reconnect holds several), and
+whatever it yields is collected. The recorded client frames are read only to count the inputs they sent,
+which a lifecycle stream's responses may answer.
 """
 
 from __future__ import annotations as _annotations
@@ -15,9 +16,12 @@ from typing import Any, Literal
 
 import yaml
 from google.genai import _live_converters as live_converters, types as genai_types
-from websockets.exceptions import ConnectionClosedOK
+from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
+from websockets.frames import Close
 
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.realtime._lifecycle import LifecycleEvent
+from pydantic_ai.realtime._openai_protocol import response_metadata_answers
 from pydantic_ai.realtime.azure import (
     AzureRealtimeConnection,
     _VoiceLiveRealtimeConnection,  # pyright: ignore[reportPrivateUsage]
@@ -28,7 +32,7 @@ from pydantic_ai.realtime.openai import OpenAIRealtimeConnection
 from pydantic_ai.realtime.openai_live import OpenAILiveConnection
 from pydantic_ai.realtime.xai import XaiRealtimeConnection
 
-from ..ws_cassettes import CassetteClose, CassetteMessage, RealtimeCassette
+from ..ws_cassettes import CassetteClose, RealtimeCassette
 
 Protocol = Literal['openai', 'azure', 'azure-voice-live', 'xai', 'gemini', 'openai-live']
 
@@ -44,6 +48,7 @@ _MODULE_PROTOCOLS: dict[str, Protocol] = {
     'test_google_ws': 'gemini',
     'test_openai_live_ws': 'openai-live',
     'test_openai_live_ws_sideband': 'openai-live',
+    'test_openai_live_ws_and_http': 'openai-live',
 }
 _PARITY_PROTOCOLS: dict[str, Protocol] = {
     'openai': 'openai',
@@ -88,41 +93,69 @@ def _is_websocket(path: Path) -> bool:
     return 'request' not in interactions[0]
 
 
-def _segments(cassette: RealtimeCassette) -> Iterator[list[dict[str, Any]]]:
-    """The provider's frames per recorded socket."""
+def _segments(cassette: RealtimeCassette) -> Iterator[tuple[list[dict[str, Any]], CassetteClose | None, int]]:
+    """The provider's frames per recorded socket, how the socket closed (if the recording says), and how many
+    inputs the client had sent on it."""
     frames: list[dict[str, Any]] = []
+    inputs_sent = 0
     for interaction in cassette.interactions:
         if isinstance(interaction, CassetteClose):
-            yield frames
+            yield frames, interaction, inputs_sent
             frames = []
-        elif isinstance(interaction, CassetteMessage) and interaction.direction == 'received':
+        elif interaction.direction == 'received':
             frames.append(interaction.data)
+        else:
+            inputs_sent = max([inputs_sent, *(index + 1 for index in _named_inputs(interaction.data))])
     if frames:
-        yield frames
+        yield frames, None, inputs_sent
+
+
+def _named_inputs(frame: dict[str, Any]) -> tuple[int, ...]:
+    """The inputs a client `response.create` frame's metadata says the response answers.
+
+    That metadata is what the server echoes, and so the only source of a replayed response's answers:
+    input indexes count up across a session, so the highest one named by a socket's end covers every
+    answer the replay can see there, though not every input sent (audio and tool outputs name none).
+    """
+    if not is_str_dict(response := frame.get('response')):
+        return ()
+    return response_metadata_answers(response.get('metadata')) or ()
+
+
+def _closed(close: CassetteClose | None) -> Exception:
+    """What reading past the last frame raises: the recorded close, abnormal ones included."""
+    if close is None:
+        return ConnectionClosedOK(None, None)
+    received = Close(close.code, close.reason)
+    return ConnectionClosedOK(received, None) if close.ok else ConnectionClosedError(received, None)
 
 
 class _InboundOnlySocket:
-    """A socket that yields recorded frames (a connection with no session sends nothing)."""
+    """A socket that yields recorded frames, then closes as recorded (a connection with no session sends nothing)."""
 
-    def __init__(self, frames: list[dict[str, Any]]) -> None:
+    def __init__(self, frames: list[dict[str, Any]], close: CassetteClose | None) -> None:
         self._frames = [json.dumps(frame) for frame in frames]
-        self.close_code: int | None = 1000
-        self.close_reason = ''
+        self._close = close
+        self.close_code: int | None = close.code if close is not None else 1000
+        self.close_reason = close.reason if close is not None else ''
 
     async def recv(self, decode: bool | None = None) -> str:
         if not self._frames:
-            raise ConnectionClosedOK(None, None)
+            raise _closed(self._close)
         return self._frames.pop(0)
 
     async def __aiter__(self) -> AsyncIterator[str]:
         while self._frames:
             yield self._frames.pop(0)
+        if self._close is not None and not self._close.ok:
+            raise _closed(self._close)
 
 
 class _InboundOnlyGeminiSession:
     """A `google-genai` session that yields recorded messages, one model turn per `receive()`, like the SDK's."""
 
-    def __init__(self, frames: list[dict[str, Any]]) -> None:
+    def __init__(self, frames: list[dict[str, Any]], close: CassetteClose | None) -> None:
+        self._close = close
         # Parsed exactly as the SDK's own `AsyncSession.receive()` parses the wire.
         self._messages = [
             genai_types.LiveServerMessage._from_response(  # pyright: ignore[reportPrivateUsage]
@@ -134,7 +167,7 @@ class _InboundOnlyGeminiSession:
 
     async def receive(self) -> AsyncIterator[genai_types.LiveServerMessage]:
         if not self._messages:
-            raise ConnectionClosedOK(None, None)
+            raise _closed(self._close)
         while self._messages:
             message = self._messages.pop(0)
             yield message
@@ -144,10 +177,10 @@ class _InboundOnlyGeminiSession:
                     return
 
 
-def _connection(protocol: Protocol, frames: list[dict[str, Any]]) -> RealtimeConnection:
-    socket: Any = _InboundOnlySocket(frames)
+def _connection(protocol: Protocol, frames: list[dict[str, Any]], close: CassetteClose | None) -> RealtimeConnection:
+    socket: Any = _InboundOnlySocket(frames, close)
     if protocol == 'gemini':
-        return GoogleRealtimeConnection(_InboundOnlyGeminiSession(frames))  # pyright: ignore[reportArgumentType]
+        return GoogleRealtimeConnection(_InboundOnlyGeminiSession(frames, close))  # pyright: ignore[reportArgumentType]
     if protocol == 'openai-live':
         return OpenAILiveConnection(socket)
     if protocol == 'xai':
@@ -163,25 +196,35 @@ async def replay_codec_events(path: Path) -> list[list[RealtimeCodecEvent]]:
     """The codec events each recorded socket's provider frames make, per socket."""
     protocol = cassette_protocol(path)
     events: list[list[RealtimeCodecEvent]] = []
-    for frames in _segments(RealtimeCassette.load(path)):
-        connection = _connection(protocol, frames)
-        events.append([event async for event in connection])
+    for frames, close, _ in _segments(RealtimeCassette.load(path)):
+        connection = _connection(protocol, frames, close)
+        socket_events: list[RealtimeCodecEvent] = []
+        try:
+            async for event in connection:
+                socket_events.append(event)
+        except ConnectionClosedError:
+            # GPT-Live, with no reconnect policy, raises an abnormal close for the session to handle.
+            pass
+        events.append(socket_events)
         if isinstance(connection, OpenAILiveConnection):
             await connection.aclose()
     return events
 
 
-async def replay_lifecycle_events(path: Path) -> list[list[RealtimeCodecEvent | LifecycleEvent]]:
+async def replay_lifecycle_events(path: Path) -> list[tuple[list[RealtimeCodecEvent | LifecycleEvent], int]]:
     """The lifecycle stream each recorded socket's provider frames make, per socket, for a version 2 connection.
 
-    Empty for a protocol whose connection is still on version 1 of the lifecycle contract.
+    Each comes with how many inputs the recorded client sent by the end of that socket, which its responses
+    may answer: the replay doesn't interleave the client's frames, so a response answering an input sent
+    after it started still passes. Empty for a protocol whose connection is still on version 1 of the lifecycle
+    contract.
     """
     protocol = cassette_protocol(path)
-    events: list[list[RealtimeCodecEvent | LifecycleEvent]] = []
-    for frames in _segments(RealtimeCassette.load(path)):
-        connection = _connection(protocol, frames)
+    events: list[tuple[list[RealtimeCodecEvent | LifecycleEvent], int]] = []
+    for frames, close, inputs_sent in _segments(RealtimeCassette.load(path)):
+        connection = _connection(protocol, frames, close)
         if connection._lifecycle_version == 2:  # pyright: ignore[reportPrivateUsage]
-            events.append([event async for event in connection._lifecycle_events()])  # pyright: ignore[reportPrivateUsage]
+            events.append(([event async for event in connection._lifecycle_events()], inputs_sent))  # pyright: ignore[reportPrivateUsage]
         elif isinstance(connection, OpenAILiveConnection):
             await connection.aclose()
     return events

@@ -112,13 +112,12 @@ from collections import deque
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from time import monotonic
-from typing import TYPE_CHECKING, Literal, Protocol, TypeVar, get_args
+from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeVar, get_args
 from urllib.parse import urlparse
 
 import anyio
 import idna
 from opentelemetry import trace
-from typing_extensions import Self
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
@@ -140,7 +139,7 @@ try:
     )
 
     PlaywrightError = _PlaywrightError
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'playwright is required for PlaywrightBrowser. '
         'Install it with: pip install "pydantic-ai-harness[playwright]"\n'
@@ -419,7 +418,7 @@ def is_blocked_address(host: str) -> bool:
     `PlaywrightBrowserSession.decide` resolving it first and passing the answers
     to `refuse`.
     Neither is rebinding-proof, since Chromium resolves the name again before it
-    connects (https://github.com/pydantic/pydantic-ai-harness/issues/415).
+    connects (https://github.com/pydantic/pydantic-ai/issues/9204).
     A trailing dot is stripped so the fully-qualified spelling gets the same
     verdict, and an IPv4-mapped IPv6 literal is classified by its embedded IPv4
     address. The named category flags are checked alongside `is_global` because
@@ -482,7 +481,7 @@ async def _resolve_host(host: str) -> tuple[str, ...] | None:
         return cached[1]
     try:
         addresses = await asyncio.wait_for(_getaddrinfo(host), _RESOLUTION_TIMEOUT_SECONDS)
-    except (OSError, UnicodeError, asyncio.TimeoutError):
+    except (TimeoutError, OSError, UnicodeError):
         return None
     if len(_resolution_cache) >= _RESOLUTION_CACHE_MAX:
         _resolution_cache.clear()
@@ -517,10 +516,12 @@ def _scroll_position(reported: object) -> str:
     has no way to tell that repeating it is pointless.
     """
     if not isinstance(reported, str):
-        return ''  # pragma: no cover -- `evaluate` returns what the expression built
+        return ''
     parts = reported.split('|')
     if len(parts) != 3 or not all(part.lstrip('-').isdigit() for part in parts):
-        return ''  # pragma: no cover -- same
+        # The test pages report whole numbers; a browser with subpixel scrolling can report a
+        # fractional `scrollY`, which this does not parse.
+        return ''  # pragma: no cover
     before, after, furthest = (int(part) for part in parts)
     if furthest == 0:
         return 'The page has nothing to scroll.'
@@ -1266,7 +1267,7 @@ class PlaywrightBrowserSession:
             return await awaitable
         try:
             return await asyncio.wait_for(awaitable, self._launch_timeout_ms / 1000)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             # Raised as a Playwright timeout so the tools map it like any other
             # deadline they already handle.
             raise PlaywrightTimeoutError(f'Timeout {self._launch_timeout_ms}ms exceeded.') from exc
@@ -1653,7 +1654,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
 
         try:
             await asyncio.wait_for(sweep(), budget_ms / 1000)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         return texts
 
@@ -1759,9 +1760,8 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             return await awaitable
         try:
             return await asyncio.wait_for(awaitable, timeout_ms / 1000)
-        except asyncio.TimeoutError as exc:
-            # asyncio.wait_for raises asyncio.TimeoutError, which is a distinct class
-            # from the builtin TimeoutError on Python 3.10 (aliased only from 3.11).
+        except TimeoutError as exc:
+            # Map the timeout to Playwright's error type so the tool's error handler catches it.
             raise PlaywrightTimeoutError(f'Timeout {timeout_ms}ms exceeded.') from exc
 
     def _timeout_error(self, timeout_ms: int | None) -> str | None:

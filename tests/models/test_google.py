@@ -9,7 +9,7 @@ import re
 import tempfile
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from datetime import date, timezone
+from datetime import date
 from decimal import Decimal
 from enum import Enum
 from typing import Any, cast
@@ -33,9 +33,7 @@ from pydantic_ai import (
     AgentStreamEvent,
     AudioUrl,
     BinaryContent,
-    BinaryImage,
     DocumentUrl,
-    FilePart,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -79,7 +77,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
 from pydantic_ai.native_tools import (
     FileSearchTool,
-    ImageGenerationTool,
     WebFetchTool,
     WebSearchTool,
 )
@@ -189,7 +186,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                     ),
                 ],
                 instructions='You are a chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -263,7 +260,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -298,7 +295,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -337,7 +334,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -402,7 +399,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
                     UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime()),
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -443,7 +440,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -484,7 +481,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -564,20 +561,27 @@ async def test_google_model_thinking_config(allow_model_requests: None, google_p
     assert result.output == snapshot('The capital of France is **Paris**.')
 
 
-async def test_google_model_gla_labels_raises_value_error(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
+async def test_google_model_gla_labels_reach_the_sdk(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """`google_labels` is forwarded to the SDK config on the Gemini API too.
 
-    # Raises before any request is made.
-    with pytest.raises(
-        ValueError,
-        match=re.escape(
-            'labels parameter is only supported in Gemini Enterprise Agent Platform mode, '
-            'not in Gemini Developer API mode.'
-        ),
-    ):
-        await agent.run('What is the capital of France?')
+    Not a VCR test: what happens next depends on the `google-genai` version. Before 2.26.0 the SDK
+    raises `ValueError` without sending anything; from 2.26.0 it sends the labels and the API accepts them.
+    """
+    model = GoogleModel('gemini-3.5-flash', provider=google_provider)
+    response = GenerateContentResponse(
+        candidates=[Candidate(content=Content(parts=[Part(text='Paris')], role='model'))],
+        response_id='1',
+        model_version='gemini-3.5-flash',
+    )
+    mock_generate = mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
+    await Agent(model=model, model_settings=settings).run('What is the capital of France?')
+
+    _, kwargs = mock_generate.call_args
+    assert kwargs['config']['labels'] == {'environment': 'test', 'team': 'analytics'}
 
 
 async def test_google_model_vertex_provider(
@@ -909,7 +913,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1073,12 +1077,25 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
+                    TextPart(
+                        content="""\
+## Weather in San Francisco is Mild and Partly Cloudy
+
+**San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with partly cloudy skies and temperatures hovering around 69°F. There is a very low chance of rain throughout the day.
+
+According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny, with highs ranging from the mid-60s to the lower 80s. Winds are predicted to come from the west at 10 to 15 mph.
+
+As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping to the upper 50s. There is a slight increase in the chance of rain overnight, but it remains low at 20%.
+
+Overall, today's weather in San Francisco is pleasant, with a mix of sun and clouds and comfortable temperatures.\
+"""
+                    ),
                     NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['weather in San Francisco today']},
@@ -1107,19 +1124,6 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google',
-                    ),
-                    TextPart(
-                        content="""\
-## Weather in San Francisco is Mild and Partly Cloudy
-
-**San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with partly cloudy skies and temperatures hovering around 69°F. There is a very low chance of rain throughout the day.
-
-According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny, with highs ranging from the mid-60s to the lower 80s. Winds are predicted to come from the west at 10 to 15 mph.
-
-As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping to the upper 50s. There is a slight increase in the chance of rain overnight, but it remains low at 20%.
-
-Overall, today's weather in San Francisco is pleasant, with a mix of sun and clouds and comfortable temperatures.\
-"""
                     ),
                 ],
                 usage=RequestUsage(
@@ -1164,12 +1168,23 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
+                    TextPart(
+                        content="""\
+In Mexico City today, you can expect a day of mixed sun and clouds with a high likelihood of showers and thunderstorms, particularly in the afternoon and evening.
+
+Currently, the weather is partly cloudy with temperatures in the mid-60s Fahrenheit (around 17-18°C). As the day progresses, the temperature is expected to rise, reaching a high of around 73-75°F (approximately 23°C).
+
+There is a significant chance of rain, with forecasts indicating a 60% to 100% probability of precipitation, especially from mid-afternoon into the evening. Winds are generally light, coming from the north-northeast at 10 to 15 mph.
+
+Tonight, the skies will remain cloudy with a continued chance of showers, and the temperature will drop to a low of around 57°F (about 14°C).\
+"""
+                    ),
                     NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['current weather in Mexico City']},
@@ -1198,17 +1213,6 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google',
-                    ),
-                    TextPart(
-                        content="""\
-In Mexico City today, you can expect a day of mixed sun and clouds with a high likelihood of showers and thunderstorms, particularly in the afternoon and evening.
-
-Currently, the weather is partly cloudy with temperatures in the mid-60s Fahrenheit (around 17-18°C). As the day progresses, the temperature is expected to rise, reaching a high of around 73-75°F (approximately 23°C).
-
-There is a significant chance of rain, with forecasts indicating a 60% to 100% probability of precipitation, especially from mid-afternoon into the evening. Winds are generally light, coming from the north-northeast at 10 to 15 mph.
-
-Tonight, the skies will remain cloudy with a continued chance of showers, and the temperature will drop to a low of around 57°F (about 14°C).\
-"""
                     ),
                 ],
                 usage=RequestUsage(
@@ -1242,6 +1246,48 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
     )
 
 
+async def test_google_model_web_search_sources_stay_out_of_replayed_history(
+    allow_model_requests: None, google_provider: GoogleProvider, vcr: Cassette
+):
+    """Gemini 3 sends web search sources in grounding metadata; they go on the return but aren't sent back."""
+    m = GoogleModel('gemini-3.8-flash', provider=google_provider)
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
+
+    result = await agent.run('Who won the most recent FIFA World Cup? Answer in one sentence.')
+    [(_, web_search_return)] = result.response.native_tool_calls
+    assert web_search_return.content == snapshot(
+        {
+            'search_suggestions': IsStr(),
+            'sources': [
+                {
+                    'domain': None,
+                    'title': 'fifa.com',
+                    'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEMbk8QbJonPMnT_uWEA6q0Re1yKhP8dloRXiLsSxL5Qo_c4uF9veKB-rwlq26xw6WQpmgVNl2N9drzLsNGtiLfvTkN1UVqszmDpg-6meVeecQ7XTk_H7DYCfQq-hEwaaj5SbFomTQ_5buWBrUu4UeKTleZpDpcV9WFTTN0ftLJjQxt-JmVy_-qZ8iXAA==',
+                }
+            ],
+        }
+    )
+
+    result = await agent.run('And who was the runner-up? One sentence.', message_history=result.all_messages())
+    assert result.output == snapshot('Argentina was the runner-up.')
+
+    replayed_tool_responses = [
+        part['toolResponse']
+        for content in request_json(vcr.requests[1])['contents']
+        for part in content['parts']
+        if 'toolResponse' in part
+    ]
+    assert replayed_tool_responses == snapshot(
+        [
+            {
+                'id': 'call_461390',
+                'tool_type': 'GOOGLE_SEARCH_WEB',
+                'response': {'search_suggestions': IsStr()},
+            }
+        ]
+    )
+
+
 async def test_google_model_web_search_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-pro', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.', capabilities=[NativeTool(WebSearchTool())])
@@ -1266,7 +1312,7 @@ async def test_google_model_web_search_tool_stream(allow_model_requests: None, g
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1284,7 +1330,46 @@ The forecast for the remainder of the day predicts sunny skies with highs rangin
 
 Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening. The chance of rain remains low throughout the day.\
 """
-                    )
+                    ),
+                    NativeToolCallPart(
+                        tool_name='web_search',
+                        args={'queries': ['weather in San Francisco today']},
+                        tool_call_id=IsStr(),
+                        provider_name='google',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        content=[
+                            {
+                                'domain': None,
+                                'title': 'Weather information for San Francisco, CA, US',
+                                'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'timeanddate.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE9XF-Y6nU0j1wObrFC2SexrS5DFq99jug8F3RhftMwfKdkLkcSVMWq_H3qgRJRC02Lp0nIyyB7EtTA9TkUIOV4vzEh0VmWYIkoeQRmbB3K6IaR4luRiN1n0lni5mP4x4JjiXd7y8V__w50hGwbk3k=',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'weather.gov',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF9gHiIEZB4cp94jXmMqDgEn5mdhQWix9Oco3m2_yhtcyDU0_2m2APS1umgwbjJB2m_jvk5YrtlCJEptzyxHBTuUSoQZyeA2wPI-2DwOt702e6hk4W40qPv3f3NwT_F62ja9E1cOswIuoUqRo7MaPCsGw==',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'wunderground.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHG2VJsv-qDQ3dAw0xQxSzqVRJTmGVBl1ynrfvi4JmEOy2i4rL0D6VmM2qU_T-igTHlYqBwhiyKfV4FVZ8p0ZkvFr12ocM9X3w5zMhemDW8sojJxbbUmL2WpJhN6-MHEMbBo0icOn8flgtJkd3oFwGd1vA=',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'accuweather.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG5DFKTufdLoq-EDj4BMwA8R-Kt4WMdHALFS5lq7bW1XPikPjRETgxED9Y_1QDm_7oA2nnRRT1XONMc9iJeBTJksRrIytiqV46Cl8VitiRX3rKZsExm4SP_usZzXnTE5wudf6FQAMTVI8rqqS6GPU3KJ5lGYRc3ZPJ1ZJa_eTl-EhqLZgWBd4E=',
+                            },
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google',
+                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=119,
@@ -1408,6 +1493,64 @@ The forecast for the remainder of the day predicts sunny skies with highs rangin
 Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening. The chance of rain remains low throughout the day.\
 """
                 ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=1,
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'queries': ['weather in San Francisco today']},
+                    tool_call_id=IsStr(),
+                    provider_name='google',
+                ),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=1,
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'queries': ['weather in San Francisco today']},
+                    tool_call_id=IsStr(),
+                    provider_name='google',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=2,
+                part=NativeToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {
+                            'domain': None,
+                            'title': 'Weather information for San Francisco, CA, US',
+                            'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'timeanddate.com',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE9XF-Y6nU0j1wObrFC2SexrS5DFq99jug8F3RhftMwfKdkLkcSVMWq_H3qgRJRC02Lp0nIyyB7EtTA9TkUIOV4vzEh0VmWYIkoeQRmbB3K6IaR4luRiN1n0lni5mP4x4JjiXd7y8V__w50hGwbk3k=',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'weather.gov',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF9gHiIEZB4cp94jXmMqDgEn5mdhQWix9Oco3m2_yhtcyDU0_2m2APS1umgwbjJB2m_jvk5YrtlCJEptzyxHBTuUSoQZyeA2wPI-2DwOt702e6hk4W40qPv3f3NwT_F62ja9E1cOswIuoUqRo7MaPCsGw==',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'wunderground.com',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHG2VJsv-qDQ3dAw0xQxSzqVRJTmGVBl1ynrfvi4JmEOy2i4rL0D6VmM2qU_T-igTHlYqBwhiyKfV4FVZ8p0ZkvFr12ocM9X3w5zMhemDW8sojJxbbUmL2WpJhN6-MHEMbBo0icOn8flgtJkd3oFwGd1vA=',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'accuweather.com',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG5DFKTufdLoq-EDj4BMwA8R-Kt4WMdHALFS5lq7bW1XPikPjRETgxED9Y_1QDm_7oA2nnRRT1XONMc9iJeBTJksRrIytiqV46Cl8VitiRX3rKZsExm4SP_usZzXnTE5wudf6FQAMTVI8rqqS6GPU3KJ5lGYRc3ZPJ1ZJa_eTl-EhqLZgWBd4E=',
+                        },
+                    ],
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                ),
+                previous_part_kind='builtin-tool-call',
             ),
         ]
     )
@@ -1423,12 +1566,23 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
+                    TextPart(
+                        content="""\
+### Scattered Thunderstorms and Mild Temperatures in Mexico City Today
+
+**Mexico City, Mexico** - The weather in Mexico City today is generally cloudy with scattered thunderstorms expected to develop, particularly this afternoon. Temperatures are mild, with highs forecasted to be in the mid-70s and lows in the upper 50s.
+
+Currently, the temperature is approximately 78°F (26°C), but it feels like 77°F (25°C). The forecast for the rest of the day indicates a high of around 73°F to 75°F (23°C to 24°C). Tonight, the temperature is expected to drop to a low of about 57°F (14°C).
+
+There is a high chance of rain throughout the day, with some reports stating a 60% to 85% probability of precipitation. Hourly forecasts indicate that the likelihood of rain increases significantly in the late afternoon and evening. Winds are coming from the north-northeast at 10 to 15 mph.\
+"""
+                    ),
                     NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['weather in Mexico City today']},
@@ -1462,17 +1616,6 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google',
-                    ),
-                    TextPart(
-                        content="""\
-### Scattered Thunderstorms and Mild Temperatures in Mexico City Today
-
-**Mexico City, Mexico** - The weather in Mexico City today is generally cloudy with scattered thunderstorms expected to develop, particularly this afternoon. Temperatures are mild, with highs forecasted to be in the mid-70s and lows in the upper 50s.
-
-Currently, the temperature is approximately 78°F (26°C), but it feels like 77°F (25°C). The forecast for the rest of the day indicates a high of around 73°F to 75°F (23°C to 24°C). Tonight, the temperature is expected to drop to a low of about 57°F (14°C).
-
-There is a high chance of rain throughout the day, with some reports stating a 60% to 85% probability of precipitation. Hourly forecasts indicate that the likelihood of rain increases significantly in the late afternoon and evening. Winds are coming from the north-northeast at 10 to 15 mph.\
-"""
                     ),
                 ],
                 usage=RequestUsage(
@@ -1530,7 +1673,7 @@ async def test_google_model_web_fetch_tool(allow_model_requests: None, google_pr
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1618,7 +1761,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1909,7 +2052,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     )
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1957,7 +2100,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     )
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2015,7 +2158,7 @@ async def test_google_model_thinking_part_from_other_model(
                     )
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2066,7 +2209,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=timezone.utc),
+                    'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=datetime.UTC),
                     'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
@@ -2096,7 +2239,7 @@ async def test_google_model_thinking_part_from_other_model(
                     )
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2159,7 +2302,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                     )
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2367,10 +2510,10 @@ async def test_google_url_input(
                 parts=[
                     UserPromptPart(
                         content=['What is the main content of this URL?', Is(url)],
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=datetime.UTC),
                     ),
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2413,10 +2556,10 @@ async def test_google_url_input_force_download(
                 parts=[
                     UserPromptPart(
                         content=['What is the main content of this URL?', Is(video_url)],
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=datetime.UTC),
                     ),
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2470,7 +2613,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2503,7 +2646,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2536,7 +2679,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2730,7 +2873,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2763,7 +2906,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2802,7 +2945,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2836,7 +2979,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2879,7 +3022,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2938,7 +3081,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3000,7 +3143,7 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3063,7 +3206,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3118,7 +3261,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3161,7 +3304,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3222,7 +3365,7 @@ async def test_google_prompted_output_multiple(allow_model_requests: None, googl
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3373,685 +3516,10 @@ def test_map_usage():
     )
 
 
-async def test_google_image_generation(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    agent = Agent(m, output_type=BinaryImage)
-
-    result = await agent.run('Generate an image of an axolotl.')
-    messages = result.all_messages()
-
-    assert result.output == snapshot(IsInstance(BinaryImage))
-    assert messages == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Generate an image of an axolotl.',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    FilePart(
-                        content=IsInstance(BinaryImage),
-                        provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
-                    )
-                ],
-                usage=RequestUsage(
-                    input_tokens=10,
-                    output_tokens=1304,
-                    input_text_tokens=10,
-                    output_image_tokens=1120,
-                    details={'thoughts_tokens': 115, 'text_prompt_tokens': 10, 'image_candidates_tokens': 1120},
-                    output_reasoning_tokens=115,
-                    cost=Decimal('0.136628'),
-                ),
-                model_name='gemini-3-pro-image-preview',
-                timestamp=IsDatetime(),
-                provider_name='google',
-                provider_url='https://generativelanguage.googleapis.com/',
-                provider_details={'finish_reason': 'STOP'},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-        ]
-    )
-
-    result = await agent.run('Now give it a sombrero.', message_history=messages)
-    assert result.output == snapshot(IsInstance(BinaryImage))
-    assert result.new_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Now give it a sombrero.',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    FilePart(
-                        content=IsInstance(BinaryImage),
-                        provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
-                    )
-                ],
-                usage=RequestUsage(
-                    input_tokens=276,
-                    output_tokens=1374,
-                    input_text_tokens=18,
-                    input_image_tokens=258,
-                    output_image_tokens=1120,
-                    details={
-                        'thoughts_tokens': 149,
-                        'text_prompt_tokens': 18,
-                        'image_prompt_tokens': 258,
-                        'image_candidates_tokens': 1120,
-                    },
-                    output_reasoning_tokens=149,
-                    cost=Decimal('0.138000'),
-                ),
-                model_name='gemini-3-pro-image-preview',
-                timestamp=IsDatetime(),
-                provider_name='google',
-                provider_url='https://generativelanguage.googleapis.com/',
-                provider_details={'finish_reason': 'STOP'},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_google_image_generation_stream(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
-    agent = Agent(m, output_type=BinaryImage)
-
-    async with agent.run_stream('Generate an image of an axolotl') as result:
-        assert await result.get_output() == snapshot(IsInstance(BinaryImage))
-
-    event_parts: list[Any] = []
-    async with agent.iter(user_prompt='Generate an image of an axolotl.') as agent_run:
-        async for node in agent_run:
-            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
-                async with node.stream(agent_run.ctx) as request_stream:
-                    async for event in request_stream:
-                        event_parts.append(event)
-
-    assert agent_run.result is not None
-    assert agent_run.result.output == snapshot(IsInstance(BinaryImage))
-    assert agent_run.result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Generate an image of an axolotl.',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(content='Here you go! '),
-                    FilePart(content=IsInstance(BinaryImage)),
-                ],
-                usage=RequestUsage(
-                    input_tokens=10,
-                    output_tokens=1295,
-                    input_text_tokens=10,
-                    output_image_tokens=1290,
-                    details={'text_prompt_tokens': 10, 'image_candidates_tokens': 1290},
-                    cost=Decimal('0.0387155'),
-                ),
-                model_name='gemini-2.5-flash-image',
-                timestamp=IsDatetime(),
-                provider_name='google',
-                provider_url='https://generativelanguage.googleapis.com/',
-                provider_details={'finish_reason': 'STOP'},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-        ]
-    )
-    assert event_parts == snapshot(
-        [
-            PartStartEvent(index=0, part=TextPart(content='Here you go!')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' ')),
-            PartEndEvent(index=0, part=TextPart(content='Here you go! '), next_part_kind='file'),
-            PartStartEvent(
-                index=1,
-                part=FilePart(content=IsInstance(BinaryImage)),
-                previous_part_kind='text',
-            ),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-        ]
-    )
-
-
-async def test_google_image_generation_with_text(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    agent = Agent(m)
-
-    result = await agent.run('Generate an illustrated two-sentence story about an axolotl.')
-    messages = result.all_messages()
-
-    assert result.output == snapshot(
-        """\
-A little axolotl named Archie lived in a beautiful glass tank, but he always wondered what was beyond the clear walls. One day, he bravely peeked over the edge and discovered a whole new world of sunshine and potted plants.
-
-"""
-    )
-    assert messages == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Generate an illustrated two-sentence story about an axolotl.',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(
-                        content="""\
-A little axolotl named Archie lived in a beautiful glass tank, but he always wondered what was beyond the clear walls. One day, he bravely peeked over the edge and discovered a whole new world of sunshine and potted plants.
-
-""",
-                        provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
-                    ),
-                    FilePart(
-                        content=IsInstance(BinaryImage),
-                        provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
-                    ),
-                ],
-                usage=RequestUsage(
-                    input_tokens=14,
-                    output_tokens=1457,
-                    input_text_tokens=14,
-                    output_image_tokens=1120,
-                    details={'thoughts_tokens': 174, 'text_prompt_tokens': 14, 'image_candidates_tokens': 1120},
-                    output_reasoning_tokens=174,
-                    cost=Decimal('0.138472'),
-                ),
-                model_name='gemini-3-pro-image-preview',
-                timestamp=IsDatetime(),
-                provider_name='google',
-                provider_url='https://generativelanguage.googleapis.com/',
-                provider_details={'finish_reason': 'STOP'},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_google_image_or_text_output(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
-    # ImageGenerationTool is listed here to indicate just that it doesn't cause any issues, even though it's not necessary with an image model.
-    agent = Agent(m, output_type=str | BinaryImage, capabilities=[NativeTool(ImageGenerationTool(size='1K'))])
-
-    result = await agent.run('Tell me a two-sentence story about an axolotl, no image please.')
-    assert result.output == snapshot(
-        'In a hidden cave, a shy axolotl named Pip spent its days dreaming of the world beyond its murky pond. One evening, a glimmering portal appeared, offering Pip a chance to explore the vibrant, unknown depths of the ocean.'
-    )
-
-    result = await agent.run('Generate an image of an axolotl.')
-    assert result.output == snapshot(IsInstance(BinaryImage))
-
-
-async def test_google_image_and_text_output(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
-    agent = Agent(m)
-
-    result = await agent.run('Tell me a two-sentence story about an axolotl with an illustration.')
-    assert result.output == snapshot(
-        'Once, in a hidden cenote, lived an axolotl named Pip who loved to collect shiny pebbles. One day, Pip found a pebble that glowed, illuminating his entire underwater world with a soft, warm light. '
-    )
-    assert result.response.files == snapshot([IsInstance(BinaryImage)])
-
-
-async def test_google_image_generation_with_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
-    class Animal(BaseModel):
-        species: str
-        name: str
-
-    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
-    agent = Agent(model=model, output_type=Animal)
-
-    with pytest.raises(UserError, match=re.escape('Tool output is not supported by this model.')):
-        await agent.run('Generate an image of an axolotl.')
-
-
-async def test_google_image_generation_with_native_output(allow_model_requests: None, google_provider: GoogleProvider):
-    class Animal(BaseModel):
-        species: str
-        name: str
-
-    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
-    agent = Agent(model=model, output_type=NativeOutput(Animal))
-
-    with pytest.raises(UserError, match=re.escape('Native structured output is not supported by this model.')):
-        await agent.run('Generate an image of an axolotl.')
-
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    agent = Agent(model=model, output_type=NativeOutput(Animal))
-
-    result = await agent.run('Generate an image of an axolotl and then return its details.')
-    assert result.output == snapshot(Animal(species='Ambystoma mexicanum', name='Axolotl'))
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Generate an image of an axolotl and then return its details.',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    FilePart(
-                        content=IsInstance(BinaryImage),
-                        provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
-                    )
-                ],
-                usage=RequestUsage(
-                    input_tokens=15,
-                    output_tokens=1334,
-                    input_text_tokens=15,
-                    output_image_tokens=1120,
-                    details={'thoughts_tokens': 131, 'text_prompt_tokens': 15, 'image_candidates_tokens': 1120},
-                    output_reasoning_tokens=131,
-                    cost=Decimal('0.136998'),
-                ),
-                model_name='gemini-3-pro-image-preview',
-                timestamp=IsDatetime(),
-                provider_name='google',
-                provider_url='https://generativelanguage.googleapis.com/',
-                provider_details={'finish_reason': 'STOP'},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        content='Please return text.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(
-                        content="""\
-{
-  "species": "Ambystoma mexicanum",
-  "name": "Axolotl"
-} \
-""",
-                        provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
-                    )
-                ],
-                usage=RequestUsage(
-                    input_tokens=295,
-                    output_tokens=222,
-                    input_text_tokens=37,
-                    input_image_tokens=258,
-                    details={'thoughts_tokens': 196, 'text_prompt_tokens': 37, 'image_prompt_tokens': 258},
-                    output_reasoning_tokens=196,
-                    cost=Decimal('0.003254'),
-                ),
-                model_name='gemini-3-pro-image-preview',
-                timestamp=IsDatetime(),
-                provider_name='google',
-                provider_url='https://generativelanguage.googleapis.com/',
-                provider_details={'finish_reason': 'STOP'},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_google_image_generation_with_prompted_output(
-    allow_model_requests: None, google_provider: GoogleProvider
-):
-    class Animal(BaseModel):
-        species: str
-        name: str
-
-    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
-    agent = Agent(model=model, output_type=PromptedOutput(Animal))
-
-    with pytest.raises(UserError, match=re.escape('JSON output is not supported by this model.')):
-        await agent.run('Generate an image of an axolotl.')
-
-
-async def test_google_image_generation_with_tools(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
-    agent = Agent(model=model, output_type=BinaryImage)
-
-    @agent.tool_plain
-    async def get_animal() -> str:
-        return 'axolotl'  # pragma: no cover
-
-    with pytest.raises(UserError, match=re.escape('Tools are not supported by this model.')):
-        await agent.run('Generate an image of an animal returned by the get_animal tool.')
-
-
-async def test_google_image_generation_with_web_search(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    agent = Agent(model=model, output_type=BinaryImage, capabilities=[NativeTool(WebSearchTool())])
-
-    result = await agent.run(
-        'Visualize the current weather forecast for the next 5 days in Mexico City as a clean, modern weather chart. Add a visual on what I should wear each day'
-    )
-    assert result.output == snapshot(IsInstance(BinaryImage))
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Visualize the current weather forecast for the next 5 days in Mexico City as a clean, modern weather chart. Add a visual on what I should wear each day',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    NativeToolCallPart(
-                        tool_name='web_search',
-                        args={'queries': ['', 'current 5-day weather forecast for Mexico City and what to wear']},
-                        tool_call_id=IsStr(),
-                        provider_name='google',
-                    ),
-                    NativeToolReturnPart(
-                        tool_name='web_search',
-                        content=[
-                            {
-                                'domain': None,
-                                'title': 'accuweather.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQElsvx97FT3Kr__tvs8zIgS3C1znKqEOvuHdjyLe2WZZsJpbDDqn9gdF6rKV8KMZytsiWXCDcNwD5m0WvZzGWY6eVbnz0lxftYNTSNdXTiv1AtLrmw-NUcnITjEScK_JHJgnr9xmFapH9DXMGWWYKRSfcT3iy96J1gZeWjCBph5Sci23DAhzA==',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'weather-and-climate.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGlGJX9f12rrKOYrY71rszTFf5KghgToVKZckqRWzT-cjW-mYE_PV3xRbk0JxQxJS18rkCt-y8qwpB41BMYEuxLnkCSBapX5s-4-0pwPUimTjHK4W65OdkVtjTU5-wlHsAppBwdwXNDSmzXZNUYLE1N0R9SKhLeHVVj-2BYYeoO9GPH',
-                            },
-                            {
-                                'domain': None,
-                                'title': '',
-                                'uri': 'https://www.google.com/search?q=time+in+Mexico+City,+MX',
-                            },
-                        ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='google',
-                    ),
-                    FilePart(
-                        content=IsInstance(BinaryImage),
-                        provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
-                    ),
-                ],
-                usage=RequestUsage(
-                    input_tokens=33,
-                    output_tokens=2309,
-                    input_text_tokens=33,
-                    output_image_tokens=1120,
-                    details={
-                        'thoughts_tokens': 529,
-                        'text_prompt_tokens': 33,
-                        'image_candidates_tokens': 1120,
-                        'web_search_requests': 1,
-                    },
-                    output_reasoning_tokens=529,
-                    web_searches=1,
-                    cost=Decimal('0.148734'),
-                ),
-                model_name='gemini-3-pro-image-preview',
-                timestamp=IsDatetime(),
-                provider_name='google',
-                provider_url='https://generativelanguage.googleapis.com/',
-                provider_details={'finish_reason': 'STOP'},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_google_image_generation_tool(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
-    agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())])
-
-    with pytest.raises(
-        UserError,
-        match=re.escape(
-            "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
-        ),
-    ):
-        await agent.run('Generate an image of an axolotl.')
-
-
-async def test_google_image_generation_tool_aspect_ratio(google_provider: GoogleProvider) -> None:
-    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
-    params = ModelRequestParameters(native_tools=[ImageGenerationTool(aspect_ratio='16:9')])
-
-    tools, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools == []
-    assert image_config == {'aspect_ratio': '16:9'}
-
-
-async def test_google_image_generation_resolution(google_provider: GoogleProvider) -> None:
-    """Test that resolution parameter from ImageGenerationTool is added to image_config."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    params = ModelRequestParameters(native_tools=[ImageGenerationTool(size='2K')])
-
-    tools, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools == []
-    assert image_config == {'image_size': '2K'}
-
-
-async def test_google_image_generation_resolution_with_aspect_ratio(google_provider: GoogleProvider) -> None:
-    """Test that resolution and aspect_ratio from ImageGenerationTool work together."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    params = ModelRequestParameters(native_tools=[ImageGenerationTool(aspect_ratio='16:9', size='4K')])
-
-    tools, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools == []
-    assert image_config == {'aspect_ratio': '16:9', 'image_size': '4K'}
-
-
-async def test_google_image_generation_unsupported_size_raises_error(google_provider: GoogleProvider) -> None:
-    """Test that unsupported size values raise an error."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    params = ModelRequestParameters(native_tools=[ImageGenerationTool(size='1024x1024')])
-
-    with pytest.raises(UserError, match='Google image generation only supports `size` values'):
-        model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_google_image_generation_auto_size_raises_error(google_provider: GoogleProvider) -> None:
-    """Test that 'auto' size raises an error for Google since it doesn't support intelligent size selection."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    params = ModelRequestParameters(native_tools=[ImageGenerationTool(size='auto')])
-
-    with pytest.raises(UserError, match='Google image generation only supports `size` values'):
-        model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_google_image_generation_tool_output_format(vertex_client_google_provider: GoogleProvider) -> None:
-    """Test that ImageGenerationTool.output_format is mapped to ImageConfigDict.output_mime_type on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
-    params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='png')])
-
-    tools, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools == []
-    assert image_config == {'output_mime_type': 'image/png'}
-
-
-async def test_google_image_generation_tool_unsupported_format_raises_error(
-    vertex_client_google_provider: GoogleProvider,
-) -> None:
-    """Test that unsupported output_format values raise an error on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
-    # 'gif' is not supported by Google
-    params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='gif')])  # pyright: ignore[reportArgumentType]
-
-    with pytest.raises(UserError, match='Google image generation only supports `output_format` values'):
-        model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_google_image_generation_tool_output_compression(
-    vertex_client_google_provider: GoogleProvider,
-) -> None:
-    """Test that ImageGenerationTool.output_compression is mapped to ImageConfigDict.output_compression_quality on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
-
-    # Test explicit value
-    params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_compression=85)])
-    tools, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools == []
-    assert image_config == {'output_compression_quality': 85, 'output_mime_type': 'image/jpeg'}
-
-    # Test None (omitted)
-    params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_compression=None)])
-    tools, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert image_config == {}
-
-
-async def test_google_image_generation_tool_compression_validation(
-    vertex_client_google_provider: GoogleProvider,
-) -> None:
-    """Test compression validation on Vertex AI: range and JPEG-only."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
-
-    # Invalid range: > 100
-    with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
-        model._get_native_tools(  # pyright: ignore[reportPrivateUsage]
-            ModelRequestParameters(native_tools=[ImageGenerationTool(output_compression=101)])
-        )
-
-    # Invalid range: < 0
-    with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
-        model._get_native_tools(  # pyright: ignore[reportPrivateUsage]
-            ModelRequestParameters(native_tools=[ImageGenerationTool(output_compression=-1)])
-        )
-
-    # Non-JPEG format (PNG)
-    with pytest.raises(UserError, match='`output_compression` is only supported for JPEG format'):
-        model._get_native_tools(  # pyright: ignore[reportPrivateUsage]
-            ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='png', output_compression=90)])
-        )
-
-    # Non-JPEG format (WebP)
-    with pytest.raises(UserError, match='`output_compression` is only supported for JPEG format'):
-        model._get_native_tools(  # pyright: ignore[reportPrivateUsage]
-            ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='webp', output_compression=90)])
-        )
-
-
-async def test_google_image_generation_silently_ignored_by_gemini_api(google_provider: GoogleProvider) -> None:
-    """Test that output_format and compression are silently ignored by the Gemini API (google)."""
-    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
-
-    # Test output_format ignored
-    params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='png')])
-    _, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert image_config == {}
-
-    # Test output_compression ignored
-    params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_compression=90)])
-    _, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert image_config == {}
-
-    # Test both ignored when None
-    params = ModelRequestParameters(native_tools=[ImageGenerationTool()])
-    _, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert image_config == {}
-
-
-async def test_google_vertexai_image_generation_with_output_format(
-    allow_model_requests: None, vertex_provider: GoogleProvider
-):  # pragma: lax no cover
-    """Test that output_format works with Vertex AI."""
-    model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
-    agent = Agent(
-        model,
-        capabilities=[NativeTool(ImageGenerationTool(output_format='jpeg', output_compression=85))],
-        output_type=BinaryImage,
-    )
-
-    result = await agent.run('Generate an image of an axolotl.')
-    assert result.output.media_type == 'image/jpeg'
-
-
-async def test_google_image_generation_tool_all_fields(vertex_client_google_provider: GoogleProvider) -> None:
-    """Test that all ImageGenerationTool fields are mapped correctly on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
-    params = ModelRequestParameters(
-        native_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
-    )
-
-    tools, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools == []
-    assert image_config == {
-        'aspect_ratio': '16:9',
-        'image_size': '2K',
-        'output_mime_type': 'image/jpeg',
-        'output_compression_quality': 90,
-    }
-
-
 def test_google_vertex_skips_include_server_side_tool_invocations(
     vertex_client_google_provider: GoogleProvider,
 ) -> None:
-    """Vertex rejects `include_server_side_tool_invocations`, so it must not be set on Gemini 3+ via Vertex.
+    """Vertex doesn't support `include_server_side_tool_invocations` (the SDK raises on it), so it isn't set there.
 
     The model is built the way #6792 reports: a
     Vertex-backed `genai.Client` wrapped in `GoogleProvider`, whose `system` stays `'google'` —
@@ -4190,6 +3658,24 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
             ),
             ModelResponse(
                 parts=[
+                    TextPart(
+                        content="""\
+Based on your location in **San Francisco**, here is the weather forecast for today, **Tuesday, July 28, 2026**:
+
+*   **Condition:** Sunny and clear throughout the day and night.
+*   **Temperature:** \n\
+    *   **Current:** Approximately **66°F (19°C)**.
+    *   **High:** Expected to reach around **67°F to 71°F (19°C - 22°C)**.
+    *   **Low:** Around **57°F (14°C)** tonight.
+*   **Humidity:** About **73% - 78%**.
+*   **Precipitation:** 0% chance of rain.
+*   **Wind:** A gentle breeze from the southwest at about **10 mph (16 km/h)**.
+
+**Note:** While it is currently comfortable in the city due to the marine layer (fog), meteorologists are tracking a heatwave expected to arrive later this week, which could bring much higher temperatures to the Bay Area by the weekend. For today, however, you can expect typical mild San Francisco summer weather.\
+""",
+                        provider_name='google-cloud',
+                        provider_details={'thought_signature': IsStr()},
+                    ),
                     NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['weather San Francisco July 28 2026']},
@@ -4224,24 +3710,6 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
                         timestamp=IsDatetime(),
                         provider_name='google-cloud',
                     ),
-                    TextPart(
-                        content="""\
-Based on your location in **San Francisco**, here is the weather forecast for today, **Tuesday, July 28, 2026**:
-
-*   **Condition:** Sunny and clear throughout the day and night.
-*   **Temperature:** \n\
-    *   **Current:** Approximately **66°F (19°C)**.
-    *   **High:** Expected to reach around **67°F to 71°F (19°C - 22°C)**.
-    *   **Low:** Around **57°F (14°C)** tonight.
-*   **Humidity:** About **73% - 78%**.
-*   **Precipitation:** 0% chance of rain.
-*   **Wind:** A gentle breeze from the southwest at about **10 mph (16 km/h)**.
-
-**Note:** While it is currently comfortable in the city due to the marine layer (fog), meteorologists are tracking a heatwave expected to arrive later this week, which could bring much higher temperatures to the Bay Area by the weekend. For today, however, you can expect typical mild San Francisco summer weather.\
-""",
-                        provider_name='google-cloud',
-                        provider_details={'thought_signature': IsStr()},
-                    ),
                 ],
                 usage=RequestUsage(
                     details={
@@ -4270,17 +3738,6 @@ Based on your location in **San Francisco**, here is the weather forecast for to
             ),
         ]
     )
-
-
-async def test_google_vertexai_image_generation(
-    allow_model_requests: None, vertex_provider: GoogleProvider
-):  # pragma: lax no cover
-    model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
-
-    agent = Agent(model, output_type=BinaryImage)
-
-    result = await agent.run('Generate an image of an axolotl.')
-    assert result.output == snapshot(IsInstance(BinaryImage))
 
 
 async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gemini_api_key: str):
@@ -4692,7 +4149,7 @@ def test_google_process_response_filters_empty_text_parts(google_provider: Googl
     model = GoogleModel('gemini-2.5-pro', provider=google_provider)
     response = _generate_response_with_texts(response_id='resp-123', texts=['', 'first', '', 'second'])
 
-    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+    result = model._process_response(response, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
     assert result.parts == snapshot([TextPart(content='first'), TextPart(content='second')])
 
@@ -4705,7 +4162,7 @@ def test_google_process_response_empty_candidates(google_provider: GoogleProvide
             'candidates': [],
         }
     )
-    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+    result = model._process_response(response, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
     assert result == snapshot(
         ModelResponse(
@@ -5160,12 +4617,15 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             timestamp=IsDatetime(),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
+                        TextPart(
+                            content='The capital of France is Paris. Paris is also known for its famous landmarks, such as the Eiffel Tower.'
+                        ),
                         NativeToolCallPart(
                             tool_name='file_search',
                             args={},
@@ -5183,9 +4643,6 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             provider_name='google',
-                        ),
-                        TextPart(
-                            content='The capital of France is Paris. Paris is also known for its famous landmarks, such as the Eiffel Tower.'
                         ),
                     ],
                     usage=RequestUsage(
@@ -5227,12 +4684,23 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             timestamp=IsDatetime(),
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
+                        TextPart(
+                            content="""\
+The Eiffel Tower is a world-renowned landmark located in Paris, the capital of France. It is a wrought-iron lattice tower situated on the Champ de Mars.
+
+Here are some key facts about the Eiffel Tower:
+*   **Creator:** The tower was designed and built by the company of French civil engineer Gustave Eiffel, and it is named after him.
+*   **Construction:** It was constructed from 1887 to 1889 to serve as the entrance arch for the 1889 World's Fair.
+*   **Height:** The tower is 330 meters (1,083 feet) tall, which is about the same height as an 81-story building. It was the tallest man-made structure in the world for 41 years until the Chrysler Building in New York City was completed in 1930.
+*   **Tourism:** It is one of the most visited paid monuments in the world, attracting millions of visitors each year. The tower has three levels for visitors, with restaurants on the first and second levels. The top level's upper platform is 276 meters (906 feet) above the ground, making it the highest observation deck accessible to the public in the European Union.\
+"""
+                        ),
                         NativeToolCallPart(
                             tool_name='file_search',
                             args={},
@@ -5254,17 +4722,6 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             provider_name='google',
-                        ),
-                        TextPart(
-                            content="""\
-The Eiffel Tower is a world-renowned landmark located in Paris, the capital of France. It is a wrought-iron lattice tower situated on the Champ de Mars.
-
-Here are some key facts about the Eiffel Tower:
-*   **Creator:** The tower was designed and built by the company of French civil engineer Gustave Eiffel, and it is named after him.
-*   **Construction:** It was constructed from 1887 to 1889 to serve as the entrance arch for the 1889 World's Fair.
-*   **Height:** The tower is 330 meters (1,083 feet) tall, which is about the same height as an 81-story building. It was the tallest man-made structure in the world for 41 years until the Chrysler Building in New York City was completed in 1930.
-*   **Tourism:** It is one of the most visited paid monuments in the world, attracting millions of visitors each year. The tower has three levels for visitors, with restaurants on the first and second levels. The top level's upper platform is 276 meters (906 feet) above the ground, making it the highest observation deck accessible to the public in the European Union.\
-"""
                         ),
                     ],
                     usage=RequestUsage(
@@ -5339,7 +4796,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                             timestamp=IsDatetime(),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -5567,7 +5024,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5596,7 +5053,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=timezone.utc),
+                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=datetime.UTC),
                     'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
@@ -5613,7 +5070,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5640,7 +5097,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=timezone.utc),
+                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=datetime.UTC),
                     'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
@@ -5694,7 +5151,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5958,7 +5415,7 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6194,7 +5651,7 @@ async def test_google_streaming_tool_call_thought_signature(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6235,7 +5692,7 @@ async def test_google_streaming_tool_call_thought_signature(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -7060,7 +6517,7 @@ async def test_google_service_tier_response_extraction(
         ),
         response_id='resp_123',
         model_version=model_name,
-        create_time=datetime.datetime.now(tz=datetime.timezone.utc),
+        create_time=datetime.datetime.now(tz=datetime.UTC),
     )
     response.sdk_http_response = HttpResponse(headers={'x-gemini-service-tier': 'PRIORITY'})
 
@@ -7099,7 +6556,7 @@ async def test_google_service_tier_streamed_response_extraction(
         ),
         response_id='resp_123',
         model_version=model_name,
-        create_time=datetime.datetime.now(tz=datetime.timezone.utc),
+        create_time=datetime.datetime.now(tz=datetime.UTC),
     )
     chunk.sdk_http_response = HttpResponse(headers={'x-gemini-service-tier': 'FLEX'})
 
@@ -7556,7 +7013,7 @@ async def test_google_model_armor_config_is_sent_in_request(
 
 # Opted in, and the cassette was recorded with the described options in the request, so the recording only
 # matches what the code sends while the enum keeps opting in.
-class TicketPriority(UseEnumMemberDocstrings, str, Enum):
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """How urgent the ticket is."""
 
     low = 'low'
@@ -7615,3 +7072,49 @@ high: Needs attention today.\
             },
         }
     )
+
+
+@pytest.mark.parametrize(
+    ('call', 'content', 'content_type'),
+    [
+        pytest.param('request', b'   ', 'application/json', id='request'),
+        pytest.param(
+            'stream',
+            b'data: {"candidates": [{"content": {"role": "model", "parts": [{"text": "Hello"}]}, "index": 0}]}\r\n\r\n'
+            b'data: {not json\r\n\r\n',
+            'text/event-stream',
+            id='stream',
+        ),
+        pytest.param('count_tokens', b'   ', 'application/json', id='count_tokens'),
+    ],
+)
+async def test_google_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, call: str, content: bytes, content_type: str
+) -> None:
+    """A 200 response body, or a streamed chunk, that can't be decoded as JSON surfaces as `ModelAPIError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        return HTTPX2Response(200, content=content, headers={'content-type': content_type})
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+        with pytest.raises(ModelAPIError) as exc_info:
+            if call == 'count_tokens':
+                await model.count_tokens([ModelRequest.user_text_prompt('Hello')], None, ModelRequestParameters())
+            elif call == 'stream':
+                async with Agent(model).run_stream('Hello') as result:
+                    await result.get_output()
+            else:
+                await Agent(model).run('Hello')
+
+    # The SDK wraps a bad streamed chunk in its own error type.
+    cause = errors.UnknownApiResponseError if call == 'stream' else json.JSONDecodeError
+    assert isinstance(exc_info.value.__cause__, cause)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')

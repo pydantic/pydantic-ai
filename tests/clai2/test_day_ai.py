@@ -26,29 +26,35 @@ from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings, api_keys
 from pydantic_clai2.config.api_keys import KeyReference, SavedKey
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.mcp import TokenStore
+from pydantic_clai2.mcp import OAUTH_TIMEOUT, SignIn as MCPSignIn, TokenStore, http_client
 from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.ui.menus.plugin_menu import Configure, PluginMenu, open_plugins_menu
-from tests.clai2.menu_script import Script, pick
+from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick
 
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'day_ai')
 CLOSE = MenuResult(cancelled=True)
 
 
 class SignIn:
-    """Stands in for FastMCP's `Client`, whose connection would open the browser."""
+    """Stands in for FastMCP's `Client`, whose connection would open the browser and store the tokens."""
 
     connected: list[StreamableHttpTransport] = []
     error: Exception | None = None
+    unfinished: bool = False
+    """The browser sign-in is never completed, so connecting waits until cancelled."""
 
-    def __init__(self, transport: StreamableHttpTransport) -> None:
+    def __init__(self, transport: StreamableHttpTransport, *, init_timeout: float) -> None:
+        assert init_timeout == OAUTH_TIMEOUT, 'the browser round trip needs longer than the default handshake'
         self.transport = transport
 
     async def __aenter__(self) -> None:
+        SignIn.connected.append(self.transport)
         if SignIn.error is not None:
             raise SignIn.error
-        SignIn.connected.append(self.transport)
+        if SignIn.unfinished:
+            await anyio.sleep_forever()
+        await store_sign_in()
 
     async def __aexit__(
         self, kind: type[BaseException] | None, error: BaseException | None, traceback: TracebackType | None
@@ -79,8 +85,8 @@ class Shell:
 
     def host(self) -> PluginHost[None]:
         [entry] = self.loader.entries()
-        assert entry.host is not None
-        return entry.host
+        assert entry.loaded is not None
+        return entry.loaded.host
 
     def client(self) -> object:
         [capability] = self.loader.capabilities()
@@ -93,6 +99,7 @@ def sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(day_ai, 'Client', SignIn)
     monkeypatch.setattr(SignIn, 'connected', [])
     monkeypatch.setattr(SignIn, 'error', None)
+    monkeypatch.setattr(SignIn, 'unfinished', False)
 
 
 def script(monkeypatch: pytest.MonkeyPatch, lists: list[MenuResult], choices: list[MenuResult] | None = None) -> Script:
@@ -193,15 +200,20 @@ async def test_choosing_the_browser_signs_in_and_sticks_with_the_conventional_ke
     await shell.loader.enable('day_ai')
     source = DayAISource(shell.host())
     assert source.rows()[0].note == 'uses DAY_AI_ACCESS_TOKEN'
-    script(monkeypatch, lists=[pick('auth')], choices=[pick('oauth')])
-    assert await shell.loader.configure('day_ai') == 'Saved Sign-in.'
+    script(monkeypatch, lists=[pick('auth')], choices=[pick('oauth'), UNTIL_CLOSED])
+    assert await shell.loader.configure('day_ai') == '\n'.join(
+        [
+            'Saved Sign-in.',
+            'Signed in to Day AI. Tokens are kept in the OS credential store and renew themselves.',
+        ]
+    )
     assert shell.saved() == {'auth': 'oauth', 'include_instructions': True}
     transport = shell.client()
     assert isinstance(transport, StreamableHttpTransport) and isinstance(transport.auth, OAuth)
     assert transport.url == day_ai.DAY_AI_MCP_URL
     [signed_in_with] = SignIn.connected
     assert signed_in_with is not transport
-    assert 'Opening your browser to sign in to Day AI.' in shell.output.getvalue()
+    assert 'not signed in' not in shell.output.getvalue()
     await shell.loader.close('exit')
 
 
@@ -224,19 +236,73 @@ async def test_nothing_chosen_loads_no_capability_and_says_how_to_connect(tmp_pa
     await shell.loader.close('exit')
 
 
-async def test_failed_sign_in_leaves_nothing_loaded(tmp_path: Path) -> None:
-    SignIn.error = RuntimeError('authorization denied')
-    shell = Shell(tmp_path, terminal=True, settings={'auth': 'oauth'})
-    with pytest.raises(PluginError, match="Plugin 'day_ai': RuntimeError: authorization denied"):
-        await shell.loader.enable('day_ai')
+async def test_failed_sign_in_is_reported_and_adds_no_capability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    SignIn.error = RuntimeError('Client failed to connect: authorization denied')
+    shell = Shell(tmp_path, terminal=True)
+    await shell.loader.enable('day_ai')
+    script(monkeypatch, lists=[pick('auth')], choices=[pick('oauth'), UNTIL_CLOSED])
+    assert await shell.loader.configure('day_ai') == '\n'.join(
+        ['Saved Sign-in.', f'Could not sign in to Day AI: Client failed to connect: authorization denied. {SETUP}']
+    )
+    assert shell.saved() == {'auth': 'oauth', 'include_instructions': True}
     assert shell.loader.capabilities() == []
+    await shell.loader.close('exit')
 
 
-async def test_headless_browser_sign_in_fails_clearly(tmp_path: Path) -> None:
-    shell = Shell(tmp_path, settings={'auth': 'oauth'})
-    with pytest.raises(PluginError, match='Save DAY_AI_ACCESS_TOKEN in /keys, or sign in to Day AI'):
-        await shell.loader.enable('day_ai')
-    assert shell.loader.capabilities() == [] and SignIn.connected == []
+async def test_browser_sign_in_is_an_auth_the_transport_client_accepts() -> None:
+    """The client is built in the HTTPX FastMCP drives, so it takes the sign-in rather than rejecting it."""
+    transport = day_ai._transport()  # pyright: ignore[reportPrivateUsage]
+    assert transport.httpx_client_factory is http_client
+    assert isinstance(transport.auth, MCPSignIn)
+    async with http_client(auth=transport.auth) as client:
+        assert client.auth is transport.auth
+        assert not client.follow_redirects
+
+
+async def test_an_unfinished_sign_in_never_holds_up_loading(tmp_path: Path) -> None:
+    """Loading waits for every plugin, so a browser left open at load would leave CLAI unable to run anything."""
+    SignIn.unfinished = True
+    for terminal in (True, False):
+        folder = tmp_path / f'terminal-{terminal}'
+        folder.mkdir()
+        shell = Shell(folder, terminal=terminal, settings={'auth': 'oauth'})
+        with anyio.fail_after(5):
+            await shell.loader.enable('day_ai')
+        assert shell.loader.capabilities() == []
+        assert 'Day AI is not signed in. Run ' in shell.output.getvalue()
+        assert SignIn.connected == []
+        await shell.loader.close('exit')
+
+
+async def test_esc_cancels_an_unfinished_sign_in_and_leaves_day_ai_signed_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    SignIn.unfinished = True
+    shell = Shell(tmp_path, terminal=True)
+    await shell.loader.enable('day_ai')
+    script(monkeypatch, lists=[pick('auth')], choices=[pick('oauth'), CLOSE])
+    with anyio.fail_after(5):
+        message = await shell.loader.configure('day_ai')
+    assert message == f'Saved Sign-in.\nDay AI sign-in cancelled. {SETUP}'
+    assert len(SignIn.connected) == 1
+    assert shell.loader.capabilities() == []
+    assert 'Day AI is not signed in. Run ' in shell.output.getvalue()
+    await shell.loader.close('exit')
+
+
+async def test_choosing_the_browser_when_already_signed_in_does_not_open_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await store_sign_in()
+    shell = Shell(tmp_path)
+    await shell.loader.enable('day_ai')
+    script(monkeypatch, lists=[pick('auth')], choices=[pick('oauth')])
+    assert await shell.loader.configure('day_ai') == 'Saved Sign-in.'
+    assert isinstance(shell.client(), StreamableHttpTransport)
+    assert SignIn.connected == []
+    await shell.loader.close('exit')
 
 
 async def test_settings_cannot_hold_a_token(tmp_path: Path) -> None:

@@ -7,9 +7,9 @@ from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Sequence
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, assert_never, cast
 
-from typing_extensions import TypeVar, assert_never
+from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import EventStreamBuffer
 from pydantic_ai._utils import cancel_and_drain
@@ -642,6 +642,14 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         (e.g. `ToolDenied`, `ModelRetry`) short-circuits inside `_call_tool`, so no validation is
         needed — the event is emitted without args-validity.
         """
+        # Function calls and their results/executions are matched back by `tool_call_id`, so duplicate
+        # ids would make the binding ambiguous (last write wins). Fail closed before any call in this batch executes.
+        # Batches bind independently (each has its own `validated_calls`), so an id repeated across the batches
+        # `'graceful'` splits at an output call still binds each call to its own tool.
+        if duplicate_ids := _duplicate_tool_call_ids(calls):
+            raise exceptions.UnexpectedModelBehavior(
+                f'Function tool calls must have unique `tool_call_id` values; duplicate `tool_call_id`s: {duplicate_ids}'
+            )
         for call in calls:
             deferred_result = self.calls_to_run_results.get(call.tool_call_id)
             if deferred_result is not None and not isinstance(deferred_result, ToolApproved):

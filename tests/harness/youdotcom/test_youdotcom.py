@@ -19,9 +19,21 @@ from youdotcom.errors import YouError
 
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai.capabilities import AbstractCapability, WebSearch
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturn, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai_harness.youdotcom import (
     ExtractionModeName,
     FinanceEffortName,
@@ -139,6 +151,27 @@ def _finance(
             sources=[models.FinanceResearchSource(url=u, title=t) for u, t in sources],
         )
     )
+
+
+async def _tools_sent(
+    capability: AbstractCapability[object], *, native_web_search: bool
+) -> tuple[list[str], list[AbstractNativeTool]]:
+    """The function and native tools one request carries, on a model with or without native web search."""
+    sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(
+            (
+                [tool.name for tool in info.function_tools],
+                list(info.model_request_parameters.native_tools),
+            )
+        )
+        return ModelResponse(parts=[TextPart('done')])
+
+    supported = frozenset({WebSearchTool}) if native_web_search else frozenset[type[AbstractNativeTool]]()
+    model = FunctionModel(respond, profile=ModelProfile(supported_native_tools=supported))
+    await Agent(model, capabilities=[capability]).run('Search the web.')
+    return sent[0]
 
 
 @dataclass
@@ -601,7 +634,7 @@ class TestYouSearchCapability:
         kwargs = you_cls.call_args.kwargs
         assert kwargs['app_name'] == 'pydantic-ai-harness'
         assert kwargs['app_title'] == 'Pydantic AI Harness'
-        assert kwargs['app_url'] == 'https://github.com/pydantic/pydantic-ai-harness'
+        assert kwargs['app_url'] == 'https://github.com/pydantic/pydantic-ai'
         assert isinstance(kwargs['app_version'], str) and kwargs['app_version']
         assert kwargs['api_key_auth'] is None
         assert kwargs['timeout_ms'] == 60_000
@@ -755,8 +788,59 @@ class TestAgentSpec:
         dumped = json.dumps(schema)
         assert 'YouSearch' in dumped and 'YouResearch' in dumped
 
+    async def test_native_search_replaces_you_search_where_supported(self) -> None:
+        tools, natives = await _tools_sent(YouSearch(native=True, client=_FakeYouClient()), native_web_search=True)
+        assert tools == ['get_page']
+        assert natives == [WebSearchTool()]
+
+    async def test_you_search_is_the_fallback_where_native_search_is_unsupported(self) -> None:
+        tools, natives = await _tools_sent(YouSearch(native=True, client=_FakeYouClient()), native_web_search=False)
+        assert tools == ['web_search', 'get_page']
+        assert natives == []
+
+    def test_native_search_gets_the_domain_filters(self) -> None:
+        capability = YouSearch[None](native=True, include_domains=['a.dev'], client=_FakeYouClient())
+        assert capability.get_native_tools() == [WebSearchTool(allowed_domains=['a.dev'])]
+        capability = YouSearch[None](native=True, exclude_domains=['b.dev'], client=_FakeYouClient())
+        assert capability.get_native_tools() == [WebSearchTool(blocked_domains=['b.dev'])]
+
+    async def test_without_native_you_search_is_always_sent(self) -> None:
+        tools, natives = await _tools_sent(YouSearch(client=_FakeYouClient()), native_web_search=True)
+        assert tools == ['web_search', 'get_page']
+        assert natives == []
+
+    async def test_web_search_tool_is_a_core_web_search_fallback(self) -> None:
+        client = _FakeYouClient(search_response=_search(_web('https://a.dev', title='A', highlights=['alpha'])))
+        you = YouSearch[object](num_results=3, client=client)
+
+        tools, _ = await _tools_sent(WebSearch[object](local=you.web_search_tool()), native_web_search=True)
+        assert tools == []
+        tools, _ = await _tools_sent(WebSearch[object](local=you.web_search_tool()), native_web_search=False)
+        assert tools == ['web_search']
+
+        def search_once(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('web_search', {'query': 'q'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        model = FunctionModel(search_once, profile=ModelProfile(supported_native_tools=frozenset()))
+        result = await Agent(model, capabilities=[WebSearch[object](local=you.web_search_tool())]).run('Search.')
+        returns = [
+            part
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        assert len(returns) == 1
+        assert returns[0].metadata['sources'] == [{'url': 'https://a.dev', 'title': 'A'}]
+        assert client.search_calls[0]['count'] == 3
+
     def test_search_from_spec_builds_capability(self) -> None:
-        capability = YouSearch[None].from_spec(num_results=3, extraction_mode='full_page', include_domains=['a.dev'])
+        capability = YouSearch[None].from_spec(
+            num_results=3, extraction_mode='full_page', include_domains=['a.dev'], native=True
+        )
+        assert capability.native is True
         assert capability.num_results == 3
         assert capability.extraction_mode == 'full_page'
         assert capability.include_domains == ['a.dev']
@@ -767,6 +851,10 @@ class TestAgentSpec:
         assert capability.research_effort == 'deep'
         assert capability.boost_domains == ['a.dev']
         assert capability.client is None
+
+    def test_from_spec_sets_a_distinct_id(self) -> None:
+        assert YouSearch[None].from_spec(include_domains=['sec.gov'], id='sec_search').id == 'sec_search'
+        assert YouResearch[None].from_spec(research_effort='deep', id='deep_research').id == 'deep_research'
 
     def test_agent_loads_from_spec_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('YDC_API_KEY', 'test-key')

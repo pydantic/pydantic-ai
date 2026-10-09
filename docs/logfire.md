@@ -239,25 +239,48 @@ print(result.output)
 
 Because Pydantic AI uses OpenTelemetry for observability, you can easily configure it to send data to any OpenTelemetry-compatible backend, not just our observability platform [Pydantic Logfire](#pydantic-logfire).
 
-The following providers have dedicated documentation on Pydantic AI:
-
-<!--Feel free to add other platforms here. They MUST be added to the bottom of the list, and may only be a name with link.-->
-- [Langfuse](https://langfuse.com/docs/integrations/pydantic-ai)
-- [W&B Weave](https://weave-docs.wandb.ai/guides/integrations/pydantic_ai/)
-- [Arize](https://arize.com/docs/ax/observe/tracing-integrations-auto/pydantic-ai)
-- [Openlayer](https://www.openlayer.com/docs/integrations/pydantic-ai)
-- [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
-- [Opik](https://www.comet.com/docs/opik/tracing/integrations/pydantic-ai)
-- [MLflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/pydantic_ai)
-- [Agenta](https://docs.agenta.ai/observability/integrations/pydanticai)
-- [Braintrust](https://www.braintrust.dev/docs/integrations/sdk-integrations/pydantic-ai)
-- [SigNoz](https://signoz.io/docs/pydantic-ai-observability/)
-- [Laminar](https://docs.laminar.sh/tracing/integrations/pydantic-ai)
-- [Respan](https://respan.ai/docs/integrations/pydantic-ai)
-- [Raindrop](https://raindrop.ai/docs/integrations/pydantic-ai)
-- [Sentry](https://docs.sentry.io/platforms/python/integrations/pydantic-ai/)
-
 ## Advanced usage
+
+### Prompt-cache health
+
+Instrumented agent runs report prompt-cache health without additional configuration:
+
+| Attribute | Description |
+|-----------|-------------|
+| `pydantic_ai.cache.hit_ratio` | Fraction of the request's input tokens read from the prompt cache: `cache_read_tokens / input_tokens`, where input tokens include cache reads and writes. |
+| `pydantic_ai.cache.established_tokens` | The cached-prefix size later requests are judged against, for the conversation and the response's provider, endpoint (`provider_url`), and model. It grows as the prefix does, and drops to whatever the current request established after a collapse, so an intentional bust is reported once rather than against a stale high-water mark. |
+| `pydantic_ai.cache.collapsed` | `true` when the request read back less of the established prefix than it could have: more than 5% and at least 2,000 tokens short, the thresholds Claude Code uses for a prompt-cache miss. Message history is append-only, so any real shortfall means the prefix moved or the cache expired, including a partial move deep in the history. |
+| `pydantic_ai.cache.missed_tokens` | Previously established tokens that were not read after a collapse. |
+| `pydantic_ai.cache.collapse_reason` | Collapse classification: `unexpected`, `ttl_expired`, `compacted`, `unknown`, or `unreported`. More values may be added. |
+| `pydantic_ai.cache.not_enabled` | `true` when the request was long enough to cache on a model that needs caching configured, but none was configured (see below). |
+
+These attributes are on model-request spans only. The agent-run span carries no cache ratio, since one aggregated across requests to different models isn't interpretable (the OpenTelemetry GenAI conventions dropped cache attributes from `invoke_agent` spans for the same reason); compute a run-level figure from its `gen_ai.aggregated_usage.*` token counts if you need one.
+
+Only an `unexpected` collapse — one that happens while the provider's documented retention window should still have been active — emits a `pydantic_ai.cache.collapse` span event for alerting and investigation, carrying `established_tokens`, `cache_read_tokens` and `missed_tokens` along with the `provider_name` and `model_name` that served the request. Every other classification is recorded on the span but stays silent, so the event means "the cacheable prefix moved when it shouldn't have" rather than "something about caching happened":
+
+| `collapse_reason` | Meaning | Emits the event |
+|-------------------|---------|-----------------|
+| `unexpected` | The retention window should still have been active, so the prefix moved. | Yes |
+| `ttl_expired` | The gap since the last request exceeded the provider's retention window. | No |
+| `compacted` | Provider-native compaction replaced the history before a [`CompactionPart`][pydantic_ai.messages.CompactionPart] with its summary, which shrinks the prefix by design. | No |
+| `unknown` | The provider publishes no retention window, so the collapse can't be attributed. | No |
+| `unreported` | The response reported no cache usage at all (see below). | No |
+
+A sustained collapse, such as a prefix that moves on every request so the provider keeps writing a cache nothing reads back, is recorded on every request's span, but emits the event once: it only fires again after a healthy read-back has re-stabilized the cache.
+
+A response reporting neither cache reads nor writes is ambiguous: on providers that report cache writes (Anthropic, Bedrock) it means the cache wasn't engaged for that request — caching disabled, or a prompt below the provider's minimum cacheable size — while on providers that only report reads (OpenAI's implicit caching) it is what a full cache miss looks like. The established prefix was re-sent uncached either way, so the collapse and its missed tokens are recorded as `unreported`, but the cause can't be determined from usage alone, so no event is emitted. Before anything has been cached, such responses are ignored entirely.
+
+Models such as Anthropic's, Bedrock's Claude and Nova, and OpenRouter's Anthropic routes only cache what the request asks them to. When a request of at least 4,096 input tokens (above every supported model's minimum cacheable prompt) goes to such a model with no caching configured (neither the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting nor a provider-specific one), no [`CachePoint`][pydantic_ai.messages.CachePoint] in its history, and no cache usage reported, its span gets `pydantic_ai.cache.not_enabled` and a `pydantic_ai.cache.not_enabled` event carrying `input_tokens` and the `provider_name` and `model_name` that served it, once per conversation and model. Enable caching with `cache=True` or the [`Caching`][pydantic_ai.capabilities.Caching] capability; setting `cache=False` says it was left off on purpose, which isn't reported.
+
+A request that the provider paused and resumed, such as an Anthropic `pause_turn` continuation, is one model request whose usage sums every segment's, so it is judged by its final segment, whose prompt carries the whole prefix. A response whose cache reads may be summed over a native tool's internal model calls, such as web search, is still judged, but doesn't raise the established prefix or re-arm the event, since its total isn't a prefix the next request can read back.
+
+The established prefix is tracked per [conversation](message-history.md#correlating-runs-with-run_id-and-conversation_id), not per run, so a run that continues a conversation via `message_history` (including history that was serialized and loaded back) is judged against what the previous run cached. That is where a moved prefix most often shows: the first request of the next turn re-sends the prefix the previous turn cached, and anything that rewrote history in between — a history processor that compacts or clears tool results, a memory or todo write — makes it miss. (Provider-native compaction is recognized by its `CompactionPart` and classified `compacted`.) The marks are kept in the process's memory: a conversation's are forgotten once it has been idle for longer than any provider keeps a cache (24 hours), or when more than 4,096 conversations have been active more recently.
+
+Model switches never register as collapses: the established prefix is tracked per provider, endpoint, and model, so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] failover starts a fresh mark, and switching back is judged against the original one.
+
+The retention window is the one the request's settings ask for, such as the unified `cache` setting, `anthropic_cache='1h'` or [`openai_prompt_cache_retention='24h'`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] on models before GPT-5.6, as resolved by [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention], or else the provider's documented [`default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention]. Explicit [`CachePoint`][pydantic_ai.messages.CachePoint] TTLs extend it; when there is no known retention, collapses stay `unknown` even if cache points carry TTLs.
+
+To surface the same collapses as Python warnings during development and in CI, use Pydantic AI Harness's [Warn On Cache Busts](harness/warn-on-cache-busts.md) capability: it shares this detector and classification, and warns on `unexpected` and `unknown` collapses.
 
 ### Emitted metrics
 

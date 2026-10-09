@@ -1,5 +1,6 @@
 """OAuth tokens for MCP servers survive a restart through the keyring, and `/mcp auth` manages them."""
 
+import importlib.metadata
 import json
 from pathlib import Path
 
@@ -7,11 +8,14 @@ import keyring
 import pytest
 from fastmcp.client.auth import OAuth
 from fastmcp.client.auth.oauth import TokenStorageAdapter
+from fastmcp.client.oauth_callback import create_oauth_callback_server
 from keyring.errors import KeyringLocked
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyUrl, HttpUrl
 
+from pydantic_clai2.config.credential_store import load_codex_credentials
 from pydantic_clai2.mcp import HTTPServer, MCPCommand, MCPServers, MCPStore, SSEServer, StdioServer, TokenStore, oauth
+from tests.clai2.conftest import stored_accounts
 from tests.clai2.menu_script import Script, pick, typed
 
 URL = 'https://mcp.example.com/mcp'
@@ -22,13 +26,25 @@ def token() -> OAuthToken:
     return OAuthToken(access_token='access', token_type='Bearer', refresh_token='refresh', expires_in=3600)
 
 
+def test_browser_sign_in_callback_server_loads() -> None:
+    """FastMCP's callback server imports `websockets`, which `fastmcp-slim[client]` does not declare."""
+    requires = importlib.metadata.metadata('pydantic-clai2').get_all('Requires-Dist') or []
+    websockets = [req for req in requires if req.startswith('websockets')]
+    assert websockets, 'websockets must be a pydantic-clai2 dependency'
+    assert all('extra ==' not in req for req in websockets)
+
+    server = create_oauth_callback_server(port=0, server_url=URL)
+    server.config.load()
+    assert server.config.ws_protocol_class is not None
+
+
 async def test_tokens_survive_a_restart_in_the_keyring(vault: Vault) -> None:
     first = TokenStorageAdapter(TokenStore('logfire'), server_url=URL)
     await first.set_tokens(token())
     client = OAuthClientInformationFull(client_id='cid', redirect_uris=[AnyUrl('http://127.0.0.1/cb')])
     await first.set_client_info(client)
-    assert list(vault) == [('pydantic-clai2', 'mcp-logfire')]
-    assert 'refresh' in vault['pydantic-clai2', 'mcp-logfire']
+    assert stored_accounts() == {'mcp-logfire'}
+    assert 'refresh' in (load_codex_credentials(account='mcp-logfire') or '')
 
     restarted = TokenStorageAdapter(TokenStore('logfire'), server_url=URL)
     assert await restarted.get_tokens() == token()
@@ -40,7 +56,7 @@ async def test_tokens_survive_a_restart_in_the_keyring(vault: Vault) -> None:
     assert await moved.get_tokens() is None, 'tokens are tied to the URL they were issued for'
 
     await restarted.clear()
-    assert vault == {} and not TokenStore('logfire').signed_in()
+    assert stored_accounts() == set() and not TokenStore('logfire').signed_in()
 
 
 async def test_key_value_protocol_edges(vault: Vault) -> None:
@@ -55,7 +71,7 @@ async def test_key_value_protocol_edges(vault: Vault) -> None:
     assert await store.ttl('b') == ({'v': 3}, None)
     assert await store.delete('b') and not await store.delete('b')
     assert await store.delete_many(['a', 'c']) == 2
-    assert vault == {}, 'the credential goes once nothing is stored'
+    assert stored_accounts() == set(), 'the credential goes once nothing is stored'
 
 
 async def test_unreadable_bundle_means_signing_in_again(vault: Vault) -> None:
@@ -95,16 +111,16 @@ async def test_auth_command(tmp_path: Path, vault: Vault) -> None:
     await TokenStorageAdapter(TokenStore('dead'), server_url=dead).set_tokens(token())
     assert 'oauth    signed in (/mcp auth dead [logout])' in await command(['status', 'dead'])
     assert (await command(['auth', 'dead', 'logout'])).startswith('Signed out of dead.')
-    assert vault == {}
+    assert stored_accounts() == set()
 
     await TokenStore('dead').put('k', {'v': 1})
     assert (await command(['auth', 'dead'])).startswith('Could not start dead'), 'signing in reconnects'
-    assert vault == {}, 'old tokens are dropped before signing in again'
+    assert stored_accounts() == set(), 'old tokens are dropped before signing in again'
     assert tuple(command.complete(['auth', 'dead', ''])) == ('logout',)
 
     await TokenStore('dead').put('k', {'v': 1})
     await command(['remove', 'dead'])
-    assert vault == {}, 'removing a server signs it out'
+    assert stored_accounts() == set(), 'removing a server signs it out'
 
 
 async def test_rename_signs_out_the_old_name(tmp_path: Path, vault: Vault) -> None:
@@ -112,7 +128,7 @@ async def test_rename_signs_out_the_old_name(tmp_path: Path, vault: Vault) -> No
     store.put('docs', HTTPServer(type='http', url=HttpUrl(URL), auth='oauth'))
     await TokenStore('docs').put('k', {'v': 1})
     assert (await command(['edit', 'docs'])).startswith('Updated renamed.')
-    assert vault == {} and json.loads(store.path.read_text())['servers']['renamed']['auth'] == 'oauth'
+    assert stored_accounts() == set() and json.loads(store.path.read_text())['servers']['renamed']['auth'] == 'oauth'
 
 
 async def test_locked_keyring_does_not_break_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -30,6 +30,7 @@ from pydantic_ai.agent.abstract import (
     _RealtimeSessionResolution,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.conversation import Conversation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -256,6 +257,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -283,6 +285,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -309,6 +312,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -350,6 +354,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             user_prompt: User input to start/continue the conversation.
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
+            conversation: The conversation to continue, in place of passing its `message_history`, `usage` and
+                `conversation_id` separately. Passing both raises `UserError`.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
@@ -388,6 +394,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     result = await super(WrapperAgent, self).run(
                         user_prompt,
                         output_type=output_type,
+                        conversation=conversation,
                         message_history=message_history,
                         deferred_tool_results=deferred_tool_results,
                         conversation_id=conversation_id,
@@ -422,6 +429,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -449,6 +457,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -475,6 +484,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -518,6 +528,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             user_prompt: User input to start/continue the conversation.
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
+            conversation: The conversation to continue, in place of passing its `message_history`, `usage` and
+                `conversation_id` separately. Passing both raises `UserError`.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
@@ -560,6 +572,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                         super(PrefectAgent, self).run(  # pyright: ignore[reportDeprecated]
                             user_prompt,
                             output_type=output_type,
+                            conversation=conversation,
                             message_history=message_history,
                             deferred_tool_results=deferred_tool_results,
                             conversation_id=conversation_id,
@@ -595,6 +608,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -622,6 +636,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -649,6 +664,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -687,6 +703,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             user_prompt: User input to start/continue the conversation.
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
+            conversation: The conversation to continue, in place of passing its `message_history`, `usage` and
+                `conversation_id` separately. Passing both raises `UserError`.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
@@ -724,6 +742,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         async with super().run_stream(
             user_prompt,
             output_type=output_type,
+            conversation=conversation,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             conversation_id=conversation_id,
@@ -751,6 +770,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -777,6 +797,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -802,6 +823,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -860,6 +882,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             user_prompt: User input to start/continue the conversation.
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
+            conversation: The conversation to continue, in place of passing its `message_history`, `usage` and
+                `conversation_id` separately. Passing both raises `UserError`.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
@@ -901,6 +925,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             async with super_run_stream_events(
                 user_prompt,
                 output_type=output_type,
+                conversation=conversation,
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
@@ -929,6 +954,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -955,6 +981,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -981,6 +1008,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -1071,6 +1099,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             user_prompt: User input to start/continue the conversation.
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
+            conversation: The conversation to continue, in place of passing its `message_history`, `usage` and
+                `conversation_id` separately. Passing both raises `UserError`.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
@@ -1109,6 +1139,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             async with super().iter(
                 user_prompt=user_prompt,
                 output_type=output_type,
+                conversation=conversation,
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
@@ -1129,6 +1160,14 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 **_deprecated_kwargs,
             ) as run:
                 yield run
+
+    def _check_realtime_signaling(self) -> None:
+        if FlowRunContext.get() is not None:
+            raise UserError(
+                '`agent.realtime(...).answer_webrtc_offer()`, `.create_client_secret()` and `.hang_up()` cannot '
+                'be used inside a Prefect flow, as they issue non-deterministic provider requests. Use them '
+                'outside a flow instead.'
+            )
 
     @asynccontextmanager
     async def _resolve_realtime_session(
@@ -1155,12 +1194,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         inside a Prefect flow; calling them there raises a `UserError`. Outside a flow they delegate
         to the wrapped agent unchanged.
         """
-        if FlowRunContext.get() is not None:
-            raise UserError(
-                '`agent.realtime(...).answer_webrtc_offer()` and `.create_client_secret()` cannot be used '
-                'inside a Prefect flow, as they issue non-deterministic provider requests. Use them '
-                'outside a flow instead.'
-            )
+        self._check_realtime_signaling()
         async with super()._resolve_realtime_session(
             model,
             deps=deps,
@@ -1198,6 +1232,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         handle_barge_in: bool = False,
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
+        retain_audio_max_seconds: float | None = 1800,
         provider_session: RealtimeProviderSession | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session; see [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] for the parameters.
@@ -1228,6 +1263,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             handle_barge_in=handle_barge_in,
             retain_images_every_n=retain_images_every_n,
             retain_images_max=retain_images_max,
+            retain_audio_max_seconds=retain_audio_max_seconds,
             provider_session=provider_session,
         ) as session:
             yield session

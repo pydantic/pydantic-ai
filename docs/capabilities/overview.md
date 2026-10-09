@@ -107,6 +107,7 @@ How the agent spends its context window: the difference between an agent that de
 |---|---|---|
 | [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) | Harness | The model writes one Python script that calls many tools inside a [Monty](https://github.com/pydantic/monty) sandbox: one round-trip instead of N, and intermediate results never enter the context window |
 | [Tool Search](tool-search.md) | Core | Load tool definitions on demand instead of carrying hundreds in every prompt |
+| [Caching](caching.md) | Core | Provider-adaptive prompt caching of tools, instructions and the conversation, at a configurable retention |
 | [Compaction](compaction.md) | Core | Provider-native compaction on OpenAI and Anthropic; the provider summarizes history server-side |
 | [Compaction](https://pydantic.dev/docs/ai/harness/compaction/) | Harness | Model-agnostic strategies: tool-result clearing, sliding-window trimming, LLM summarization, tiered; all window-relative, with live usage reporting |
 | [Tool Output Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/) | Harness | Truncate, spill to a queryable file, or summarize oversized tool returns at the source |
@@ -143,7 +144,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Capability Creation](https://pydantic.dev/docs/ai/harness/capability-creation/) | Harness | The agent writes, validates, and persists *new capabilities* during a run, loaded on the next run: self-extension with typed, inspectable units instead of arbitrary code |
+| [Capability Creation](https://pydantic.dev/docs/ai/harness/capability-creation/) | Harness | The agent writes, validates, and persists *new capabilities* during a run; the host loads them into a later run via `store.load_active()` and `capabilities=` |
 
 ### Execution runtime
 
@@ -153,6 +154,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 |---|---|---|
 | [Durable execution](../durable_execution/overview.md) | Core | Runs that survive restarts and failures on [Temporal](../durable_execution/temporal.md), [DBOS](../durable_execution/dbos.md), or [Prefect](../durable_execution/prefect.md), with [Restate](../durable_execution/restate.md), [Kitaru](../durable_execution/kitaru.md), and [Airflow](../durable_execution/airflow.md) integrations |
 | [AWS Lambda durability](https://pydantic.dev/docs/ai/harness/aws-lambda/) | Harness | Checkpoint model requests and tool calls into AWS Lambda durable function steps |
+| [Absurd durability](https://pydantic.dev/docs/ai/harness/absurd/) | Harness | Checkpoint model requests, MCP calls, and tool calls into Absurd steps on PostgreSQL |
 | [Step Persistence](https://pydantic.dev/docs/ai/harness/step-persistence/) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
 | [Instrumentation](instrumentation.md) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |
 | [Managed Prompt](https://pydantic.dev/docs/ai/harness/managed-prompt/) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt; version and roll out without redeploying |

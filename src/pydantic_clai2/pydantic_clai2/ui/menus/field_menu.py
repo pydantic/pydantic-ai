@@ -1,4 +1,4 @@
-"""A full-screen editor for a set of named, validated fields. `/set`, `/add_model`, and plugin settings use it."""
+"""A full-screen editor for a set of named, validated fields. `/set`, `/model add`, and plugin settings use it."""
 
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -9,8 +9,10 @@ from typing import Protocol
 from pydantic import JsonValue, ValidationError
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 from termflow.tui.menu import Menu, MenuResult
+from termflow.tui.terminal import terminal_size
 from termflow.tui.textinput import TextInput, TextInputResult
 
+from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
@@ -20,6 +22,7 @@ KEEP = 'Keep current'
 SAVE_AND_CLOSE = 'Save & close'
 SAVE_AND_CLOSE_DETAILS = 'Leave this menu. Each change was saved as you made it.'
 _LIST_HINT = 'type to filter - Enter edit - R reset - Esc close'
+_PREVIEW_LIST_WIDTH = 30
 
 
 class _SaveAndClose:
@@ -53,6 +56,12 @@ class _Reset:
     key: str
 
 
+class ChoicePreview(Protocol):
+    """Render a sample of `choice` for the choice picker's right-hand panel, `width` cells wide."""
+
+    def __call__(self, choice: str, /, *, width: int) -> str: ...
+
+
 @dataclass(frozen=True, kw_only=True)
 class FieldRow:
     """One editable field as the menu sees it."""
@@ -67,6 +76,8 @@ class FieldRow:
     secret: bool = False
     note: str = ''
     """Where the value comes from when not from the user; shown muted after the value."""
+    preview: ChoicePreview | None = None
+    """Renders a sample of each choice in the choice picker."""
 
     def display(self, value: str) -> str:
         """Label a choice without changing its stored or validated value."""
@@ -194,7 +205,7 @@ class FieldMenu:
         if row.allow_custom:
             items += [MenuItem(CUSTOM, value=CUSTOM), MenuItem(KEEP, value=KEEP)]
         initial = row.choices.index(current) if current in row.choices else 0
-        return (
+        builder = (
             MenuBuilder(f'Choose {row.label or row.key}')
             .style(markdown_style())
             .items(items)
@@ -202,8 +213,17 @@ class FieldMenu:
             .initial_index(initial)
             .footer_hint('Enter select - Esc keep current')
             .key_source(menu_key)
-            .build()
         )
+        if row.preview is not None:
+            builder.list_width(_PREVIEW_LIST_WIDTH).preview(partial(self._preview, row.preview))
+        return builder.build()
+
+    @staticmethod
+    def _preview(render: ChoicePreview, item: MenuItem) -> str:
+        """Size the sample to the panel; the typed-value and keep rows have none."""
+        if not isinstance(item.value, str) or item.value in (CUSTOM, KEEP):
+            return ''
+        return render(item.value, width=max(20, terminal_size()[0] - _PREVIEW_LIST_WIDTH - 4))
 
     def build_editor(self, row: FieldRow) -> TextInput:
         """A typed input that validates as you go; empty resets."""
@@ -227,11 +247,19 @@ class FieldMenu:
     def apply(self, row: FieldRow, raw: str) -> str:
         """Save and apply, or reset on empty input."""
         raw = raw.strip()
-        return self._source.apply(row, raw) if raw else self._source.reset(row)
+        if not raw:
+            return self.reset(row)
+        message = self._source.apply(row, raw)
+        # Only a listed choice is recorded: typed text can be a secret or a path.
+        chosen = {'choice': raw} if raw in row.choices and not row.secret else {}
+        telemetry.record('{menu} field {field} set', menu=self._source.title, field=row.key, **chosen)
+        return message
 
     def reset(self, row: FieldRow) -> str:
         """Forget the override and apply the default."""
-        return self._source.reset(row)
+        message = self._source.reset(row)
+        telemetry.record('{menu} field {field} reset', menu=self._source.title, field=row.key)
+        return message
 
     def row_for(self, key: object) -> FieldRow | None:
         """Look a row up by its key."""
@@ -242,7 +270,7 @@ ListRunner = Callable[[Menu], MenuResult]
 TextRunner = Callable[[TextInput], TextInputResult]
 
 
-def run_menu(menu: Menu) -> MenuResult:  # pragma: no cover -- needs a real terminal.
+def run_menu(menu: Menu) -> MenuResult:
     """Show a termflow menu on the real terminal."""
     return menu.run()
 

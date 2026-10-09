@@ -2,9 +2,10 @@
 
 from typing import TYPE_CHECKING
 
-from ._warn import HarnessDeprecationWarning
+from ._warn import HarnessDeprecationWarning, MCPReadOnlyNoToolsWarning
 
 if TYPE_CHECKING:
+    from .absurd import AbsurdDurability
     from .advisor import Advisor
     from .ask_user import AskUser
     from .background_tools import BackgroundTools
@@ -64,12 +65,14 @@ if TYPE_CHECKING:
     from .step_persistence import StepPersistence
     from .subagents import SubAgent, SubAgents
     from .system_reminders import SystemReminders
+    from .tool_call_judge import ToolCallJudge
     from .tool_output_limits import ToolOutputLimits
     from .trajectory_judge import TrajectoryJudge
     from .warn_on_cache_busts import WarnOnCacheBusts
     from .youdotcom import YouResearch, YouSearch
 
 __all__ = [
+    'AbsurdDurability',
     'Advisor',
     'AskUser',
     'BackgroundTools',
@@ -101,6 +104,7 @@ __all__ = [
     'InputGuardrailFunc',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
+    'MCPReadOnlyNoToolsWarning',
     'Macroscope',
     'ManagedPrompt',
     'Memory',
@@ -134,6 +138,7 @@ __all__ = [
     'SummarizingCompaction',
     'SystemReminders',
     'TieredCompaction',
+    'ToolCallJudge',
     'ToolGuardrail',
     'ToolOutputLimits',
     'TrajectoryJudge',
@@ -144,6 +149,7 @@ __all__ = [
 ]
 
 _CAPABILITY_EXPORTS = {
+    'AbsurdDurability': 'absurd',
     'Advisor': 'advisor',
     'AskUser': 'ask_user',
     'BackgroundTools': 'background_tools',
@@ -190,6 +196,7 @@ _CAPABILITY_EXPORTS = {
     'SummarizingCompaction': 'compaction',
     'SystemReminders': 'system_reminders',
     'TieredCompaction': 'compaction',
+    'ToolCallJudge': 'tool_call_judge',
     'ToolGuardrail': 'guardrails',
     'ToolOutputLimits': 'tool_output_limits',
     'TrajectoryJudge': 'trajectory_judge',

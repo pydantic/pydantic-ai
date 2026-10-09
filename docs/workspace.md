@@ -497,7 +497,8 @@ Backends answer it in one of three ways:
 
 - `LocalWorkspaceBackend` uses `os.path.realpath`.
 - A backend with commands but without [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath]
-  gets a shell fallback that follows links with `readlink`, in one command.
+  gets a shell fallback that follows links with `readlink`, in one command. A link it cannot read,
+  as in an image without `readlink`, raises `WorkspaceError` rather than being left unresolved.
 - A backend with neither only gets the path normalized as text. That is exact for storage that
   cannot hold symlinks, such as an object store. Where symlinks can exist, a path check such as the
   harness `FileSystem`'s `root_dir` then sees only the text, and the example above leads outside.

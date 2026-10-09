@@ -25,5 +25,7 @@ def openai_codex_model_profile(model_name: str) -> ModelProfile:
             openai_responses_requires_streaming=True,
             openai_responses_requires_store_false=True,
             openai_supports_input_token_counting=False,
+            # Not verified against the Codex backend, which rejects fields the standard endpoint accepts.
+            openai_responses_supports_prompt_cache_diagnostics=False,
         ),
     )

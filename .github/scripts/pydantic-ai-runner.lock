@@ -27,9 +27,9 @@ pydantic-settings = false
 pydantic-monty-client = false
 genai-prices = false
 pydantic-monty = false
-termflow-md = "2026-09-24T16:36:46Z"
+termflow-md = "2026-10-02T15:05:25Z"
 anthropic = "2026-09-28T18:04:04Z"
-openai = "2026-09-23T00:08:49Z"
+openai = "2026-10-06T21:31:20Z"
 google-genai = "2026-09-22T17:23:02Z"
 
 [manifest]
@@ -1133,6 +1133,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "absurd-sdk", marker = "extra == 'absurd'", specifier = ">=0.5.0,<1" },
     { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.11,<0.12" },
     { name = "aws-durable-execution-sdk-python", marker = "python_full_version >= '3.11' and extra == 'aws-lambda'", specifier = ">=1.7.0,<2" },
     { name = "browser-use", marker = "python_full_version >= '3.11' and extra == 'browser-use'", specifier = ">=0.13.6,<0.14" },
@@ -1179,7 +1180,7 @@ requires-dist = [
     { name = "stackone-defender", extras = ["onnx"], marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
     { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
-provides-extras = ["acp", "anthropic", "aws-lambda", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "researcher", "skills", "slack", "sprites", "stackone", "temporal", "youdotcom"]
+provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "researcher", "skills", "slack", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-slim"
@@ -1219,7 +1220,6 @@ requires-dist = [
     { name = "dbos", marker = "extra == 'dbos'", specifier = ">=2.10.0" },
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
-    { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0,<5" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "fastmcp-tasks", marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
@@ -1235,15 +1235,15 @@ requires-dist = [
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.39.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.9.2" },
-    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.26.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'logfire'", specifier = ">=0.65b0" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.7.5" },

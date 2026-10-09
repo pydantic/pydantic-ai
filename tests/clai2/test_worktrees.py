@@ -1,13 +1,16 @@
 """Launch the installed CLI against real repositories without provider requests."""
 
 import os
+import shutil
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_clai2.runtime.worktrees import Worktree, open_worktree
 
 
 def git(directory: Path, *args: str) -> str:
@@ -61,7 +64,12 @@ def test_launches_in_new_worktree(repository: Path, args: list[str]) -> None:
     plugins = nested / 'plugins'
     plugins.mkdir()
     (plugins / 'workspace.py').write_text(
-        'from pathlib import Path\ndef activate(host):\n    Path("plugin-workspace.txt").write_text(str(Path.cwd()))\n'
+        'from pathlib import Path\n'
+        'from pydantic_clai2.plugins import Plugin\n'
+        'class Workspace(Plugin):\n'
+        '    def get_capabilities(self):\n'
+        '        Path("plugin-workspace.txt").write_text(str(Path.cwd()))\n'
+        '        return []\n'
     )
 
     result = launch(nested, *args, prompt='/set run.request_limit\n/exit\n')
@@ -75,11 +83,12 @@ def test_launches_in_new_worktree(repository: Path, args: list[str]) -> None:
         if len(args) == 1 and args[0] in ('-w', '--worktree')
         else workspace.name == 'feature'
     )
-    assert (
-        f'Worktree: {workspace} (branch: clai/{workspace.name}). Kept unless removal is confirmed on exit.'
-        in result.stdout
-    )
-    assert git(workspace, 'branch', '--show-current') == f'clai/{workspace.name}'
+    notice = f'Worktree: {workspace} (branch: clai-{workspace.name}). Kept unless removal is confirmed on exit.'
+    banner, _, after = result.stdout.partition(notice)
+    assert after, result.stdout
+    assert banner.strip(), 'the notice comes below the logo, not on the first line'
+    assert after.lstrip('\n').startswith('/new starts a session')
+    assert git(workspace, 'branch', '--show-current') == f'clai-{workspace.name}'
     assert git(workspace, 'rev-parse', 'HEAD') == original_head
     assert (workspace / 'tracked.txt').read_text() == 'committed'
     assert not (workspace / 'untracked.txt').exists()
@@ -158,13 +167,31 @@ def test_startup_error_keeps_created_worktree(repository: Path) -> None:
     result = launch(repository, '-w', 'retained', '--request-limit', '0')
     assert result.returncode == 2
     workspace = repository / '.worktrees/retained'
-    assert f'Worktree: {workspace}' in result.stdout
-    assert 'Kept unless removal is confirmed on exit.' in result.stdout
+    assert f'Worktree kept at {workspace} (branch: clai-retained).' in result.stderr
     assert (workspace / 'tracked.txt').read_text() == 'committed'
-    assert git(workspace, 'branch', '--show-current') == 'clai/retained'
+    assert git(workspace, 'branch', '--show-current') == 'clai-retained'
 
 
-@pytest.mark.parametrize('state', ['outside', 'unborn', 'branch', 'path', 'missing-git'])
+def test_headless_worktree_notice_stays_off_stdout(repository: Path) -> None:
+    # The exit code is not asserted: `TestModel` calls every default tool, which the notice does not depend on.
+    result = launch(repository, '-w', 'headless', '-p', 'hello', prompt='')
+    workspace = repository / '.worktrees/headless'
+    notice = f'Worktree: {workspace} (branch: clai-headless). Kept unless removal is confirmed on exit.'
+    assert notice in result.stderr
+    assert 'Worktree' not in result.stdout
+
+
+def test_named_worktree_is_reopened(repository: Path) -> None:
+    assert launch(repository, '-w', 'feature').returncode == 0
+    workspace = repository / '.worktrees/feature'
+    (workspace / 'draft.txt').write_text('in progress')
+    result = launch(repository, '-w', 'feature')
+    assert result.returncode == 0, result.stderr
+    assert f'Reopened worktree: {workspace} (branch: clai-feature).' in result.stdout
+    assert (workspace / 'draft.txt').read_text() == 'in progress'
+
+
+@pytest.mark.parametrize('state', ['outside', 'unborn', 'path', 'missing-git'])
 def test_git_errors_leave_existing_work_untouched(
     repository: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
 ) -> None:
@@ -178,8 +205,6 @@ def test_git_errors_leave_existing_work_untouched(
         directory = tmp_path / 'empty'
         directory.mkdir()
         git(directory, 'init')
-    elif state == 'branch':
-        git(repository, 'branch', 'clai/feature')
     elif state == 'path':
         workspace.mkdir(parents=True)
         (workspace / 'keep.txt').write_text('keep this')
@@ -210,7 +235,7 @@ def test_failed_checkout_removes_new_branch_and_allows_retry(repository: Path) -
     result = launch(repository, '-w', 'retry')
     assert result.returncode == 2
     assert 'smudge filter fail failed' in result.stderr
-    assert 'clai/retry' not in git(repository, 'branch', '--format=%(refname)')
+    assert 'clai-retry' not in git(repository, 'branch', '--format=%(refname)')
     assert not (repository / '.worktrees/retry').exists()
     git(repository, 'config', 'filter.fail.smudge', 'cat')
     assert launch(repository, '-w', 'retry').returncode == 0
@@ -224,9 +249,9 @@ def test_checkout_hook_failure_preserves_work_and_reports_cleanup_failure(reposi
     workspace = repository / '.worktrees/retained'
     assert result.returncode == 2
     assert f'Cannot create worktree at {workspace}' in result.stderr
-    assert 'Branch clai/retained could not be removed' in result.stderr
+    assert 'Branch clai-retained could not be removed' in result.stderr
     assert (workspace / 'tracked.txt').read_text() == 'committed'
-    assert git(workspace, 'branch', '--show-current') == 'clai/retained'
+    assert git(workspace, 'branch', '--show-current') == 'clai-retained'
 
 
 def test_exclude_write_failure_reports_retained_worktree(repository: Path) -> None:
@@ -238,7 +263,7 @@ def test_exclude_write_failure_reports_retained_worktree(repository: Path) -> No
     assert result.returncode == 2
     assert f'Worktree kept at {workspace}, but could not update Git excludes' in result.stderr
     assert (workspace / 'tracked.txt').read_text() == 'committed'
-    assert git(workspace, 'branch', '--show-current') == 'clai/retained'
+    assert git(workspace, 'branch', '--show-current') == 'clai-retained'
 
 
 @pytest.mark.parametrize(
@@ -259,3 +284,71 @@ def test_worktree_rejects_incompatible_commands(repository: Path, args: list[str
     assert 'cannot be combined' in result.stderr
     assert not (repository / '.worktrees').exists()
     assert not (repository / 'config.db').exists()
+
+
+@pytest.mark.parametrize('name', ['', 'feature'])
+def test_existing_clai_branch_does_not_block_worktrees(
+    repository: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """Git refs are paths: with a `clai` branch, a `clai/...` branch could never be created."""
+    git(repository, 'branch', 'clai')
+    monkeypatch.chdir(repository)
+    worktree = open_worktree(name=name)
+    assert worktree.created
+    assert worktree.branch == f'clai-{worktree.path.name}'
+    assert git(worktree.path, 'branch', '--show-current') == worktree.branch
+
+
+def test_existing_branch_is_checked_out(repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    git(repository, 'branch', 'clai-feature')
+    kept = git(repository, 'rev-parse', 'clai-feature')
+    git(repository, 'commit', '--allow-empty', '-m', 'Advance main')
+    monkeypatch.chdir(repository)
+    worktree = open_worktree(name='feature')
+    assert worktree == Worktree(
+        path=repository / '.worktrees/feature', branch='clai-feature', head=kept, created=True, new_branch=False
+    )
+    assert git(worktree.path, 'rev-parse', 'HEAD') == kept
+
+
+def test_existing_branch_checked_out_elsewhere_is_kept(repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    git(repository, 'worktree', 'add', '-b', 'clai-feature', str(repository.parent / 'elsewhere'))
+    monkeypatch.chdir(repository)
+    with pytest.raises(ValueError, match="'clai-feature' is already used by worktree"):
+        open_worktree(name='feature')
+    assert git(repository, 'branch', '--list', 'clai-feature')
+    assert not (repository / '.worktrees/feature').exists()
+
+
+def test_hand_deleted_worktree_is_checked_out_again(repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`rm -rf .worktrees/NAME` leaves Git's registration behind; the branch and its commits come back."""
+    monkeypatch.chdir(repository)
+    first = open_worktree(name='feature')
+    (first.path / 'work.txt').write_text('committed')
+    git(first.path, 'add', 'work.txt')
+    git(first.path, 'commit', '-m', 'Work')
+    work = git(first.path, 'rev-parse', 'HEAD')
+    shutil.rmtree(first.path)
+    assert open_worktree(name='feature') == replace(first, head=work, new_branch=False)
+    assert (first.path / 'work.txt').read_text() == 'committed'
+
+
+def test_symlink_loop_is_a_clean_error(repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = repository / '.worktrees/loop'
+    loop.parent.mkdir()
+    loop.symlink_to(loop)
+    monkeypatch.chdir(repository)
+    with pytest.raises(ValueError, match='Cannot create worktree'):
+        open_worktree(name='loop')
+    assert not git(repository, 'branch', '--list', 'clai-loop')
+
+
+def test_git_made_worktree_is_reopened_and_excluded(repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A detached checkout from plain `git worktree add` is reused, and stops showing in `git status`."""
+    path = repository / '.worktrees/loose'
+    git(repository, 'worktree', 'add', '--detach', str(path))
+    assert '.worktrees' in git(repository, 'status', '--porcelain')
+    monkeypatch.chdir(repository)
+    head = git(repository, 'rev-parse', 'HEAD')
+    assert open_worktree(name='loose') == Worktree(path=path, branch='detached HEAD', head=head, created=False)
+    assert '.worktrees' not in git(repository, 'status', '--porcelain')

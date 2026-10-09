@@ -1,4 +1,4 @@
-import cProfile
+import gc
 import json
 import os
 import re
@@ -7,9 +7,10 @@ import sys
 import warnings
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
+from types import FrameType
 from typing import Annotated, Any, Literal, cast, get_args, get_origin, overload
 
 import pytest
@@ -459,7 +460,7 @@ def test_video_url_invalid():
 
 
 @pytest.mark.skipif(
-    sys.version_info < (3, 11), reason="'Python 3.10's mimetypes module does not support query parameters'"
+    sys.version_info < (3, 12), reason='`mimetypes` does not support URL query parameters on Python 3.11'
 )
 def test_url_with_query_parameters() -> None:
     """Test that Url types correctly infer media type from URLs with query parameters"""
@@ -589,7 +590,7 @@ def test_pre_usage_refactor_messages_deserializable():
             'parts': [
                 {
                     'content': 'What is the capital of Mexico?',
-                    'timestamp': datetime.now(tz=timezone.utc),
+                    'timestamp': datetime.now(tz=UTC),
                     'part_kind': 'user-prompt',
                 }
             ],
@@ -606,7 +607,7 @@ def test_pre_usage_refactor_messages_deserializable():
                 'details': None,
             },
             'model_name': 'gpt-5-2025-08-07',
-            'timestamp': datetime.now(tz=timezone.utc),
+            'timestamp': datetime.now(tz=UTC),
             'kind': 'response',
             'vendor_details': {
                 'finish_reason': 'STOP',
@@ -621,7 +622,7 @@ def test_pre_usage_refactor_messages_deserializable():
                 parts=[
                     UserPromptPart(
                         content='What is the capital of Mexico?',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
             ),
@@ -633,7 +634,7 @@ def test_pre_usage_refactor_messages_deserializable():
                     details={},
                 ),
                 model_name='gpt-5-2025-08-07',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='chatcmpl-CBpEXeCfDAW4HRcKQwbqsRDn7u7C5',
             ),
@@ -873,7 +874,7 @@ def test_file_part_serialization_roundtrip():
 def test_model_messages_type_adapter_preserves_run_id():
     messages: list[ModelMessage] = [
         ModelRequest(
-            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=timezone.utc))],
+            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=UTC))],
             run_id='run-123',
             metadata={'key': 'value'},
         ),
@@ -889,7 +890,7 @@ def test_model_messages_type_adapter_preserves_run_id():
 def test_model_messages_type_adapter_preserves_conversation_id():
     messages: list[ModelMessage] = [
         ModelRequest(
-            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=timezone.utc))],
+            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=UTC))],
             conversation_id='conv-abc',
         ),
         ModelResponse(parts=[TextPart(content='Hello!')], conversation_id='conv-abc'),
@@ -925,7 +926,7 @@ def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():
             parts=[
                 UserPromptPart(
                     content=[TextContent(content='What is the weather like today?', metadata={'foo': 'bar'})],
-                    timestamp=datetime.now(tz=timezone.utc),
+                    timestamp=datetime.now(tz=UTC),
                 )
             ],
             run_id='run-123',
@@ -2007,15 +2008,14 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
     thousands of Rust→Python crossings, paid on every message-history load, UI adapter round-trip, and
     Temporal activity resolution and replay.
 
-    Counting Python calls rather than timing is what makes this pin usable in CI: the count is far
-    steadier than a wall-clock threshold, which would either flake on a noisy runner or be loose
-    enough to catch nothing. It is not perfectly machine-independent, though — the delta is 0 on a
-    developer machine but around 110 on some CI runners, from something ambient that has never been
-    tracked down — so the bound has to clear that. The gap it separates is enormous: a per-node
-    Python call costs ~2,770 extra calls here, one per JSON value node in the larger payload, so a
-    bound of 1,000 sits an order of magnitude above the noise and well under the regression. `cProfile` rather than a `sys.setprofile` callback
-    because the interpreter does not trace the callback's own body, leaving it unmeasurable by
-    coverage.
+    Counting Python calls rather than timing is what makes this pin usable in CI: a slow or loaded
+    runner changes how long the calls take, not how many there are. Only the (de)serializer's own
+    calls may count, though. The count comes from a `sys.setprofile` hook because that sees only
+    this thread, whereas `cProfile` also counts other threads' calls on Python 3.12+. Garbage
+    collection is held off during the measurement because a collection runs `gc.callbacks` (Hypothesis
+    installs one) and the finalizers of garbage that earlier tests left behind, all on this thread.
+    A per-node Python call costs over 2,000 extra calls here, about one per JSON value node in the
+    larger payload, so a bound of 1,000 catches it with headroom for anything ambient.
 
     `dump_json` is pinned alongside `validate_json` because it is the leg that notices the two ways
     the `_StrPassthrough` arm can be lost: `pydantic.InstanceOf[str]` builds the same validator but
@@ -2039,18 +2039,26 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
         messages = ModelMessagesTypeAdapter.validate_json(raw)  # build the (de)serializer outside the measurement
         ModelMessagesTypeAdapter.dump_json(messages)
 
-        profiler = cProfile.Profile()
-        profiler.enable()
+        calls = 0
+
+        def count_call(frame: FrameType, event: str, arg: object) -> None:
+            nonlocal calls
+            # The interpreter never traces a profile function, so coverage can't see this line.
+            calls += event == 'call'  # pragma: no cover
+
+        gc.disable()
+        sys.setprofile(count_call)
         try:
             if dump:
                 ModelMessagesTypeAdapter.dump_json(messages)
             else:
                 ModelMessagesTypeAdapter.validate_json(raw)
         finally:
-            profiler.disable()
-        return sum(entry.callcount for entry in profiler.getstats())
+            sys.setprofile(None)
+            gc.enable()
+        return calls
 
-    # 100x the nodes: a per-node Python call turns a handful of calls into tens of thousands.
+    # 100x the nodes: a per-node Python call adds thousands of calls.
     for dump in (False, True):
         small, large = python_calls(payload(2), dump), python_calls(payload(200), dump)
         direction = 'dump_json' if dump else 'validate_json'
@@ -2129,7 +2137,7 @@ def test_tool_return_mapping_with_non_str_key_stays_mapping():
     assert stringified_key['1'] == ImageUrl(url='https://example.com/x.png')
 
 
-class _Flavour(str, Enum):
+class _Flavour(str, Enum):  # noqa: UP042
     """A `str` subclass of the kind a tool might legitimately return."""
 
     VANILLA = 'vanilla'
@@ -2987,7 +2995,7 @@ def test_prepare_messages_converts_speech_parts():
     # The default profile doesn't support audio input, so the transcript is used.
     prepared = TestModel().prepare_messages(history)
     assert message(prepared, ModelRequest, index=0).parts == [
-        UserPromptPart(content='What time is it?', timestamp=IsNow(tz=timezone.utc))
+        UserPromptPart(content='What time is it?', timestamp=IsNow(tz=UTC))
     ]
     assert message(prepared, ModelResponse, index=1).parts == [
         TextPart(content='It is noon.'),
@@ -2996,9 +3004,7 @@ def test_prepare_messages_converts_speech_parts():
 
     # A model that supports audio input receives the retained audio instead of the transcript.
     prepared = TestModel(profile={'supports_audio_input': True}).prepare_messages(history)
-    assert message(prepared, ModelRequest, index=0).parts == [
-        UserPromptPart(content=[audio], timestamp=IsNow(tz=timezone.utc))
-    ]
+    assert message(prepared, ModelRequest, index=0).parts == [UserPromptPart(content=[audio], timestamp=IsNow(tz=UTC))]
 
 
 @pytest.mark.parametrize(

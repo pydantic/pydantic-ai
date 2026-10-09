@@ -132,7 +132,7 @@ def test_graphql_projection_never_requests_title_or_body():
     assert 'body' not in compact
 
 
-@pytest.mark.parametrize('labels', [[], ['p:1-highest'], ['p:2-high', 'streaming'], ['community-backed']])
+@pytest.mark.parametrize('labels', [[], ['p:1-highest'], ['p:2-high', 'streaming']])
 def test_core_pull_requests_are_never_routed(labels: list[str]):
     # Pull requests are outside triage entirely: a human assigns one when an
     # issue warrants it. Even a gate label does not open routing for a PR.
@@ -561,30 +561,8 @@ def test_gated_selection_skips_full_assignee_list_without_starving_the_next():
     assert [selection['number'] for selection in selected] == [8]
 
 
-def test_community_recovery_is_opt_in_second_choice_and_bounded():
-    stale = {number: item(number, labels=['MCP', 'community-backed']) for number in range(1, 9)}
-    client = FakeClient(stale)
-
-    client.search_results = [[]]
-    assert router.select_batch(client, CORE) == []
-
-    client.search_results = [[], [8]]
-    assert [selection['number'] for selection in router.select_batch(client, CORE, community_recovery=True)] == [8]
-
-    client.search_results = [[], list(range(1, 8))]
-    selected = router.select_batch(client, CORE, community_recovery=True)
-    assert [selection['number'] for selection in selected] == [1, 2, 3]
-
-    community_queries = [query for query in _search_queries(client) if 'community-backed' in query]
-    assert len(community_queries) == 2
-    for query in community_queries:
-        assert query == (
-            'repo:pydantic/pydantic-ai is:open is:issue no:assignee label:"community-backed" sort:updated-desc'
-        )
-
-
 def test_gated_routing_backs_off_after_a_recent_unassignment():
-    recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
+    recent = (dt.datetime.now(dt.UTC) - dt.timedelta(days=2)).isoformat()
     client = FakeClient({7: item(7, labels=['MCP', 'p:1-highest'], unassigned_at=[recent])})
 
     selection = router.decision_for(client, CORE, 7)
@@ -596,7 +574,7 @@ def test_gated_routing_backs_off_after_a_recent_unassignment():
 
 
 def test_bot_unassignments_do_not_suppress_gated_routing():
-    recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
+    recent = (dt.datetime.now(dt.UTC) - dt.timedelta(days=2)).isoformat()
     client = FakeClient(
         {
             7: item(
@@ -615,7 +593,7 @@ def test_bot_unassignments_do_not_suppress_gated_routing():
 
 
 def test_a_full_page_of_recent_bot_cleanup_still_backs_off():
-    recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
+    recent = (dt.datetime.now(dt.UTC) - dt.timedelta(days=2)).isoformat()
     cleanup: list[str | dict[str, Any]] = [
         {'createdAt': recent, 'actor': {'__typename': 'Bot'}}
         for _ in range(router._UNASSIGNED_EVENT_PAGE)  # pyright: ignore[reportPrivateUsage]
@@ -630,7 +608,7 @@ def test_a_full_page_of_recent_bot_cleanup_still_backs_off():
 
 
 def test_a_full_page_of_old_bot_cleanup_does_not_back_off():
-    old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).isoformat()
+    old = (dt.datetime.now(dt.UTC) - dt.timedelta(days=30)).isoformat()
     cleanup: list[str | dict[str, Any]] = [
         {'createdAt': old, 'actor': {'__typename': 'Bot'}}
         for _ in range(router._UNASSIGNED_EVENT_PAGE)  # pyright: ignore[reportPrivateUsage]
@@ -644,34 +622,13 @@ def test_a_full_page_of_old_bot_cleanup_does_not_back_off():
     assert selection['decision'] is not None
 
 
-def test_community_recovery_backs_off_after_a_recent_unassignment():
-    recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
-    old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).isoformat()
-    stale = {
-        8: item(8, labels=['MCP', 'community-backed'], unassigned_at=[old, recent]),
-        9: item(9, labels=['MCP', 'community-backed'], unassigned_at=[old]),
-    }
-    client = FakeClient(stale)
-    client.search_results = [[], [8, 9]]
-
-    selected = router.select_batch(client, CORE, community_recovery=True)
-
-    # A maintainer just took #8 off someone's plate; re-assigning it the next
-    # morning would fight that correction. #9's unassignment is outside the
-    # two-week window, so its neglect clock has run out again.
-    assert [selection['number'] for selection in selected] == [9]
-
-
-@pytest.mark.parametrize(('labels', 'routed'), [(['MCP', 'community-backed'], True), (['MCP'], False)])
-def test_community_backed_label_opens_the_priority_gate(labels: list[str], routed: bool):
+@pytest.mark.parametrize('labels', [['community-backed'], ['MCP', 'community-backed']])
+def test_community_backed_label_does_not_open_the_priority_gate(labels: list[str]):
+    # Old issues with community demand were landing on maintainers through
+    # this label; only a priority label may open routing.
     client = FakeClient({7: item(7, labels=labels)})
 
-    selected = router.decision_for(client, CORE, 7)
-
-    if routed:
-        assert selected['decision'] == {'number': 7, 'owner': 'dsfaccini', 'evidence': 'label:MCP'}
-    else:
-        assert selected == {'number': 7, 'decision': None, 'status': 'awaiting-triage'}
+    assert router.decision_for(client, CORE, 7) == {'number': 7, 'decision': None, 'status': 'awaiting-triage'}
 
 
 @pytest.mark.parametrize(
@@ -791,7 +748,6 @@ def test_cli_modes_write_the_workflow_contract(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setenv('GITHUB_REPOSITORY', CORE)
     monkeypatch.setenv('GITHUB_OUTPUT', str(output))
     monkeypatch.setenv('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS', MENTIONS)
-    monkeypatch.setenv('ROUTING_COMMUNITY_RECOVERY', '')
     monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
 
     monkeypatch.setattr(sys, 'argv', ['semantic_owner_router.py', 'select'])
@@ -857,8 +813,8 @@ def test_workflow_is_notification_first_and_least_privilege():
     jobs = workflow['jobs']
 
     assert set(workflow[True]) == {'schedule', 'workflow_dispatch', 'workflow_call'}
-    assert [entry['cron'] for entry in workflow[True]['schedule']] == ['25 */6 * * *', '40 7 * * *']
-    assert set(workflow[True]['workflow_call']['inputs']) == {'community_recovery'}
+    assert [entry['cron'] for entry in workflow[True]['schedule']] == ['25 */6 * * *']
+    assert 'inputs' not in workflow[True]['workflow_call']
     assert jobs['route']['needs'] == 'select'
     assert jobs['select']['permissions'] == {
         'contents': 'read',
@@ -881,14 +837,10 @@ def test_workflow_is_notification_first_and_least_privilege():
     select_step = jobs['select']['steps'][2]
     assert set(select_step['env']) == {
         'GITHUB_TOKEN',
-        'ROUTING_COMMUNITY_RECOVERY',
         'LOGFIRE_TRIAGE_WRITE_TOKEN',
         'LOGFIRE_URL',
     }
     assert select_step['env']['LOGFIRE_URL'] == '${{ vars.LOGFIRE_URL }}'
-    assert select_step['env']['ROUTING_COMMUNITY_RECOVERY'] == (
-        "${{ github.event.schedule == '40 7 * * *' || inputs.community_recovery }}"
-    )
     assert prepare['id'] == 'prepare'
     assert prepare['env']['ROUTE_NUMBER'] == '${{ matrix.route.number }}'
     assert prepare['env']['ROUTE_OWNER'] == '${{ matrix.route.owner }}'

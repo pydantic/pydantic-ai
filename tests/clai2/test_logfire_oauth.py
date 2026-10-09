@@ -8,11 +8,13 @@ from urllib.parse import parse_qs
 
 import anyio
 import httpx
+import httpx2
 import keyring
 import pytest
 from keyring.errors import KeyringError
 from pydantic import JsonValue
 
+import pydantic_clai2.mcp._settings as mcp_settings
 from pydantic_clai2 import logfire_oauth
 from pydantic_clai2.config.credential_store import save_codex_credentials
 from pydantic_clai2.logfire_oauth import DeviceAuth, SignInError, Tokens, forget, load, sign_in, status
@@ -145,10 +147,6 @@ async def no_wait(seconds: float) -> None:
     pass
 
 
-def emptied(service: str, account: str) -> None:
-    keyring.set_password(service, account, '')  # conftest's fake keyring has no delete; empty reads as unset.
-
-
 class TestSignIn:
     async def test_announces_the_link_and_code_opens_the_browser_and_saves_tokens(self, opened: list[str]) -> None:
         logfire = Logfire()
@@ -166,7 +164,7 @@ class TestSignIn:
         [registered] = logfire.registered
         assert registered == {
             'client_name': 'CLAI',
-            'client_uri': 'https://github.com/pydantic/pydantic-ai-harness',
+            'client_uri': 'https://github.com/pydantic/pydantic-ai',
             'grant_types': ['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token'],
             'token_endpoint_auth_method': 'none',
             'application_type': 'native',
@@ -513,7 +511,6 @@ class TestDeviceAuth:
         assert not forget()
 
     async def test_logging_out_during_a_refresh_discards_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(keyring, 'delete_password', emptied)
         remember(stored(expires_in=-10))
         logfire = Logfire()
         logfire.valid = {'access-2'}
@@ -530,6 +527,29 @@ class TestDeviceAuth:
         with pytest.raises(SignInError, match='Signed out of Logfire while signing in'):
             await self.mcp(logfire)
         assert load(RESOURCE) is None
+
+    async def test_fastmcp_4_connections_accept_it(self) -> None:
+        """FastMCP 4 connects with `httpx2`, which rejected a legacy `httpx.Auth` as an invalid `auth`."""
+        remember(stored())
+        logfire = Logfire()
+        logfire.refreshes = [granted('access-2')]
+        auth = DeviceAuth(resource=RESOURCE, read_only=True, announce=print, http=logfire.client, sleep=no_wait)
+        bearers: list[str] = []
+
+        def mcp(request: httpx2.Request) -> httpx2.Response:
+            bearers.append(request.headers['Authorization'])
+            return httpx2.Response(200 if bearers[-1] == 'Bearer access-2' else 401)
+
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(mcp), auth=auth) as client:
+            assert (await client.post(RESOURCE)).status_code == 200
+        assert bearers == ['Bearer access-1', 'Bearer access-2'], 'a 401 is refreshed and retried once'
+
+    async def test_sign_in_failures_are_reported_under_fastmcp_4(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The device flow keeps its own client: FastMCP 4's SDK builds `httpx2` ones, whose errors it would miss."""
+        monkeypatch.setattr(mcp_settings, 'create_mcp_http_client', httpx2.AsyncClient)
+        auth = DeviceAuth(resource='http://127.0.0.1:1/mcp', read_only=True, announce=print)
+        with pytest.raises(SignInError, match='Logfire sign-in failed: ConnectError'):
+            await auth.sign_in()
 
     def test_sync_clients_are_refused(self) -> None:
         auth = DeviceAuth(resource=RESOURCE, read_only=True, announce=print)
@@ -553,7 +573,6 @@ def test_an_unreadable_sign_in_does_not_discard_the_others() -> None:
 
 
 def test_status_forget_and_unreadable_storage(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(keyring, 'delete_password', emptied)
     assert status(resource=RESOURCE, read_only=True) == 'signed out'
     remember(stored(writable=False))
     assert status(resource=RESOURCE, read_only=True) == 'signed in'
