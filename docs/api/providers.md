@@ -66,6 +66,8 @@
 
 ::: pydantic_ai.providers.moonshotai.MoonshotAIProvider
 
+::: pydantic_ai.providers.nvidia.NVIDIAProvider
+
 ::: pydantic_ai.providers.ollama.OllamaProvider
 
 ::: pydantic_ai.providers.litellm.LiteLLMProvider

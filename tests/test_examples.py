@@ -518,6 +518,7 @@ def test_docs_examples(
     env.set('GITHUB_COPILOT_API_KEY', 'testing')
     env.set('GROK_API_KEY', 'testing')
     env.set('MOONSHOTAI_API_KEY', 'testing')
+    env.set('NVIDIA_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')
     env.set('OVHCLOUD_API_KEY', 'testing')
     env.set('ALIBABA_API_KEY', 'testing')

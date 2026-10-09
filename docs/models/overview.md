@@ -33,6 +33,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Mistral](mistral.md) | Model developer | `mistral:` |
 | [Moonshot AI / Kimi](moonshotai.md) | Model developer | `moonshotai:` |
 | [Nebius AI Studio](compatible-apis.md#nebius-ai-studio) | Inference platform | `nebius:` |
+| [NVIDIA NIM](nvidia.md) | Inference platform; self-hosted inference | `nvidia:` |
 | [Ollama](ollama.md) | Local inference; cloud inference | `ollama:` |
 | [OpenAI Codex](openai-codex.md) | Subscription access | `openai-codex:` |
 | [OpenRouter](openrouter.md) | Gateway | `openrouter:` |

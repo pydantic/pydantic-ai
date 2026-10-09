@@ -144,6 +144,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'litellm',
         'moonshotai',
         'nebius',
+        'nvidia',
         'ollama',
         'openrouter',
         'ovhcloud',
