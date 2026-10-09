@@ -201,12 +201,15 @@ class RetryModelRequest(Exception):
     """Exception to raise in model request hooks to attempt the request again.
 
     Raise from [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error]
-    to retry after a failed attempt, or from
+    to retry after a failed attempt, from
     [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] to reject
-    a response the model did return. Either way the agent stays on the same request step: no retry
-    prompt is added to the history, and the model never learns that an earlier attempt happened. That
-    is what distinguishes it from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], which asks the
-    model itself to try again.
+    a response the model did return, or from
+    [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] to send
+    the attempt to another model before anything is sent. In each case the agent stays on the same
+    request step: no retry prompt is added to the history, and the model never learns that an earlier
+    attempt happened. That is what distinguishes it from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry],
+    which asks the model itself to try again. `before_model_request` and `wrap_model_request` run before
+    any attempt, so raising it from them is a [`UserError`][pydantic_ai.exceptions.UserError].
 
     Pass `model` to attempt a different model, or omit it to attempt the same one again:
 
