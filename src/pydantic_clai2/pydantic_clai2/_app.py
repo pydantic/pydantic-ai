@@ -52,6 +52,7 @@ from pydantic_clai2.models import login_names
 from pydantic_clai2.models.chains import settings_model as chain_settings_model
 from pydantic_clai2.models.profiles import ALL, DEFAULT, ModelRef, base_model, parse_model, provider_of
 from pydantic_clai2.plugins import (
+    ConversationChanged,
     ModelProvider,
     PluginLogin,
     Renderer,
@@ -777,7 +778,7 @@ def create_shell(
         status=status,
         enabled=load_plugins,
     )
-    session.on_change = loader.fire
+    session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -880,6 +881,22 @@ def create_shell(
     # Mutate retained state only after the rebuild has succeeded, so reload failures can roll back.
     TranscriptBuffer.rebind(transcript)
     return shell
+
+
+@dataclass(kw_only=True)
+class _ConversationFooter:
+    """Tells plugins about a conversation change, starting the footer afresh when the ID changed."""
+
+    status: Status
+    fire: Callable[[ConversationChanged], Awaitable[None]]
+    shown: str
+
+    async def changed(self, event: ConversationChanged) -> None:
+        # The footer belongs to one conversation: any switch, by command or plugin, starts it afresh.
+        if event.conversation_id != self.shown:
+            self.shown = event.conversation_id
+            self.status.clear_conversation()
+        await self.fire(event)
 
 
 @dataclass(kw_only=True)
@@ -1108,8 +1125,7 @@ class _Shell(Generic[DepsT, OutputT]):
             self.console.print()
             if self.plugins_busy(text):
                 return
-            # A running conversation cannot be replaced, so the turn's footer counters stay.
-            await _execute_command(self.commands, text, console=self.console, status=None)
+            await _execute_command(self.commands, text, console=self.console)
             self._show_status_segments()
 
     def _show_status_segments(self) -> None:
@@ -1199,7 +1215,7 @@ class _Shell(Generic[DepsT, OutputT]):
         if self.editor is not None and self.commands.runs_live(text):
             return await self._live_command(text, self.editor)
         async with self.forks.busy(), self._released():
-            await self.interrupts.run(_execute_command(self.commands, text, console=self.console, status=self.status))
+            await self.interrupts.run(_execute_command(self.commands, text, console=self.console))
         return (
             text == '/exit' or self.interrupts.exit_requested or self.reload_requested or self.updates.restart_required
         )
@@ -1213,9 +1229,7 @@ class _Shell(Generic[DepsT, OutputT]):
         async with self.forks.busy():
             self.status.activity = 'working'
             try:
-                completed = await self.interrupts.run(
-                    _execute_command(self.commands, text, console=self.console, status=self.status)
-                )
+                completed = await self.interrupts.run(_execute_command(self.commands, text, console=self.console))
             finally:
                 self.status.activity = 'ready'
                 await editor.output.drain()
@@ -1372,7 +1386,7 @@ def _report_interrupt(completed: bool, console: Console) -> None:
         console.print()
 
 
-async def _execute_command(commands: Commands, text: str, *, console: Console, status: Status | None) -> None:
+async def _execute_command(commands: Commands, text: str, *, console: Console) -> None:
     try:
         result = await commands.execute_async(text)
         # The echoed command already ends in a blank line; a menu closed without changes adds nothing.
@@ -1382,18 +1396,6 @@ async def _execute_command(commands: Commands, text: str, *, console: Console, s
     except Exception as exc:  # noqa: BLE001 -- command failures must not exit the interactive shell.
         console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
         console.print()
-    if status is not None:
-        _reset_status(text, status)
-
-
-def _reset_status(command: str, status: Status) -> None:
-    if command.split(maxsplit=1)[0] in ('/new', '/clear', '/resume'):
-        status.context_tokens = None
-        status.context_window = None
-        status.context_alert = False
-        status.output_tokens = None
-        status.cost = None
-        status.streamed_chars = 0
 
 
 def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:
