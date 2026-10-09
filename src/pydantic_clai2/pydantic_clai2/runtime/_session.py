@@ -656,13 +656,14 @@ class Session(Generic[DepsT, OutputT]):
                         summary=replace(candidate, outcome='running'), messages=accepted
                     )
                     self._messages = accepted
-                    # The first save titles a new conversation.
-                    await self._publish()
                 with (
                     capture_run_messages() as messages,
                     self.delegations.bind() if self.delegations is not None else nullcontext(),
                 ):
                     try:
+                        # The first save titles a new conversation. Inside the handlers below, so a
+                        # failed or cancelled observer still finalizes the `running` head saved above.
+                        await self._publish()
                         run_model, capabilities = self._bind()
                         if self.delegations is not None:
                             capabilities.append(
