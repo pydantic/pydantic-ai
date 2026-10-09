@@ -244,7 +244,8 @@ async def transcript_reload(root: Path) -> None:
     transcript.write('before\n')
 
     def render(*, source: str, width: int) -> str:
-        return source + '\n'
+        # Called only when a frame repaints the block at a new width or theme, which this scenario does not assert.
+        return source + '\n'  # pragma: lax no cover
 
     block = transcript.markdown(render=render, width=80, changed=lambda: None)
     block.extend('markdown')
