@@ -144,7 +144,12 @@ def find_filter_examples() -> Iterable[ParameterSet]:
                 if title.endswith('.py'):
                     code_examples[title] = ex
                 test_id += f':{title}'
-            yield pytest.param(ex, id=test_id)
+            marks = (
+                [pytest.mark.subprocess(reason='the example runs Python as a real child process')]
+                if path == Path('docs/workspace.md') or title == 'mcp_client_sampling.py'
+                else []
+            )
+            yield pytest.param(ex, id=test_id, marks=marks)
 
 
 @pytest.fixture
@@ -162,6 +167,15 @@ def tmp_path_cwd(tmp_path: Path):
     finally:
         os.chdir(cwd)
         sys.path.remove(str(tmp_path))
+
+
+def _patch_sentence_transformers(mocker: MockerFixture, example: CodeExample) -> None:
+    """Stub the model download, only for examples that use it: patching imports `sentence_transformers` and `torch`."""
+    if re.search(r'sentence[-_]transformers', example.source, re.IGNORECASE):
+        try:
+            mocker.patch('sentence_transformers.SentenceTransformer')
+        except ModuleNotFoundError:
+            pass
 
 
 def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
@@ -423,6 +437,7 @@ def examples_type_errors(
     return result['errors']
 
 
+@pytest.mark.subprocess(reason='runs pyright, which is launched through `python -m pyright`')
 @pytest.mark.skipif(not _typecheck_enabled(), reason='type checking the examples is off')
 def test_typecheck_examples_reports_errors_at_their_source(tmp_path: Path):
     """A type error is reported at its line and column in the Markdown or docstring the example came from."""
@@ -482,10 +497,7 @@ def test_docs_examples(
 
     _patch_optional_mcp_modules(mocker)
     _patch_realtime_models(mocker)
-    try:
-        mocker.patch('sentence_transformers.SentenceTransformer')
-    except ModuleNotFoundError:
-        pass
+    _patch_sentence_transformers(mocker, example)
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
@@ -532,6 +544,11 @@ def test_docs_examples(
     env.set('ZAI_API_KEY', 'testing')
     env.set('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
     env.set('SNOWFLAKE_TOKEN', 'testing')
+    # Many examples call `logfire.configure()`, whose console exporter then prints every span of every
+    # later test in the worker. Each of those prints goes through pytest-examples' mocked `print`, which
+    # calls `inspect.stack()`, so an evals example emitting hundreds of spans took up to 30s in CI.
+    # The console output is never part of an example's checked output, so turn the exporter off.
+    env.set('LOGFIRE_CONSOLE', 'false')
 
     # The Codex provider reads the Codex CLI's `auth.json` (honoring `CODEX_HOME`) instead of an
     # env var, so fake the file the same way the API keys above are faked.

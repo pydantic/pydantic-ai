@@ -99,7 +99,7 @@ from . import (
     get_user_agent,
 )
 from ._anthropic_containers import is_tool_result_only as _is_tool_result_only
-from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
+from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
 from ._prompt_cache import (
     excess_cache_points,
     previous_tail_needing_breakpoint,
@@ -1129,6 +1129,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
         response = await self._messages_create(messages, False, model_settings, model_request_parameters)
+        response = check_json_response(self.model_name, response)
         if isinstance(response, BetaMessage):
             return self._process_response(response, model_request_parameters, model_settings)
         # The request was streamed behind the scenes, see `_messages_create`. `_map_api_errors` maps a transport error
@@ -1157,7 +1158,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             messages, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
 
-        return usage.RequestUsage(input_tokens=response.input_tokens)
+        return usage.RequestUsage(input_tokens=check_json_response(self.model_name, response).input_tokens)
 
     @asynccontextmanager
     async def request_stream(

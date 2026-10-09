@@ -498,6 +498,7 @@ def test_the_frame_key_is_sent_out_of_band_and_removed_from_the_child_environmen
     assert invocation.stdin == f'{invocation.frame_key}\n'
 
 
+@pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
 @requires_clai2
 def test_an_imported_agent_does_not_pass_the_frame_key_to_its_children(tmp_path: Path) -> None:
     invocation = launch(
@@ -808,6 +809,7 @@ async def test_a_failed_stream_emits_one_partial_message_and_failure_result(
     assert all(event.id != 'forged' for event in parsed.log_entries)
 
 
+@pytest.mark.subprocess(reason='connects to `tests/mcp_server.py` over stdio')
 async def test_imported_tools_and_gateway_mcp_tools_both_execute(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1059,6 +1061,7 @@ async def test_interrupted_stream_has_a_failure_terminal_result(
     assert events[-1].data['status'] == 'failure'
 
 
+@pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
 @pytest.mark.parametrize(
     ('cli_fails', 'expected_exit_code', 'expected_status'),
     [(False, 0, 'success'), (True, 2, 'failure')],
@@ -1165,6 +1168,7 @@ class TestLauncherProgram:
             check=False,
         )
 
+    @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
     @requires_clai2
     def test_the_agent_module_is_imported_once_and_not_from_the_checkout(self, tmp_path: Path) -> None:
         completed = self.run(tmp_path, 'gh_aw_agent:agent', '-a', 'gh_aw_agent:agent', '-m', 'test', '-p', 'hello')
@@ -1176,6 +1180,7 @@ class TestLauncherProgram:
         assert (tmp_path / 'imports.txt').read_text(encoding='utf-8') == 'module-directory\n'
         assert re.search(rf'\x1eGH-AW-SESSION/{FRAME_KEY} \{{"type"\s*:\s*"session\.result"', completed.stdout)
 
+    @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
     def test_a_target_that_is_not_an_agent_names_what_it_found(self, tmp_path: Path) -> None:
         (tmp_path / 'module').mkdir(parents=True, exist_ok=True)
         (tmp_path / 'module' / 'not_an_agent.py').write_text('agent = 1\n', encoding='utf-8')
@@ -1185,6 +1190,7 @@ class TestLauncherProgram:
         assert completed.returncode != 0
         assert 'TypeError: not_an_agent:agent is int, not pydantic_ai.Agent' in completed.stderr
 
+    @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
     def test_an_agent_that_raises_on_import_fails_with_its_traceback(self, tmp_path: Path) -> None:
         (tmp_path / 'module').mkdir(parents=True, exist_ok=True)
         (tmp_path / 'module' / 'broken_agent.py').write_text(
@@ -1199,6 +1205,7 @@ class TestLauncherProgram:
         # The message `pai` prints instead of a traceback when its own load fails.
         assert 'Could not load agent' not in completed.stderr + completed.stdout
 
+    @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
     @requires_clai2
     def test_cli_argument_error_finishes_the_generated_recorder_without_run_events(self, tmp_path: Path) -> None:
         invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'), extra_python_path=CLAI2_SOURCE)
@@ -1231,6 +1238,7 @@ class TestLauncherProgram:
         assert event.type == 'session.result'
         assert event.data == {'status': 'failure', 'sourceType': 'pydantic-ai'}
 
+    @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
     def test_a_custom_agent_import_failure_keeps_one_full_traceback(self, tmp_path: Path) -> None:
         workspace = tmp_path / 'workspace'
         workspace.mkdir()

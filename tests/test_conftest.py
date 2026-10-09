@@ -125,6 +125,7 @@ def test_blockbuster_disabled_when_explicitly_configured(monkeypatch: pytest.Mon
         next(fixture)
 
 
+@pytest.mark.subprocess(reason='asserts what a fresh interpreter imports')
 def test_disabled_blockbuster_does_not_import_instrumentation() -> None:
     subprocess.run(
         [
