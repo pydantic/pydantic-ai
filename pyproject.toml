@@ -221,6 +221,12 @@ openai = "2026-09-23T00:08:49Z"
 # google-genai 2.25.0 is the `google-genai` floor: it sends Gemini blob fields as `mime_type`/`file_uri`.
 # TODO(adtyavrdhn): Remove after 2026-09-29 17:24 UTC.
 google-genai = "2026-09-22T17:23:02Z"
+# FastMCP 3.4.8 carries security fixes; FastMCP 4.1.0 is the first release supporting Python 3.15.
+# TODO(Kludex): Remove after 2026-10-15 22:57 UTC.
+fastmcp = "2026-10-08T22:57:02Z"
+fastmcp-slim = "2026-10-08T22:57:02Z"
+fastmcp-tasks = "2026-10-08T22:57:02Z"
+pydocket = "2026-10-08T22:57:02Z"
 
 [dependency-groups]
 dev = [
@@ -259,6 +265,8 @@ dev = [
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
     # `fastmcp` package alongside, tracking the same range as the `[mcp]` extra (#6661).
     "fastmcp>=3.3.0,<5",
+    # FastMCP 3 pulls in `beartype` 0.22, which imports `typing.no_type_check_decorator` (removed in 3.15).
+    "beartype>=0.23.0rc2; python_version >= '3.15'",
     # The MCP SDK v2 wire types as a standalone pure-Pydantic distribution, so the tests can check
     # the compat readers' field-name pairs against the real v2 models while running against v1.
     "mcp-types>=2.0.0",
