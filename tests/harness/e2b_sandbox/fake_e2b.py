@@ -44,7 +44,7 @@ from e2b.exceptions import (
 )
 
 try:
-    from e2b.exceptions import format_sandbox_unavailable_exception  # pyright: ignore[reportAttributeAccessIssue]
+    from e2b.exceptions import format_sandbox_unavailable_exception  # pyright: ignore[reportAttributeAccessIssue,reportUnknownVariableType]
 except ImportError:  # e2b < 2.53.1
     from e2b.exceptions import format_sandbox_timeout_exception as format_sandbox_unavailable_exception
 
