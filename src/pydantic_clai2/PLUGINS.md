@@ -400,12 +400,13 @@ With `include_content=true`, Logfire captures HTTP headers and request and respo
 bodies too; with it off, those are not captured. HTTP instrumentation is removed
 on unload unless it was already installed by another owner.
 
-`base_url` (an https origin) is the Logfire to send to; unset, the SDK uses
-`LOGFIRE_BASE_URL`, else the region the token names. The **Logfire project** row
+`base_url` is the Logfire to send to: any address [Which Logfire](#which-logfire)
+accepts, saved as its https origin. Unset, the SDK uses `LOGFIRE_BASE_URL`, else
+the region the token names. The **Logfire project** row
 sets `token`, `base_url`, `account`, and `send_to_logfire` for you (`R` on it
-clears `token`, `base_url`, and `account` again): it asks where traces go, runs
+clears `token`, `base_url`, and `account` again): it asks which Logfire, runs
 Logfire's own device sign-in there (the one behind `logfire auth`, not
-`logfire_mcp`'s MCP OAuth, whose tokens only the MCP server accepts), reads your
+the Logfire plugin's MCP OAuth, whose tokens only the MCP server accepts), reads your
 account's email, lists the projects you can write to, and saves a new write
 token for the one you pick in `/keys`. The sign-in token is used only during
 setup. The flow lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
@@ -575,12 +576,15 @@ runs or remote machines, choose a key and set Sign-in to key only: without a
 key, CLAI warns at startup and runs fail with a message instead of waiting for a
 sign-in. The plugin emits no telemetry of its own; tool calls appear in core's
 spans.
-## Logfire MCP: query your telemetry
+## Logfire: query your telemetry
 
-The built-in `logfire_mcp` plugin (`pydantic_clai2.builtin_plugins.logfire_mcp`) gives the agent
-the tools of Logfire's hosted MCP server through harness
+The built-in Logfire plugin (id `logfire_mcp`, `pydantic_clai2.builtin_plugins.logfire_mcp`) gives the agent
+the tools of Logfire's MCP server through harness
 [`LogfireMCP`](../../docs/harness/logfire-mcp.md), each named `logfire_` plus the
-server's name for it (`logfire_query_run`). It starts disabled.
+server's name for it (`logfire_query_run`). It starts disabled. Its id
+stays `logfire_mcp`: `logfire` is the `observability` plugin's old id, which older
+CLAI builds sharing your settings still store it under, so `/plugins enable logfire`
+keeps meaning `observability`. Its command is `/logfire`; `/logfire_mcp` still works.
 Turning it on (Space in `/plugins`, or `/plugins enable logfire_mcp`) loads it and
 opens its settings menu; reopen the menu any time with
 `/plugins configure logfire_mcp` or `c` in `/plugins`.
@@ -593,10 +597,43 @@ its default.
 | Row | Setting | Default | Does |
 |---|---|---|---|
 | API key | `key` | none | name of the `/keys` entry to connect with (see below) |
-| Destination | `url` | Logfire US | Logfire US, Logfire EU, or type the `https://` MCP URL of a self-hosted Logfire |
+| Which Logfire | `url` | Logfire US, or the region you last set up | Logfire US, Logfire EU, or another typed in; see [Which Logfire](#which-logfire). Saved as its MCP URL |
 | Tools | `read_only` | read-only | offer only the tools the server marks read-only; "read and write" also allows tools that change Logfire resources |
 | Server instructions | `include_instructions` | forwarded | whether the server's instructions, query guidance, and current UTC time reach the agent |
 | Browser sign-in | `oauth` | when there is no key | sign in, or sign up, through the browser when no key is chosen, set, or saved; the row shows whether you are signed in |
+
+### Which Logfire
+
+The Logfire plugin and `observability` setup ask which Logfire with the same
+picker. Enter on **Logfire US** or **Logfire EU** chooses that hosted region.
+Enter on **Another Logfire...** opens a field for a self-hosted or staging
+Logfire, where you can type any of these for the same Logfire:
+
+| You type | Example |
+|---|---|
+| a host | `logfire.example.com` or `logfire-eu.pydantic.info` |
+| the URL you open Logfire at | `https://logfire.example.com` |
+| its MCP URL | `https://logfire.example.com/mcp` |
+
+Logfire serves its UI, its API, and its MCP server (at `/mcp`) from one host, so
+CLAI derives the rest: `observability` sends traces to the https origin, and this
+plugin connects to the origin plus `/mcp`. The hosted regions come from harness's
+`LOGFIRE_US_MCP_URL` and `LOGFIRE_EU_MCP_URL`, which match the Logfire SDK's
+regions. The pre-region hosts `logfire.pydantic.dev` and `logfire-api.pydantic.dev`
+mean Logfire US. In this plugin's JSON settings, a host or the URL you open Logfire
+at becomes its MCP URL, but an MCP URL is kept exactly as given, and so is the one
+saved when you pick the same Logfire again: browser sign-ins are stored under it, so
+an MCP URL saved by an earlier build keeps its sign-in. Only https is accepted, and
+an address with a password, another path, a query, or a fragment is refused as you
+type. Enter uses the address; Esc goes back to the list, and Esc there cancels
+without changing anything.
+
+Whichever Logfire you last chose in either plugin is remembered, in
+`~/.config/pydantic-clai2/logfire/destination.json` (or under `$XDG_CONFIG_HOME`),
+so the other starts from it: the picker highlights it. Opening this plugin's menu
+before any of its settings were saved also switches it to that Logfire, and says so,
+when it is Logfire US or EU; any other Logfire is only highlighted, so a key you
+already use is never sent to a server you did not pick for it.
 
 ### Keys live in `/keys`
 
@@ -625,7 +662,7 @@ every run, so saving it there later connects without a reload.
 
 Browser sign-in uses the OAuth device flow
 ([RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628)), as Code Puppy's
-Logfire plugin does. The first run with no usable token, or `/logfire_mcp login`
+Logfire plugin does. The first run with no usable token, or `/logfire login`
 at any time, prints a link and a code and opens the link:
 
 ```text
@@ -639,14 +676,14 @@ approve the code. CLAI waits up to 660 seconds (Logfire's codes last 600). No
 local callback server is involved, so this also works over SSH: open the link on
 any device.
 
-- **Discovery:** the Logfire server is found from the Destination URL
+- **Discovery:** the Logfire server is found from the MCP URL
   ([RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) resource metadata),
   so self-hosted Logfire works too, including an issuer with a path
   ([RFC 8414](https://datatracker.ietf.org/doc/html/rfc8414)). CLAI registers
   itself as a client ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591))
   and uses PKCE. It registers again if the server has forgotten the earlier
   registration.
-- **Binding:** every request names the Destination URL as the token's resource
+- **Binding:** every request names the MCP URL as the token's resource
   ([RFC 8707](https://datatracker.ietf.org/doc/html/rfc8707)), and the
   discovered metadata must describe that same URL (and the authorization
   server's metadata its own issuer). A token is only issued for the MCP server
@@ -658,11 +695,11 @@ any device.
   servers that includes `organization:create_project`). Switching Tools to read
   and write signs in again for those scopes. If Logfire grants fewer scopes, CLAI
   says so once and keeps the sign-in, since asking again would get the same
-  grant; `/logfire_mcp login` asks again when you want to.
-- **Tokens:** kept per Destination URL in the OS keyring (or the private
+  grant; `/logfire login` asks again when you want to.
+- **Tokens:** kept per MCP URL in the OS keyring (or the private
   credential file) under the `logfire-oauth` account, so restarting CLAI does
   not mean signing in again. An expired or rejected token is refreshed; if that
-  fails, the next run signs in again. `/logfire_mcp logout` forgets every
+  fails, the next run signs in again. `/logfire logout` forgets every
   Logfire sign-in, including one still waiting for approval, and keeps keys in
   `/keys`.
   If the keyring or file refuses to save a sign-in, CLAI says so and keeps it in
@@ -823,7 +860,7 @@ CLAI plugins written for them, such as the disabled built-ins
 [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
 [`grain`](#grain-meetings-with-a-saved-sign-in),
 [`linear`](#linear-issues-and-projects),
-[`logfire_mcp`](#logfire-mcp-query-your-telemetry),
+[`logfire_mcp`](#logfire-query-your-telemetry),
 [`notion`](#notion-workspace-tools),
 [`ordinal`](#ordinal-social-posts-in-ordinal),
 [`posthog`](#posthog-posthog-analytics-signed-in-for-clai),
@@ -2600,7 +2637,7 @@ them as environment variables.
 When saved keys exist, vLLM's token prompt, OpenRouter's **Enter API key** flow,
 and plugins such as [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
 [`grain`](#grain-meetings-with-a-saved-sign-in), [`linear`](#linear-issues-and-projects),
-[`logfire_mcp`](#logfire-mcp-query-your-telemetry), [`notion`](#notion-workspace-tools),
+[`logfire_mcp`](#logfire-query-your-telemetry), [`notion`](#notion-workspace-tools),
 [`pylon`](#pylon-support-issues-and-accounts-in-pylon), and
 [`slack`](#slack-your-slack-workspace-as-you) show a
 searchable list of names. Choose one, enter a different key privately, or

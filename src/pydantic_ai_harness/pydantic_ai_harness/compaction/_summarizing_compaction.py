@@ -516,14 +516,18 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                     else:
                         break
                 extra = list(reversed(retained))
-            retained_tail_slots = self.keep_messages - len(extra)
+            retained_tail_slots = max(1, self.keep_messages - len(extra))
             if token_tail_budget is not None:
                 if token_tail_budget == 0:
-                    preserved = []
+                    # Retained user turns spent the whole token tail budget; reserve one
+                    # slot so the request being answered still survives compaction.
+                    preserved = preserved[find_safe_cutoff(preserved, 1) :]
                 else:
                     token_tail = preserved[find_token_cutoff(preserved, token_tail_budget, self.tokenizer) :]
                     preserved = (
-                        token_tail if estimate_token_count(token_tail, self.tokenizer) <= token_tail_budget else []
+                        token_tail
+                        if estimate_token_count(token_tail, self.tokenizer) <= token_tail_budget
+                        else preserved[find_safe_cutoff(preserved, 1) :]
                     )
             if len(preserved) > retained_tail_slots:
                 preserved = preserved[find_safe_cutoff(preserved, retained_tail_slots) :]

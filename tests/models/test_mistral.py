@@ -3425,6 +3425,45 @@ async def test_text_document_binary_content_mapping(text_document_content: Binar
     assert text_document_content.identifier in inlined
 
 
+async def test_parameterized_media_type_text_file_inlined() -> None:
+    """Test that a parameterized text-like media type is inlined as MistralTextChunk.
+
+    Unit test, not VCR: `BinaryContent.from_data_uri` stores `application/json;charset=utf-8`
+    verbatim, and before the classifier ignored parameters the mapping raised
+    `NotImplementedError` for this content.
+    """
+    json_content = BinaryContent.from_data_uri('data:application/json;charset=utf-8;base64,eyJhIjogMX0=')
+    m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'What is in this document?',
+                        json_content,
+                    ]
+                )
+            ]
+        )
+    ]
+
+    mapped = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    user_msg = mapped[0]
+    assert isinstance(user_msg, UserMessage)
+    assert user_msg.content is not None
+    assert isinstance(user_msg.content, list)
+    assert len(user_msg.content) == 2
+    text_chunks = [chunk for chunk in user_msg.content if isinstance(chunk, MistralTextChunk)]
+    assert len(text_chunks) == 2
+    inlined = text_chunks[1].text
+    assert '-----BEGIN FILE' in inlined
+    assert '{"a": 1}' in inlined
+    assert '-----END FILE' in inlined
+    assert json_content.media_type in inlined
+    assert json_content.identifier in inlined
+
+
 async def test_document_url_force_download() -> None:
     """Test that force_download=True calls download_item for DocumentUrl PDF in MistralModel."""
     m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
