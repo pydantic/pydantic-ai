@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import gc
 import importlib.util
 import logging
 import os
@@ -651,6 +652,22 @@ def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
         with suppress(RuntimeError):
             asyncio.get_event_loop().close()
         asyncio.set_event_loop(original_loop)
+
+
+@pytest.fixture
+def young_gc() -> Iterator[None]:
+    """Limit the test's `gc.collect()` calls to the objects it creates.
+
+    A full collection walks every object the worker has accumulated, which takes seconds per call
+    late in a CI run. Freezing everything that exists before the test keeps it out of the collector's
+    reach until teardown, so collections stay cheap, and garbage leaked by an earlier test can't be
+    finalized (and raise an unraisable exception or `ResourceWarning`) in the middle of this one.
+    """
+    gc.freeze()
+    try:
+        yield
+    finally:
+        gc.unfreeze()
 
 
 @pytest.fixture(autouse=True)
