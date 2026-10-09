@@ -1,0 +1,84 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    type: conversation_initiation_client_data
+    conversation_config_override:
+      agent:
+        prompt:
+          prompt: Answer in one short sentence. Use the get_weather tool for any weather
+            question.
+- kind: message
+  direction: received
+  data:
+    conversation_initiation_metadata_event:
+      conversation_id: conv_6201m2dhjkvpeht89z63rjqgmyma
+      agent_output_audio_format: pcm_16000
+      user_input_audio_format: pcm_16000
+      persistent_session_token: null
+    type: conversation_initiation_metadata
+- kind: message
+  direction: sent
+  data:
+    type: user_message
+    text: What is the weather in Berlin?
+- kind: message
+  direction: received
+  data:
+    client_tool_call:
+      tool_name: get_weather
+      tool_call_id: get_weather_ff6e3625c0564343b382198e060b0de0
+      parameters:
+        city: Berlin
+      event_id: 1
+      expects_response: true
+    type: client_tool_call
+- kind: message
+  direction: sent
+  data:
+    type: client_tool_result
+    tool_call_id: get_weather_ff6e3625c0564343b382198e060b0de0
+    result: It is sunny and 21 degrees in Berlin.
+    is_error: false
+- kind: message
+  direction: received
+  data:
+    agent_tool_response:
+      tool_name: get_weather
+      tool_call_id: get_weather_ff6e3625c0564343b382198e060b0de0
+      tool_type: client
+      is_error: false
+      is_blocked: false
+      event_id: 1
+      is_called: true
+      status: success
+    type: agent_tool_response
+- kind: message
+  direction: received
+  data:
+    audio_event:
+      audio_base_64: AgAAAAEAAAD9//7/AAD+//3//v/+//7/+//9//7//v/+
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  data:
+    audio_event:
+      audio_base_64: 7gGMAhYFBAhPCtsM+w7sEA4TNRSOFVkXRBf1Fl4WlBUc
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  data:
+    agent_response_event:
+      agent_response: It is sunny and twenty one degrees in Berlin.
+      event_id: 1
+      response_id: c4c12b24-e701-4696-a24b-97d863a2c54b
+      in_response_to_ids:
+      - b5c0aec4-0ee9-4507-bbc3-ca7f67816b3e
+      response_type: text
+      attachments: []
+    type: agent_response

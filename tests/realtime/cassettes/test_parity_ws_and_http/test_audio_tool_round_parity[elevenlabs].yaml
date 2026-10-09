@@ -1,0 +1,383 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: conversation_initiation_client_data
+    conversation_config_override:
+      agent:
+        prompt:
+          prompt: Always call get_weather for a weather question, then answer in one
+            short sentence.
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    conversation_initiation_metadata_event:
+      conversation_id: conv_1701m3hdp128e12ta9yhnyfet012
+      agent_output_audio_format: pcm_16000
+      user_input_audio_format: pcm_16000
+      persistent_session_token: null
+    type: conversation_initiation_metadata
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    user_audio_chunk: 7//0//r///8HAAoAEwAXAB4AJgAsADMAOQBBAEIATQBM
+- kind: message
+  direction: sent
+  at: 0.094
+  data:
+    user_audio_chunk: DQHHAIMARgAOANr/qP9+/1X/Kf8A/9D+nv5l/if+4f2U
+- kind: message
+  direction: sent
+  at: 0.203
+  data:
+    user_audio_chunk: B+Ri5GHlbupm81YApA71FgkbthxaHpwdKxfBCsz/7vkb
+- kind: message
+  direction: sent
+  at: 0.313
+  data:
+    user_audio_chunk: WP9Z/1j/Xv9n/3f/hv+V/63/v//V/+z//P8UACcAPABK
+- kind: message
+  direction: sent
+  at: 0.422
+  data:
+    user_audio_chunk: v/Zn+ZH9RgHrBCAHeQhnCkYMTA1aDmUPYBAREfoQEBFx
+- kind: message
+  direction: sent
+  at: 0.531
+  data:
+    user_audio_chunk: pgu4CyMLDgu7CgsKbQkSCYoIkAiHCJIIxAjQCPIIyAiw
+- kind: message
+  direction: sent
+  at: 0.641
+  data:
+    user_audio_chunk: 0QJiAeD/Yf4a/Rb8O/tT+nT5tvhG+Pf3n/dE9/f2FvdO
+- kind: message
+  direction: sent
+  at: 0.75
+  data:
+    user_audio_chunk: /ASKAYL8V/aY8UvwffFx9CL4qPzfAscJyw8LE1MTFhKP
+- kind: message
+  direction: sent
+  at: 0.86
+  data:
+    user_audio_chunk: yQXXBdYF8QXrBbwFiAX8BIUEAwSgA2UD+gK+AkcCEgK4
+- kind: message
+  direction: sent
+  at: 0.969
+  data:
+    user_audio_chunk: ag9eDYULTAp8CYsISAfMBTgECQPyAVkBJAFpAcsB8gGy
+- kind: message
+  direction: sent
+  at: 1.078
+  data:
+    user_audio_chunk: Fg6sEWcTWxIOEewQAhL8ElcTBBSgFE8UhRJEEBMPHw94
+- kind: message
+  direction: sent
+  at: 1.188
+  data:
+    user_audio_chunk: luYr6KDr4u517O3q6Oph85H7ovxT+DT25PrKAzEHJAhQ
+- kind: message
+  direction: sent
+  at: 1.297
+  data:
+    user_audio_chunk: uAKQAbEA/gFsA3wE0wRYBGYDLwL8AZgC8QKoAnUB3gDs
+- kind: message
+  direction: sent
+  at: 1.406
+  data:
+    user_audio_chunk: cvu5++v7IPxT/KL8CP1+/db9J/5q/n/+hP53/nn+mv65
+- kind: message
+  direction: sent
+  at: 1.516
+  data:
+    user_audio_chunk: ee0769Ps+O6V9hD8Uf47+Tj0Bva2/vwGbAeuAUf8y/zn
+- kind: message
+  direction: sent
+  at: 1.625
+  data:
+    user_audio_chunk: XRJfEn0SgxJREsoRPxGsEEEQuA/7DgkONg1/DPULKQtD
+- kind: message
+  direction: sent
+  at: 1.735
+  data:
+    user_audio_chunk: 3ASqAOT8uf62+0AG6PT+A3D8jQDD/9j8JwMrAvkAmPyW
+- kind: message
+  direction: received
+  at: 1.828
+  data:
+    ping_event:
+      event_id: 2
+      ping_ms: null
+    type: ping
+- kind: message
+  direction: sent
+  at: 1.828
+  data:
+    type: pong
+    event_id: 2
+- kind: message
+  direction: sent
+  at: 1.828
+  data:
+    user_audio_chunk: XP5s/Db66/gC+KP3Q/fk9WH0W/Ix8MruUe7L7lbvfO9L
+- kind: message
+  direction: sent
+  at: 1.922
+  data:
+    user_audio_chunk: HQErAisCyQC9/tn8xPss+777LfwK/NX63Pih94n3I/j8
+- kind: message
+  direction: sent
+  at: 2.031
+  data:
+    user_audio_chunk: s/9bAdsCfQSHBsAI5wpzDJoNWQ5PD1QQUxHvEUgShhLk
+- kind: message
+  direction: sent
+  at: 2.141
+  data:
+    user_audio_chunk: d/x3/Cj8ffwJ/kj/bf/i/wcAoP9+/j/+PP39/WT/MAFx
+- kind: message
+  direction: sent
+  at: 2.25
+  data:
+    user_audio_chunk: 8//G/4D/+v5Y/pv95fw0/IH7xfr7+SP5TfiY9xj3uPZM
+- kind: message
+  direction: sent
+  at: 2.36
+  data:
+    user_audio_chunk: 9QZUBW4DaQFz/9b95fzg/Jj93f4+AHEBNwJNAvcBJAE9
+- kind: message
+  direction: sent
+  at: 2.469
+  data:
+    user_audio_chunk: SP/X/oz+if6s/vL+R/+X/+T/KACAAOcARgF2AYoBcAFJ
+- kind: message
+  direction: sent
+  at: 2.578
+  data:
+    user_audio_chunk: 2/7//hb/QP9W/4H/pv/Z/+D/1P/j/97/8v/i/9L/yf/E
+- kind: message
+  direction: sent
+  at: 2.688
+  data:
+    user_audio_chunk: AQD//wAA//8AAP7////9//3//P/9//v/+//6//j/+v/3
+- kind: message
+  direction: sent
+  at: 2.797
+  data:
+    user_audio_chunk: FAAVABMAFQAVABUAFQAWABUAFgAXABYAFgAWABMAFwAU
+- kind: message
+  direction: sent
+  at: 2.906
+  data:
+    user_audio_chunk: IQAiACAAIgAhACEAIgAiACIAIgAiACIAIgAiAB8AIgAg
+- kind: message
+  direction: sent
+  at: 3.016
+  data:
+    user_audio_chunk: GQAZABYAGQAYABgAGQAYABgAGQAZABkAGQAZABYAGQAW
+- kind: message
+  direction: sent
+  at: 3.125
+  data:
+    user_audio_chunk: FwAXABQAGAAWABYAGAAXABcAFwAYABcAGAAYABMAGAAU
+- kind: message
+  direction: sent
+  at: 3.235
+  data:
+    user_audio_chunk: OAA7ADkAOgA7ADcAOQA4ADkANwA7ADUANgA0ADIAMwA0
+- kind: message
+  direction: sent
+  at: 3.344
+  data:
+    user_audio_chunk: 1PojAS4HIwmqC+kMSRC4E+QW6BgLHE8fgCKWJFklDiTQ
+- kind: message
+  direction: sent
+  at: 3.453
+  data:
+    user_audio_chunk: rvI756f17emp7KbzsuXI8OnryO+8607xSPBn7Sbxa/Ch
+- kind: message
+  direction: received
+  at: 3.531
+  data:
+    ping_event:
+      event_id: 3
+      ping_ms: 126
+    type: ping
+- kind: message
+  direction: sent
+  at: 3.531
+  data:
+    type: pong
+    event_id: 3
+- kind: message
+  direction: sent
+  at: 3.563
+  data:
+    user_audio_chunk: ZRrcGzocoxseHOQcAh4gHpwe+R7yHmQdMRubGBMVphCv
+- kind: message
+  direction: sent
+  at: 3.672
+  data:
+    user_audio_chunk: jgi4BSUBzPrU+yb9yQAOCpYSUgx1A/j4J/qM/AwGJQcE
+- kind: message
+  direction: sent
+  at: 3.781
+  data:
+    user_audio_chunk: Vfau+GP7Vf4fAMD+Ovwk+ML0j/Jp8Vbx1fH98Ozvku2f
+- kind: message
+  direction: sent
+  at: 3.875
+  data:
+    user_audio_chunk: WQoGCfgGYgROAer9vvpf+D334veh+YD71fyE/Tz+bv+u
+- kind: message
+  direction: sent
+  at: 4.0
+  data:
+    user_audio_chunk: 8P+w/6L/yf8ZAAEA7P/Z//3/9v8LAPz/2v+i/2H/df+c
+- kind: message
+  direction: sent
+  at: 4.094
+  data:
+    user_audio_chunk: t/+2/7X/tv+z/7P/s/+z/7L/sv+1/7P/tf+0/6//s/+v
+- kind: message
+  direction: sent
+  at: 4.203
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 4.313
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 4.422
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 4.531
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 4.641
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 4.75
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 4.86
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 4.969
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 5.078
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 5.188
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 5.219
+  data:
+    ping_event:
+      event_id: 4
+      ping_ms: 126
+    type: ping
+- kind: message
+  direction: sent
+  at: 5.219
+  data:
+    type: pong
+    event_id: 4
+- kind: message
+  direction: received
+  at: 5.375
+  data:
+    user_transcription_event:
+      user_transcript: What will the weather be in Amsterdam tomorrow? Please look
+        it up.
+      event_id: 25
+    type: user_transcript
+- kind: message
+  direction: received
+  at: 5.375
+  data:
+    client_tool_call:
+      tool_name: get_weather
+      tool_call_id: get_weather_24b124da4047497e83b682cf89888410
+      parameters:
+        city: Amsterdam
+      event_id: 25
+      expects_response: true
+    type: client_tool_call
+- kind: message
+  direction: sent
+  at: 5.375
+  data:
+    type: client_tool_result
+    tool_call_id: get_weather_24b124da4047497e83b682cf89888410
+    result: It is foggy and 12 degrees in Amsterdam.
+    is_error: false
+- kind: message
+  direction: received
+  at: 5.5
+  data:
+    agent_tool_response:
+      tool_name: get_weather
+      tool_call_id: get_weather_24b124da4047497e83b682cf89888410
+      tool_type: client
+      is_error: false
+      is_blocked: false
+      event_id: 25
+      is_called: true
+      status: success
+    type: agent_tool_response
+- kind: message
+  direction: received
+  at: 5.969
+  data:
+    audio_event:
+      audio_base_64: AQAJAAYAAAD8//z/AgD//////v/+//7/+v/6//3/AQAC
+      event_id: 25
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 6.047
+  data:
+    audio_event:
+      audio_base_64: 8u6B7zTw9/Cz8YTyW/M79CX1EvYD9+H3ufiu+af6ivtc
+      event_id: 25
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 6.047
+  data:
+    agent_response_event:
+      agent_response: It is foggy and twelve degrees in Amsterdam.
+      event_id: 25
+      response_id: 3139d330-156d-42fd-8a05-d2f05a7f3188
+      in_response_to_ids:
+      - 47737421-d098-430d-b185-d7f113dde460
+      response_type: text
+      attachments: []
+    type: agent_response

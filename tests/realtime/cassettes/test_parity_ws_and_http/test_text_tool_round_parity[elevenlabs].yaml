@@ -1,0 +1,137 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: conversation_initiation_client_data
+    conversation_config_override:
+      agent:
+        prompt:
+          prompt: Always call get_weather for a weather question, then answer in one
+            short sentence.
+      conversation:
+        text_only: true
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    conversation_initiation_metadata_event:
+      conversation_id: conv_1501m3hdnz2wet2s491fzb77ke0z
+      agent_output_audio_format: pcm_16000
+      user_input_audio_format: pcm_16000
+      persistent_session_token: null
+    type: conversation_initiation_metadata
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: user_message
+    text: What is the weather in London?
+- kind: message
+  direction: received
+  at: 0.578
+  data:
+    client_tool_call:
+      tool_name: get_weather
+      tool_call_id: get_weather_605918d3eea9425088ee885804aeefb1
+      parameters:
+        city: London
+      event_id: 1
+      expects_response: true
+    type: client_tool_call
+- kind: message
+  direction: received
+  at: 0.578
+  data:
+    text_response_part:
+      text: ''
+      type: start
+      event_id: 1
+      response_id: 4e413121-8a58-43da-b1be-586419c6241f
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 0.578
+  data:
+    text_response_part:
+      text: ''
+      type: stop
+      event_id: 1
+      response_id: 4e413121-8a58-43da-b1be-586419c6241f
+    type: agent_chat_response_part
+- kind: message
+  direction: sent
+  at: 0.578
+  data:
+    type: client_tool_result
+    tool_call_id: get_weather_605918d3eea9425088ee885804aeefb1
+    result: It is foggy and 12 degrees in London.
+    is_error: false
+- kind: message
+  direction: received
+  at: 0.703
+  data:
+    agent_tool_response:
+      tool_name: get_weather
+      tool_call_id: get_weather_605918d3eea9425088ee885804aeefb1
+      tool_type: client
+      is_error: false
+      is_blocked: false
+      event_id: 1
+      is_called: true
+      status: success
+    type: agent_tool_response
+- kind: message
+  direction: received
+  at: 1.015
+  data:
+    text_response_part:
+      text: ''
+      type: start
+      event_id: 1
+      response_id: 0deae98c-2936-4a6f-afea-2d5a0f56fcd1
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 1.015
+  data:
+    text_response_part:
+      text: It is foggy and 1
+      type: delta
+      event_id: 1
+      response_id: 0deae98c-2936-4a6f-afea-2d5a0f56fcd1
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 1.093
+  data:
+    text_response_part:
+      text: 2 degrees in London.
+      type: delta
+      event_id: 1
+      response_id: 0deae98c-2936-4a6f-afea-2d5a0f56fcd1
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 1.109
+  data:
+    text_response_part:
+      text: ''
+      type: stop
+      event_id: 1
+      response_id: 0deae98c-2936-4a6f-afea-2d5a0f56fcd1
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 1.109
+  data:
+    agent_response_event:
+      agent_response: It is foggy and 12 degrees in London.
+      event_id: 1
+      response_id: 0deae98c-2936-4a6f-afea-2d5a0f56fcd1
+      in_response_to_ids:
+      - 49e7eb02-e65d-48d1-8bef-5a9e35cc678b
+      response_type: text
+      attachments: []
+    type: agent_response

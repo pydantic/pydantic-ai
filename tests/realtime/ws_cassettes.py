@@ -54,7 +54,7 @@ _MessageKind = Literal['message']
 _CloseKind = Literal['close']
 _Direction = Literal['sent', 'received']
 
-ProviderName = Literal['openai', 'gemini', 'xai', 'openai_live']
+ProviderName = Literal['openai', 'gemini', 'xai', 'openai_live', 'elevenlabs']
 
 # Outbound frame fields that carry random client-generated ids, normalized to stable placeholders so
 # replay can validate frame *structure* without depending on a fresh random value each run.
@@ -92,8 +92,13 @@ def _transcription_model(frame: dict[str, Any]) -> object:
 
 
 def _is_audio_send(frame: dict[str, Any]) -> bool:
-    """Whether an outbound frame is microphone audio, on the OpenAI, GPT-Live, or Gemini protocol."""
-    return frame.get('type') in _AUDIO_APPEND_TYPES or _gemini_realtime_audio(frame) is not None
+    """Whether an outbound frame is microphone audio, on the OpenAI, GPT-Live, Gemini, or ElevenLabs protocol."""
+    return (
+        frame.get('type') in _AUDIO_APPEND_TYPES
+        or _gemini_realtime_audio(frame) is not None
+        # ElevenLabs: the one client frame without a `type`.
+        or isinstance(frame.get('user_audio_chunk'), str)
+    )
 
 
 # Value patterns that must never land in a cassette (API keys / bearer tokens). Belt-and-braces:
@@ -113,6 +118,7 @@ _SECRET_ENV_VARS = (
     'GEMINI_API_KEY',
     'GOOGLE_API_KEY',
     'XAI_API_KEY',
+    'ELEVENLABS_API_KEY',
 )
 
 
@@ -310,6 +316,17 @@ def _truncate_audio(frame: dict[str, Any]) -> dict[str, Any]:
         if isinstance(video, dict) and isinstance(data := cast('dict[str, Any]', video).get('data'), str):
             video = {**cast('dict[str, Any]', video), 'data': _truncate_b64_audio(data)}
             return {**frame, 'realtime_input': {**cast('dict[str, Any]', realtime_input), 'video': video}}
+    # ElevenLabs outbound microphone chunk (the one client message without a `type` field).
+    if isinstance(frame.get('user_audio_chunk'), str):
+        return {**frame, 'user_audio_chunk': _truncate_b64_audio(frame['user_audio_chunk'])}
+    # ElevenLabs inbound audio: truncate the payload and drop the per-character TTS timing block,
+    # which is hundreds of numbers per frame that the session never reads.
+    if frame.get('type') == 'audio' and isinstance(audio_event := frame.get('audio_event'), dict):
+        audio_event = cast('dict[str, Any]', audio_event)
+        payload = audio_event.get('audio_base_64')
+        if isinstance(payload, str):  # pragma: no branch
+            audio_event = {key: value for key, value in audio_event.items() if key != 'alignment'}
+            return {**frame, 'audio_event': {**audio_event, 'audio_base_64': _truncate_b64_audio(payload)}}
 
     def _walk(value: Any) -> Any:
         if isinstance(value, dict):
@@ -623,6 +640,11 @@ def _connect_target(provider: ProviderName) -> tuple[Any, str]:
         from pydantic_ai.realtime import xai as rt_xai
 
         return rt_xai.websockets, 'connect'
+    if provider == 'elevenlabs':
+        # ElevenLabs speaks its own agent protocol over the `websockets` library directly.
+        from pydantic_ai.realtime import elevenlabs as rt_elevenlabs
+
+        return rt_elevenlabs.websockets, 'connect'
     from google.genai import live
 
     return live, 'ws_connect'

@@ -27,6 +27,7 @@ from pydantic_ai.realtime.azure import (
     _VoiceLiveRealtimeConnection,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection
+from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeConnection
 from pydantic_ai.realtime.google import GoogleRealtimeConnection
 from pydantic_ai.realtime.openai import OpenAIRealtimeConnection
 from pydantic_ai.realtime.openai_live import OpenAILiveConnection
@@ -34,7 +35,7 @@ from pydantic_ai.realtime.xai import XaiRealtimeConnection
 
 from ..ws_cassettes import CassetteClose, RealtimeCassette
 
-Protocol = Literal['openai', 'azure', 'azure-voice-live', 'xai', 'gemini', 'openai-live']
+Protocol = Literal['openai', 'azure', 'azure-voice-live', 'xai', 'gemini', 'openai-live', 'elevenlabs']
 
 CASSETTES_DIR = Path(__file__).parent.parent / 'cassettes'
 
@@ -49,6 +50,7 @@ _MODULE_PROTOCOLS: dict[str, Protocol] = {
     'test_openai_live_ws': 'openai-live',
     'test_openai_live_ws_sideband': 'openai-live',
     'test_openai_live_ws_and_http': 'openai-live',
+    'test_elevenlabs_ws_and_http': 'elevenlabs',
 }
 _PARITY_PROTOCOLS: dict[str, Protocol] = {
     'openai': 'openai',
@@ -58,6 +60,7 @@ _PARITY_PROTOCOLS: dict[str, Protocol] = {
     'google': 'gemini',
     'gateway-google': 'gemini',
     'openai-live': 'openai-live',
+    'elevenlabs': 'elevenlabs',
 }
 
 
@@ -70,7 +73,7 @@ def cassette_protocol(path: Path) -> Protocol:
     module = path.parent.name
     if module == 'test_gateway_ws':
         return 'gemini' if 'gemini' in path.stem else 'openai'
-    if module == 'test_parity_ws':
+    if module in ('test_parity_ws', 'test_parity_ws_and_http'):
         variant = path.stem.split('[', 1)[1].rstrip(']')
         return next(
             protocol
@@ -81,7 +84,7 @@ def cassette_protocol(path: Path) -> Protocol:
 
 
 def websocket_cassettes() -> list[Path]:
-    """Every WebSocket cassette (the same directories also hold HTTP recordings of WebRTC signaling)."""
+    """Every WebSocket cassette (the same directories also hold HTTP recordings, e.g. of WebRTC signaling)."""
     return sorted(path for path in CASSETTES_DIR.glob('*/*.yaml') if _is_websocket(path))
 
 
@@ -131,7 +134,7 @@ def _closed(close: CassetteClose | None) -> Exception:
 
 
 class _InboundOnlySocket:
-    """A socket that yields recorded frames, then closes as recorded (a connection with no session sends nothing)."""
+    """A socket that yields recorded frames, then closes as recorded (what a connection with no session sends is discarded)."""
 
     def __init__(self, frames: list[dict[str, Any]], close: CassetteClose | None) -> None:
         self._frames = [json.dumps(frame) for frame in frames]
@@ -149,6 +152,9 @@ class _InboundOnlySocket:
             yield self._frames.pop(0)
         if self._close is not None and not self._close.ok:
             raise _closed(self._close)
+
+    async def send(self, message: str) -> None:
+        """Discard the one frame a connection sends unprompted: ElevenLabs' `pong` answering a recorded `ping`."""
 
 
 class _InboundOnlyGeminiSession:
@@ -185,6 +191,8 @@ def _connection(protocol: Protocol, frames: list[dict[str, Any]], close: Cassett
         return OpenAILiveConnection(socket)
     if protocol == 'xai':
         return XaiRealtimeConnection(socket)
+    if protocol == 'elevenlabs':
+        return ElevenLabsRealtimeConnection(socket)
     if protocol == 'azure':
         return AzureRealtimeConnection(socket)
     if protocol == 'azure-voice-live':
