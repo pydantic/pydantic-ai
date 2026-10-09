@@ -2,8 +2,8 @@
 
 Every sharded test job stores the durations of the tests it ran (`pytest --store-durations
 --clean-durations`) and uploads them as an artifact named `<prefix><shard>`. Before running, each
-shard fetches those artifacts from the latest `main` run that uploaded all of them, so the split
-follows the suite as it is now instead of a committed file that drifts. Without them (the first run,
+shard fetches those artifacts from the newest `main` run that had uploaded all of them when this run
+was created, so the split follows the suite as it is now instead of a committed file that drifts. Without them (the first run,
 expired artifacts, an API failure), `pytest-split` falls back to splitting by test count.
 
 `report` compares a shard's measured durations with that baseline and lists, in the job summary, new
@@ -27,7 +27,8 @@ from typing import Any
 Durations = dict[str, float]
 GhApi = Callable[[str], bytes]
 
-# How far back to look for a `main` run that uploaded every shard's durations.
+WORKFLOW_FILE = 'ci.yml'
+# How many `main` runs back to look for one that uploaded every shard's durations.
 MAX_CANDIDATE_RUNS = 20
 NEW_TEST_MIN_SECONDS = 1.0
 SLOWDOWN_FACTOR = 2.0
@@ -40,41 +41,6 @@ def gh_api(path: str) -> bytes:
     return subprocess.run(['gh', 'api', path], check=True, capture_output=True).stdout
 
 
-@dataclass(frozen=True)
-class Artifact:
-    id: int
-    name: str
-    run_id: int
-
-
-def _main_artifacts(repo: str, name: str, api: GhApi) -> list[Artifact]:
-    """Unexpired artifacts called `name` uploaded by runs of `repo`'s own `main`, newest first.
-
-    A fork's PR can push from a branch that is also called `main`, so the run's head repository must be
-    the base repository itself.
-    """
-    data: dict[str, list[dict[str, Any]]] = json.loads(api(f'repos/{repo}/actions/artifacts?name={name}&per_page=100'))
-    artifacts: list[Artifact] = []
-    for artifact in data.get('artifacts', []):
-        run: dict[str, Any] = artifact.get('workflow_run') or {}
-        if (
-            not artifact.get('expired')
-            and run.get('head_branch') == 'main'
-            and run.get('head_repository_id') == run.get('repository_id')
-        ):
-            artifacts.append(Artifact(id=artifact['id'], name=artifact['name'], run_id=run['id']))
-    return artifacts
-
-
-def _run_artifacts(repo: str, run_id: int, prefix: str, api: GhApi) -> list[Artifact]:
-    data: dict[str, list[dict[str, Any]]] = json.loads(api(f'repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100'))
-    return [
-        Artifact(id=artifact['id'], name=artifact['name'], run_id=run_id)
-        for artifact in data.get('artifacts', [])
-        if artifact['name'].startswith(prefix) and not artifact.get('expired')
-    ]
-
-
 def _read_durations_zip(content: bytes) -> Durations:
     durations: Durations = {}
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
@@ -84,23 +50,36 @@ def _read_durations_zip(content: bytes) -> Durations:
     return durations
 
 
-def fetch(repo: str, prefix: str, shards: int, api: GhApi = gh_api) -> tuple[int, Durations] | None:
-    """The merged durations of every shard of the latest `main` run that uploaded all `shards` of them."""
+def fetch(repo: str, prefix: str, shards: int, before: str, api: GhApi = gh_api) -> tuple[int, Durations] | None:
+    """The merged durations of every shard of the newest `main` push run created before `before` that uploaded all of them.
+
+    Every shard of one run must split identically, or a test could run in two shards or in none. A run
+    created before this one has uploaded its artifacts, or is still running, by the time any shard of this
+    run asks; requiring all `shards` of them skips the latter, so every shard (and every re-run attempt,
+    which keeps the run's creation time) settles on the same baseline.
+    """
+    runs: dict[str, list[dict[str, Any]]] = json.loads(
+        api(
+            f'repos/{repo}/actions/workflows/{WORKFLOW_FILE}/runs'
+            f'?branch=main&event=push&created=%3C{before}&per_page={MAX_CANDIDATE_RUNS}'
+        )
+    )
     wanted = {f'{prefix}{shard}' for shard in range(1, shards + 1)}
-    seen_runs: set[int] = set()
-    for candidate in _main_artifacts(repo, f'{prefix}1', api):
-        if candidate.run_id in seen_runs:
-            continue
-        seen_runs.add(candidate.run_id)
-        if len(seen_runs) > MAX_CANDIDATE_RUNS:
-            break
-        artifacts = _run_artifacts(repo, candidate.run_id, prefix, api)
-        if not wanted <= {artifact.name for artifact in artifacts}:
-            continue  # still running, or a shard failed before uploading
+    for run in runs.get('workflow_runs', []):
+        data: dict[str, list[dict[str, Any]]] = json.loads(
+            api(f'repos/{repo}/actions/runs/{run["id"]}/artifacts?per_page=100')
+        )
+        artifacts = [
+            artifact
+            for artifact in data.get('artifacts', [])
+            if artifact['name'].startswith(prefix) and not artifact.get('expired')
+        ]
+        if not wanted <= {artifact['name'] for artifact in artifacts}:
+            continue  # still running, a shard failed before uploading, or tests were skipped
         durations: Durations = {}
-        for artifact in artifacts:
-            durations.update(_read_durations_zip(api(f'repos/{repo}/actions/artifacts/{artifact.id}/zip')))
-        return candidate.run_id, durations
+        for artifact in sorted(artifacts, key=lambda artifact: artifact['name']):
+            durations.update(_read_durations_zip(api(f'repos/{repo}/actions/artifacts/{artifact["id"]}/zip')))
+        return run['id'], durations
     return None
 
 
@@ -187,7 +166,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == 'fetch':
         # Balancing is an optimization: never fail the job over it.
         try:
-            found = fetch(os.environ['GITHUB_REPOSITORY'], args.prefix, args.shards)
+            repo = os.environ['GITHUB_REPOSITORY']
+            this_run = json.loads(gh_api(f'repos/{repo}/actions/runs/{os.environ["GITHUB_RUN_ID"]}'))
+            found = fetch(repo, args.prefix, args.shards, before=this_run['created_at'])
         except (KeyError, OSError, subprocess.CalledProcessError, ValueError, zipfile.BadZipFile) as exc:
             print(f'::warning::Could not fetch test durations, splitting shards by test count: {exc!r}')
             return 0

@@ -24,57 +24,49 @@ def _zip(durations: dict[str, float]) -> bytes:
     return buffer.getvalue()
 
 
-def _artifact(artifact_id: int, name: str, run_id: int, *, branch: str = 'main', fork: bool = False) -> dict[str, Any]:
-    return {
-        'id': artifact_id,
-        'name': name,
-        'expired': False,
-        'workflow_run': {
-            'id': run_id,
-            'head_branch': branch,
-            'repository_id': 1,
-            'head_repository_id': 2 if fork else 1,
-        },
-    }
+def _artifact(artifact_id: int, name: str) -> dict[str, Any]:
+    return {'id': artifact_id, 'name': name, 'expired': False}
 
 
 class FakeApi:
-    def __init__(self, artifacts: list[dict[str, Any]], zips: dict[int, bytes]) -> None:
-        self.artifacts = artifacts
+    def __init__(self, runs: dict[int, list[dict[str, Any]]], zips: dict[int, bytes]) -> None:
+        self.runs = runs
         self.zips = zips
+        self.paths: list[str] = []
 
     def __call__(self, path: str) -> bytes:
-        if path.startswith(f'repos/{REPO}/actions/artifacts?name='):
-            name = path.split('name=')[1].split('&')[0]
-            return json.dumps({'artifacts': [a for a in self.artifacts if a['name'] == name]}).encode()
-        if path.startswith(f'repos/{REPO}/actions/runs/'):
-            run_id = int(path.split('/')[5])
-            return json.dumps({'artifacts': [a for a in self.artifacts if a['workflow_run']['id'] == run_id]}).encode()
-        artifact_id = int(path.split('/')[5])
-        return self.zips[artifact_id]
+        self.paths.append(path)
+        parts = path.split('?')[0].split('/')
+        if parts[3:5] == ['actions', 'workflows']:
+            return json.dumps({'workflow_runs': [{'id': run_id} for run_id in self.runs]}).encode()
+        if parts[3:5] == ['actions', 'runs']:
+            return json.dumps({'artifacts': self.runs[int(parts[5])]}).encode()
+        return self.zips[int(parts[5])]
 
 
 def test_fetch_merges_shards_of_newest_complete_main_run():
     api = FakeApi(
-        artifacts=[
-            # Newest first: a fork PR from a branch called `main`, a PR run, a `main` run still
-            # missing its second shard, then the run to use.
-            _artifact(50, f'{PREFIX}1', 500, fork=True),
-            _artifact(51, f'{PREFIX}2', 500, fork=True),
-            _artifact(40, f'{PREFIX}1', 400, branch='feature'),
-            _artifact(30, f'{PREFIX}1', 300),
-            _artifact(20, f'{PREFIX}1', 200),
-            _artifact(21, f'{PREFIX}2', 200),
-            _artifact(22, 'coverage-3.12-all-extras-1', 200),
-        ],
+        runs={
+            # Newest first: a run still missing its second shard, then the run to use.
+            300: [_artifact(30, f'{PREFIX}1')],
+            200: [
+                _artifact(20, f'{PREFIX}1'),
+                _artifact(21, f'{PREFIX}2'),
+                _artifact(22, 'coverage-3.12-all-extras-1'),
+            ],
+            100: [_artifact(10, f'{PREFIX}1'), _artifact(11, f'{PREFIX}2')],
+        },
         zips={20: _zip({'a': 1.0}), 21: _zip({'b': 2.0})},
     )
-    assert shard_durations.fetch(REPO, PREFIX, 2, api) == (200, {'a': 1.0, 'b': 2.0})
+    assert shard_durations.fetch(REPO, PREFIX, 2, '2026-10-09T12:00:00Z', api) == (200, {'a': 1.0, 'b': 2.0})
+    assert api.paths[0] == (
+        f'repos/{REPO}/actions/workflows/ci.yml/runs?branch=main&event=push&created=%3C2026-10-09T12:00:00Z&per_page=20'
+    )
 
 
 def test_fetch_without_a_complete_run():
-    api = FakeApi(artifacts=[_artifact(30, f'{PREFIX}1', 300)], zips={})
-    assert shard_durations.fetch(REPO, PREFIX, 2, api) is None
+    api = FakeApi(runs={300: [_artifact(30, f'{PREFIX}1')]}, zips={})
+    assert shard_durations.fetch(REPO, PREFIX, 2, '2026-10-09T12:00:00Z', api) is None
 
 
 def test_compare_flags_new_slow_and_slower_tests():
