@@ -196,7 +196,7 @@ async def test_failing_observer_does_not_prevent_error_reporting(tmp_path: Path,
 
 
 async def test_handled_errors_keep_plugin_and_event_names_without_ui_events(tmp_path: Path, recorder: Recorder) -> None:
-    """`SessionEnd` and a plugin name like `session-namer` would trip Logfire's `session` scrubbing pattern."""
+    """`SessionEnd` and plugin names like `session_namer` would trip Logfire's `session` scrubbing pattern."""
     namer = tmp_path / 'session_namer.py'
     namer.write_text(
         'from pydantic_clai2.plugins import Plugin, SessionEnd\n'
@@ -215,12 +215,17 @@ async def test_handled_errors_keep_plugin_and_event_names_without_ui_events(tmp_
             PluginSettings(id='session_namer', factory='session_namer', path=str(namer)),
         ),
     )
+    (harness.store.plugins_dir / 'session_loader.py').write_text('raise ImportError("missing dependency")\n')
     await harness.loader.load_all()
     await harness.loader.close('exit')
-    [failed] = [span for span in recorder.spans() if (span.attributes or {}).get('logfire.level_num') == 17]
-    attributes = failed.attributes or {}
-    assert attributes['logfire.msg'] == "Plugin 'session_namer' failed handling SessionEnd"
-    assert (attributes['plugin'], attributes['event']) == ('session_namer', 'SessionEnd')
+    failed = [
+        span.attributes or {} for span in recorder.spans() if (span.attributes or {}).get('logfire.level_num') == 17
+    ]
+    assert [(attributes['logfire.msg'], attributes['plugin']) for attributes in failed] == [
+        ("Plugin 'session_loader' failed to load", 'session_loader'),
+        ("Plugin 'session_namer' failed handling SessionEnd", 'session_namer'),
+    ]
+    assert failed[1]['event'] == 'SessionEnd'
 
 
 async def test_startup_errors_keep_only_their_type_without_content(tmp_path: Path, recorder: Recorder) -> None:

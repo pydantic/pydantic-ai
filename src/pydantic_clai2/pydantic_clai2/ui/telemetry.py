@@ -134,7 +134,7 @@ def handled_error(msg_template: str, error: BaseException, /, **attributes: Attr
     """
     if _sinks:
         sink = _sinks[-1]
-        with parent_span(sink.root()), _exempt():
+        with parent_span(sink.root()):
             log_error(sink.instance, msg_template, error, content=sink.include_content, attributes=attributes)
 
 
@@ -151,14 +151,16 @@ def log_error(
     Both can quote a prompt or a pasted secret, so without `content` the event keeps only the exception's type,
     as core `Instrumentation` does on agent spans with `include_content=False`. That record is an error-level
     span with no duration, since a Logfire log cannot carry an event without the exception's message.
+    Its `NAMES` attributes, such as the failing plugin's, are exempt from scrubbing, as for UI records.
     """
-    if content:
-        instance.log('error', msg_template, attributes=dict(attributes or {}), exc_info=error)
-        return
-    with _open(instance, msg_template, dict(attributes or {}), level='error'):
-        current = get_current_span()
-        record_exception(current, error, include_content=False, escaped=False)
-        set_error_status(current, error, include_content=False)
+    with _exempt():
+        if content:
+            instance.log('error', msg_template, attributes=dict(attributes or {}), exc_info=error)
+            return
+        with _open(instance, msg_template, dict(attributes or {}), level='error'):
+            current = get_current_span()
+            record_exception(current, error, include_content=False, escaped=False)
+            set_error_status(current, error, include_content=False)
 
 
 class UiSpan:
