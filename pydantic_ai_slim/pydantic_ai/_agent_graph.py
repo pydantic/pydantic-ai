@@ -252,12 +252,10 @@ def _apply_context_changes(changes: Sequence[tuple[ContextVar[Any], Any]]) -> No
         var.set(value)
 
 
-async def _resolve_interrupted_stream_state(
-    model: models.Model,
-    stream_error: BaseException,
-    partial: _messages.ModelResponse,
-) -> _messages.ModelResponseState:
-    """State to record for a streamed turn the consumer stopped, cancelling a leaked job when appropriate.
+def _interrupted_stream_response(
+    stream_error: BaseException, partial: _messages.ModelResponse
+) -> _messages.ModelResponse:
+    """The response to record for a streamed turn the consumer stopped.
 
     The composite treats every `aclose()` (which the handler teardown triggers) as a *detach*, so
     `partial.state` is `'suspended'` whenever the last segment is a still-pending job — regardless of
@@ -266,13 +264,12 @@ async def _resolve_interrupted_stream_state(
     - `GeneratorExit` is a walk-away detach (the consumer broke out of `run_stream`/`stream_text`). Mirror
       the non-streaming detach: keep `'suspended'` so the run is resumable, and leave the job alive.
     - any other exception is a genuine downstream failure. Mirror the non-streaming cancel-on-error policy:
-      force `'interrupted'` (non-resumable) and best-effort cancel the still-live job so it doesn't leak.
+      force `'interrupted'` (non-resumable); the graph best-effort cancels the still-live job so it doesn't leak.
     """
-    if isinstance(stream_error, GeneratorExit) and partial.state == 'suspended':
-        return 'suspended'
-    if partial.state == 'suspended':
-        await cancel_suspended_job(model, partial)
-    return 'interrupted'
+    detached = isinstance(stream_error, GeneratorExit) and partial.state == 'suspended'
+    response = replace(partial, state='suspended' if detached else 'interrupted')
+    fill_response_cost(response)
+    return response
 
 
 NEW_CONVERSATION: Literal['new'] = 'new'
@@ -1433,6 +1430,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         _handler_called = False
         _handler_usage_recorded = False
         _stream_cut_short = False
+        # Set when the consumer stops the stream by raising, before the graph task cancels the handler.
+        stream_error: BaseException | None = None
+        _interrupted_response: _messages.ModelResponse | None = None
         time_to_first_chunk: float | None = None
         accounted_responses: list[_messages.ModelResponse] = []
         before_model_request_context: list[tuple[ContextVar[Any], Any]] = []
@@ -1441,6 +1441,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             nonlocal _handler_called, _handler_response, _handler_usage_recorded, _stream_cut_short, time_to_first_chunk
+            nonlocal _interrupted_response
             if _handler_called:
                 raise exceptions.UserError('`wrap_model_request` may call its handler only once')
             _handler_called = True
@@ -1464,25 +1465,34 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # into one continuous stream, so the whole chain is presented as a single
             # `AgentStream` and the model-request hooks wrap it once. The step is counted in
             # `ctx.state.usage.requests` when its response is committed, not here.
-            async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
-                self._did_stream = True
-                agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
-                agent_stream_holder.append(agent_stream)
-                stream_ready.set()
-                try:
-                    await stream_done.wait()
-                finally:
-                    if not stream_done.is_set():
-                        # `wrap_model_request` stopped the handler while the stream is still being consumed,
-                        # e.g. a parallel `InputGuardrail` blocking the prompt. Stop the consumer's pull before
-                        # the stream closes; it continues with the response `wrap_model_request` returns instead.
-                        _stream_cut_short = await agent_stream._abandon_model_stream(_wrap_response)  # pyright: ignore[reportPrivateUsage]
-                    # Report TTFT in a `finally` so it also lands when the consumer raises
-                    # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
-                    # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
-                    # that cancelled path `finish` is never reached today (no metrics of any
-                    # kind are recorded), so this is symmetry rather than an observable fix.
-                    time_to_first_chunk = sr.time_to_first_chunk(request_start)
+            try:
+                async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
+                    self._did_stream = True
+                    agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
+                    agent_stream_holder.append(agent_stream)
+                    stream_ready.set()
+                    try:
+                        await stream_done.wait()
+                    finally:
+                        if not stream_done.is_set():
+                            # `wrap_model_request` stopped the handler while the stream is still being consumed,
+                            # e.g. a parallel `InputGuardrail` blocking the prompt. Stop the consumer's pull before
+                            # the stream closes; it continues with the response `wrap_model_request` returns instead.
+                            _stream_cut_short = await agent_stream._abandon_model_stream(_wrap_response)  # pyright: ignore[reportPrivateUsage]
+                        # Report TTFT in a `finally` so it also lands when the consumer raises
+                        # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
+                        # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
+                        # that cancelled path `finish` is never reached today (no metrics of any
+                        # kind are recorded), so this is symmetry rather than an observable fix.
+                        time_to_first_chunk = sr.time_to_first_chunk(request_start)
+            except BaseException:
+                if stream_error is not None:
+                    # The consumer stopped the stream, so the graph task cancelled this one. Record what the
+                    # provider billed for so far before the `wrap_model_request` chain unwinds, so wrappers that
+                    # account for billed responses see it. The graph task commits this same response afterwards.
+                    _interrupted_response = _interrupted_stream_response(stream_error, agent_stream_holder[0].response)
+                    req_ctx._usage_response_ledger.responses.append(_interrupted_response)  # pyright: ignore[reportPrivateUsage]
+                raise
             # Streaming core errors surface in the consumer task, which cancels this wrap task;
             # `on_model_request_error` cannot recover an error after streaming has begun.
             response = sr.get()
@@ -1592,7 +1602,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return
 
         # Normal path: handler was called, stream is ready
-        stream_error: BaseException | None = None
         try:
             yield agent_stream_holder[0]
         except BaseException as exc:
@@ -1609,8 +1618,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     # We append directly rather than via `_append_response` to skip the usage-limit
                     # check; raising `UsageLimitExceeded` here would mask `stream_error`.
                     if agent_stream_holder:  # pragma: no branch
+                        partial = agent_stream_holder[0].response
                         await self._commit_interrupted_response(
-                            ctx, wrap_request_context.model, stream_error, agent_stream_holder[0].response
+                            ctx,
+                            wrap_request_context.model,
+                            partial,
+                            # The handler recorded the response it billed, unless `wrap_model_request`
+                            # had already stopped it before the consumer did.
+                            _interrupted_response or _interrupted_stream_response(stream_error, partial),
                         )
                 else:
                     try:
@@ -1647,18 +1662,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     async def _commit_interrupted_response(
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
         model: models.Model,
-        stream_error: BaseException,
         partial: _messages.ModelResponse,
+        partial_response: _messages.ModelResponse,
     ) -> None:
-        """Record the response an interrupted stream produced so far, without checking usage limits."""
-        recorded_state = await _resolve_interrupted_stream_state(model, stream_error, partial)
-        partial_response = replace(
-            partial,
-            state=recorded_state,
-            run_id=ctx.state.run_id,
-            conversation_id=ctx.state.conversation_id,
-        )
-        fill_response_cost(partial_response)
+        """Commit the response an interrupted stream produced so far, without checking usage limits.
+
+        `partial_response` is `partial` as `_interrupted_stream_response` recorded it.
+        """
+        if partial.state == 'suspended' and partial_response.state == 'interrupted':
+            # A genuine failure rather than a walk-away: cancel the still-live job so it doesn't leak.
+            await cancel_suspended_job(model, partial)
+        partial_response.run_id = ctx.state.run_id
+        partial_response.conversation_id = ctx.state.conversation_id
         partial_response.workspace_ref = ctx.deps.workspace_ref
         _record_attempts_usage(ctx.state.usage, partial_response.failed_attempts)
         _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)

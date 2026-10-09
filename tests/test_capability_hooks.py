@@ -21,7 +21,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.agent import Agent
+from pydantic_ai.agent import Agent, capture_run_messages
 from pydantic_ai.capabilities import (
     CombinedCapability,
     ToolSearch,
@@ -86,7 +86,7 @@ from .capability_models import (
     tool_calling_stream_function,
 )
 from .conftest import IsDatetime, IsStr
-from .continuation_utils import ScriptedContinuationModel, scripted_response
+from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
@@ -553,6 +553,48 @@ class TestModelRequestHooks:
 
         assert len(observed_responses) == 1
         assert observed_responses[0] is result.all_messages()[-1]
+
+    async def test_usage_ledger_records_a_stream_the_consumer_stopped(self):
+        """The partial response is recorded before `wrap_model_request` unwinds, and is the one committed to history."""
+        observed_responses: list[ModelResponse] = []
+
+        class ObserveUsage(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                try:
+                    return await handler(request_context)
+                finally:
+                    observed_responses.extend(request_context._usage_responses)  # pyright: ignore[reportPrivateUsage]
+
+        model = ScriptedContinuationModel(
+            segments=[
+                StreamSegment(
+                    texts=['A', 'B'], state='complete', provider_response_id='a', input_tokens=7, output_tokens=3
+                )
+            ]
+        )
+        agent = Agent(model, capabilities=[ObserveUsage()])
+
+        with capture_run_messages() as messages:
+            async with agent.iter('hello') as run:
+                with pytest.raises(RuntimeError, match='stop'):
+                    async for node in run:  # pragma: no branch
+                        if Agent.is_model_request_node(node):
+                            async with node.stream(run.ctx) as stream:
+                                async for _ in stream:  # pragma: no branch
+                                    raise RuntimeError('stop')
+
+        partial = messages[-1]
+        assert isinstance(partial, ModelResponse)
+        assert partial.state == 'interrupted'
+        assert len(observed_responses) == 1
+        assert observed_responses[0] is partial
+        assert run.usage == RunUsage(input_tokens=7, output_tokens=3, requests=1)
 
     async def test_wrapper_recovery_keeps_continuation_usage(self):
         class RecoverAfterRejection(AbstractCapability[Any]):

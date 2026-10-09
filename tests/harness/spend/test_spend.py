@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import warnings
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
@@ -47,10 +48,12 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness import HarnessDeprecationWarning, spend
@@ -2650,6 +2653,100 @@ class TestContinuationAccrual:
         await Agent(model, deps_type=type(None), capabilities=[limits]).run('go')
 
         assert (await limits.status())[0].spent == Spent(usd=Decimal('5'), tokens=21, requests=1)
+
+
+class _AttemptsBeforeStream(WrapperModel):
+    """Streams the wrapped model's response as one a `FallbackModel` fell back to, after a billed rejected attempt."""
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as stream:
+            stream.failed_attempts = [_attempt()]
+            yield stream
+
+
+async def _stop_streaming(agent: Agent[None, str], *, at: str) -> RunUsage:
+    """Stream the agent's first model response and raise once its text reaches `at`, returning the run's usage."""
+    async with agent.iter('go') as run:
+        with pytest.raises(RuntimeError, match='consumer stopped'):
+            async for node in run:  # pragma: no branch
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        async for text in stream.stream_text(debounce_by=None):  # pragma: no branch
+                            if at in text:
+                                raise RuntimeError('consumer stopped')
+    return run.usage
+
+
+class TestInterruptedStreams:
+    """A stream the consumer stops was billed for what the provider produced before it stopped."""
+
+    async def test_the_partial_response_is_charged_once(self):
+        store = _CountingStore()
+        model = ScriptedContinuationModel(
+            segments=[
+                StreamSegment(
+                    texts=['A', 'B'], state='complete', provider_response_id='a', input_tokens=7, output_tokens=3
+                )
+            ]
+        )
+        limits = SpendLimits[None](
+            budgets=[Budget(window='total')], store=store, price=lambda response: Decimal(response.usage.total_tokens)
+        )
+
+        usage = await _stop_streaming(Agent(model, deps_type=type(None), capabilities=[limits]), at='A')
+
+        assert usage == RunUsage(input_tokens=7, output_tokens=3, requests=1)
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('10'), tokens=10, requests=1)
+        assert [[(entry.tokens, entry.requests) for entry in batch] for batch in store.batches] == [[(10, 1)]]
+
+    async def test_a_chain_stopped_mid_segment_is_charged_what_core_counted(self):
+        """The merged response of a chain stopped during its second segment is accrued once, matching `RunUsage`."""
+        store = _CountingStore()
+        model = ScriptedContinuationModel(
+            segments=[
+                StreamSegment(
+                    texts=['A'], state='suspended', provider_response_id='a', input_tokens=7, output_tokens=3
+                ),
+                StreamSegment(
+                    texts=['B', 'C'], state='complete', provider_response_id='b', input_tokens=8, output_tokens=3
+                ),
+            ]
+        )
+        limits = SpendLimits[None](
+            budgets=[Budget(window='total')], store=store, price=lambda response: Decimal(response.usage.total_tokens)
+        )
+
+        usage = await _stop_streaming(Agent(model, deps_type=type(None), capabilities=[limits]), at='B')
+
+        assert usage.total_tokens == 21
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('21'), tokens=21, requests=1)
+        assert [[(entry.tokens, entry.requests) for entry in batch] for batch in store.batches] == [[(21, 1)]]
+
+    async def test_the_rejected_attempts_before_it_are_charged_too(self):
+        model = _AttemptsBeforeStream(
+            ScriptedContinuationModel(
+                segments=[
+                    StreamSegment(
+                        texts=['A', 'B'], state='complete', provider_response_id='a', input_tokens=7, output_tokens=3
+                    )
+                ]
+            )
+        )
+        limits = SpendLimits[None](
+            budgets=[Budget(window='total')], price=lambda response: Decimal(response.usage.total_tokens)
+        )
+
+        usage = await _stop_streaming(Agent(model, deps_type=type(None), capabilities=[limits]), at='A')
+
+        assert usage.total_tokens == 120
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('120'), tokens=120, requests=2)
 
 
 class TestDeprecatedStore:
