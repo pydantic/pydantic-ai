@@ -1498,13 +1498,16 @@ class TestRedisStore:
         assert (await store.get_many(['k']))['k'] == added
 
     async def test_repeated_adds_do_not_drift(self):
-        """A price with a fractional sub-unit, since a whole one cannot detect rounding at all."""
+        """A price with a fractional sub-unit, since a whole one cannot detect rounding at all.
+
+        Float accumulation of this price already drifts by the 7th add, so 1000 is ample.
+        """
         store = RedisSpendStore(FakeRedis())
         price = Decimal('0.000000675')  # a cheap model's real per-request cost
-        for _ in range(100_000):
+        for _ in range(1000):
             await store.add_many([SpendEntry(key='k', usd=price, requests=1)])
 
-        assert (await store.get_many(['k']))['k'].usd == price * 100_000
+        assert (await store.get_many(['k']))['k'].usd == price * 1000
 
     async def test_a_ttl_is_applied_and_the_key_is_namespaced(self):
         client = FakeRedis()
