@@ -416,7 +416,7 @@ class Session(Generic[DepsT, OutputT]):
         self.summary = ConversationSummary(id=conversation_id or str(uuid4()), workspace=self.workspace)
         await self._publish()
 
-    async def fork(self, conversation_id: str | None = None) -> str:
+    async def _fork(self, conversation_id: str | None = None) -> str:
         """Save a copy of this conversation under `conversation_id`, or a random ID, and continue in the copy.
 
         The original is left as it was saved. Raises `ValueError` when a saved conversation already

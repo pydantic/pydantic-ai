@@ -61,7 +61,7 @@ async def test_fork_copies_and_leaves_the_original(tmp_path: Path) -> None:
     assert store is not None
     await session.prompt('original work')
     original = session.summary
-    notice = await session.fork(NEW_ID)
+    notice = await session._fork(NEW_ID)  # pyright: ignore[reportPrivateUsage]
     assert notice == f'Forked original work ({original.id}) into {NEW_ID}.'
     assert session.conversation_id == NEW_ID
     assert session.title == 'original work'
@@ -72,11 +72,11 @@ async def test_fork_copies_and_leaves_the_original(tmp_path: Path) -> None:
     assert len(copy.messages) > len(source.messages)
     assert source.summary.revision == original.revision
 
-    assert UUID(await session.fork() and session.conversation_id)
+    assert UUID(await session._fork() and session.conversation_id)  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(ValueError, match='already uses the ID'):
-        await session.fork(original.id)
+        await session._fork(original.id)  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(ValueError, match='not configured'):
-        await Session(Agent(TestModel()), deps=None).fork()
+        await Session(Agent(TestModel()), deps=None)._fork()  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_fork_refuses_a_running_conversation(tmp_path: Path) -> None:
@@ -100,7 +100,7 @@ async def test_fork_refuses_a_running_conversation(tmp_path: Path) -> None:
         tasks.start_soon(session.prompt, 'go')
         await started.wait()
         with pytest.raises(RuntimeError, match='Cannot fork a running conversation'):
-            await session.fork()
+            await session._fork()  # pyright: ignore[reportPrivateUsage]
         release.set()
 
 

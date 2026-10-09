@@ -141,7 +141,7 @@ class Sessions(Generic[DepsT, OutputT]):
             notice = await self.command([resume_from] if resume_from else []) if resume is not None else ''
         if fork and notice:
             # Keep the resume notice: it warns about an interrupted session, which the copy no longer records.
-            notice = f'{notice}\n{await self.session.fork(session_id)}'
+            notice = f'{notice}\n{await self.session._fork(session_id)}'  # pyright: ignore[reportPrivateUsage]
         elif session_id is not None:
             await self.session.clear(session_id)
         if notice or session_id is not None:
