@@ -50,6 +50,7 @@ def test_worktree_with_non_ascii_repository_path(tmp_path: Path, monkeypatch: py
 
 
 @pytest.mark.parametrize('command', ['token', 'login'])
+@pytest.mark.subprocess(reason='Verify UTF-8 decoding of real subprocess pipes.')
 def test_gh_with_non_ascii_diagnostics(monkeypatch: pytest.MonkeyPatch, command: str) -> None:
     """Run a stand-in CLI so the actual run/Popen pipes decode UTF-8 diagnostics."""
     for name in tuple(os.environ):
