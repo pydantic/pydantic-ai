@@ -155,18 +155,6 @@ class ToolGates:
         self.started[call_id].set_result(outcome)
 
 
-# One agent for every simulation, each passing its own gates as deps: building the tool's schema is a
-# noticeable share of a short simulation, and exploration starts one per example.
-_AGENT = Agent(deps_type=ToolGates, instructions='You are a simulated voice assistant.')
-
-
-@_AGENT.tool
-async def lookup(ctx: RunContext[ToolGates]) -> str | ToolReturn:
-    """Look something up."""
-    assert ctx.tool_call_id is not None
-    return await ctx.deps.run(ctx.tool_call_id)
-
-
 @dataclass
 class SessionOptions:
     """Session-level knobs a trace starts with."""
@@ -259,10 +247,10 @@ class Simulation(ABC):
         self._checker = _invariants.Checker(self, strict=self.strict, enforce=self.enforce)
         self._exit_stack.enter_context(self.transport())
         self._exit_stack.callback(self.loop.close)
+        agent = self._build_agent()
         model = self.build_model()
-        realtime = _AGENT.realtime(
+        realtime = agent.realtime(
             model,
-            deps=self.tools,
             model_settings=self.model_settings(),
             usage_limits=UsageLimits(request_limit=self.options.request_limit)
             if self.options.request_limit is not None
@@ -295,6 +283,18 @@ class Simulation(ABC):
         self._player = self.loop.create_task(self._play())
         self.loop.run_until_idle()
         return self
+
+    def _build_agent(self) -> Agent[object, str]:
+        agent: Agent[object, str] = Agent(instructions='You are a simulated voice assistant.')
+        gates = self.tools
+
+        @agent.tool
+        async def lookup(ctx: RunContext[object]) -> str | ToolReturn:
+            """Look something up."""
+            assert ctx.tool_call_id is not None
+            return await gates.run(ctx.tool_call_id)
+
+        return agent
 
     async def _consume(self) -> None:
         assert self.session is not None
