@@ -31,7 +31,7 @@ _PRE_RELEASE_PATTERN = re.compile(r'^\d+(?:\.\d+)*[.-]?(?:a|b|c|rc|alpha|beta|pr
 _DISTRIBUTIONS = ('pydantic-ai', 'pydantic-ai-harness')
 
 
-class _VersionCache(TypedDict):
+class VersionCache(TypedDict):
     checked_at: float
     latest: dict[str, str]
 
@@ -44,9 +44,9 @@ def version_check_enabled() -> bool:
     return do_not_track.lower() in ('', '0', 'false')
 
 
-def cached_updates() -> list[tuple[str, str]]:
+def cached_updates(cache: VersionCache | None) -> list[tuple[str, str]]:
     """Return newer releases found in the cache, without making a request."""
-    if not version_check_enabled() or (cache := _read_cache()) is None:
+    if not version_check_enabled() or cache is None:
         return []
 
     installed = _installed_versions()
@@ -59,13 +59,12 @@ def cached_updates() -> list[tuple[str, str]]:
     ]
 
 
-def start_version_check() -> threading.Thread | None:
+def start_version_check(cache: VersionCache | None) -> threading.Thread | None:
     """Start a due version check in a daemon thread, returning it for deterministic tests."""
     if not version_check_enabled():
         return None
 
     now = time.time()
-    cache = _read_cache()
     # A timestamp from the future is a clock that was wrong when it was written, not a check that
     # is still fresh: trusting it would put off the next check until the clock caught up with it.
     if cache is not None and 0 <= now - cache['checked_at'] < _CHECK_INTERVAL:
@@ -76,7 +75,7 @@ def start_version_check() -> threading.Thread | None:
     return thread
 
 
-def _check_for_updates(now: float, cache: _VersionCache | None) -> None:
+def _check_for_updates(now: float, cache: VersionCache | None) -> None:
     try:
         latest = cache['latest'] if cache is not None else {}
         # Record the attempt first so an unavailable endpoint or an interrupted process does not
@@ -100,7 +99,11 @@ def _cache_file() -> Path:
     return user_cache_dir() / 'version-check.json'
 
 
-def _read_cache() -> _VersionCache | None:
+def read_cache() -> VersionCache | None:
+    """Read and validate the version cache when the version check is enabled."""
+    if not version_check_enabled():
+        return None
+
     try:
         data = json.loads(_cache_file().read_bytes())
         if not is_str_dict(data):
@@ -116,7 +119,7 @@ def _read_cache() -> _VersionCache | None:
         return None
 
 
-def _write_cache(cache: _VersionCache) -> None:
+def _write_cache(cache: VersionCache) -> None:
     try:
         atomic_write_bytes(_cache_file(), json.dumps(cache, separators=(',', ':')).encode())
     except Exception:

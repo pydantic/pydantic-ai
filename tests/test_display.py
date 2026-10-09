@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import errno
 import importlib.util
+import json
 import os
 import signal
 import sys
@@ -9,9 +10,12 @@ import threading
 from collections.abc import Callable
 from importlib import metadata
 from io import StringIO
+from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
+import anyio
+import httpx2
 import pytest
 from pydantic import BaseModel
 
@@ -488,21 +492,81 @@ def test_displayed_banner_shows_cached_updates_then_starts_the_check(
     monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
 ):
     started = False
+    cache: _version_check.VersionCache = {'checked_at': 0, 'latest': {'pydantic-ai': '2.46.0'}}
 
-    def start_version_check() -> None:
+    def start_version_check(received: _version_check.VersionCache | None) -> None:
         nonlocal started
+        assert received is cache
         started = True
 
     monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK')
     monkeypatch.setattr(sys, 'stderr', stderr)
-    monkeypatch.setattr(_version_check, 'cached_updates', lambda: [('pydantic-ai', '2.46.0')])
+    read_cache = Mock(return_value=cache)
+    cached_updates = Mock(return_value=[('pydantic-ai', '2.46.0')])
+    monkeypatch.setattr(_version_check, 'read_cache', read_cache)
+    monkeypatch.setattr(_version_check, 'cached_updates', cached_updates)
     monkeypatch.setattr(_version_check, 'start_version_check', start_version_check)
 
     display_banner()
 
     assert 'update available: pydantic-ai v2.46.0' in stderr.getvalue()
     assert 'https://pydantic.dev/docs/ai/requests/' in stderr.getvalue()
+    read_cache.assert_called_once_with()
+    cached_updates.assert_called_once_with(cache)
     assert started is True
+
+
+async def test_async_agent_run_shows_cached_update_and_starts_due_check(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream, tmp_path: Path
+):
+    monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK')
+    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    cache_file = tmp_path / 'pydantic-ai' / 'version-check.json'
+    cache_file.parent.mkdir()
+    cache_file.write_text(
+        json.dumps({'checked_at': 0, 'latest': {'pydantic-ai': '999.0.0'}}),
+        encoding='utf-8',
+    )
+    requests: list[httpx2.Request] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json={'pypi': {}})
+
+    def get(url: str, **kwargs: Any) -> httpx2.Response:
+        with httpx2.Client(transport=httpx2.MockTransport(record)) as client:
+            return client.get(url, **kwargs)
+
+    monkeypatch.setattr(_version_check.httpx2, 'get', get)
+    cache_reads = 0
+    read_cache = _version_check.read_cache
+
+    def record_cache_read() -> _version_check.VersionCache | None:
+        nonlocal cache_reads
+        cache_reads += 1
+        return read_cache()
+
+    monkeypatch.setattr(_version_check, 'read_cache', record_cache_read)
+    threads: list[threading.Thread | None] = []
+    start_version_check = _version_check.start_version_check
+
+    def record_thread(cache: _version_check.VersionCache | None) -> threading.Thread | None:
+        thread = start_version_check(cache)
+        threads.append(thread)
+        return thread
+
+    monkeypatch.setattr(_version_check, 'start_version_check', record_thread)
+
+    await Agent(TestModel()).run('hello')
+    assert len(threads) == 1
+    thread = threads[0]
+    assert thread is not None
+    await anyio.to_thread.run_sync(thread.join)
+
+    assert 'update available: pydantic-ai v999.0.0' in stderr.getvalue()
+    assert cache_reads == 1
+    assert len(requests) == 1
 
 
 @pytest.mark.parametrize(

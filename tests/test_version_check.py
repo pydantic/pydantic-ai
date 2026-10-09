@@ -81,7 +81,7 @@ def install_transport(
 
 
 def run_check() -> None:
-    thread = _version_check.start_version_check()
+    thread = _version_check.start_version_check(_version_check.read_cache())
     assert thread is not None
     assert thread.daemon is True
     thread.join()
@@ -113,7 +113,7 @@ def test_fresh_machine_checks_without_a_cached_notice(monkeypatch: pytest.Monkey
         ),
     )
 
-    assert _version_check.cached_updates() == []
+    assert _version_check.cached_updates(_version_check.read_cache()) == []
     run_check()
 
     assert len(requests) == 1
@@ -141,7 +141,7 @@ def test_recent_cache_does_not_check(monkeypatch: pytest.MonkeyPatch, cache_file
     get = Mock()
     monkeypatch.setattr(_version_check.httpx2, 'get', get)
 
-    assert _version_check.start_version_check() is None
+    assert _version_check.start_version_check(_version_check.read_cache()) is None
     get.assert_not_called()
 
 
@@ -179,7 +179,7 @@ def test_failed_request_is_already_throttled_and_preserves_latest(monkeypatch: p
         'checked_at': _NOW,
         'latest': {'pydantic-ai': '9.0.0'},
     }
-    assert _version_check.start_version_check() is None
+    assert _version_check.start_version_check(_version_check.read_cache()) is None
 
 
 @pytest.mark.parametrize(
@@ -247,7 +247,7 @@ def test_corrupt_cache_is_a_miss(monkeypatch: pytest.MonkeyPatch, cache_file: Pa
     cache_file.write_text('{', encoding='utf-8')
     requests = install_transport(monkeypatch, lambda request: httpx2.Response(200, json={'pypi': {}}))
 
-    assert _version_check.cached_updates() == []
+    assert _version_check.cached_updates(_version_check.read_cache()) == []
     run_check()
 
     assert len(requests) == 1
@@ -263,14 +263,16 @@ def test_corrupt_cache_is_a_miss(monkeypatch: pytest.MonkeyPatch, cache_file: Pa
 )
 def test_opt_out_never_accesses_cache_or_network(variable: str, value: str, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv(variable, value)
-    read_cache = Mock()
+    cache_file = Mock()
     get = Mock()
-    monkeypatch.setattr(_version_check, '_read_cache', read_cache)
+    monkeypatch.setattr(_version_check, '_cache_file', cache_file)
     monkeypatch.setattr(_version_check.httpx2, 'get', get)
 
-    assert _version_check.cached_updates() == []
-    assert _version_check.start_version_check() is None
-    read_cache.assert_not_called()
+    cache = _version_check.read_cache()
+    assert cache is None
+    assert _version_check.cached_updates(cache) == []
+    assert _version_check.start_version_check(cache) is None
+    cache_file.assert_not_called()
     get.assert_not_called()
 
 
@@ -313,7 +315,7 @@ def test_cached_updates_compare_release_tuples(
     write_cache(cache_file, checked_at=_NOW, latest={'pydantic-ai': latest})
     monkeypatch.setattr(_version_check, '_installed_versions', lambda: {'pydantic-ai': installed})
 
-    assert _version_check.cached_updates() == expected
+    assert _version_check.cached_updates(_version_check.read_cache()) == expected
 
 
 def test_unsafe_versions_are_never_returned(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
@@ -331,7 +333,7 @@ def test_unsafe_versions_are_never_returned(monkeypatch: pytest.MonkeyPatch, cac
         lambda: {'pydantic-ai': '2.45.0', 'pydantic-ai-harness': '0.7.0'},
     )
 
-    assert _version_check.cached_updates() == []
+    assert _version_check.cached_updates(_version_check.read_cache()) == []
 
 
 def test_harness_notice_requires_an_installed_harness(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
@@ -341,14 +343,15 @@ def test_harness_notice_requires_an_installed_harness(monkeypatch: pytest.Monkey
         latest={'pydantic-ai': '2.46.0', 'pydantic-ai-harness': '0.8.0'},
     )
     monkeypatch.setattr(_version_check, '_installed_versions', lambda: {'pydantic-ai': '2.45.0'})
-    assert _version_check.cached_updates() == [('pydantic-ai', '2.46.0')]
+    cache = _version_check.read_cache()
+    assert _version_check.cached_updates(cache) == [('pydantic-ai', '2.46.0')]
 
     monkeypatch.setattr(
         _version_check,
         '_installed_versions',
         lambda: {'pydantic-ai': '2.45.0', 'pydantic-ai-harness': '0.7.0'},
     )
-    assert _version_check.cached_updates() == [
+    assert _version_check.cached_updates(cache) == [
         ('pydantic-ai', '2.46.0'),
         ('pydantic-ai-harness', '0.8.0'),
     ]
@@ -357,8 +360,18 @@ def test_harness_notice_requires_an_installed_harness(monkeypatch: pytest.Monkey
 @pytest.mark.parametrize(
     ('variable', 'value', 'expected'),
     [
-        pytest.param('AI_AGENT', 'my secret project', 'agent/agent', id='unknown-name-is-private'),
-        pytest.param('CODEX_THREAD_ID', '123', 'agent/codex', id='known-name'),
+        pytest.param(
+            'AI_AGENT',
+            'my secret project',
+            'pydantic-ai/2.45.0 (Python 3.14.1; TestOS; test-cpu) pydantic-ai-harness/0.8.0 agent/agent',
+            id='unknown-name-is-private',
+        ),
+        pytest.param(
+            'CODEX_THREAD_ID',
+            '123',
+            'pydantic-ai/2.45.0 (Python 3.14.1; TestOS; test-cpu) pydantic-ai-harness/0.8.0 agent/codex',
+            id='known-name',
+        ),
     ],
 )
 def test_user_agent_reports_only_known_agent_names(
@@ -366,6 +379,10 @@ def test_user_agent_reports_only_known_agent_names(
 ):
     monkeypatch.setenv(variable, value)
     monkeypatch.setattr(_display, 'detect_coding_agent', _DETECT_CODING_AGENT)
+    monkeypatch.setattr(_version_check.platform, 'python_version', lambda: '3.14.1')
+    monkeypatch.setattr(_version_check.platform, 'system', lambda: 'TestOS')
+    monkeypatch.setattr(_version_check.platform, 'machine', lambda: 'test-cpu')
+    monkeypatch.setattr(models, 'get_user_agent', lambda: 'pydantic-ai/2.45.0')
 
     def distribution_version(_module: str, distribution: str) -> str | None:
         return '0.8.0' if distribution == 'pydantic-ai-harness' else None
@@ -375,10 +392,7 @@ def test_user_agent_reports_only_known_agent_names(
 
     run_check()
 
-    user_agent = requests[0].headers['user-agent']
-    assert expected in user_agent
-    assert ('pydantic-ai-harness/0.8.0' in user_agent) is True
-    assert 'my secret project' not in user_agent
+    assert requests[0].headers['user-agent'] == expected
 
 
 def test_no_coding_agent_adds_no_agent_token(monkeypatch: pytest.MonkeyPatch):
@@ -434,7 +448,7 @@ def test_wrong_cache_types_are_a_miss(contents: str, monkeypatch: pytest.MonkeyP
     cache_file.write_text(contents, encoding='utf-8')
     requests = install_transport(monkeypatch, lambda request: httpx2.Response(200, json={'pypi': {}}))
 
-    assert _version_check.cached_updates() == []
+    assert _version_check.cached_updates(_version_check.read_cache()) == []
     run_check()
     assert len(requests) == 1
 
@@ -463,4 +477,4 @@ def test_invalid_installed_version_has_an_empty_release_tuple(monkeypatch: pytes
     write_cache(cache_file, checked_at=_NOW, latest={'pydantic-ai': '2.46.0'})
     monkeypatch.setattr(_version_check, '_installed_versions', lambda: {'pydantic-ai': 'development'})
 
-    assert _version_check.cached_updates() == [('pydantic-ai', '2.46.0')]
+    assert _version_check.cached_updates(_version_check.read_cache()) == [('pydantic-ai', '2.46.0')]

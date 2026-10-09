@@ -2,7 +2,7 @@
 
 This page lists every request Pydantic AI makes on its own initiative, what each one carries, and how to turn it off. It doesn't cover the requests you configure: to model providers, MCP servers, or from your own tools.
 
-One of them, [the version check](#the-version-check), goes to a server run by Pydantic. Like any web server, it sees the IP address and `User-Agent` of each request, and Pydantic uses these in aggregate to understand which versions and platforms Pydantic AI is used on, and by what kind of organization. To turn it off, set `PYDANTIC_AI_NO_VERSION_CHECK=1`, or see [every way to turn it off](#turning-the-version-check-off).
+One of them, [the version check](#the-version-check), goes to a server run by Pydantic. Like any web server, it sees the IP address and `User-Agent` of each request, and Pydantic uses these in aggregate to understand which versions and platforms Pydantic AI is used on, and by what kind of organization. To turn it off, set `PYDANTIC_AI_NO_VERSION_CHECK` to any value (for example, `PYDANTIC_AI_NO_VERSION_CHECK=1`), or see [every way to turn it off](#turning-the-version-check-off).
 
 ## Model provider requests
 
@@ -52,7 +52,7 @@ The cache contains no identifying information and is never sent to the server.
 
 ### Turning the version check off {#turning-the-version-check-off}
 
-Set `PYDANTIC_AI_NO_VERSION_CHECK=1` to disable the check without hiding the banner. A non-empty `DO_NOT_TRACK` value other than `0` or `false` also disables it. Everything that prevents the relevant banner also prevents the check: `PYDANTIC_AI_NO_BANNER`, `pydantic_ai.BANNER_ENABLED = False`, CI, `pytest`, or the absence of both a terminal and a coding agent. Configured instrumentation prevents an agent run's banner and therefore its check, but does not prevent the `clai` intro banner.
+Set `PYDANTIC_AI_NO_VERSION_CHECK` to any value (for example, `PYDANTIC_AI_NO_VERSION_CHECK=1`) to disable the check without hiding the banner. A non-empty `DO_NOT_TRACK` value other than `0` or `false` also disables it. Everything that prevents the relevant banner also prevents the check: `PYDANTIC_AI_NO_BANNER`, `pydantic_ai.BANNER_ENABLED = False`, CI, `pytest`, or the absence of both a terminal and a coding agent. Configured instrumentation prevents an agent run's banner and therefore its check, but does not prevent the `clai` intro banner.
 
 ## Model price updates
 

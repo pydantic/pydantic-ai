@@ -1604,13 +1604,17 @@ def test_clai_intro_shows_cached_updates_then_starts_the_check(
     monkeypatch.delenv('DO_NOT_TRACK', raising=False)
     env.set('OPENAI_API_KEY', 'test')
     mocker.patch('pydantic_ai._cli.ask_agent')
-    mocker.patch.object(_version_check, 'cached_updates', return_value=[('pydantic-ai', '2.46.0')])
+    cache: _version_check.VersionCache = {'checked_at': 0, 'latest': {'pydantic-ai': '2.46.0'}}
+    read_cache = mocker.patch.object(_version_check, 'read_cache', return_value=cache)
+    cached_updates = mocker.patch.object(_version_check, 'cached_updates', return_value=[('pydantic-ai', '2.46.0')])
     start = mocker.patch.object(_version_check, 'start_version_check')
 
     assert cli(['hello']) == 0
 
     assert 'update available: pydantic-ai v2.46.0' in _plain(capfd.readouterr().out)
-    start.assert_called_once_with()
+    read_cache.assert_called_once_with()
+    cached_updates.assert_called_once_with(cache)
+    start.assert_called_once_with(cache)
 
 
 def test_clai_nested_in_an_agent_still_opens_with_a_banner(
