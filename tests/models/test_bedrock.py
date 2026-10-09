@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import io
 import json
 import os
-from collections.abc import Generator, Iterator
+from collections.abc import Generator, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -5491,7 +5491,7 @@ async def test_bedrock_manual_cache_point_with_explicit_ttl(
     )
 
 
-def _cache_point_ttls(converse: dict[str, Any]) -> list[str]:
+def _cache_point_ttls(converse: Mapping[str, Any]) -> list[str]:
     """The TTL of every cache point in a Converse request, in the order Bedrock processes them: tools, system, messages."""
     blocks = [*converse.get('toolConfig', {}).get('tools', []), *converse['system']]
     for wire_message in converse['messages']:

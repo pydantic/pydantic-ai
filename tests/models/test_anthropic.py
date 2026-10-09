@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import json
 import os
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -2114,7 +2114,7 @@ async def test_automatic_caching_yields_to_explicit_breakpoint_on_last_block(
     }
 
 
-def _cache_breakpoint_ttls(kwargs: dict[str, Any]) -> list[str]:
+def _cache_breakpoint_ttls(kwargs: Mapping[str, Any]) -> list[str]:
     """The TTL of every breakpoint in a mocked request, in the order Anthropic processes them: tools, system,
     messages, then the top-level automatic breakpoint, which lands on the last cacheable block."""
     blocks = [
@@ -2188,7 +2188,11 @@ async def test_earlier_cache_breakpoints_raised_in_count_tokens(allow_model_requ
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
     mock_client = MockAnthropic.create_mock(c)
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(model, instructions='System instructions.', model_settings={'anthropic_cache_instructions': '5m'})
+    agent = Agent(
+        model,
+        instructions='System instructions.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions='5m'),
+    )
 
     await agent.run(
         ['Some context', CachePoint(ttl='1h'), 'Question'],
@@ -2222,7 +2226,7 @@ async def test_earlier_cache_breakpoints_raised_on_non_direct_clients(
     agent = Agent(
         model,
         instructions='System instructions.',
-        model_settings={'anthropic_cache': '1h', 'anthropic_cache_instructions': '5m'},
+        model_settings=AnthropicModelSettings(anthropic_cache='1h', anthropic_cache_instructions='5m'),
     )
 
     await agent.run('Hello')
