@@ -39,7 +39,7 @@ class SessionTracing(AbstractCapability[None]):
             return None
         session_id = self._bind_identity()
         if session_id not in self._roots:
-            self._roots[session_id] = (
+            root = (
                 self.instance.config.get_tracer_provider()
                 .get_tracer(SCOPE)
                 .start_span(
@@ -48,12 +48,33 @@ class SessionTracing(AbstractCapability[None]):
                     attributes={
                         'agent_session_id': session_id,
                         'logfire.msg': 'CLAI session',
-                        'logfire.tags': [self._email] if self._email else [],
-                        **({'user.email': self._email} if self._email else {}),
+                        'logfire.tags': self._tags(),
+                        **self._user(),
                     },
                 )
             )
+            self._roots[session_id] = root
+            # Also before `--resume` picks the conversation, or for a host with no saved conversations: the email
+            # is known now, and binding the root to its conversation, when startup selects it, announces it again.
+            self._announce(root, session_id)
         return self._roots[session_id]
+
+    def _tags(self) -> list[str]:
+        return [self._email] if self._email else []
+
+    def _user(self) -> dict[str, str]:
+        return {'user.email': self._email} if self._email else {}
+
+    def _announce(self, root: Span, session_id: str) -> None:
+        """Log the root's identity now: a span is exported only when it ends, which a session root does at exit."""
+        with parent_span(root):
+            # `tags=`, not a `logfire.tags` attribute, which `log` would serialize to a JSON string.
+            self.instance.log(
+                'info',
+                'CLAI session opened',
+                attributes={'agent_session_id': session_id, **self._user()},
+                tags=self._tags(),
+            )
 
     def _bind_identity(self) -> str:
         session_id = self.session_id() or self._fallback_id
@@ -61,6 +82,7 @@ class SessionTracing(AbstractCapability[None]):
             # Startup UI records can precede --resume selection; keep their parent and bind it once known.
             pending.set_attribute('agent_session_id', session_id)
             self._roots[session_id] = pending
+            self._announce(pending, session_id)
         return session_id
 
     def end(self, reason: SessionEndReason) -> None:

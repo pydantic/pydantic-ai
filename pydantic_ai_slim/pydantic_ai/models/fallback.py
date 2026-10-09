@@ -138,11 +138,7 @@ class FallbackModel(Model):
 
     def _parse_fallback_on(self, fallback_on: FallbackOn) -> None:
         """Parse the fallback_on parameter into exception and response handlers."""
-        if isinstance(fallback_on, tuple):
-            if fallback_on:
-                # Tuple of exception types (typing guarantees tuple contents are exception types)
-                self._exception_handlers.append(_exception_types_to_handler(fallback_on))  # type: ignore[arg-type]
-        elif _is_exception_type(fallback_on):
+        if _is_exception_type(fallback_on):
             # Single exception type
             self._exception_handlers.append(_exception_types_to_handler((fallback_on,)))
         elif callable(fallback_on):

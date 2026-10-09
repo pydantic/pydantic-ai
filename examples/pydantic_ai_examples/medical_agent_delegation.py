@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, RunContext
+from pydantic_ai.capabilities import Caching
 
 MODEL = 'openai:gpt-5.2'
 
@@ -106,6 +107,7 @@ gp_agent = Agent(
         You are a general practitioner.
         """
     ),
+    capabilities=[Caching()],
 )
 
 cardiology_agent = Agent(
@@ -117,6 +119,7 @@ cardiology_agent = Agent(
         You are a cardiology specialist.
         """
     ),
+    capabilities=[Caching()],
 )
 
 neurology_agent = Agent(
@@ -128,6 +131,7 @@ neurology_agent = Agent(
         You are a neurology specialist.
         """
     ),
+    capabilities=[Caching()],
 )
 
 senior_doctor_agent = Agent(
@@ -140,6 +144,7 @@ senior_doctor_agent = Agent(
         Integrate all prior findings to produce a clear treatment plan.
         """
     ),
+    capabilities=[Caching()],
 )
 
 SPECIALIST_MAP = {
@@ -175,6 +180,7 @@ triage_agent = Agent(
         Always produce a structured TriageFinalOutput.
         """
     ),
+    capabilities=[Caching()],
 )
 
 
