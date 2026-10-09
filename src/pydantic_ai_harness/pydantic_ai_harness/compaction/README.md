@@ -150,6 +150,27 @@ agent = Agent(
 )
 ```
 
+### `keep_fraction`: a kept tail that fits the window
+
+`keep_tokens` is as model-specific as `max_tokens`. With `keep_tokens=50_000` on a 32K model, the
+whole history fits in the tail, so compaction runs at the trigger and changes nothing, and the next
+request still overflows. `SummarizingCompaction` and `SlidingWindowCompaction` take
+`keep_fraction` too, resolved against the same window as `max_fraction`. Next to `keep_tokens` the
+smaller budget applies, so the tail stays at 50,000 tokens on large models and shrinks on small
+ones:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import SummarizingCompaction
+
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    capabilities=[SummarizingCompaction(max_fraction=0.85, keep_tokens=50_000, keep_fraction=0.4)],
+)
+```
+
+On its own, `keep_fraction` replaces `keep_messages` the way `keep_tokens` does.
+
 ### What counts toward the fraction
 
 With a usage anchor, everything the provider billed for the anchored request counts -- including
@@ -260,15 +281,23 @@ last exception is re-raised. Non-matching exceptions, cancellation, and other `B
 subclasses pass through immediately; `fallback_on` rejects types that do not derive from
 `Exception`.
 
+A `SummarizingCompaction` without `model=` summarizes with the run's model. When that is a
+realtime model or one that cannot write text, it raises `CannotSummarizeError`, a `UserError`.
+Add it to `fallback_on` to truncate on such models instead of failing the run; other `UserError`s
+still propagate.
+
 ```python
+from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError
 from pydantic_ai_harness import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
+from pydantic_ai_harness.compaction import CannotSummarizeError
 
 fallback = FallbackCompaction(
     max_fraction=0.85,
     fallback_chain=[
         SummarizingCompaction(max_messages=1, keep_tokens=20_000),
         SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
-    ]
+    ],
+    fallback_on=(ModelAPIError, FallbackExceptionGroup, CannotSummarizeError),
 )
 ```
 

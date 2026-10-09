@@ -914,9 +914,9 @@ Some plugins already include others. `coder` includes task delegation, so while
 `coder` has `sub_agents` turned off: `/plugins` shows it greyed out with
 `in coder`, `/plugins list` says `included in coder`, and enabling it says to
 disable `coder` first. Turning `coder` off loads any of them you had enabled.
-`coder` only clears old tool results, so `compaction` runs beside it. Were `coder`
-to bind its own history compaction, `compaction` would be greyed out the same way,
-so two compaction chains never run together.
+`coder` binds harness `Coder` with its compaction off, so `compaction` runs beside
+it as the only chain. Were `coder` to bind its own history compaction, `compaction`
+would be greyed out the same way, so two compaction chains never run together.
 
 `compaction` directly registers harness `FallbackCompaction` with
 `max_fraction=threshold`; harness owns the automatic trigger. `/compact` runs the

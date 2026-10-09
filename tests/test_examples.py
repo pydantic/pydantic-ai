@@ -127,7 +127,7 @@ def find_filter_examples() -> Iterable[ParameterSet]:
             # Written for the harness repository, which never ran them; not yet made runnable here.
             continue
         if ex.path.name == 'README.md' and (
-            'pydantic_ai_harness' in ex.source or 'agent.realtime(' in ex.source or 'ClearToolResults(' in ex.source
+            'pydantic_ai_harness' in ex.source or 'agent.realtime(' in ex.source or 'FallbackCompaction(' in ex.source
         ):
             # README fences stay bare so GitHub renders them; snippets that can't run here
             # (harness imports, the Coder blocks-equivalence fragment, interactive realtime

@@ -133,7 +133,14 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
 
 Then the plumbing, which the agent never calls directly:
 
-6. [`ClearToolResults`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_fraction=0.7)` and [`WarnNearLimits`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_context_fraction=0.9)`.
+6. [`FallbackCompaction`](https://pydantic.dev/docs/ai/harness/compaction/) over `SummarizingCompaction` then `SlidingWindowCompaction`: above 85% of the
+   model's context window, the run's model summarizes older messages, keeping the first user message (the task)
+   and the most recent 50,000 tokens or 40% of the window, whichever is less (`keep_tokens=50_000,
+   keep_fraction=0.4` on both strategies). A first message larger than about 40% of the window keeps the history
+   above the threshold. When summarizing fails with a model API error (including an exhausted `FallbackModel`),
+   a usage limit, or `CannotSummarizeError` because the model is realtime or cannot write text, those messages are
+   dropped instead.
+   Pass `compaction=False` to leave it out when the agent binds its own compaction.
 7. A private [`ToolOutputLimits`](https://pydantic.dev/docs/ai/harness/tool-output-limits/) specialization that truncates any tool result over 64,000 characters
    without adding a spill-retrieval tool. Its stable ID, `coder_tool_output_limits`, lets durability
    capabilities bind its inherited operations without colliding with a separately configured `ToolOutputLimits`.
@@ -231,6 +238,16 @@ capabilities emit.
 `Coder` works under Temporal, DBOS, and Prefect. [Durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/) shows an example for each engine and what works on each.
 
 ## Upgrading
+
+### Automatic compaction
+
+`Coder` now compacts the history itself, as described in [Composition](#composition), instead of binding
+[`ClearToolResults`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_fraction=0.7)` and [`WarnNearLimits`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_context_fraction=0.9)`.
+A summary is a request to the run's model, so it counts toward the run's usage and cost. To keep the previous
+behaviour, pass `Coder(compaction=False)` and add `ClearToolResults(max_fraction=0.7)` and
+`WarnNearLimits(max_context_fraction=0.9)` yourself.
+
+### The workspace
 
 This release makes the workspace the single place that decides where an agent works. Removed arguments are still accepted, emit a `HarnessDeprecationWarning` naming the fix, and are ignored.
 

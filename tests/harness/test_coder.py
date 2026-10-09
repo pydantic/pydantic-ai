@@ -11,9 +11,12 @@ import pydantic_ai_harness.coder
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability, LocalWorkspace
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceRef
 from pydantic_ai_harness.coder import FILE_TOOL_NAMES, Coder, coder_agent
+from pydantic_ai_harness.compaction import FallbackCompaction, compact_now, estimate_token_count
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.subagents import SubAgents
@@ -108,8 +111,7 @@ def test_coder_members_and_parameters() -> None:
         'Shell',
         'RepoContext',
         'SubAgents',
-        'ClearToolResults',
-        'WarnNearLimits',
+        'FallbackCompaction',
         '_BoundToolOutputs',
         'RepairToolArguments',
     ]
@@ -127,6 +129,61 @@ def test_coder_members_and_parameters() -> None:
     limits = next(item for item in coder.capabilities if type(item).__name__ == '_BoundToolOutputs')
     assert limits.id == 'coder_tool_output_limits'
     assert isinstance(coder.for_agent(Agent(TestModel())), Coder)
+
+
+def _history(tokens: int) -> list[ModelMessage]:
+    """Forty exchanges of about `tokens` in all, so compaction can keep a tail close to its budget."""
+    text = 'x' * (tokens * 4 // 40)  # four characters a token
+    return [
+        message
+        for turn in range(40)
+        for message in (ModelRequest(parts=[UserPromptPart(text)]), ModelResponse(parts=[TextPart(f'reply {turn}')]))
+    ]
+
+
+@pytest.mark.parametrize('window', [200_000, 32_000])
+async def test_coder_compaction_summarizes_with_the_run_model(tmp_path: Path, window: int) -> None:
+    """Over 85% of the window, the run's own model summarizes all but a tail that fits a small window too."""
+    requests: list[int] = []
+    summaries = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal summaries
+        if any('<messages>' in str(getattr(part, 'content', '')) for message in messages for part in message.parts):
+            summaries += 1
+            return ModelResponse(parts=[TextPart('summary')])
+        requests.append(estimate_token_count(messages))
+        return ModelResponse(parts=[TextPart('done')])
+
+    model = FunctionModel(respond, profile={'context_window': window})
+    agent = Agent(model, capabilities=[LocalWorkspace(tmp_path), Coder(repo_context=False, sub_agents=False)])
+    await agent.run('go', message_history=_history(int(window * 0.9)))
+
+    assert summaries == 1
+    # The kept tail is bounded by the window too, so even a 32,000-token one gets back under the trigger.
+    assert requests[0] < window * 0.85
+
+
+async def test_coder_compaction_truncates_when_the_model_cannot_summarize() -> None:
+    compaction = next(item for item in Coder().capabilities if isinstance(item, FallbackCompaction))
+
+    def never_called(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('a model that cannot write text is never asked for a summary')  # pragma: no cover
+
+    textless = FunctionModel(never_called, profile={'supports_text_output': False})
+
+    compacted = await compact_now(compaction, _history(180_000), model=textless)
+
+    assert isinstance(compacted[-1], ModelResponse) and compacted[-1].parts == [TextPart('reply 39')]
+    assert estimate_token_count(compacted) < 60_000  # 50,000 tokens kept, give or take a message
+    assert not any(
+        'summary' in str(getattr(part, 'content', '')).lower() for message in compacted for part in message.parts
+    )
+
+
+def test_coder_compaction_can_be_left_out() -> None:
+    assert any(isinstance(item, FallbackCompaction) for item in Coder().capabilities)
+    assert not any(isinstance(item, FallbackCompaction) for item in Coder(compaction=False).capabilities)
 
 
 async def test_no_workspace_fails_the_run_naming_coder() -> None:

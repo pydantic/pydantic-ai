@@ -154,6 +154,8 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
                 unrestricted_filesystem=settings.unrestricted_filesystem,
                 workspace=settings.workspace,
                 repo_context=settings.repo_context,
+                # The `compaction` plugin compacts history, with its own settings, `/compact`, and context gauge.
+                compaction=False,
                 sub_agents=settings.sub_agents,
                 agent_folders=settings.folders(home=Path.home()) or None,
             ),

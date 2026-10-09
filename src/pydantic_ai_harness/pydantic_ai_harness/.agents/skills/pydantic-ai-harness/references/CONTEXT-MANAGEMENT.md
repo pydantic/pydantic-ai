@@ -114,13 +114,16 @@ drop live data). With no trigger it runs on every request.
 ### `SlidingWindowCompaction`
 
 `SlidingWindowCompaction(max_messages=None, max_tokens=None, keep_messages=40, keep_tokens=None, preserve_first_user_message=True, receipts=False)`:
-drops the oldest whole messages.
+drops the oldest whole messages. Keyword `keep_fraction` caps the kept tail at a fraction of the
+window (the smaller of it and `keep_tokens`), so a `keep_tokens` tail still reclaims on a small model.
 
 ### `SummarizingCompaction`
 
 `SummarizingCompaction(model=None, max_messages=None, max_tokens=None, keep_messages=20, keep_tokens=None, ...)`:
 one LLM call per compaction. `model=None` inherits the run's model; a non-text model (for
-example a decision model) needs `model=` set or the first compaction raises `UserError`.
+example a decision model) or a realtime model needs `model=` set, or the first compaction raises
+`CannotSummarizeError` (a `UserError`; add it to `FallbackCompaction(fallback_on=...)` to truncate
+instead). `keep_fraction` works as on `SlidingWindowCompaction`.
 Useful keyword options: `model_settings`, `summarization_capabilities` (outer capabilities do not
 run on the summary call), `incremental=True` (update the previous summary rather than
 re-summarize), `keep_user_messages=False`, `tool_return_max_chars=500`, `summary_prompt` (must

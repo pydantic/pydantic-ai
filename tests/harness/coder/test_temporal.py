@@ -5,6 +5,7 @@ These tests start a local Temporal dev server via `WorkflowEnvironment.start_loc
 
 from __future__ import annotations
 
+import re
 import shutil
 from collections.abc import AsyncIterator, Iterator
 from datetime import timedelta
@@ -13,7 +14,7 @@ from pathlib import Path
 import pytest
 
 try:
-    from temporalio import workflow
+    from temporalio import activity, workflow
     from temporalio.client import Client
     from temporalio.common import RetryPolicy
     from temporalio.testing import WorkflowEnvironment
@@ -27,7 +28,15 @@ except ImportError:  # pragma: lax no cover
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
@@ -139,6 +148,40 @@ class DelegatingWorkflow:
         return (await delegating_agent.run(prompt)).output
 
 
+def _summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Write the summary when compaction asks, then answer with the summary the history carries."""
+    contents = [str(getattr(part, 'content', '')) for message in messages for part in message.parts]
+    if any('<messages>' in content for content in contents):
+        return ModelResponse(parts=[TextPart(f'summarized in an activity: {activity.in_activity()}')])
+    summary = re.search(r'summarized in an activity: \w+', '\n'.join(contents))
+    return ModelResponse(parts=[TextPart(summary.group() if summary else 'not compacted')])
+
+
+compacting_agent = Agent(
+    # A small window keeps the history under Temporal's payload size limit.
+    FunctionModel(_summarize, profile={'context_window': 64_000}),
+    name='compacting_coder_agent',
+    deps_type=type(None),
+    capabilities=[
+        LocalWorkspace[None](WORK),
+        Coder[None](repo_context=False, sub_agents=False),
+        TemporalDurability[None](activity_config=ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class CompactingWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        # About 60,000 tokens: over 85% of the window, and older than the 50,000 tokens compaction keeps.
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('lorem ipsum ' * 20_000)]),
+            ModelResponse(parts=[TextPart('read it')]),
+        ]
+        return (await compacting_agent.run(prompt, message_history=history)).output
+
+
 @pytest.fixture(scope='module')
 def anyio_backend() -> str:
     """Temporal's Python SDK runs on asyncio."""
@@ -218,6 +261,25 @@ async def test_delegation_to_self_runs_in_the_workflow(client: Client, workspace
 
     assert (workspace / 'delegated.txt').read_text() == 'from the delegate\n'
     assert 'Wrote 18 chars (1 lines) to delegated.txt.' in output
+
+
+async def test_compaction_summarizes_through_an_activity(client: Client, workspace: Path) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CompactingWorkflow],
+        plugins=[AgentPlugin(compacting_agent)],
+        workflow_runner=SandboxedWorkflowRunner(restrictions=_SANDBOXED),
+    ):
+        output = await client.execute_workflow(
+            CompactingWorkflow.run,
+            'Continue',
+            id='test_coder_temporal_compaction',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=60),
+        )
+
+    assert output == 'summarized in an activity: True'
 
 
 def test_workspace_capabilities_register_their_toolsets() -> None:
