@@ -472,7 +472,7 @@ _BrowserPeer = tuple[str, Callable[[str], Awaitable[None]], Callable[[], None]]
 
 
 @asynccontextmanager
-async def _speaking_browser(pcm: bytes) -> AsyncGenerator[_BrowserPeer]:  # pragma: no cover
+async def _speaking_browser(pcm: bytes, *, rate: int = 24000) -> AsyncGenerator[_BrowserPeer]:  # pragma: no cover
     """Negotiate a real WebRTC call with `aiortc`, standing in for a browser whose user asks a question.
 
     Recording only. Live's timeline moves with the audio it receives, and on a WebRTC call that audio
@@ -483,7 +483,7 @@ async def _speaking_browser(pcm: bytes) -> AsyncGenerator[_BrowserPeer]:  # prag
     """
     aiortc = importlib.import_module('aiortc')
     av = importlib.import_module('av')
-    rate, frame_samples = 24000, 480  # 20 ms frames of the 24 kHz clip
+    frame_samples = rate // 50  # 20 ms frames of the clip
     state = {'position': -1}
 
     class _Microphone(aiortc.MediaStreamTrack):
@@ -612,6 +612,60 @@ async def test_webrtc_sideband_runs_the_delegated_tool_round(
     # The browser plays the audio, so the sideband records the reply without its bytes.
     assert answer_part.audio is None
     assert session.usage.input_tokens > 0
+
+
+@pytest.mark.vcr
+async def test_webrtc_call_continues_the_bound_history(
+    openai_live_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    realtime_recording: bool,
+) -> None:
+    """History bound with `agent.realtime(...)` is seeded when the offer starts the Live session.
+
+    Live takes history only then, so the sideband opened from the same object seeds nothing, and the model
+    answers from the history it was started with.
+    """
+    provider, cassette = openai_live_ws_sideband_cassette
+    model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
+    agent = Agent(_BACKEND, instructions='Answer in a few words.')
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='My name is Ada.')]),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Nice to meet you, Ada.')]),
+    ]
+    realtime = agent.realtime(model, message_history=history)
+    pcm = assets_path.joinpath('remind_me_my_name_16khz.pcm').read_bytes()
+
+    @asynccontextmanager
+    async def browser() -> AsyncGenerator[_BrowserPeer]:
+        if realtime_recording:  # pragma: no cover
+            async with _speaking_browser(pcm, rate=16000) as peer:
+                yield peer
+            return
+        yield REAL_SDP_OFFER, _no_browser_to_connect, lambda: None
+
+    async with browser() as (offer, connect, speak):
+        answer = await realtime.answer_webrtc_offer(offer)
+        await connect(answer.sdp)
+
+        async with realtime.session(provider_session=answer.session) as session:
+            speak()
+            with anyio.fail_after(60):
+                async for event in session:  # pragma: no branch
+                    if isinstance(event, RealtimeTurnCompleteEvent):
+                        break
+
+    # The sideband seeded nothing: Live replayed the history the offer started the session with.
+    assert [i for i in cassette.interactions if isinstance(i, CassetteMessage) and i.direction == 'sent'] == []
+    messages = session.all_messages()
+    assert messages[:2] == history
+    spoken = ' '.join(
+        part.transcript or ''
+        for message in messages[2:]
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    )
+    assert 'Ada' in spoken
 
 
 @pytest.mark.vcr
