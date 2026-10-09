@@ -15,10 +15,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from importlib.metadata import distributions
 from types import ModuleType
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import anyio
-import pydantic
 import pytest
 
 import pydantic_ai._utils as utils_module
@@ -1091,7 +1090,13 @@ def test_merge_json_schema_defs_structurally_equal_with_different_ref_targets():
     )
 
 
-def _chain_schema(names: tuple[str, str, str, str], value_type: str, *, defs_layout: str, title: str) -> dict[str, Any]:
+def _chain_schema(
+    names: tuple[str, str, str, str],
+    value_type: str,
+    *,
+    defs_layout: Literal['sorted', 'chain'],
+    title: str,
+) -> dict[str, Any]:
     d1, d2, d3, leaf = names
     chain_defs = {
         d1: {'type': 'object', 'properties': {'next': {'$ref': f'#/$defs/{d2}'}}},
@@ -1122,10 +1127,21 @@ def _assert_all_json_schema_refs_resolve(value: Any, defs: dict[str, dict[str, A
             _assert_all_json_schema_refs_resolve(nested, defs)
 
 
+def _resolve_branch_leaf_value_type(branch: dict[str, Any], defs: dict[str, dict[str, Any]]) -> str:
+    """Follow `$ref`s from a merged branch down to its leaf model's `value` field."""
+    node: dict[str, Any] = branch
+    while True:
+        props: dict[str, Any] = node.get('properties', {})
+        next_props = [prop for prop in props.values() if '$ref' in prop]
+        if not next_props:
+            return str(node['properties']['value']['type'])
+        node = defs[str(next_props[0]['$ref']).removeprefix('#/$defs/')]
+
+
 @pytest.mark.parametrize('names', list(itertools.permutations(('A', 'B', 'C', 'D'))))
 @pytest.mark.parametrize('defs_layout', ['sorted', 'chain'])
 def test_merge_json_schema_defs_transitive_rename_all_orderings(
-    names: tuple[str, str, str, str], defs_layout: str
+    names: tuple[str, str, str, str], defs_layout: Literal['sorted', 'chain']
 ) -> None:
     schemas = [
         _chain_schema(names, 'string', defs_layout=defs_layout, title='StringRoot'),
@@ -1367,46 +1383,3 @@ def test_replace_no_init() -> None:
     with pytest.raises(TypeError, match='its `__copy__` does not return a new instance'):
         replace_no_init(self_copying, name='b')
     assert self_copying.name == 'a', 'the original must not be mutated in place'
-
-
-def _resolve_branch_leaf_value_type(branch: dict[str, Any], defs: dict[str, dict[str, Any]]) -> str:
-    """Follow `$ref`s from a merged `anyOf` branch down to its leaf model's `value` field."""
-    node: dict[str, Any] = branch
-    while True:
-        props: dict[str, Any] = node.get('properties', {})
-        next_props = [prop for prop in props.values() if '$ref' in prop]
-        if not next_props:
-            return str(node['properties']['value']['type'])
-        node = defs[str(next_props[0]['$ref']).removeprefix('#/$defs/')]
-
-
-def test_output_json_schema_transitive_collision_preserves_branches():
-    """Two output models with same-named nested defs of different bodies keep per-branch fidelity."""
-    first_leaf = pydantic.create_model('ZLeaf', value=(str, ...))
-    first_middle = pydantic.create_model('Middle', leaf=(first_leaf, ...))
-    first = pydantic.create_model('AOuter', middle=(first_middle, ...))
-    second_leaf = pydantic.create_model('ZLeaf', value=(int, ...))
-    second_middle = pydantic.create_model('Middle', leaf=(second_leaf, ...))
-    second = pydantic.create_model('AOuter', middle=(second_middle, ...))
-
-    schema = Agent(TestModel(), output_type=[first, second]).output_json_schema()
-
-    defs = schema['$defs']
-    assert _resolve_branch_leaf_value_type(schema['anyOf'][0], defs) == 'string'
-    assert _resolve_branch_leaf_value_type(schema['anyOf'][1], defs) == 'integer'
-
-
-def test_output_json_schema_transitive_collision_preserves_branches_name_permutation():
-    """Same shape with outer/middle/leaf def names permuted to (A, C, B), another order that corrupted a branch."""
-    first_leaf = pydantic.create_model('B', value=(str, ...))
-    first_middle = pydantic.create_model('C', leaf=(first_leaf, ...))
-    first = pydantic.create_model('A', middle=(first_middle, ...))
-    second_leaf = pydantic.create_model('B', value=(int, ...))
-    second_middle = pydantic.create_model('C', leaf=(second_leaf, ...))
-    second = pydantic.create_model('A', middle=(second_middle, ...))
-
-    schema = Agent(TestModel(), output_type=[first, second]).output_json_schema()
-
-    defs = schema['$defs']
-    assert _resolve_branch_leaf_value_type(schema['anyOf'][0], defs) == 'string'
-    assert _resolve_branch_leaf_value_type(schema['anyOf'][1], defs) == 'integer'
