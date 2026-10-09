@@ -572,9 +572,12 @@ User turns are the highest signal-per-token content in a conversation, and losin
 main driver of resumption drift. `SummarizingCompaction(keep_user_messages=True)` preserves
 the newest user turns from the summarized prefix alongside the summary. They consume the
 existing `keep_messages` tail budget, so at most that many retained user messages and tail
-messages survive together; compaction therefore does not grow retained copies on each cycle.
-When `keep_tokens` is set, those same retained user messages and tail messages also share its
-token budget; a user turn that does not fit is summarized instead.
+messages survive together, except that one tail slot is reserved for the request being
+answered when retained user turns would otherwise consume it; compaction therefore does not
+grow retained copies on each cycle. When `keep_tokens` is set, those same retained user
+messages and tail messages also share its token budget; a user turn that does not fit is
+summarized instead, and the newest tail message survives even when retained user turns
+exhaust that budget too.
 Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) with an explicit
 truncation marker when it overruns. The character budget applies per part, shared across the
 text items of a multi-part prompt; images, audio, and cache points pass through untouched. This

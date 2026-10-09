@@ -22,6 +22,7 @@ from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 
 from pydantic_ai import Agent, CancellationToken, ModelMessage, RunCancelled
+from pydantic_ai.capabilities import Caching
 
 
 async def stream_turn(
@@ -87,7 +88,7 @@ async def _run_interactive_turn(
 
 
 async def main() -> None:
-    agent = Agent('openai:gpt-5-mini')
+    agent = Agent('openai:gpt-5-mini', capabilities=[Caching()])
     session: PromptSession[str] = PromptSession()
     history: list[ModelMessage] = []
 
