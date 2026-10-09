@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TypeAlias
 
 import pytest
+import xdist.workermanage
 
 from .cost_guards import BUDGET_ENV_VAR, _popen_argv, launches_python  # pyright: ignore[reportPrivateUsage]
 
@@ -56,6 +57,8 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunPytest
         (['git', 'status'], False),
         (['sh', '-c', 'git status'], False),
         (['sh', '-c', "echo 'unbalanced"], False),
+        (['sh', '-c', f"python -c '{'x' * 100_000}'"], True),
+        (['sh', '-c', f"printf %s '{'x' * 100_000}' >> file"], False),
         (['sh', 'script.sh'], False),
         ([], False),
     ],
@@ -247,8 +250,13 @@ def test_a_failing_marked_test_is_not_judged(run: RunPytest):
 
 @pytest.mark.subprocess(reason='checks the guard and the stale-marker verdict across pytest-xdist workers')
 def test_guards_work_under_xdist(run: RunPytest, monkeypatch: pytest.MonkeyPatch):
-    # Workers import `tests.cost_guards` from a fresh interpreter started in the session's temporary directory.
-    monkeypatch.setenv('PYTHONPATH', str(Path(__file__).parent.parent))
+    # Workers import `tests.cost_guards` from a fresh interpreter, and xdist replaces their `sys.path` with the one
+    # this process started with (ignoring `PYTHONPATH`), which only has the repo root when an editable install adds it.
+    monkeypatch.setattr(
+        xdist.workermanage,
+        '_sys_path',
+        [str(Path(__file__).parent.parent), *xdist.workermanage._sys_path],  # pyright: ignore[reportPrivateUsage]
+    )
     result = run(
         f"""
         @pytest.mark.subprocess(reason='used to launch Python')

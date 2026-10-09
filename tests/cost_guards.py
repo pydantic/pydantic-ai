@@ -66,6 +66,21 @@ def _is_python_program(program: str) -> bool:
     return program in _python_programs or _PYTHON_PROGRAM.fullmatch(os.path.basename(program)) is not None
 
 
+# Only the start of a shell command names the program it runs. `shlex` tokenizes in pure Python, one character at a
+# time, so splitting a whole command that carries a large payload (a base64-encoded file write) costs seconds.
+_SHELL_COMMAND_SCAN_CHARS = 1024
+
+
+def _leading_words(command: str) -> list[str]:
+    """The words at the start of a shell command, up to an unterminated quote where the scan was cut off."""
+    lexer = shlex.shlex(command[:_SHELL_COMMAND_SCAN_CHARS], posix=True)
+    lexer.whitespace_split = True
+    words: list[str] = []
+    with suppress(ValueError):
+        words.extend(lexer)
+    return words
+
+
 def launches_python(argv: Sequence[str]) -> bool:
     """Whether a process started with `argv` is a Python interpreter.
 
@@ -76,10 +91,7 @@ def launches_python(argv: Sequence[str]) -> bool:
     program, *rest = argv
     name = os.path.basename(program)
     if name in _SHELLS and len(rest) >= 2 and rest[0] == '-c':
-        try:
-            return launches_python(shlex.split(rest[1]))
-        except ValueError:
-            return False
+        return launches_python(_leading_words(rest[1]))
     if name == 'env':
         while rest and (rest[0].startswith('-') or '=' in rest[0]):
             rest.pop(0)

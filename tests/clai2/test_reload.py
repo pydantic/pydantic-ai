@@ -51,6 +51,7 @@ def reload_server() -> Iterator[ReloadServer]:
 @pytest.mark.skipif(
     'fork' not in multiprocessing.get_all_start_methods(), reason='the reload server forks a child per scenario'
 )
+@pytest.mark.slow(reason='each scenario reloads the whole shell in a forked child of the preloaded reload server')
 def test_reload_running_shell(tmp_path: Path, reload_server: ReloadServer, mode: str) -> None:
     copy_package(tmp_path)
     reload_server.run(tmp_path, mode)
