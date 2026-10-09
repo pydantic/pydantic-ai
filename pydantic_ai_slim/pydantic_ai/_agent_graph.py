@@ -2033,22 +2033,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             state.response = response
 
         start = AttemptStart()
-        # What this attempt failed with, should a hook reject its outcome: the billed response, or
-        # the error a hook recovered from (a recovered response was never billed).
-        failure: Exception | _messages.ModelResponse
+        # What the attempt is recorded as failing with, should a hook move on from it: the billed
+        # response, or the error, also when a hook recovered from it (a recovered response was never billed).
+        outcome: Exception | _messages.ModelResponse
         try:
-            failure = await model_request(
+            outcome = await model_request(
                 request_context.model, request_context=request_context, run_context=run_context, on_progress=on_progress
             )
             # Committed before the earlier attempts are attached, so their usage isn't counted twice.
-            state.record(ctx, failure, request_context)
-            response = failed.attach(failure)
+            state.record(ctx, outcome, request_context)
+            response = failed.attach(outcome)
         except (exceptions.ModelRetry, exceptions.RetryModelRequest):
             raise
         except Exception as e:
             if state.response is not None:
                 state.record(ctx, state.response, request_context)
-            failure = e
+            outcome = e
             response = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
         state.response = response
         capture_model_response_span_context(request_context, response)
@@ -2057,10 +2057,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 run_context, request_context=request_context, response=response
             )
         except exceptions.RetryModelRequest:
-            failed.record(request_context, failure, start)
+            failed.record(request_context, outcome, start)
             raise
         except exceptions.FallbackExceptionGroup as unrecovered:
-            failed.record_exhausted(request_context, failure, start, unrecovered)
+            failed.record_exhausted(request_context, outcome, start, unrecovered)
             self._raise_usage_limit_exceeded(ctx, unrecovered)
             raise
 
