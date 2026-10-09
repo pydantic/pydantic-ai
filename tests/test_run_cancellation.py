@@ -164,16 +164,16 @@ async def test_external_cancellation_keeps_completed_tool_result(
 async def test_parallel_ordered_sibling_exception_does_not_emit_later_result_event() -> None:
     """Keeping the completed return doesn't add a result event: ordered settlement stops at the first exception."""
     agent, _ = _parallel_sibling_tools_agent(raise_first=True)
-    result_events: list[FunctionToolResultEvent] = []
+    seen_events: list[object] = []
 
     with agent.parallel_tool_call_execution_mode('parallel_ordered_events'):
         with pytest.raises(RuntimeError, match='first tool failed'):
             async with agent.run_stream_events('go') as events:
                 async for event in events:
-                    if isinstance(event, FunctionToolResultEvent):
-                        result_events.append(event)
+                    seen_events.append(event)
 
-    assert result_events == []
+    assert seen_events
+    assert not any(isinstance(event, FunctionToolResultEvent) for event in seen_events)
 
 
 def _task_cancelling(task: asyncio.Task[Any]) -> int:
