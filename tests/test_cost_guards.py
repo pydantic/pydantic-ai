@@ -268,6 +268,7 @@ def test_guards_work_under_xdist(run: RunPytest, monkeypatch: pytest.MonkeyPatch
         [
             '*`test_guarded.py::test_unmarked` launched a Python interpreter during call:*',
             '*test_guarded.py::test_stale: no test covered by its `@pytest.mark.subprocess`*',
+            '*worker startup and collection of 2 tests took *s (slowest worker collected in *s)',
         ]
     )
 
@@ -321,3 +322,14 @@ def test_the_budget_message_names_excluded_shared_setup(run: RunPytest, monkeypa
 def test_a_run_that_collects_nothing_is_not_judged(run: RunPytest):
     result = run('')
     assert result.ret == pytest.ExitCode.NO_TESTS_COLLECTED
+
+
+def test_collection_time_is_reported(run: RunPytest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    step_summary = tmp_path / 'summary.md'
+    monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(step_summary))
+    result = run('def test_nothing():\n    pass\n')
+    result.stdout.fnmatch_lines(
+        ['collection of 1 tests took *s', 'slowest test modules to collect: test_guarded.py (*s)']
+    )
+    assert step_summary.read_text().startswith('pytest collection of 1 tests took ')
+    assert '- `test_guarded.py`: ' in step_summary.read_text()

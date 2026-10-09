@@ -7,6 +7,7 @@ towards. The plugin:
   and fails the session when a `subprocess` marker no longer covers any test that launches one;
 - when `PYTEST_TEST_BUDGET_SECONDS` is set, fails a test whose setup and call together take longer than that
   unless it is marked `@pytest.mark.slow(reason=...)`;
+- reports how long collection took, in the terminal summary and in `$GITHUB_STEP_SUMMARY` when that is set.
 """
 
 from __future__ import annotations as _annotations
@@ -124,6 +125,7 @@ _BUDGET_KEY = pytest.StashKey[float]()
 _DESELECTED_KEY = pytest.StashKey[set[str]]()
 _MARKER_SCOPES_KEY = pytest.StashKey[dict[str, tuple[int, bool]]]()
 _AGGREGATE_KEY = pytest.StashKey['_SessionAggregate']()
+_MODULE_COLLECTION_KEY = pytest.StashKey[dict[str, float]]()
 # The sessions whose terminal this process owns, innermost last; `pytest-xdist` workers own none.
 _aggregates: list[_SessionAggregate] = []
 # Innermost last: `pytester` runs a session inside a test, and its tests must not report to the outer one.
@@ -393,6 +395,11 @@ class _MarkerAggregate:
 class _SessionAggregate:
     markers: dict[str, _MarkerAggregate] = field(default_factory=dict[str, _MarkerAggregate])
     stale: list[str] = field(default_factory=list[str])
+    session_start: float = 0.0
+    collection_end: float = 0.0
+    collected: int = 0
+    slowest_worker_collection: float = 0.0
+    slowest_modules: dict[str, float] = field(default_factory=dict[str, float])
 
     def stale_markers(self) -> list[str]:
         return sorted(
@@ -417,6 +424,12 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
 
 
 @pytest.hookimpl(tryfirst=True)
+def pytest_sessionstart(session: pytest.Session) -> None:
+    if (aggregate := session.config.stash.get(_AGGREGATE_KEY, None)) is not None:
+        aggregate.session_start = time.perf_counter()
+
+
+@pytest.hookimpl(tryfirst=True)
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     aggregate = session.config.stash.get(_AGGREGATE_KEY, None)
     if aggregate is None or session.shouldstop or session.shouldfail:
@@ -428,6 +441,69 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
+# --- Collection time --------------------------------------------------------------------------------------------------
+#
+# Collection runs once per `pytest-xdist` worker, so its cost multiplies with the worker count; it mostly comes from
+# test modules importing heavy optional dependencies. The summary names the slowest modules to collect, so a module
+# that starts importing something expensive shows up in the next CI run.
+
+_SLOWEST_MODULES_SHOWN = 10
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(
+    collector: pytest.Collector,
+) -> Generator[None, pytest.CollectReport, pytest.CollectReport]:
+    if not isinstance(collector, pytest.Module):
+        return (yield)
+    start = time.perf_counter()
+    try:
+        return (yield)
+    finally:
+        collector.config.stash.setdefault(_MODULE_COLLECTION_KEY, {})[collector.nodeid] = time.perf_counter() - start
+
+
+def _slowest_modules(config: pytest.Config) -> dict[str, float]:
+    seconds = config.stash.get(_MODULE_COLLECTION_KEY, dict[str, float]())
+    return dict(sorted(seconds.items(), key=lambda item: item[1], reverse=True)[:_SLOWEST_MODULES_SHOWN])
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_collection(session: pytest.Session) -> Generator[None, object, object]:
+    start = time.perf_counter()
+    try:
+        return (yield)
+    finally:
+        config = session.config
+        if hasattr(config, 'workerinput'):
+            workeroutput: dict[str, Any] = getattr(config, 'workeroutput')  # set by `pytest-xdist` on workers
+            workeroutput['collection_seconds'] = time.perf_counter() - start
+            workeroutput['slowest_modules'] = _slowest_modules(config)
+        elif (aggregate := config.stash.get(_AGGREGATE_KEY, None)) is not None and not config.pluginmanager.has_plugin(
+            'dsession'
+        ):
+            aggregate.session_start = start
+            aggregate.collection_end = time.perf_counter()
+            aggregate.collected = len(session.items)
+            aggregate.slowest_modules = _slowest_modules(config)
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_node_collection_finished(node: Any, ids: Sequence[str]) -> None:
+    aggregate = node.config.stash[_AGGREGATE_KEY]
+    aggregate.collection_end = time.perf_counter()
+    aggregate.collected = len(ids)
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node: Any, error: object) -> None:
+    aggregate = node.config.stash[_AGGREGATE_KEY]
+    output = getattr(node, 'workeroutput', {})
+    aggregate.slowest_worker_collection = max(aggregate.slowest_worker_collection, output.get('collection_seconds', 0))
+    for module, seconds in output.get('slowest_modules', {}).items():
+        aggregate.slowest_modules[module] = max(aggregate.slowest_modules.get(module, 0), seconds)
+
+
 def pytest_terminal_summary(terminalreporter: Any, config: pytest.Config) -> None:
     aggregate = config.stash.get(_AGGREGATE_KEY, None) or _SessionAggregate()
     if aggregate.stale:
@@ -437,3 +513,23 @@ def pytest_terminal_summary(terminalreporter: Any, config: pytest.Config) -> Non
                 f'{location}: no test covered by its `@pytest.mark.subprocess` launched a Python interpreter; '
                 'remove the stale marker'
             )
+    if not aggregate.collection_end:  # pragma: lax no cover - `pytest-xdist` workers that died before collecting
+        return
+    seconds = aggregate.collection_end - aggregate.session_start
+    if aggregate.slowest_worker_collection:
+        summary = (
+            f'worker startup and collection of {aggregate.collected} tests took {seconds:.1f}s '
+            f'(slowest worker collected in {aggregate.slowest_worker_collection:.1f}s)'
+        )
+    else:
+        summary = f'collection of {aggregate.collected} tests took {seconds:.1f}s'
+    modules = sorted(aggregate.slowest_modules.items(), key=lambda item: item[1], reverse=True)[:_SLOWEST_MODULES_SHOWN]
+    terminalreporter.write_line(summary)
+    terminalreporter.write_line(
+        'slowest test modules to collect: ' + ', '.join(f'{module} ({seconds:.2f}s)' for module, seconds in modules)
+    )
+    if step_summary := os.environ.get('GITHUB_STEP_SUMMARY'):
+        with open(step_summary, 'a', encoding='utf-8') as file:
+            file.write(f'pytest {summary}; slowest test modules to collect:\n\n')
+            file.writelines(f'- `{module}`: {seconds:.2f}s\n' for module, seconds in modules)
+            file.write('\n')
