@@ -631,7 +631,7 @@ _deadline_sub_agent = Agent(TestModel(), name='durability_deadline_sub_agent')
 
 
 @_deadline_sub_agent.tool
-def _record_sub_agent_deadline(ctx: RunContext[None]) -> str:
+def _record_sub_agent_deadline(ctx: RunContext[object]) -> str:
     _deadline_seen.append((None, ctx.deadline))
     return 'ok'
 

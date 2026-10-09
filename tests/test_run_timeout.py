@@ -59,7 +59,7 @@ def _call_slow_tool(messages: list[ModelMessage], _info: AgentInfo) -> ModelResp
     return ModelResponse(parts=[ToolCallPart('slow_tool', {}, tool_call_id='call_slow')])
 
 
-def _slow_tool_agent() -> Agent[None, str]:
+def _slow_tool_agent() -> Agent[object, str]:
     agent = Agent(FunctionModel(_call_slow_tool))
 
     @agent.tool_plain
@@ -220,7 +220,7 @@ async def test_deadline_and_remaining_time_on_run_context():
     agent = Agent(TestModel())
 
     @agent.tool
-    def check_deadline(ctx: RunContext[None]) -> str:
+    def check_deadline(ctx: RunContext[object]) -> str:
         seen.append((ctx.deadline, ctx.remaining_time()))
         return 'ok'
 
@@ -238,22 +238,22 @@ async def test_deadline_and_remaining_time_on_run_context():
     assert seen == [(None, None)]
 
 
-def _delegating_agent(sub_agent: Agent[None, str], *, sub_timeout: float | None) -> Agent[None, str]:
+def _delegating_agent(sub_agent: Agent[object, str], *, sub_timeout: float | None) -> Agent[object, str]:
     agent = Agent(TestModel())
 
     @agent.tool
-    async def delegate(ctx: RunContext[None]) -> str:
+    async def delegate(ctx: RunContext[object]) -> str:
         result = await sub_agent.run('sub', timeout=sub_timeout)
         return result.output
 
     return agent
 
 
-def _deadline_recording_agent(seen: list[datetime | None]) -> Agent[None, str]:
+def _deadline_recording_agent(seen: list[datetime | None]) -> Agent[object, str]:
     sub_agent = Agent(TestModel())
 
     @sub_agent.tool
-    def record(ctx: RunContext[None]) -> str:
+    def record(ctx: RunContext[object]) -> str:
         seen.append(ctx.deadline)
         return 'ok'
 
@@ -267,7 +267,7 @@ async def test_sub_agent_inherits_deadline():
     agent = Agent(TestModel())
 
     @agent.tool
-    async def delegate(ctx: RunContext[None]) -> str:
+    async def delegate(ctx: RunContext[object]) -> str:
         parent_deadlines.append(ctx.deadline)
         return (await sub_agent.run('sub')).output
 
@@ -350,7 +350,7 @@ async def test_cancel_before_expiry_stays_run_cancelled():
     agent = Agent(TestModel())
 
     @agent.tool
-    async def cancel_run(ctx: RunContext[None]) -> str:
+    async def cancel_run(ctx: RunContext[object]) -> str:
         ctx.cancel()
         await asyncio.sleep(SHORT_TIMEOUT * 4)
         raise AssertionError('unreachable')  # pragma: no cover
@@ -395,7 +395,7 @@ _FIXED_NOW = datetime(2030, 1, 1, tzinfo=UTC)
 
 
 @dataclass
-class _ReplaySafeClock(AbstractCapability[None]):
+class _ReplaySafeClock(AbstractCapability[object]):
     """Stands in for a durability capability's replay-safe clock and recorded start time."""
 
     def _run_clock(self) -> Callable[[], datetime] | None:
@@ -411,7 +411,7 @@ async def test_capability_supplies_clock_and_start_time():
     agent = Agent(TestModel(), capabilities=[WrapperCapability(wrapped=_ReplaySafeClock())])
 
     @agent.tool
-    def check_deadline(ctx: RunContext[None]) -> str:
+    def check_deadline(ctx: RunContext[object]) -> str:
         seen.append((ctx.deadline, ctx.remaining_time()))
         return 'ok'
 
