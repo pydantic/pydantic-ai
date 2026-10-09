@@ -41,8 +41,12 @@ from e2b.exceptions import (
     SandboxException,
     SandboxNotFoundException,
     TimeoutException,
-    format_sandbox_timeout_exception,
 )
+
+try:
+    from e2b.exceptions import format_sandbox_unavailable_exception  # pyright: ignore[reportAttributeAccessIssue]
+except ImportError:  # e2b < 2.53.1
+    from e2b.exceptions import format_sandbox_timeout_exception as format_sandbox_unavailable_exception
 
 __all__ = (
     'FakeCommandCall',
@@ -654,7 +658,7 @@ class FakeSandbox:
         request, so only the health probe tells the two apart.
         """
         if self.killed:
-            raise format_sandbox_timeout_exception('The sandbox was not found')
+            raise format_sandbox_unavailable_exception('The sandbox was not found')
 
     async def is_running(self, request_timeout: float | None = None) -> bool:
         del request_timeout
