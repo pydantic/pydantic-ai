@@ -160,7 +160,8 @@ extended-thinking blocks, provider-side tool results, and the instructions, once
 the anchor only when they changed since it). That estimated portion is a ~4-characters-per-token
 approximation, not a tokenizer; pass `tokenizer=` to any strategy to measure with the real one.
 `FilePart` is not counted there -- its payload is binary, and its length in characters would mean
-nothing. Newly revealed tool schemas pending in the current request are conservatively estimated
+nothing. For the same reason a file inside a tool return counts as the `See file <identifier>.`
+reference a text-only tool result carries in its place. Newly revealed tool schemas pending in the current request are conservatively estimated
 by the implementation, since they are not covered by the earlier anchor.
 
 **If you already set an absolute `max_tokens`, re-check it.** The estimator used to count only user
@@ -539,6 +540,9 @@ SlidingWindowCompaction(max_messages=80, keep_messages=40, receipts=True)
   above is secondhand; `SlidingWindowCompaction` drops history outright, so its receipt says that context
   is gone. The blank-in-place strategies (`ClearToolResults`, `DeduplicateFileReads`,
   `ClampOversizedMessages`) keep every message and cross no boundary, so they emit no receipt.
+- **Receipt slot.** `SlidingWindowCompaction` counts its receipt toward `keep_messages`, so
+  `keep_messages=40` keeps the receipt and 39 messages. The receipt never takes the last slot:
+  `keep_messages=1` keeps the receipt and the newest message.
 - **Transcript handle.** Attach any capability exposing `compaction_transcript_handle() -> str | None`
   (the `TranscriptHandleProvider` protocol) and the receipt gains a `Persisted run handle:` pointer.
   `StepPersistence` implements it (returning its `run_id`), so attaching it is enough. The handle

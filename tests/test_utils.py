@@ -3,8 +3,10 @@ from __future__ import annotations as _annotations
 import asyncio
 import contextlib
 import contextvars
+import copy
 import functools
 import importlib.util
+import itertools
 import os
 import sys
 import threading
@@ -13,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from importlib.metadata import distributions
 from types import ModuleType
-from typing import Any
+from typing import Any, Literal, cast
 
 import anyio
 import pytest
@@ -30,6 +32,7 @@ from pydantic_ai._utils import (
     get_first_param_type,
     group_by_temporal,
     is_async_callable,
+    is_str_dict,
     merge_json_schema_defs,
     replace_no_init,
     run_in_executor,
@@ -1130,6 +1133,147 @@ def test_merge_json_schema_defs_structurally_equal_with_different_ref_targets():
                 'title': 'SchemaB',
             },
         ]
+    )
+
+
+def _chain_schema(
+    names: tuple[str, str, str, str],
+    value_type: str,
+    *,
+    defs_layout: Literal['sorted', 'chain'],
+    title: str,
+) -> dict[str, Any]:
+    d1, d2, d3, leaf = names
+    chain_defs = {
+        d1: {'type': 'object', 'properties': {'next': {'$ref': f'#/$defs/{d2}'}}},
+        d2: {'type': 'object', 'properties': {'next': {'$ref': f'#/$defs/{d3}'}}},
+        d3: {'type': 'object', 'properties': {'next': {'$ref': f'#/$defs/{leaf}'}}},
+        leaf: {'type': 'object', 'properties': {'value': {'type': value_type}}},
+    }
+    if defs_layout == 'sorted':
+        chain_defs = {name: chain_defs[name] for name in sorted(chain_defs)}
+
+    return {
+        '$defs': chain_defs,
+        'title': title,
+        'type': 'object',
+        'properties': {'root': {'$ref': f'#/$defs/{d1}'}},
+    }
+
+
+def _assert_all_json_schema_refs_resolve(value: Any, defs: dict[str, dict[str, Any]]) -> None:
+    if is_str_dict(value):
+        if ref := value.get('$ref'):
+            assert str(ref).removeprefix('#/$defs/') in defs
+        for nested in value.values():
+            _assert_all_json_schema_refs_resolve(nested, defs)
+    elif isinstance(value, list):
+        for nested in cast(list[Any], value):
+            _assert_all_json_schema_refs_resolve(nested, defs)
+
+
+def _resolve_branch_leaf_value_type(branch: dict[str, Any], defs: dict[str, dict[str, Any]]) -> str:
+    """Follow `$ref`s from a merged branch down to its leaf model's `value` field."""
+    node: dict[str, Any] = branch
+    while True:
+        props: dict[str, Any] = node.get('properties', {})
+        next_props = [prop for prop in props.values() if '$ref' in prop]
+        if not next_props:
+            return str(node['properties']['value']['type'])
+        node = defs[str(next_props[0]['$ref']).removeprefix('#/$defs/')]
+
+
+@pytest.mark.parametrize('names', list(itertools.permutations(('A', 'B', 'C', 'D'))))
+@pytest.mark.parametrize('defs_layout', ['sorted', 'chain'])
+def test_merge_json_schema_defs_transitive_rename_all_orderings(
+    names: tuple[str, str, str, str], defs_layout: Literal['sorted', 'chain']
+) -> None:
+    """Every 4-level chain ordering keeps branch types; too many cases to run through `Agent.output_json_schema()`."""
+    schemas = [
+        _chain_schema(names, 'string', defs_layout=defs_layout, title='StringRoot'),
+        _chain_schema(names, 'integer', defs_layout=defs_layout, title='IntegerRoot'),
+    ]
+    original_schemas = copy.deepcopy(schemas)
+
+    rewritten_schemas, all_defs = merge_json_schema_defs(schemas)
+
+    assert _resolve_branch_leaf_value_type(rewritten_schemas[0], all_defs) == 'string'
+    assert _resolve_branch_leaf_value_type(rewritten_schemas[1], all_defs) == 'integer'
+    _assert_all_json_schema_refs_resolve(rewritten_schemas, all_defs)
+    _assert_all_json_schema_refs_resolve(all_defs, all_defs)
+    assert schemas == original_schemas
+
+
+def test_merge_json_schema_defs_transitive_rename_snapshot():
+    """Pins the names for one previously broken ordering; the Agent-level test covers the user-facing path."""
+    names = ('A', 'C', 'B', 'D')
+    schemas = [
+        _chain_schema(names, 'string', defs_layout='sorted', title='StringRoot'),
+        _chain_schema(names, 'integer', defs_layout='sorted', title='IntegerRoot'),
+    ]
+
+    rewritten_schemas, all_defs = merge_json_schema_defs(schemas)
+
+    assert (all_defs, rewritten_schemas) == snapshot(
+        (
+            {
+                'A': {'type': 'object', 'properties': {'next': {'$ref': '#/$defs/C'}}},
+                'B': {'type': 'object', 'properties': {'next': {'$ref': '#/$defs/D'}}},
+                'C': {'type': 'object', 'properties': {'next': {'$ref': '#/$defs/B'}}},
+                'D': {'type': 'object', 'properties': {'value': {'type': 'string'}}},
+                'IntegerRoot_D_1': {'type': 'object', 'properties': {'value': {'type': 'integer'}}},
+                'IntegerRoot_B_1': {'type': 'object', 'properties': {'next': {'$ref': '#/$defs/IntegerRoot_D_1'}}},
+                'IntegerRoot_C_1': {'type': 'object', 'properties': {'next': {'$ref': '#/$defs/IntegerRoot_B_1'}}},
+                'IntegerRoot_A_1': {'type': 'object', 'properties': {'next': {'$ref': '#/$defs/IntegerRoot_C_1'}}},
+            },
+            [
+                {'title': 'StringRoot', 'type': 'object', 'properties': {'root': {'$ref': '#/$defs/A'}}},
+                {'title': 'IntegerRoot', 'type': 'object', 'properties': {'root': {'$ref': '#/$defs/IntegerRoot_A_1'}}},
+            ],
+        )
+    )
+
+
+def test_merge_json_schema_defs_shared_chain_not_renamed_for_unrelated_collision():
+    """Shared defs that do not reach a renamed def are reused, not copied; a merge-level detail of the def names."""
+    shared_defs = {
+        'SharedRoot': {'type': 'object', 'properties': {'leaf': {'$ref': '#/$defs/SharedLeaf'}}},
+        'SharedLeaf': {'type': 'object', 'properties': {'value': {'type': 'boolean'}}},
+    }
+    schemas = [
+        {
+            '$defs': {
+                **shared_defs,
+                'Collision': {'type': 'object', 'properties': {'value': {'type': 'string'}}},
+            },
+            'title': 'First',
+            'properties': {'shared': {'$ref': '#/$defs/SharedRoot'}},
+        },
+        {
+            '$defs': {
+                **shared_defs,
+                'Collision': {'type': 'object', 'properties': {'value': {'type': 'integer'}}},
+            },
+            'title': 'Second',
+            'properties': {'shared': {'$ref': '#/$defs/SharedRoot'}},
+        },
+    ]
+
+    rewritten_schemas, all_defs = merge_json_schema_defs(schemas)
+
+    assert (all_defs, rewritten_schemas) == snapshot(
+        (
+            {
+                'SharedRoot': {'type': 'object', 'properties': {'leaf': {'$ref': '#/$defs/SharedLeaf'}}},
+                'SharedLeaf': {'type': 'object', 'properties': {'value': {'type': 'boolean'}}},
+                'Collision': {'type': 'object', 'properties': {'value': {'type': 'string'}}},
+                'Second_Collision_1': {'type': 'object', 'properties': {'value': {'type': 'integer'}}},
+            },
+            [
+                {'title': 'First', 'properties': {'shared': {'$ref': '#/$defs/SharedRoot'}}},
+                {'title': 'Second', 'properties': {'shared': {'$ref': '#/$defs/SharedRoot'}}},
+            ],
+        )
     )
 
 

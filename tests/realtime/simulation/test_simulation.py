@@ -481,8 +481,9 @@ def test_known_late_terminal_of_a_barged_in_reply_lands_on_the_next() -> None:
     reproduce('8801', OpenAISimulation(), scenario)
 
 
-def test_request_whose_refusal_is_lost_is_settled_by_the_reconnect() -> None:
-    """SIM-21, fixed by the session core."""
+@pytest.mark.parametrize('dialect', ['openai', 'xai'])
+def test_request_whose_refusal_is_lost_is_settled_by_the_reconnect(dialect: Dialect) -> None:
+    """SIM-21, fixed by the session core: on xAI too, now that its reconnect replays history instead of resuming."""
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.reject_next('response')
@@ -491,7 +492,7 @@ def test_request_whose_refusal_is_lost_is_settled_by_the_reconnect() -> None:
         sim.drop()
         sim.settle()
 
-    run_clean(OpenAISimulation(), scenario)
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect)), scenario)
 
 
 @known('SIM-23')
@@ -871,18 +872,6 @@ def test_known_gemini_turn_sent_during_a_tool_round_recorded_ahead_of_it() -> No
         sim.settle()
 
     reproduce('SIM-2a', GeminiSimulation(), scenario)
-
-
-@known('SIM-21')
-def test_known_request_whose_refusal_is_lost_keeps_its_reservation_xai() -> None:
-    def scenario(sim: OpenAISimulation) -> None:
-        sim.reject_next('response')
-        sim.create_response()
-        sim.send_text()
-        sim.drop()
-        sim.settle()
-
-    reproduce('SIM-21', OpenAISimulation(openai=OpenAIOptions(dialect='xai')), scenario)
 
 
 def test_gemini_typed_turn_lost_to_a_drop_is_settled() -> None:
@@ -1338,20 +1327,24 @@ def test_xai_hand_commit_while_vad_hears_the_user_is_filed_in_place() -> None:
     run_clean(OpenAISimulation(openai=OpenAIOptions(dialect='xai', transcription=True)), scenario)
 
 
-def test_scenario_turn_without_its_transcript_lost_at_a_reconnect() -> None:
-    """SIM-25 in the session core: the untranscribed turn is lost at the reconnect, though the reply after it is not."""
-    with OpenAISimulation(strict=False, openai=OpenAIOptions(dialect='xai', transcription=True)) as s:
-        s.create_response()
-        s.send_audio()
-        s.commit_audio()
-        s.speak(deliver=False)
-        s.finish(deliver=False)
-        s.deliver()
-        s.drop()
-        s.settle()
-        s.create_response()
-        s.settle()
-        assert ('SIM-25', 'history.turn_missing') in s.checker.known_hits
+def test_scenario_turn_without_its_transcript_kept_at_a_reconnect() -> None:
+    """A turn whose transcript the drop cut off is recorded without one, and the reply after the reconnect too.
+
+    xAI's own resumption used to lose it (SIM-25); the reconnect now settles it, as on OpenAI.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.send_audio()
+        sim.commit_audio()
+        sim.speak(deliver=False)
+        sim.finish(deliver=False)
+        sim.deliver()
+        sim.drop()
+        sim.settle()
+        sim.create_response()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect='xai', transcription=True)), scenario)
 
 
 def test_scenario_late_cancel_drops_a_tool_call_and_ends_the_wait() -> None:
@@ -1501,7 +1494,9 @@ def test_scenario_failed_audio_commit_after_an_unacknowledged_commit() -> None:
     run_tolerant(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', transcription=False)), scenario)
 
 
-def test_scenario_xai_resumption() -> None:
+def test_scenario_xai_reconnect_replays_history() -> None:
+    """xAI reconnects like OpenAI, by replaying the history: its own resumption drops user text (checked live)."""
+
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
         sim.speak()
@@ -1512,6 +1507,21 @@ def test_scenario_xai_resumption() -> None:
         sim.send_text()
 
     run_tolerant(OpenAISimulation(openai=OpenAIOptions(dialect='xai')), scenario)
+
+
+@pytest.mark.parametrize('clear', [False, True])
+def test_scenario_xai_reconnect_after_a_turn_is_discarded(clear: bool) -> None:
+    """xAI adds a spoken turn's item at speech start: once the turn is discarded, by a drop mid-speech or a clear
+    before one, the reconnect doesn't discard it a second time for the transcript it was awaiting."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        if clear:
+            sim.clear_audio()
+        sim.drop()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect='xai')), scenario)
 
 
 def test_push_to_talk_turn_filed_before_its_answer() -> None:
@@ -1837,6 +1847,20 @@ def test_scenario_a_spoken_turn_whose_transcript_is_never_read() -> None:
     )
 
 
+def test_scenario_live_backend_report_read_while_closing_an_ended_session() -> None:
+    """A session that ended on its request limit accounts nothing more: not the backend report its close reads."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.delegate()
+        sim.settle()
+        sim.delegate()
+        sim.settle()
+        sim.delegate()
+        sim.backend_finish()
+
+    run_tolerant(LiveSimulation(options=SessionOptions(request_limit=1)), scenario)
+
+
 def test_every_finding_is_pinned() -> None:
     """Every known bug has a scenario that fails with it until the fix lands; accepted limitations have none."""
     assert {finding.id for finding in KNOWN_FINDINGS if not finding.accepted} == PINNED
@@ -1895,8 +1919,9 @@ def test_baseline_reconnect_replays_the_conversation(dialect: Dialect) -> None:
     run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect)), scenario)
 
 
-def test_baseline_xai_resumption_replays_a_tool_round() -> None:
-    """xAI's resumed conversation includes the tool call and its output, which the session must not run again."""
+def test_baseline_xai_reconnect_replays_a_tool_round() -> None:
+    """The history replayed into xAI's new conversation includes the tool call and its output, which the session
+    must not run again."""
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
@@ -1914,7 +1939,8 @@ def test_baseline_xai_resumption_replays_a_tool_round() -> None:
             for frame in sim.server.network.sockets[-1].received
             if frame['type'] == 'conversation.item.added'
         ]
-        assert replayed == ['message', 'function_call', 'function_call_output', 'message']
+        # The user's message comes first: xAI's own resumption left it out (checked live).
+        assert replayed == ['message', 'message', 'function_call', 'function_call_output', 'message']
         sim.send_text()
         sim.speak()
         sim.finish()
