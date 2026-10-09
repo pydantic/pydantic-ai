@@ -9,6 +9,14 @@ on:
       # Moved by `clai2-bleeding.yml` for every CLAI change on `main`; not a release to build or publish.
       - "!clai2-bleeding"
   pull_request: {}
+  # The merge queue: a pull request reaches `main` only through a merge group that passed this
+  # workflow's full test matrix. A `pull_request` run skips the matrix legs that only repeat a
+  # middle Python version (see `pull_request` in the test jobs' matrices); every leg that
+  # collects coverage or carries a check no other leg runs stays on it, so coverage and the
+  # coverage gate come out identical under both events. `.github/scripts/test_ci_matrix.py`
+  # checks that.
+  merge_group:
+    types: [checks_requested]
 
 env:
   COLUMNS: 150
@@ -31,8 +39,9 @@ permissions:
 
 concurrency:
   # PRs: one group per ref so newer pushes cancel superseded in-flight runs.
-  # push/tag: one group per run_id so main and tag runs never share a group
-  # (avoids GitHub's pending-run cancellation between distinct main commits).
+  # push/tag/merge group: one group per run_id so main, tag and merge-queue runs never share a
+  # group (avoids GitHub's pending-run cancellation between distinct main commits, and never
+  # cancels a merge group the queue is waiting on).
   group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -231,6 +240,7 @@ jobs:
           .github/scripts/test_protect_github_dir.py
           .github/scripts/test_ci_content_classifier.py
           .github/scripts/test_shard_durations.py
+          .github/scripts/test_ci_matrix.py
 
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
       # answer here silently stops type errors reaching a developer's terminal.
@@ -506,6 +516,10 @@ jobs:
         # report truncates. That constant's comment enumerates all four.
         # `all-extras` is the slowest install shape -- it runs sharded in `test-all-extras` instead.
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+        # A single-value dimension, so the `exclude` below can drop the legs a pull request skips:
+        # 3.11 and 3.14 collect coverage and 3.13 detects blocking calls, so only 3.12 goes. The
+        # merge queue and `main` run every leg (see `merge_group` in `on:`).
+        pull_request: ["${{ github.event_name == 'pull_request' }}"]
         install:
           - name: pydantic-ai-slim
             command: "--package pydantic-ai-slim"
@@ -536,6 +550,8 @@ jobs:
             install: { name: pydantic-ai-harness }
           - clai2_only: "true"
             install: { name: standard }
+          - pull_request: "true"
+            python-version: "3.12"
     env:
       CI: true
       # Coverage adds roughly 50% to test execution before Python 3.14. Collect every install shape
@@ -686,9 +702,15 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         shard: [1, 2]
+        # 3.11 and 3.14 collect coverage and 3.13 enforces the per-test budget, so a pull request
+        # skips only 3.12 (see the `test` job's matrix).
+        pull_request: ["${{ github.event_name == 'pull_request' }}"]
         include:
           - python-version: "3.11"
             shard: 3
+        exclude:
+          - pull_request: "true"
+            python-version: "3.12"
     env:
       CI: true
       # Collect 3.14 for fast coverage and 3.11 for branches and extras unavailable on 3.14.
@@ -705,7 +727,7 @@ jobs:
       # Per-test time budget enforced by `tests/cost_guards.py` (see "Test cost" in `tests/AGENTS.md`). The 3.13
       # cells run nearly every test without coverage or blocking-call detection, so their timings carry the least
       # instrumentation noise. 8s sits above the fresh-interpreter tests (4-6s on these runners) with headroom for runner
-      # jitter; the per-test report on the 3.12 cells surfaces anything new over 1s. List the tests over a budget from a
+      # jitter; the per-test report on the same cells surfaces anything new over 1s. List the tests over a budget from a
       # run's `--durations` with `scripts/list_over_budget_tests.py`.
       PYTEST_TEST_BUDGET_SECONDS: ${{ matrix.python-version == '3.13' && '8' || '' }}
       # Per-module collection budget, also enforced by `tests/cost_guards.py`. The first module in a shard to import a
@@ -839,9 +861,10 @@ jobs:
           retention-days: 30
 
       # Show authors what their change costs: new tests over a second and tests that got at least
-      # twice as slow as on `main`, in the job summary. One coverage-free version is enough.
+      # twice as slow as on `main`, in the job summary. One coverage-free version is enough, and it must be one a pull
+      # request runs.
       - name: report new and slower tests
-        if: ${{ !cancelled() && matrix.python-version == '3.12' }}
+        if: ${{ !cancelled() && matrix.python-version == '3.13' }}
         run: >-
           uv run --no-project python .github/scripts/shard_durations.py report
           --baseline "$RUNNER_TEMP/$DURATIONS_BASELINE" --current "$RUNNER_TEMP/test-durations.json"
@@ -895,6 +918,18 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         resolution: [locked, lowest]
+        # A pull request runs only the legs that collect coverage (see `COLLECT_COVERAGE`), which
+        # include one `lowest` leg (see the `test` job's matrix).
+        pull_request: ["${{ github.event_name == 'pull_request' }}"]
+        exclude:
+          - pull_request: "true"
+            python-version: "3.11"
+            resolution: lowest
+          - pull_request: "true"
+            python-version: "3.13"
+          - pull_request: "true"
+            python-version: "3.14"
+            resolution: lowest
     env:
       CI: true
       # Python 3.11 and 3.14 cover version endpoints; both 3.12 resolutions cover Temporal dependency branches.
@@ -996,6 +1031,16 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         shard: [1, 2]
+        # A pull request runs only 3.14, the version that collects coverage (see the `test` job's
+        # matrix).
+        pull_request: ["${{ github.event_name == 'pull_request' }}"]
+        exclude:
+          - pull_request: "true"
+            python-version: "3.11"
+          - pull_request: "true"
+            python-version: "3.12"
+          - pull_request: "true"
+            python-version: "3.13"
     env:
       CI: true
       # Python 3.14's sys.monitoring coverage core is substantially cheaper than the legacy tracer.
@@ -1151,6 +1196,14 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+        # A pull request imports the examples on the oldest and newest versions only (see the
+        # `test` job's matrix).
+        pull_request: ["${{ github.event_name == 'pull_request' }}"]
+        exclude:
+          - pull_request: "true"
+            python-version: "3.12"
+          - pull_request: "true"
+            python-version: "3.13"
     env:
       CI: true
     steps:
@@ -1334,7 +1387,7 @@ jobs:
   # always on tags.
   harness-integration-changes:
     name: classify harness integration changes
-    if: github.event_name == 'pull_request' || github.ref_type == 'branch'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.ref_type == 'branch'
     runs-on: ubuntu-latest
     outputs:
       localstack: ${{ steps.detect.outputs.localstack }}
@@ -1348,7 +1401,11 @@ jobs:
 
       - id: detect
         env:
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          # A merge group has no `before`: diff it against the `main` commit it was built on.
+          BASE_SHA: >-
+            ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha
+                || github.event_name == 'merge_group' && github.event.merge_group.base_sha
+                || github.event.before }}
           HEAD_SHA: ${{ github.sha }}
         run: |
           H=src/pydantic_ai_harness
