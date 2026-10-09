@@ -2282,9 +2282,12 @@ when either changes. `await resume(conversation_id)` switches to a saved convers
 `/resume ID` does, returning the notice to show: it only restores history, never runs the
 model or replays a tool. Call it between turns, for example from `on_session_start`; it raises
 `RuntimeError` during a run, `LookupError` for an unknown ID, and `ValueError` for a
-conversation saved in another directory or still running in another process. Every loaded
-plugin, the caller included, then receives `on_conversation_changed`, and the status row starts
-afresh. An in-memory `Transcript` has nothing saved, so its `resume` raises `LookupError`.
+conversation saved in another directory or when persistence is not configured. A conversation
+still running in another process is not taken over: a fork of it is resumed, and the notice
+says so. When the conversation or its title changed, every loaded plugin, the caller included,
+then receives `on_conversation_changed`; when the ID changed, the status row starts afresh.
+Resuming the conversation already held changes nothing. An in-memory `Transcript` has nothing
+saved, so its `resume` raises `LookupError`.
 Local `!command` executions append a user message with the command, stdout, stderr, and
 completion status. They do not start an agent turn or fire turn hooks; the context reaches the
 model on the next prompt.

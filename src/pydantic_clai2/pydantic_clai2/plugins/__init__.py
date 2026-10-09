@@ -75,7 +75,9 @@ class Conversation(Protocol):
         Only restores the saved history: nothing runs and no tool is replayed. Call it between
         turns, such as from `on_session_start` or a command. It raises `RuntimeError` during a run,
         `LookupError` for an unknown ID, and `ValueError` for a conversation saved in another
-        directory or still running in another process. `on_conversation_changed` follows.
+        directory or when persistence is not configured. A conversation still running in another
+        process is not taken over: a fork of it is resumed, and the notice says so.
+        `on_conversation_changed` follows when the conversation or its title changed.
         """
         ...
 
