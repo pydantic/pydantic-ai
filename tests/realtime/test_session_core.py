@@ -1195,3 +1195,12 @@ def test_what_the_user_says_as_they_cut_in_is_a_turn_of_its_own() -> None:
             'None [assistant:Sure.] complete stop',
         ]
     )
+
+
+def test_a_reply_taken_with_audio_starts_ahead_of_it() -> None:
+    """GPT-Live's audio track runs on between replies, so its connection says where the model takes the turn."""
+    tracker = InferredLifecycle(transcribes=True, audio_starts_response=False)
+    assert [type(event).__name__ for event, _ in tracker.message([AudioDelta(b'\x00\x00')])] == snapshot(['AudioDelta'])
+    assert [type(event).__name__ for event, _ in tracker.message([AudioDelta(b'\x00\x10')], takes_turn=True)] == (
+        snapshot(['ResponseStarted', 'AudioDelta'])
+    )

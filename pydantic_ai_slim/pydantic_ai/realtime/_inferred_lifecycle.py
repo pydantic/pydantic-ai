@@ -43,6 +43,7 @@ from ._lifecycle import (
 )
 from .codec import (
     AudioDelta,
+    CreateResponse,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -123,7 +124,7 @@ class InferredLifecycle:
         else:
             # Nothing is going on: it joins the conversation as it arrives.
             self._pending.append(InputAdded(input_id=input_id))
-        if isinstance(content, (str, ToolResult)):
+        if isinstance(content, (str, ToolResult, CreateResponse)):
             self._unanswered.append(input_id)
 
     def input_failed(self, input_id: InputId) -> None:
@@ -151,8 +152,9 @@ class InferredLifecycle:
     def message(self, codec: Sequence[RealtimeCodecEvent], *, takes_turn: bool = False) -> list[TaggedEvent]:
         """The lifecycle events around the codec events one server message makes, in order.
 
-        `takes_turn` says the message has the model take the turn even without output of its own (GPT-Live
-        delegating work): a response starts after its events, if none is under way.
+        `takes_turn` says the message has the model take the turn (GPT-Live's connection says where, as its audio
+        track runs on between replies): a response starts with its audio, or after its events if it has none,
+        if none is under way.
         """
         tagged: list[TaggedEvent] = [(event, False) for event in self.take_pending()]
         if any(isinstance(event, RealtimeResponseInterruptedEvent) for event in codec):
@@ -162,7 +164,7 @@ class InferredLifecycle:
             self._close_turn(closed)
             tagged.extend((event, False) for event in closed)
         for event in codec:
-            before, after = self._event(event)
+            before, after = self._event(event, takes_turn=takes_turn)
             tagged.extend((lifecycle, False) for lifecycle in before)
             tagged.append((event, False))
             tagged.extend((lifecycle, False) for lifecycle in after)
@@ -172,12 +174,14 @@ class InferredLifecycle:
             tagged.extend((lifecycle, False) for lifecycle in started)
         return tagged
 
-    def _event(self, event: RealtimeCodecEvent) -> tuple[list[LifecycleEvent], list[LifecycleEvent]]:
+    def _event(
+        self, event: RealtimeCodecEvent, *, takes_turn: bool = False
+    ) -> tuple[list[LifecycleEvent], list[LifecycleEvent]]:
         before: list[LifecycleEvent] = []
         after: list[LifecycleEvent] = []
         output = (
             isinstance(event, (PartStartEvent, ToolCall))
-            or (isinstance(event, AudioDelta) and self._audio_starts_response)
+            or (isinstance(event, AudioDelta) and (self._audio_starts_response or takes_turn))
             or (isinstance(event, OutputTranscript) and bool(event.text))
         )
         if self._deferred is not None:
