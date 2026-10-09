@@ -173,7 +173,7 @@ class _AgentLoop:
 
                 # Let callbacks queued by the run's finalizers create any follow-up cleanup tasks
                 # before taking the snapshot that will be drained.
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
                 current = asyncio.current_task()
                 pending = [pending for pending in asyncio.all_tasks(loop) if pending is not current]
                 if task is None:
@@ -265,9 +265,7 @@ class StepBridge:
 
             def schedule() -> None:
                 try:
-                    # Creating the task inside `step_context` makes it the task's context, which is
-                    # what `create_task(context=...)` does on 3.11+, spelled so it also type-checks
-                    # against the repo's 3.10 target.
+                    # Creating the task inside `step_context` makes it the task's context.
                     task: asyncio.Task[T] = step_context.run(lambda: loop.create_task(run_operation()))
                 except BaseException as exc:  # pragma: no cover - task creation failing is not reproducible
                     result.set_exception(exc)

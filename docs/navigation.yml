@@ -203,6 +203,9 @@ navigation:
       - page: "Snowflake Cortex"
         path: "models/snowflake.md"
         slug: "models/snowflake"
+      - page: "System One API"
+        path: "models/system-one.md"
+        slug: "models/system-one"
       - page: "TypeSafe (Jev)"
         path: "models/typesafe.md"
         slug: "models/typesafe"
@@ -412,6 +415,9 @@ navigation:
           - page: "Tool Search"
             path: "capabilities/tool-search.md"
             slug: "capabilities/tool-search"
+          - page: "Prompt Caching"
+            path: "capabilities/caching.md"
+            slug: "capabilities/caching"
           - page: "Provider-Native Compaction"
             path: "capabilities/compaction.md"
             slug: "capabilities/compaction"
@@ -472,6 +478,9 @@ navigation:
           - page: "Trajectory Judge"
             path: "harness/trajectory-judge.md"
             slug: "harness/trajectory-judge"
+          - page: "Tool Call Judge"
+            path: "harness/tool-call-judge.md"
+            slug: "harness/tool-call-judge"
       - section: "Self-Extension"
         slug: ""
         contents:
@@ -900,6 +909,11 @@ navigation:
             slug: "examples/streaming/stream-whales"
             aliases:
               - "examples/stream-whales"
+          - page: "Cancel and Resume"
+            path: "examples/cancellation.md"
+            slug: "examples/streaming/cancellation"
+            aliases:
+              - "examples/cancellation"
       - section: "Realtime"
         slug: ""
         contents:
@@ -1070,6 +1084,11 @@ navigation:
             slug: "api/pydantic-ai/concurrency"
             aliases:
               - "api/concurrency"
+          - page: "conversation"
+            path: "api/conversation.md"
+            slug: "api/pydantic-ai/conversation"
+            aliases:
+              - "api/conversation"
           - page: "direct"
             path: "api/direct.md"
             slug: "api/pydantic-ai/direct"
@@ -1197,6 +1216,9 @@ navigation:
               - page: "decision"
                 path: "api/models/decision.md"
                 slug: "api/models/decision"
+              - page: "system_one"
+                path: "api/models/system_one.md"
+                slug: "api/models/system_one"
               - page: "typesafe"
                 path: "api/models/typesafe.md"
                 slug: "api/models/typesafe"

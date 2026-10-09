@@ -8,3 +8,4 @@
         - ToolChoice
         - ToolOrOutput
         - ServiceTier
+        - CacheConfig

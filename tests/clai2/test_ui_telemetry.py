@@ -1,4 +1,4 @@
-"""UI telemetry: the shared chokepoints record what the user chose, nested, and never what they typed."""
+"""UI telemetry: the shared chokepoints record what the user chose, nested, and typed text only as content."""
 
 import io
 import json
@@ -46,7 +46,17 @@ Recorded = tuple[str, dict[str, object]]
 
 @pytest.fixture
 def exporter(tmp_path: Path) -> Generator[InMemorySpanExporter]:
-    """A local Logfire instance subscribed to UI telemetry, exporting to memory."""
+    """A local Logfire instance subscribed to UI telemetry without message content, exporting to memory."""
+    yield from _subscribed(tmp_path, include_content=False)
+
+
+@pytest.fixture
+def content_exporter(tmp_path: Path) -> Generator[InMemorySpanExporter]:
+    """The same, subscribed with message content, as the `observability` plugin does by default."""
+    yield from _subscribed(tmp_path, include_content=True)
+
+
+def _subscribed(tmp_path: Path, *, include_content: bool) -> Generator[InMemorySpanExporter]:
     spans = InMemorySpanExporter()
     propagator = propagate.get_global_textmap()
     instance = logfire.configure(
@@ -61,7 +71,9 @@ def exporter(tmp_path: Path) -> Generator[InMemorySpanExporter]:
         advanced=logfire.AdvancedOptions(emit_configuration_span=False),
     )
     propagate.set_global_textmap(propagator)
-    unsubscribe = telemetry.subscribe(instance)
+    unsubscribe = telemetry.subscribe(
+        logfire.Logfire(config=instance.config, otel_scope=telemetry.SCOPE), include_content=include_content
+    )
     try:
         yield spans
     finally:
@@ -148,7 +160,11 @@ async def test_a_command_its_menu_and_the_fields_it_changes_nest(exporter: InMem
     assert all(span.parent is not None for span in (color, note, opened))
     assert color.parent == note.parent == opened.context
     assert opened.parent == command.context
-    assert attributes(command)['logfire.tags'] == (telemetry.TAG,)
+    assert all(
+        span.instrumentation_scope and span.instrumentation_scope.name == 'clai2'
+        for span in exporter.get_finished_spans()
+    )
+    assert all('logfire.tags' not in attributes(span) for span in exporter.get_finished_spans())
     assert 'my private note' not in json.dumps([_own(span) for span in exporter.get_finished_spans()])
 
 
@@ -224,7 +240,7 @@ def test_only_the_newest_subscriber_records(exporter: InMemorySpanExporter, tmp_
         advanced=logfire.AdvancedOptions(emit_configuration_span=False),
     )
     propagate.set_global_textmap(propagator)
-    unsubscribe = telemetry.subscribe(newer)
+    unsubscribe = telemetry.subscribe(logfire.Logfire(config=newer.config, otel_scope=telemetry.SCOPE))
     try:
         with telemetry.span('command /{command}', command='session'):
             telemetry.record('inner')
@@ -236,6 +252,31 @@ def test_only_the_newest_subscriber_records(exporter: InMemorySpanExporter, tmp_
     inner, command = other.get_finished_spans()
     assert inner.parent == command.context
     assert recorded(exporter) == [('after', {})]
+
+
+def test_a_root_only_subscriber_is_told_of_selection_but_records_nothing(
+    content_exporter: InMemorySpanExporter,
+) -> None:
+    selected: list[str] = []
+
+    def root(name: str) -> None:
+        selected.append(name)
+
+    unsubscribe = telemetry.subscribe(logfire.DEFAULT_LOGFIRE_INSTANCE, root=partial(root, 'newer'), ui_events=False)
+    try:
+        telemetry.conversation_selected()
+        assert selected == ['newer']
+        # UI telemetry still goes to the newest subscriber with `ui_events`, under its content setting.
+        assert telemetry.prompt_text('hello') == {telemetry.PROMPT: 'hello'}
+        with telemetry.span('command /{command}', command='session'):
+            telemetry.record('inner')
+    finally:
+        unsubscribe()
+        unsubscribe()  # A second call is harmless.
+    selected.clear()
+    telemetry.conversation_selected()
+    assert selected == []
+    assert recorded(content_exporter) == [('inner', {}), ('command /session', {'command': 'session'})]
 
 
 def test_nothing_is_recorded_without_a_subscriber() -> None:
@@ -317,7 +358,7 @@ async def test_conversations_cleared_and_resumed(exporter: InMemorySpanExporter,
     await session.resume(saved)
     assert recorded(exporter) == [
         ('conversation cleared', {'messages': 2}),
-        ('conversation resumed', {'outcome': 'completed', 'messages': 2, 'other_workspace': False}),
+        ('conversation resumed', {'outcome': 'completed', 'messages': 2, 'other_workspace': False, 'forked': False}),
     ]
 
 
@@ -350,7 +391,9 @@ async def test_prompt_submissions_interrupts_and_steering(exporter: InMemorySpan
             live.buffer.replace('steer this')
             live.feed('enter')
             live.feed('alt-enter')
-    assert steered == ['steer this']
+            live.buffer.replace('steer that')
+            live.feed('alt-enter')
+    assert steered == ['steer this', 'steer that']
     assert recorded(exporter) == [
         ('prompt submitted', {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 16}),
         (
@@ -365,5 +408,51 @@ async def test_prompt_submissions_interrupts_and_steering(exporter: InMemorySpan
         ('prompt submitted', {'route': 'submitted', 'recalled': True, 'kind': 'shell', 'chars': 3}),
         ('prompt interrupt', {'key': 'ctrl-c', 'cancelled_turn': False}),
         ('prompt submitted', {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 10}),
-        ('prompt steer', {'steered': True}),
+        ('prompt steer', {'steered': True, 'source': 'queue'}),
+        ('prompt steer', {'steered': True, 'source': 'draft'}),
     ]
+
+
+async def test_only_prompt_text_is_recorded_with_content(
+    content_exporter: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With content on, prompts keep their words unscrubbed; `!` lines and command arguments stay out."""
+    monkeypatch.setattr(telemetry, 'MAX_CONTENT_CHARS', 20)
+    commands = Commands()
+    commands.register(Command(name='plugins', description='Plugins', handler=lambda args: ''))
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(5):
+        live = LivePrompt(
+            console=Console(file=io.StringIO(), force_terminal=True, width=80, height=24),
+            commands=commands,
+            history=InMemoryHistory(),
+            images=ImageInput(),
+            interrupts=Interrupts(),
+            toolbar=lambda: [('', 'ready')],
+            clock=lambda: 0,
+        )
+        async with live.opened():
+            for text in (
+                'fix the session bug',
+                'a prompt longer than twenty characters',
+                '!export TOKEN=sk-y',
+                '/plugins add x m {"token": "sk-x"}',
+            ):
+                live.buffer.replace(text)
+                live.feed('enter')
+                assert await live.read() == text
+    assert recorded(content_exporter) == [
+        (
+            'prompt submitted',
+            {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 19, 'prompt': 'fix the session bug'},
+        ),
+        (
+            'prompt submitted',
+            {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 38, 'prompt': 'a prompt longer than'},
+        ),
+        ('prompt submitted', {'route': 'submitted', 'recalled': False, 'kind': 'shell', 'chars': 18}),
+        (
+            'prompt submitted',
+            {'route': 'submitted', 'recalled': False, 'kind': 'command', 'command': 'plugins', 'chars': 34},
+        ),
+    ]
+    assert 'sk-' not in json.dumps([own for _, own in recorded(content_exporter)])

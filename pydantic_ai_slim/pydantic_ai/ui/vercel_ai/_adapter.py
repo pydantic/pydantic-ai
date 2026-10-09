@@ -7,10 +7,9 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, InitVar, dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, assert_never, cast
 
 from pydantic import TypeAdapter
-from typing_extensions import assert_never
 
 from pydantic_ai._utils import is_str_dict as _is_str_dict
 

@@ -1,6 +1,8 @@
-"""The built-in `linear` plugin: harness `Linear`, set up in a settings menu, with its key named in `/keys`.
+"""Use Linear, with its key kept in /keys.
 
-`/plugins configure linear` (also opened on `/plugins add`, `/plugins enable`, and Space or C in `/plugins`) edits
+The built-in `linear` plugin: harness `Linear`, set up in a settings menu, with its key named in `/keys`.
+
+`/plugins configure linear` (also opened on `/plugins add`, `/plugins enable`, and Space or `c` in `/plugins`) edits
 every setting harness `Linear` takes from a user: how to sign in, which `/keys` entry to use, read-only access,
 and whether to pass the server's instructions. Edits are saved as they are made. Plugin settings are plaintext
 SQLite, so they carry no credential: the menu's key row picks a saved key or saves a new one under
@@ -8,6 +10,7 @@ SQLite, so they carry no credential: the menu's key row picks a saved key or sav
 reaches Linear on the next run and a deleted key fails the run instead of connecting without it.
 """
 
+from collections.abc import Sequence
 from functools import partial
 from typing import Generic, Literal
 
@@ -17,6 +20,7 @@ from fastmcp.client.transports import StreamableHttpTransport
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.linear import Linear
@@ -34,7 +38,7 @@ from pydantic_clai2.config.api_keys import (
 )
 from pydantic_clai2.config.credential_store import load_codex_credentials
 from pydantic_clai2.mcp import HTTPServer, TokenStore, http_client, oauth
-from pydantic_clai2.plugins import DepsT, PluginHost, SessionStart
+from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow, run_flow_async, shown
 from pydantic_clai2.ui.rendering import theme
 
@@ -71,50 +75,57 @@ class _Connection(BaseModel):
     token: KeyReference
 
 
-def activate(host: PluginHost[DepsT]) -> None:
-    """Add `Linear` and its settings menu; a missing key is reported now and fails each run until one is chosen."""
-    host.configure(partial(configure, host))
-    settings = host.settings(LinearSettings)
-    if settings.auth == 'oauth':
+class LinearPlugin(Plugin[LinearSettings, DepsT]):
+    """`Linear` and its settings menu; a missing key is reported on load and fails each run until one is chosen."""
 
-        def connect(_: RunContext[DepsT]) -> Linear[DepsT]:
-            # A new client per run: FastMCP keeps tokens in memory once connected, so `/linear logout` would
-            # otherwise leave this session signed in.
-            client = _oauth_client(settings.read_only)
-            return Linear[DepsT](client=client, include_instructions=settings.include_instructions)
+    def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
+        settings = self.settings
+        if settings.auth == 'oauth':
 
-        host.add(connect)
-        store = TokenStore(TOKEN_ACCOUNT)
+            def connect(_: RunContext[DepsT]) -> Linear[DepsT]:
+                # A new client per run: FastMCP keeps tokens in memory once connected, so `/linear logout` would
+                # otherwise leave this session signed in.
+                client = _oauth_client(settings.read_only)
+                return Linear[DepsT](client=client, include_instructions=settings.include_instructions)
 
-        async def logout(args: list[str]) -> str:
-            if args != ['logout']:
-                raise ValueError('Usage: /linear logout')
-            await to_thread.run_sync(store.forget)
-            return 'Signed out of Linear. The next run opens the browser to sign in again.'
+            return (connect,)
 
-        host.commands.register(
+        def token(ctx: RunContext[DepsT]) -> str:
+            return saved_key()(ctx)
+
+        return (
+            Linear[DepsT](auth=token, read_only=settings.read_only, include_instructions=settings.include_instructions),
+        )
+
+    def get_commands(self) -> Sequence[Command]:
+        if self.settings.auth != 'oauth':
+            return ()
+        return (
             Command(
                 name='linear',
                 description='Sign out of Linear (/linear logout).',
-                handler=logout,
+                handler=_logout,
                 complete=lambda _: ('logout',),
-            )
+            ),
         )
-        return
 
-    def token(ctx: RunContext[DepsT]) -> str:
-        return saved_key()(ctx)
+    async def configure(self) -> str:
+        return await configure(self.host)
 
-    host.add(
-        Linear[DepsT](auth=token, read_only=settings.read_only, include_instructions=settings.include_instructions)
-    )
-
-    @host.on('session_start')
-    async def check(_: SessionStart) -> None:
+    async def on_session_start(self, event: SessionStart) -> None:
+        if self.settings.auth == 'oauth':
+            return
         try:
             await to_thread.run_sync(lambda: saved_key()(None))
         except UserError as exc:
-            host.console.print(f'Linear: {exc}', style=theme.color(theme.WARNING), markup=False)
+            self.host.console.print(f'Linear: {exc}', style=theme.color(theme.WARNING), markup=False)
+
+
+async def _logout(args: list[str]) -> str:
+    if args != ['logout']:
+        raise ValueError('Usage: /linear logout')
+    await to_thread.run_sync(TokenStore(TOKEN_ACCOUNT).forget)
+    return 'Signed out of Linear. The next run opens the browser to sign in again.'
 
 
 async def configure(host: PluginHost[DepsT]) -> str:
@@ -212,7 +223,7 @@ class _Settings(Generic[DepsT]):
         return f'Linear {row.label}: {row.display(row.default)} (default).'
 
     def _saved(self) -> LinearSettings:
-        # Settings that fail validation fail `activate`, so the menu of a loaded plugin never sees them.
+        # Settings that fail validation fail the load, so the menu of a loaded plugin never sees them.
         return self._host.settings(LinearSettings)
 
     def _validated(self, row: FieldRow, text: str) -> LinearSettings:

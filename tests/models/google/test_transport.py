@@ -12,6 +12,7 @@ inspect the body — so a recording would replay green through a regression in e
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -20,9 +21,19 @@ from pytest_mock import MockerFixture
 
 from pydantic_ai import UploadedFile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelRequest, UploadedFileProviderName, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    TextPart,
+    UploadedFileProviderName,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.profiles.google import GoogleModelProfile, GoogleThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
 from ...conftest import try_import
@@ -104,6 +115,41 @@ def test_gemini_api_sets_include_server_side_tool_invocations_on_a_google_cloud_
     _tools, tool_config, _image_config = model._get_tool_config(params, GoogleModelSettings())  # pyright: ignore[reportPrivateUsage]
     assert tool_config is not None
     assert tool_config.get('include_server_side_tool_invocations') is True
+
+
+async def test_google_cloud_transport_drops_gemini_api_native_tool_parts(
+    vertex_client_google_provider: GoogleProvider,
+) -> None:
+    """Gemini API history's `tool_call`/`tool_response` parts are dropped on a Google Cloud transport.
+
+    Google Cloud has no such parts: the SDK's Vertex converter raises `ValueError` on them, even on the Gemini 3
+    models that support tool combination. A Google Cloud client in `GoogleProvider` accepts `'google'` history.
+    """
+    m = GoogleModel('gemini-3-pro-preview', provider=vertex_client_google_provider)
+    assert m.profile.get('google_supports_tool_combination')
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search the web')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name=WebSearchTool.kind, args={'queries': ['q']}, tool_call_id='abc', provider_name='google'
+                ),
+                NativeToolReturnPart(
+                    tool_name=WebSearchTool.kind,
+                    content={'search_suggestions': '<div></div>'},
+                    tool_call_id='abc',
+                    provider_name='google',
+                ),
+                TextPart(content='Found it.'),
+            ],
+            provider_name='google',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Thanks')]),
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents[1] == {'role': 'model', 'parts': [{'text': 'Found it.'}]}
 
 
 async def test_count_tokens_forwards_tools_on_a_google_cloud_transport(
@@ -252,3 +298,63 @@ def test_provider_outside_both_name_families_matches_only_itself(vertexai: bool)
     assert m.base_url == 'https://proxy.example.invalid'
     assert m._matching_provider_names == frozenset({'my-google-proxy'})  # pyright: ignore[reportPrivateUsage]
     assert m._is_google_cloud is vertexai  # pyright: ignore[reportPrivateUsage]
+
+
+@dataclass(frozen=True)
+class FlashImageThinkingCase:
+    """One construction of `gemini-3.1-flash-image`, with the levels it sends for `low` and `medium`."""
+
+    id: str
+    make_provider: Callable[[], Provider[Client]]
+    expected: tuple[GoogleThinkingLevel, GoogleThinkingLevel]
+    profile: GoogleModelProfile | None = None
+
+
+FLASH_IMAGE_THINKING_CASES = [
+    FlashImageThinkingCase(
+        id='gemini_api',
+        make_provider=lambda: GoogleProvider(api_key='mock-api-key'),
+        expected=('MINIMAL', 'HIGH'),
+    ),
+    FlashImageThinkingCase(
+        id='google_cloud',
+        make_provider=lambda: GoogleCloudProvider(api_key='mock-api-key'),
+        expected=('LOW', 'MEDIUM'),
+    ),
+    FlashImageThinkingCase(
+        id='google_cloud_client_in_google_provider',
+        make_provider=lambda: GoogleProvider(
+            client=Client(vertexai=True, project='test-project', location='us-central1')
+        ),
+        expected=('LOW', 'MEDIUM'),
+    ),
+    FlashImageThinkingCase(
+        id='gemini_api_client_in_google_cloud_provider',
+        make_provider=lambda: GoogleCloudProvider(client=Client(vertexai=False, api_key='mock-api-key')),
+        expected=('MINIMAL', 'HIGH'),
+    ),
+    FlashImageThinkingCase(
+        id='gemini_api_user_levels_win',
+        make_provider=lambda: GoogleProvider(api_key='mock-api-key'),
+        profile=GoogleModelProfile(google_thinking_levels=frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        expected=('LOW', 'MEDIUM'),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in FLASH_IMAGE_THINKING_CASES])
+def test_flash_image_thinking_levels_follow_the_client_transport(case: FlashImageThinkingCase) -> None:
+    """`gemini-3.1-flash-image` snaps to `minimal, high` only when requests go to the Gemini API.
+
+    The Gemini API rejects `LOW` and `MEDIUM` on this model while Vertex accepts them, so the level set
+    follows the client's transport whichever way the provider name points, and a level set already
+    on the profile wins. Not a VCR test: the level is decided before the request is built. The
+    body-matched cassettes in `tests/test_thinking_wire_contract.py` pin the Gemini API side; Vertex
+    accepting `LOW` and `MEDIUM` was verified live but is not recorded.
+    """
+    m = GoogleModel('gemini-3.1-flash-image', provider=case.make_provider(), profile=case.profile)
+    sent = [
+        m._translate_thinking(GoogleModelSettings(), ModelRequestParameters(thinking=thinking))  # pyright: ignore[reportPrivateUsage]
+        for thinking in ('low', 'medium')
+    ]
+    assert sent == [{'include_thoughts': True, 'thinking_level': level} for level in case.expected]

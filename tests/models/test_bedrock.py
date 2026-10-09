@@ -1,10 +1,11 @@
 from __future__ import annotations as _annotations
 
+import io
 import json
 import os
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from itertools import count
 from threading import Barrier, Lock
@@ -75,7 +76,9 @@ from ..cassette_utils import request_json, single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
+    from botocore.awsrequest import AWSPreparedRequest, AWSResponse, HTTPHeaders
     from botocore.client import BaseClient
+    from botocore.eventstream import ParserError as EventStreamParserError
     from botocore.exceptions import (
         BotoCoreError,
         ClientError,
@@ -87,6 +90,7 @@ with try_import() as imports_successful:
     from cassetter import Cassette
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
+    from urllib3 import HTTPResponse
 
     from pydantic_ai.models.bedrock import (
         BedrockConverseModel,
@@ -940,10 +944,10 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 parts=[
                     UserPromptPart(
                         content='What was the temperature in London 1st January 2022?',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -958,7 +962,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 ],
                 usage=RequestUsage(input_tokens=571, output_tokens=22, cost=Decimal('0.000023065')),
                 model_name='us.amazon.nova-micro-v1:0',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'tool_use'},
@@ -972,10 +976,10 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         tool_name='temperature',
                         content='30°C',
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1048,10 +1052,10 @@ The temperature in London on 1st January 2022 was 30°C.\
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3097,7 +3101,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 10, 22, 46, 57, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 10, 22, 46, 57, tzinfo=UTC),
                     'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
@@ -3928,6 +3932,41 @@ async def test_bedrock_thinking_true_qwen_variant(
     assert sent['additionalModelRequestFields'] == {'reasoning_config': 'high'}
 
 
+async def test_bedrock_qwen_stream_whitespace_text_blocks(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+) -> None:
+    """A Qwen stream's whitespace-only text blocks, which `Converse` leaves out, build no parts.
+
+    Ahead of a tool call, `ConverseStream` sends a text block of `''` before the reasoning and one of `'\\n\\n'` after
+    it, while `Converse` returns only the reasoning and the tool call. The profile's
+    `ignore_streamed_leading_whitespace` drops the two blocks, so both build the same parts.
+    """
+    model = BedrockConverseModel('qwen.qwen3-32b-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='get_weather',
+                description='Get the weather for a city',
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'city': {'type': 'string'}},
+                    'required': ['city'],
+                },
+            )
+        ]
+    )
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('What is the weather in Paris?')]
+    settings = ModelSettings(thinking='high')
+
+    response = await model.request(messages, settings, params)
+    async with model.request_stream(messages, settings, params) as stream:
+        async for _ in stream:
+            pass
+
+    assert [type(part).__name__ for part in response.parts] == snapshot(['ThinkingPart', 'ToolCallPart'])
+    assert [type(part).__name__ for part in stream.get().parts] == snapshot(['ThinkingPart', 'ToolCallPart'])
+
+
 async def test_bedrock_top_k_anthropic_variant(
     allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ) -> None:
@@ -4280,6 +4319,156 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
     assert second_usage == snapshot(
         RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1322, requests=1, cost=Decimal('0.00052536'))
     )
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'cache,expected_cache_point,expected_usage',
+    [
+        pytest.param(
+            True,
+            # No `ttl`, matching what `bedrock_cache_instructions=True` sends.
+            {'cachePoint': {'type': 'default'}},
+            snapshot(
+                (
+                    RunUsage(
+                        cache_write_tokens=8172,
+                        output_tokens=5,
+                        input_tokens=8259,
+                        cost=Decimal('0.0227194'),
+                        requests=1,
+                    ),
+                    RunUsage(
+                        output_tokens=5,
+                        input_tokens=8259,
+                        cache_read_tokens=8172,
+                        cost=Decimal('0.00204424'),
+                        requests=1,
+                    ),
+                )
+            ),
+            id='default',
+        ),
+        pytest.param(
+            '1h',
+            {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+            snapshot(
+                (
+                    RunUsage(
+                        cache_write_tokens=8175,
+                        output_tokens=5,
+                        input_tokens=8262,
+                        cost=Decimal('0.02272765'),
+                        requests=1,
+                    ),
+                    RunUsage(
+                        output_tokens=5,
+                        input_tokens=8262,
+                        cache_read_tokens=8175,
+                        cost=Decimal('0.0020449'),
+                        requests=1,
+                    ),
+                )
+            ),
+            id='1h',
+        ),
+    ],
+)
+async def test_unified_cache_writes_then_reads_real_api(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    cache: Literal[True, '1h'],
+    expected_cache_point: dict[str, Any],
+    expected_usage: tuple[RunUsage, RunUsage],
+):
+    """The unified `cache` setting places cache points after the tool definitions and the instructions,
+    with the requested TTL, and Bedrock accepts them.
+
+    The same prompt is sent twice: the first run writes the prefix to the cache and the second reads it back.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-5', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        # Distinct per case, so that recording one case doesn't read the cache the other wrote.
+        instructions=f'You are a concise Python assistant (cache setting: {cache!r}). '
+        + 'Answer questions about Python concisely. ' * 650,
+        model_settings=ModelSettings(cache=cache),
+    )
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:  # pragma: no cover
+        return f'Sunny in {city}'
+
+    prompt = 'Name one Python web framework, in one word.'
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        first = await agent.run(prompt)
+        second = await agent.run(prompt)
+
+    assert [
+        {
+            'system': [block for block in body['system'] if 'cachePoint' in block],
+            'tools': [tool for tool in body['toolConfig']['tools'] if 'cachePoint' in tool],
+        }
+        for body in sent_requests
+    ] == [{'system': [expected_cache_point], 'tools': [expected_cache_point]}] * 2
+    assert (first.usage, second.usage) == expected_usage
+
+
+@pytest.mark.vcr()
+async def test_unified_cache_reads_history_after_wide_turn_real_api(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """With `cache=True`, a direct `model.request()` caches the conversation, and the next request reads it
+    back even after a turn with 12 parallel tool calls.
+
+    Bedrock looks back only about 20 content blocks from a cache breakpoint for an earlier cache entry, and the
+    wide turn adds 25, so the end of the previous request gets its own breakpoint
+    (https://github.com/pydantic/pydantic-ai/issues/9404).
+    """
+    # Claude Sonnet 4.5 on Bedrock reads nothing back after this turn without the extra breakpoint.
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})]
+    )
+    first_request = ModelRequest(
+        parts=[
+            UserPromptPart('Here are some notes about Python, for a wide turn. ' + 'Python favors readability. ' * 1200)
+        ],
+        instructions='You are a concise Python assistant.',
+    )
+    tool_calls = [ToolCallPart('get_weather', {}, tool_call_id=f'call_{i}') for i in range(12)]
+    history: list[ModelMessage] = [
+        first_request,
+        ModelResponse(parts=[TextPart('Checking the weather.'), *tool_calls]),
+        ModelRequest(
+            parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id=call.tool_call_id) for call in tool_calls]
+        ),
+    ]
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        first = await model.request([first_request], ModelSettings(cache=True), params)
+        second = await model.request(history, ModelSettings(cache=True), params)
+
+    def cache_point_positions(body: dict[str, Any]) -> list[tuple[int, int]]:
+        return [
+            (message_index, block_index)
+            for message_index, message in enumerate(body['messages'])
+            for block_index, block in enumerate(message['content'])
+            if 'cachePoint' in block
+        ]
+
+    # Instructions, tools, and the end of the conversation; after the wide turn, also the end of the first request.
+    assert [cache_point_positions(body) for body in sent_requests] == snapshot([[(0, 1)], [(0, 1), (2, 12)]])
+    assert [
+        ('cachePoint' in body['system'][-1], 'cachePoint' in body['toolConfig']['tools'][-1]) for body in sent_requests
+    ] == [(True, True)] * 2
+    assert (first.usage, second.usage) == snapshot(
+        (
+            RequestUsage(input_tokens=7749, cache_write_tokens=7746, output_tokens=219),
+            RequestUsage(input_tokens=8337, cache_read_tokens=7746, cache_write_tokens=584, output_tokens=156),
+        )
+    )
+    assert second.usage.cache_read_tokens >= first.usage.cache_write_tokens
 
 
 @pytest.mark.vcr()
@@ -5020,6 +5209,69 @@ async def test_bedrock_cache_skipped_for_unsupported_models(
         messages_user, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
     )
     assert bedrock_messages[0]['content'] == snapshot([{'text': 'User message.'}])
+
+
+async def test_unified_cache_places_stable_boundary_points(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """The unified `cache` setting flows through `prepare_request` into cache points at the stable
+    prompt boundaries; `cache=True` emits no explicit `ttl`, matching `bedrock_cache_*=True`."""
+    model = BedrockConverseModel('anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='tool_one')])
+    settings, params = model.prepare_request(ModelSettings(cache=True), params)
+    bedrock_settings = cast(BedrockModelSettings, settings or {})
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='System instructions.'), UserPromptPart(content='Hi!')])
+    ]
+    system_prompt, _ = await model._map_messages(messages, params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
+    assert system_prompt == snapshot([{'text': 'System instructions.'}, {'cachePoint': {'type': 'default'}}])
+
+    tool_config = model._map_tool_config(params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
+    assert tool_config and tool_config['tools'][-1] == snapshot({'cachePoint': {'type': 'default'}})
+
+
+async def test_bedrock_cache_messages_keeps_existing_previous_request_cache_point(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """After a wide turn, a previous request that already ends in a `CachePoint` doesn't get a second one."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    calls = [ToolCallPart('get_weather', {}, tool_call_id=f'call_{i}') for i in range(12)]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Check the weather everywhere.', CachePoint()])]),
+        ModelResponse(parts=[TextPart('Checking.'), *calls]),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id=call.tool_call_id) for call in calls]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
+    )
+
+    assert [[next(iter(block)) for block in message['content']][-2:] for message in bedrock_messages] == [
+        ['text', 'cachePoint'],
+        ['toolUse', 'toolUse'],
+        ['toolResult', 'cachePoint'],
+    ]
+
+
+async def test_unified_cache_tool_points_skipped_for_nova(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """On Nova (prompt caching without tool caching), the unified setting caches instructions while
+    the injected tool-definitions setting is dropped by the profile gate."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='tool_one')])
+    settings, params = model.prepare_request(ModelSettings(cache=True), params)
+    bedrock_settings = cast(BedrockModelSettings, settings or {})
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='System instructions.'), UserPromptPart(content='Hi!')])
+    ]
+    system_prompt, _ = await model._map_messages(messages, params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
+    assert system_prompt[-1] == {'cachePoint': {'type': 'default'}}
+
+    tool_config = model._map_tool_config(params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
+    assert tool_config and all('cachePoint' not in tool for tool in tool_config['tools'])
 
 
 async def test_bedrock_cache_tool_definitions_skipped_for_nova(
@@ -7499,3 +7751,49 @@ def test_bedrock_anthropic_5_no_sampling_settings_pass_through_silently(
 
     assert prepared == snapshot({'max_tokens': 16})
     assert not [w for w in recwarn if 'Sampling parameters' in str(w.message)]
+
+
+@pytest.mark.parametrize(
+    ('call', 'body', 'message'),
+    [
+        pytest.param('request', b'', "Response has no 'output' field", id='request'),
+        pytest.param('request', b'not json', "Response has no 'output' field", id='request-not-json'),
+        # At least botocore's 12-byte event stream prelude, since a shorter body parses to no events instead of failing.
+        pytest.param('stream', b' ' * 32, 'Failed to decode response as an event stream: ', id='stream'),
+        pytest.param('count_tokens', b'', "Response has no 'inputTokens' field", id='count_tokens'),
+    ],
+)
+async def test_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, call: str, body: bytes, message: str
+):
+    """An empty or non-JSON 200 response body surfaces as `ModelAPIError`, not a `KeyError` or a botocore error.
+
+    The response is injected at `before-send` so botocore's own parser handles it, because no real endpoint returns such
+    a body on demand. https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+    provider = BedrockProvider(
+        region_name='us-east-1',
+        aws_access_key_id='AKIA6666666666666666',
+        aws_secret_access_key='6666666666666666666666666666666666666666',
+    )
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=provider)
+
+    def respond(request: AWSPreparedRequest, **_: object) -> AWSResponse:
+        return AWSResponse(request.url, 200, HTTPHeaders(), HTTPResponse(body=io.BytesIO(body), preload_content=False))
+
+    # botocore sends the response a `before-send` handler returns instead of the request, though the stubs type every
+    # handler as returning `None`.
+    model.client.meta.events.register_last('before-send.bedrock-runtime', respond)  # pyright: ignore[reportArgumentType]
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+    with pytest.raises(ModelAPIError) as exc_info:
+        if call == 'count_tokens':
+            await model.count_tokens(messages, None, ModelRequestParameters())
+        elif call == 'stream':
+            async with Agent(model).run_stream('Hello'):
+                pass
+        else:
+            await model.request(messages, None, ModelRequestParameters())
+
+    assert exc_info.value.message.startswith(message)
+    if call == 'stream':
+        assert isinstance(exc_info.value.__cause__, EventStreamParserError)

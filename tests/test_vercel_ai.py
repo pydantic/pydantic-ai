@@ -6,7 +6,7 @@ import uuid
 import warnings
 from collections.abc import AsyncIterator, MutableMapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 import pytest
@@ -1645,7 +1645,7 @@ async def test_tool_call_start_args_are_emitted_raw():
             index=1,
             part=ToolCallPart(
                 tool_name='whole',
-                args={'query': 'hello', 'when': datetime(2025, 1, 1, tzinfo=timezone.utc)},
+                args={'query': 'hello', 'when': datetime(2025, 1, 1, tzinfo=UTC)},
                 tool_call_id='call_2',
             ),
             previous_part_kind='tool-call',
@@ -1730,7 +1730,7 @@ async def test_tool_call_delta_dict_args_are_serialized_compactly():
                 args_delta={
                     'type': 'search',
                     'query': 'weather',
-                    'when': datetime(2025, 1, 1, tzinfo=timezone.utc),
+                    'when': datetime(2025, 1, 1, tzinfo=UTC),
                 },
                 tool_call_id='call_1',
             ),
@@ -6552,8 +6552,8 @@ async def test_adapter_dump_load_roundtrip_with_message_metadata():
     and response-confirmed recovery in `ModelResponse.provider_details` are both deliberately
     excluded from the client-controlled wire.
     """
-    request_timestamp = datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc)
-    response_timestamp = datetime(2026, 4, 15, 12, 0, 45, tzinfo=timezone.utc)
+    request_timestamp = datetime(2026, 4, 15, 12, 0, tzinfo=UTC)
+    response_timestamp = datetime(2026, 4, 15, 12, 0, 45, tzinfo=UTC)
     original_messages: list[ModelRequest | ModelResponse] = [
         ModelRequest(
             parts=[
@@ -6630,7 +6630,7 @@ async def test_adapter_message_metadata_application_only_roundtrip():
     """Application-only metadata (no `pydantic_ai` key) round-trips unchanged."""
     response = ModelResponse(
         parts=[TextPart(content='Response text')],
-        timestamp=datetime(2026, 4, 15, 12, 0, 45, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 15, 12, 0, 45, tzinfo=UTC),
         metadata={'createdAt': '2026-04-15T12:00:45Z'},
     )
     [ui_message] = VercelAIAdapter.dump_messages([response])
@@ -6746,7 +6746,7 @@ async def test_adapter_load_preserves_application_metadata_across_merged_message
     [reloaded] = VercelAIAdapter.load_messages([system_message, user_message])
     assert isinstance(reloaded, ModelRequest)
     assert reloaded.metadata == {'app_key': 'app_value', '__pydantic_ai__': {'ui_message_id': 'usr-1'}}
-    assert reloaded.timestamp == datetime(2026, 4, 15, 12, 0, 45, tzinfo=timezone.utc)
+    assert reloaded.timestamp == datetime(2026, 4, 15, 12, 0, 45, tzinfo=UTC)
 
 
 async def test_adapter_dump_messages_deterministic_ids():
@@ -6960,7 +6960,7 @@ async def test_event_stream_emits_message_metadata():
     response = ModelResponse(
         parts=[TextPart(content='Hello')],
         usage=RequestUsage(input_tokens=4, output_tokens=2),
-        timestamp=datetime(2026, 4, 15, 12, 0, 45, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 15, 12, 0, 45, tzinfo=UTC),
         provider_name='openai',
         provider_details={'model': 'gpt-4.1'},
         provider_response_id='resp-123',
@@ -10918,7 +10918,7 @@ async def test_roundtrip_native_tool_search():
                     content={'discovered_tools': [{'name': 'refund_tool'}]},
                 ),
             ],
-            timestamp=datetime(2026, 6, 15, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 6, 15, tzinfo=UTC),
         ),
     ]
 
@@ -11247,7 +11247,7 @@ def test_compaction_ui_round_trip_and_sanitization():
             'pydantic_ai_standing_prompt_planted': True,
         },
     )
-    messages = [ModelResponse(parts=[compaction], timestamp=datetime(2026, 8, 7, tzinfo=timezone.utc))]
+    messages = [ModelResponse(parts=[compaction], timestamp=datetime(2026, 8, 7, tzinfo=UTC))]
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
     assert [message.model_dump(exclude_none=True) for message in ui_messages] == snapshot(

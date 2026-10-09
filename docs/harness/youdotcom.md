@@ -156,6 +156,7 @@ YouSearch(
     boost_domains=[],            # re-rank these domains higher without excluding others
     freshness=None,              # 'day' | 'week' | 'month' | 'year' | 'YYYY-MM-DDtoYYYY-MM-DD'
     country=None,                # two-letter country code to focus results
+    native=False,                # prefer the model's native web search, You.com as fallback
     guidance=None,               # None = default instructions, '' = none, str = custom
     timeout_ms=60_000,           # per-request timeout for the default client
     client=None,                 # YouClient -- None builds youdotcom.You from YDC_API_KEY
@@ -190,10 +191,12 @@ and `research`. `finance_research` takes only its input and `finance_effort`.
 
 ## Multiple instances
 
-Two instances of the same capability register the same tool names, which is an
+Two instances of the same capability register the same tool names, and share
+the default `id` (`you_search` or `you_research`), so two that differ raise an
 error. To run more than one setup in a single agent -- say one `YouSearch` over
-the open web and one limited to a few domains -- wrap the extra ones in core's
-`PrefixTools` capability. It puts a prefix in front of their tool names:
+the open web and one limited to a few domains -- give each extra one a distinct
+`id` and wrap it in core's `PrefixTools` capability. It puts a prefix in front
+of their tool names:
 
 ```python
 from pydantic_ai import Agent
@@ -206,7 +209,7 @@ agent = Agent(
     capabilities=[
         YouSearch(),  # web_search, get_page
         PrefixTools(
-            wrapped=YouSearch(include_domains=['sec.gov'], guidance=''),
+            wrapped=YouSearch(include_domains=['sec.gov'], guidance='', id='sec_search'),
             prefix='sec',
         ),  # sec_web_search, sec_get_page
     ],
@@ -216,6 +219,25 @@ agent = Agent(
 Set `guidance=''` on the wrapped instance (or replace it with text that tells
 the model when to use the prefixed tools), since each instance otherwise
 contributes the same default research guidance.
+
+## Durable execution
+
+Under [durable execution](durable-execution.md), each You.com request is recorded, so a
+recovered run reuses the result instead of making the request again. Temporal
+and Prefect record each tool call in its own activity or task. DBOS runs
+function tools in workflow code, so there the request runs as its own step.
+
+On Temporal an activity has 60 seconds by default, which `research` can
+exceed: it waits up to `timeout_ms`, 600 seconds by default. Give the tool calls
+longer with
+`TemporalDurability(toolset_activity_config={'you_research': ActivityConfig(...)})`,
+keyed by the capability's `id`,
+as in [Temporal timeouts](durable-execution.md#temporal-timeouts).
+
+The records are named after the capability's `id`, which defaults to
+`you_search` for `YouSearch` and `you_research` for `YouResearch`, so durable
+execution needs no configuration. Changing an `id` renames the records, which
+in-flight runs then cannot find.
 
 ## Custom client
 
@@ -237,21 +259,42 @@ YouSearch(client=You(api_key_auth='...'))
 
 Core ships a [`WebSearch`](../capabilities/overview.md#provider-adaptive-tools)
 capability that adapts to the model: it uses the provider's own search where
-the model has one, and a local DuckDuckGo tool everywhere else. Use it when you
-want search that follows whichever model you run. Use `YouSearch` when you want
-the same search on every model: one vendor, excerpts with every result, page
-reads you ask for, domain filters, and freshness controls.
+the model has one, and on other models raises unless you pass a `local=`
+fallback, such as `local=True` for DuckDuckGo. Use it when you want search that
+follows whichever model you run. Use `YouSearch` when you want the same search
+on every model: one vendor, excerpts with every result, page reads you ask for,
+domain filters, and freshness controls.
 
-Give an agent one web search capability: core `WebSearch`, harness
+To use the provider's search where there is one and You.com's elsewhere, either:
+
+- Set `YouSearch(native=True)`. The capability adds the native web search
+  tool, and You.com's `web_search` is only sent to models without one.
+  `get_page` stays available on every model. `include_domains` and
+  `exclude_domains` become the native tool's `allowed_domains` and
+  `blocked_domains`.
+  Whether the native search applies them depends on the provider: Gemini's
+  native search ignores them, so on Gemini they only restrict the fallback.
+- Or pass You.com's search as the fallback of core `WebSearch`, to configure the
+  native search with `WebSearch`'s own options:
+
+  ```python
+  from pydantic_ai.capabilities import WebSearch
+  from pydantic_ai_harness.youdotcom import YouSearch
+
+  WebSearch(local=YouSearch(num_results=10).web_search_tool())
+  ```
+
+Otherwise, give an agent one web search capability: core `WebSearch`, harness
 `ExaSearch`, or `YouSearch`. They all name their tools the same way --
 `web_search`, plus `get_page` for the two harness ones -- and an agent cannot
 have two tools with the same name, so it fails when you create it. If you want
 two of them anyway, wrap one in `PrefixTools` to rename its tools, as shown in
 [Multiple instances](#multiple-instances). There is one extra case: on
 Anthropic models the built-in search is also called `web_search`, so
-`WebSearch` clashes there even though the search runs on Anthropic's side. Pass
-`WebSearch(native=False)` to switch it to the DuckDuckGo tool, which is called
-`duckduckgo_search` and does not clash.
+`WebSearch` clashes with the default `YouSearch()` there even though the search
+runs on Anthropic's side. Use `YouSearch(native=True)` instead, or pass
+`WebSearch(native=False, local=True)` to switch core's search to the DuckDuckGo
+tool, which is called `duckduckgo_search` and does not clash.
 
 ## Agent spec (YAML/JSON)
 

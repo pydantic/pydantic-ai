@@ -1,4 +1,4 @@
-"""The `/add_model` menu: pick the model for the next prompt, or edit one model's settings."""
+"""The `/model add` menu: pick the model for the next prompt, or edit one model's settings."""
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -15,6 +15,7 @@ from pydantic_clai2.models import github_copilot, openrouter, vllm
 from pydantic_clai2.models.model_catalog import CatalogModel, catalog, github_copilot_models
 from pydantic_clai2.models.model_options import model_options, validate_model_options
 from pydantic_clai2.models.model_settings import ModelSettingsForm, model_defaults
+from pydantic_clai2.models.profiles import provider_of
 from pydantic_clai2.ui.menus.custom_params import CustomParamsMenu
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow, shown
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
@@ -34,10 +35,11 @@ class _EditSettings:
 class ModelSettingsSource:
     """One model's overrides, from `ModelSettingsForm`, saved in the store."""
 
-    def __init__(self, store: SettingsStore, model: str) -> None:
-        """Edits are saved under `model` and validated as a whole form each time."""
+    def __init__(self, store: SettingsStore, model: str, *, settings_as: str | None = None) -> None:
+        """Edits are saved under `model`, offering and validating the controls of `settings_as` (default `model`)."""
         self._store = store
         self.model = model
+        self._settings_as = settings_as or model
 
     @property
     def title(self) -> str:
@@ -47,12 +49,12 @@ class ModelSettingsSource:
     def rows(self) -> list[FieldRow]:
         """Every form field with its description and any fixed choices."""
         rows: list[FieldRow] = []
-        options = model_options(model=self.model)
+        options = model_options(model=self._settings_as)
         saved = self._store.model_settings(self.model)
         for key, info in ModelSettingsForm.model_fields.items():
             if key not in options and key not in saved:
                 continue
-            codex_tier = key == 'service_tier' and self.model.startswith('openai-codex:')
+            codex_tier = key == 'service_tier' and provider_of(self._settings_as) == 'openai-codex'
             rows.append(
                 FieldRow(
                     key=key,
@@ -71,7 +73,7 @@ class ModelSettingsSource:
                     choice_labels={'priority': 'Fast (priority)', 'default': 'Standard (default)'}
                     if codex_tier
                     else {},
-                    default=shown(model_defaults(model=self.model).get(key)),
+                    default=shown(model_defaults(model=self._settings_as).get(key)),
                     choices=options.get(key, ()) or _choices(info.annotation),
                 )
             )
@@ -79,7 +81,7 @@ class ModelSettingsSource:
 
     def current(self, row: FieldRow) -> str:
         """The effective value, without persisting inherited defaults."""
-        values = {**model_defaults(model=self.model), **self._store.model_settings(self.model)}
+        values = {**model_defaults(model=self._settings_as), **self._store.model_settings(self.model)}
         return shown(values.get(row.key))
 
     def problem(self, row: FieldRow, text: str) -> str | None:
@@ -126,7 +128,7 @@ class ModelSettingsSource:
             if key in ModelSettingsForm.model_fields
         }
         form = ModelSettingsForm.model_validate({**saved, row.key: value})
-        validate_model_options(model=self.model, form=form)
+        validate_model_options(model=self._settings_as, form=form)
         return form
 
 
@@ -173,13 +175,18 @@ class ModelMenu:
             for model in catalog(
                 include=[context.settings.model or '', *context.plugin_models()], discovered=self._discovered
             )
-            if provider is None or model.name.partition(':')[0] == provider
+            if provider is None or model.provider == provider
         ]
 
     @property
     def current(self) -> str | None:
         """The model `/set model` holds right now."""
         return self._context.settings.model
+
+    @property
+    def store(self) -> SettingsStore:
+        """Where models, their settings, and accounts are saved."""
+        return self._context.store
 
     def items(self) -> list[MenuItem]:
         """One row per model, marking the current one."""
@@ -240,14 +247,12 @@ class ModelMenu:
 
     def providers(self) -> list[str]:
         """Unique provider prefixes from the merged catalog."""
-        return sorted(
-            {model.name.partition(':')[0] for model in self.models} | {'github-copilot', 'openrouter', 'vllm'}
-        )
+        return sorted({model.provider for model in self.models} | {'github-copilot', 'openrouter', 'vllm'})
 
     def build_providers(self) -> Menu:
         """Choose a provider before browsing its models."""
         providers = self.providers()
-        current = (self.current or '').partition(':')[0]
+        current = provider_of(self.current or '')
         return (
             MenuBuilder('Providers')
             .style(markdown_style())
@@ -265,7 +270,9 @@ class ModelMenu:
 
     def edit_settings(self, *, name: str, runners: Runners) -> list[str]:
         """Run the same settings flow as the direct slash command."""
-        return run_model_settings(store=self._context.store, model=name, runners=runners)
+        return run_model_settings(
+            store=self._context.store, model=name, runners=runners, settings_as=self._context.settings_model(name)
+        )
 
 
 def _tokens(count: int | None) -> str:
@@ -298,7 +305,12 @@ def _run_provider(menu: ModelMenu, runners: Runners, messages: list[str]) -> boo
             messages += menu.edit_settings(name=value.model, runners=runners)
             continue
         if isinstance(value, str):
-            messages.append(menu.choose(value))
+            from pydantic_clai2.ui.menus.accounts_menu import choose_account
+
+            name = choose_account(menu.store, value, runners)
+            if name is None:
+                continue
+            messages.append(menu.choose(name))
         return True
 
 
@@ -343,22 +355,28 @@ class _ConnectProvider(Exception):
 async def model_settings_command(context: CommandContext, args: list[str], *, runners: Runners = TERMINAL) -> str:
     """Pick a saved model to edit, or open a named one, without switching models."""
     if len(args) > 1:
-        raise ValueError('Usage: /model_settings [NAME]')
+        raise ValueError('Usage: /model settings [NAME]')
     if not args:
         messages = await run_worker(lambda: run_model_settings_picker(context=context, runners=runners))
         return '\n'.join(messages) or 'No changes.'
     name = args[0]
     if name not in context.store.models():
-        raise ValueError(f'Model not added: {name}. Use /add_model {name} first.')
-    messages = await run_worker(lambda: run_model_settings(store=context.store, model=name, runners=runners))
+        raise ValueError(f'Model not added: {name}. Use /model add {name} first.')
+    messages = await run_worker(
+        lambda: run_model_settings(
+            store=context.store, model=name, runners=runners, settings_as=context.settings_model(name)
+        )
+    )
     return '\n'.join(messages) or 'No changes.'
 
 
-def run_model_settings(*, store: SettingsStore, model: str, runners: Runners) -> list[str]:
+def run_model_settings(
+    *, store: SettingsStore, model: str, runners: Runners, settings_as: str | None = None
+) -> list[str]:
     """Both entry points use the same field editor and custom-params submenu."""
     custom = CustomParamsMenu(store=store, model=model)
     return run_flow(
-        FieldMenu(ModelSettingsSource(store, model), searchable=False),
+        FieldMenu(ModelSettingsSource(store, model, settings_as=settings_as), searchable=False),
         runners,
         submenus={'custom_params': lambda: custom.run(runners=runners)},
     )
@@ -373,21 +391,25 @@ def build_model_settings_picker(*, context: CommandContext, current: str | None)
         .style(markdown_style())
         .items(
             [MenuItem(name, value=name) for name in names]
-            or [MenuItem('No models added. Use /add_model first.', disabled=True)]
+            or [MenuItem('No models added. Use /model add first.', disabled=True)]
         )
         .searchable()
         .list_width(40)
         .initial_index(names.index(current) if current in names else 0)
-        .preview(lambda item: model_settings_summary(store=context.store, model=str(item.value)))
+        .preview(
+            lambda item: model_settings_summary(
+                store=context.store, model=str(item.value), settings_as=context.settings_model(str(item.value))
+            )
+        )
         .footer_hint('type filter - Enter configure - Esc exit')
         .key_source(menu_key)
         .build()
     )
 
 
-def model_settings_summary(*, store: SettingsStore, model: str) -> str:
+def model_settings_summary(*, store: SettingsStore, model: str, settings_as: str | None = None) -> str:
     """Preview effective settings without mutating the model or its saved overrides."""
-    values = {**model_defaults(model=model), **store.model_settings(model)}
+    values = {**model_defaults(model=settings_as or model), **store.model_settings(model)}
     lines = [model, '', 'Configured settings:' if values else 'No custom settings (model defaults).']
     lines.extend(f'{_setting_label(key)}: {shown(value)}' for key, value in values.items())
     return '\n'.join(lines)
@@ -404,4 +426,8 @@ def run_model_settings_picker(*, context: CommandContext, runners: Runners) -> l
         current = result.item.value
         if current not in context.store.models():
             return messages
-        messages.extend(run_model_settings(store=context.store, model=current, runners=runners))
+        messages.extend(
+            run_model_settings(
+                store=context.store, model=current, runners=runners, settings_as=context.settings_model(current)
+            )
+        )

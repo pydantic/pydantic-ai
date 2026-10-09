@@ -1,17 +1,24 @@
-"""The built-in `ask_user` plugin: inline questions that keep the transcript visible."""
+"""Let the model ask you multiple-choice questions inline, without leaving the transcript.
 
-from collections.abc import Callable
+The built-in `ask_user` plugin: inline questions that keep the transcript visible.
+"""
+
+from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from functools import partial
 
 import anyio
+from pydantic import BaseModel, ValidationError
 from rich.console import Console, RenderableType
 from rich.text import Text
 from termflow.tui.layout import truncate
 from termflow.tui.terminal import raw_mode
 
+from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.ask_user import (
+    TOOL_NAME,
     AskUser,
     AskUserAnswer,
     AskUserAnsweredEvent,
@@ -19,12 +26,14 @@ from pydantic_ai_harness.ask_user import (
     AskUserResponse,
     Question,
 )
-from pydantic_clai2.plugins import FullScreen, PluginHost
+from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_clai2.plugins import FullScreen, Plugin
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
-from pydantic_clai2.ui.prompt.question_input import Paste, question_input
+from pydantic_clai2.ui.prompt.question_input import Paste, QuestionKey, TranscriptKey, question_input
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.tool_output import tool_header
 
 
 @dataclass(kw_only=True)
@@ -34,6 +43,8 @@ class QuestionMenu:
     question: Question
     position: int
     total: int
+    asker: str | None = None
+    """Who asks, such as `Task [1a2b3c4d]`, when it is not the run the user prompted."""
     cursor: int = 0
     selected: set[int] = field(default_factory=set[int])
     custom: PromptBuffer = field(default_factory=PromptBuffer)
@@ -41,10 +52,11 @@ class QuestionMenu:
 
     @property
     def title(self) -> str:
-        """Include progress when the request contains several questions."""
+        """Include who asks, and progress when the request contains several questions."""
+        title = self.question.header if self.asker is None else f'{self.asker}: {self.question.header}'
         if self.total == 1:
-            return self.question.header
-        return f'{self.question.header} (question {self.position} of {self.total})'
+            return title
+        return f'{title} (question {self.position} of {self.total})'
 
     @property
     def hint(self) -> str:
@@ -90,12 +102,18 @@ class QuestionMenu:
         return None
 
     def frame(self, *, width: int, height: int) -> tuple[str, ...]:
-        """Bound the picker to half the viewport, scrolling choices around the cursor."""
+        """Bound the picker to half the viewport, scrolling choices around the cursor.
+
+        The question is pinned between the title and its choices: output that streams while it is
+        open, from a delegated task say, lands in the transcript above and cannot push it away.
+        """
         budget = max(3, height // 2)
+        question = self._question_rows(width=width, limit=max(1, (budget - 2) // 2))
         if self.editing_custom:
             return (
                 theme.sgr(theme.ACCENT) + truncate(f'{self.title}: Other (type answer)', width) + '\x1b[0m',
-                *self.custom.rows(width=width, limit=budget - 2),
+                *question,
+                *self.custom.rows(width=width, limit=max(1, budget - 2 - len(question))),
                 theme.sgr(theme.MUTED) + truncate(self.hint, width) + '\x1b[0m',
             )
         choices: list[str] = []
@@ -108,42 +126,58 @@ class QuestionMenu:
         choices.append(f'{len(choices) + 1}. Other (type answer)')
         lines: list[str] = []
         focus = 0
-        console = Console()
         for index, choice in enumerate(choices):
             if index == self.cursor:
                 focus = len(lines)
-            wrapped = Text(choice).wrap(console, width=max(1, width - 2), overflow='fold')
-            for line_index, line in enumerate(wrapped):
+            for line_index, line in enumerate(_wrap(choice, width=width - 2)):
                 prefix = '> ' if index == self.cursor and line_index == 0 else '  '
                 role = theme.ACCENT if index == self.cursor else theme.INFO
-                lines.append(theme.sgr(role) + truncate(prefix + line.plain, width) + '\x1b[0m')
-        visible = max(1, budget - 2)
+                lines.append(theme.sgr(role) + truncate(prefix + line, width) + '\x1b[0m')
+        visible = max(1, budget - 2 - len(question))
         start = min(focus, max(0, len(lines) - visible))
         title = truncate(self.title, width)
         return (
             theme.sgr(theme.ACCENT, bold=True) + title + '\x1b[0m',
+            *question,
             *lines[start : start + visible],
             theme.sgr(theme.MUTED) + truncate(self.hint, width) + '\x1b[0m',
         )
 
-    def run(self, *, console: Console, key_source: Callable[[], str | Paste]) -> tuple[str, ...] | str | None:
-        """Borrow the released editor surface, never entering the alternate screen."""
+    def _question_rows(self, *, width: int, limit: int) -> list[str]:
+        """The question's wrapped text, cut to `limit` rows with an ellipsis so the choices keep room."""
+        rows = _wrap(self.question.question, width=width)
+        if len(rows) > limit:
+            rows = [*rows[: limit - 1], rows[limit - 1] + '…']
+        return [truncate(row, width) for row in rows]
+
+    def run(self, *, console: Console, key_source: Callable[[], QuestionKey]) -> tuple[str, ...] | str | None:
+        """Borrow the released editor's live panel, or open one for this question alone."""
         surface = console.file
+        owned = not isinstance(surface, PromptSurface)
         if not isinstance(surface, PromptSurface):
             surface = PromptSurface(output=surface, size=lambda: console.size)
+            console = Console(file=surface, width=console.width, height=console.height)
         try:
-            console.print(Text(self.question.question, style=theme.color(theme.ACCENT)))
             with raw_mode():
                 while True:
                     surface.paint(self.frame(width=console.width, height=console.height))
                     key = key_source()
+                    if isinstance(key, TranscriptKey):
+                        # Reading back through or copying the transcript must not answer or edit the question.
+                        surface.transcript_key(key.key, key.data)
+                        continue
                     if key == 'ctrl-c' or (key == 'escape' and not self.editing_custom):
                         return None
                     result = self.choose(key)
                     if result is not None:
                         return result
         finally:
-            surface.release()
+            # The panel showed the question while it was open; the transcript keeps it above the answer.
+            console.print(Text(self.question.question, style=theme.color(theme.ACCENT)))
+            if owned:
+                surface.restore()
+            else:
+                surface.release()
 
 
 class TerminalAnswerer:
@@ -165,22 +199,26 @@ class TerminalAnswerer:
     async def __call__(self, request: AskUserRequest, /) -> AskUserResponse:
         """Answer every question or decline the entire request."""
         async with self._terminal, self._full_screen():
+            child_id = DelegationTasks.child_id()
+            asker = None if child_id is None else f'Task [{child_id[:8]}]'
+            if asker is not None:
+                self._console.print(f'{asker} requests your input', markup=False)
             with question_input() if self._runner is None else nullcontext(None) as key_source:
-                return await self.answer_questions(request=request, key_source=key_source)
+                return await self.answer_questions(request=request, key_source=key_source, asker=asker)
 
     async def answer_questions(
-        self, *, request: AskUserRequest, key_source: Callable[[], str | Paste] | None
+        self, *, request: AskUserRequest, key_source: Callable[[], QuestionKey] | None, asker: str | None = None
     ) -> AskUserResponse:
         """Keep one decoder for the batch so pasted text cannot escape to the next question."""
         answers: list[AskUserAnswer] = []
         for position, question in enumerate(request.questions, start=1):
-            menu = QuestionMenu(question=question, position=position, total=len(request.questions))
+            menu = QuestionMenu(question=question, position=position, total=len(request.questions), asker=asker)
             if self._runner is not None:
                 operation = partial(self._runner, menu)
             else:
                 assert key_source is not None
                 operation = partial(menu.run, console=self._console, key_source=key_source)
-            selected = await run_worker(operation)
+            selected = await run_worker(operation, inline=True)
             if selected is None:
                 return AskUserResponse(cancelled=True)
             answers.append(
@@ -189,6 +227,30 @@ class TerminalAnswerer:
                 else AskUserAnswer(header=question.header, selected=selected)
             )
         return AskUserResponse(answers=tuple(answers))
+
+
+def _wrap(text: str, *, width: int) -> list[str]:
+    """Fold `text` to plain rows of at most `width` cells, keeping its own line breaks."""
+    return [line.plain for line in Text(text).wrap(Console(), width=max(1, width), overflow='fold')]
+
+
+class _Header(BaseModel):
+    header: str
+
+
+class _Headers(BaseModel):
+    """Only the display fields of the call; the harness validates the rest."""
+
+    questions: list[_Header]
+
+
+def render_call(event: FunctionToolCallEvent) -> RenderableType:
+    """Name the questions, not their raw JSON: the picker shows each one in full right after."""
+    try:
+        headers = _Headers.model_validate_json(event.part.args_as_json_str()).questions
+    except ValidationError:
+        headers = []
+    return tool_header(name=TOOL_NAME, argument=', '.join(question.header for question in headers))
 
 
 def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
@@ -207,7 +269,13 @@ def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
     return text
 
 
-def activate(host: PluginHost[None]) -> None:
-    """Register `AskUser` with the terminal answerer and a transcript line per answer."""
-    host.add(AskUser(answerer=TerminalAnswerer(full_screen=host.full_screen, console=host.console)))
-    host.render(AskUserAnsweredEvent)(render_answer)
+class AskUserPlugin(Plugin):
+    """`AskUser` with the terminal answerer, a readable call header, and a transcript line per answer."""
+
+    def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+        return (AskUser(answerer=TerminalAnswerer(full_screen=self.host.full_screen, console=self.host.console)),)
+
+    def render(self, event: AgentStreamEvent) -> RenderableType | None:
+        if isinstance(event, FunctionToolCallEvent) and event.part.tool_name == TOOL_NAME:
+            return render_call(event)
+        return render_answer(event) if isinstance(event, AskUserAnsweredEvent) else None
