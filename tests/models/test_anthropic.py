@@ -2160,8 +2160,7 @@ def _cache_breakpoint_ttls(kwargs: Mapping[str, Any]) -> list[str]:
         block for section in ('tools', 'system') if isinstance(kwargs[section], list) for block in kwargs[section]
     ]
     for wire_message in kwargs['messages']:
-        content = wire_message['content']
-        blocks.extend(content if isinstance(content, list) else [])
+        blocks.extend(wire_message['content'])
     ttls = [block['cache_control']['ttl'] for block in blocks if 'cache_control' in block]
     if kwargs['cache_control'] is not OMIT:
         ttls.append(f'{kwargs["cache_control"]["ttl"]} (automatic)')
