@@ -1263,9 +1263,10 @@ class TestTokenizerParameter:
         rc = _make_request_context(messages)
         ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
-        # With keep_tokens=5 and 4 tokens per message, should keep 1 message.
+        # Include the whole message crossing the five-token retention target.
         remaining_tokens = estimate_token_count(result.messages, tokenizer=lambda s: len(s))
-        assert remaining_tokens <= 5
+        assert remaining_tokens == 8
+        assert result.messages == messages[-2:]
 
     async def test_sliding_window_tokenizer_threshold_check(self):
         """SlidingWindowCompaction tokenizer should be used for the trigger check."""
@@ -3452,7 +3453,7 @@ class TestKeepUserMessages:
         assert len(first.messages) <= comp.max_messages
         assert second.messages == first.messages
 
-    async def test_retained_users_and_tail_share_the_token_budget(self):
+    async def test_retained_users_are_additional_to_the_token_tail(self):
         comp = SummarizingCompaction(
             model='test:m',
             max_tokens=2,
@@ -3465,12 +3466,11 @@ class TestKeepUserMessages:
         messages: list[ModelMessage] = [_user('xx'), _assistant('x')]
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
             result = await comp.compact(messages, _make_ctx())
-        assert _user_texts(result) == []
-        assert result[-1] == messages[-1]
-        assert comp.keep_tokens is not None
-        assert estimate_token_count(result[1:], len) <= comp.keep_tokens
+        assert _user_texts(result) == ['xx']
+        assert result[-1] is messages[-1]
+        assert estimate_token_count(result[1:], len) == 3
 
-    async def test_retained_user_can_consume_the_token_budget(self):
+    async def test_retained_user_cannot_displace_the_token_tail(self):
         comp = SummarizingCompaction(
             model='test:m',
             max_tokens=2,
@@ -3484,15 +3484,15 @@ class TestKeepUserMessages:
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
             result = await comp.compact(messages, _make_ctx())
         assert _user_texts(result) == ['x']
-        assert comp.keep_tokens is not None
-        assert estimate_token_count(result[1:], len) <= comp.keep_tokens
+        assert result[-1] is messages[-1]
+        assert estimate_token_count(result[1:], len) == 2
 
-    async def test_older_user_is_not_retained_when_the_newest_does_not_fit(self):
+    async def test_extra_users_are_capped_without_displacing_token_tail(self):
         comp = SummarizingCompaction(
             model='test:m',
             max_tokens=3,
             keep_tokens=1,
-            keep_messages=3,
+            keep_messages=1,
             keep_user_messages=True,
             bridge_prefix=False,
             tokenizer=len,
@@ -3500,8 +3500,8 @@ class TestKeepUserMessages:
         messages: list[ModelMessage] = [_user('x'), _assistant('x'), _user('xx'), _assistant('x')]
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
             result = await comp.compact(messages, _make_ctx())
-        assert _user_texts(result) == []
-        assert result[-1] == messages[-1]
+        assert _user_texts(result) == ['xx']
+        assert result[-1] is messages[-1]
 
     async def test_pin_is_not_rebuilt_as_a_kept_user_message(self):
         comp = SummarizingCompaction(

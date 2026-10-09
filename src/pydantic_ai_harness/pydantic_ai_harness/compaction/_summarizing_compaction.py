@@ -378,9 +378,10 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     """Number of tail messages to preserve after compaction (message-count trigger)."""
 
     keep_tokens: int | None = None
-    """Target token budget to preserve after compaction (token-count trigger).
+    """Minimum original message-content tokens to retain in an unchanged recent suffix.
 
-    When `None`, falls back to `keep_messages`.
+    Whole messages and tool dependencies can exceed this floor. Attached instructions do
+    not count. When `None`, falls back to `keep_messages`; zero keeps legacy edge behavior.
     """
 
     summary_prompt: str = _DEFAULT_SUMMARY_PROMPT
@@ -426,7 +427,8 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     keep_user_messages: bool = False
     """When `True`, preserve recent summarized user messages (each truncated to
     `keep_user_messages_max_chars`) alongside the summary. Retained messages consume the
-    `keep_messages` tail budget, keeping compaction bounded. Supersedes
+    `keep_messages` tail budget in message-count mode. With positive `keep_tokens`,
+    `keep_messages` caps only extra user copies, which do not displace the retained suffix. Supersedes
     `preserve_first_user_message`.
     """
 
@@ -505,28 +507,20 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         if self.keep_user_messages:
             extra = self._kept_user_messages(to_summarize)
             extra = extra[-self.keep_messages :] if self.keep_messages else []
-            token_tail_budget = self.keep_tokens
-            if token_tail_budget is not None:
+            if self.keep_tokens == 0:
+                # Preserve the legacy zero-budget edge case, including zero-token copies.
                 retained: list[ModelMessage] = []
                 for message in reversed(extra):
-                    tokens = estimate_token_count([message], self.tokenizer)
-                    if tokens <= token_tail_budget:
+                    if estimate_token_count([message], self.tokenizer) == 0:
                         retained.append(message)
-                        token_tail_budget -= tokens
                     else:
                         break
                 extra = list(reversed(retained))
-            retained_tail_slots = self.keep_messages - len(extra)
-            if token_tail_budget is not None:
-                if token_tail_budget == 0:
-                    preserved = []
-                else:
-                    token_tail = preserved[find_token_cutoff(preserved, token_tail_budget, self.tokenizer) :]
-                    preserved = (
-                        token_tail if estimate_token_count(token_tail, self.tokenizer) <= token_tail_budget else []
-                    )
-            if len(preserved) > retained_tail_slots:
-                preserved = preserved[find_safe_cutoff(preserved, retained_tail_slots) :]
+                preserved = []
+            elif self.keep_tokens is None:
+                retained_tail_slots = self.keep_messages - len(extra)
+                if len(preserved) > retained_tail_slots:
+                    preserved = preserved[find_safe_cutoff(preserved, retained_tail_slots) :]
         elif self.preserve_first_user_message:
             first_user_msg = find_first_user_message(messages)
             if first_user_msg is not None:
@@ -535,9 +529,11 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                     extra = [first_user_msg]
 
         result: list[ModelMessage] = [summary_message, *extra, *preserved]
-        result = reinject_pinned(messages, result)
+        result = reinject_pinned(messages, result, protected_tail=len(preserved) if self.keep_tokens else 0)
         if self.receipts:
-            result = self._insert_receipt(summary_message, to_summarize, result, ctx)
+            result = self._insert_receipt(
+                summary_message, to_summarize, result, ctx, protected_tail=len(preserved) if self.keep_tokens else 0
+            )
         return result
 
     def _kept_user_messages(self, to_summarize: list[ModelMessage]) -> list[ModelMessage]:
@@ -616,9 +612,13 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         to_summarize: list[ModelMessage],
         result: list[ModelMessage],
         ctx: RunContext[AgentDepsT],
+        *,
+        protected_tail: int = 0,
     ) -> list[ModelMessage]:
-        """Insert a deterministic receipt right after the summary, de-accumulating old ones."""
-        deduped = [msg for msg in result if not _is_receipt_message(msg)]
+        """Insert a receipt after the summary, de-accumulating only outside the protected tail."""
+        prefix_end = len(result) - protected_tail
+        deduped = [msg for msg in result[:prefix_end] if not _is_receipt_message(msg)]
+        deduped.extend(result[prefix_end:])
         dropped_tokens = estimate_token_count(to_summarize, self.tokenizer)
         handle = discover_transcript_handle(ctx)
         summarizer = _model_family(self.model if self.model is not None else ctx.model)
