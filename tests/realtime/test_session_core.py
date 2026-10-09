@@ -20,9 +20,13 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    PartEndEvent,
+    PartStartEvent,
     RealtimeInputSpeechEndEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeInputTranscriptionErrorEvent,
+    RealtimeResponseInterruptedEvent,
     RealtimeSessionReconnectEvent,
     SpeechPart,
     TextPart,
@@ -46,6 +50,7 @@ from pydantic_ai.realtime._core import (
     ToolReturned,
     TranscriptOverdue,
 )
+from pydantic_ai.realtime._google_lifecycle import GeminiLifecycle
 from pydantic_ai.realtime._lifecycle import (
     InputAdded,
     InputLost,
@@ -171,6 +176,7 @@ def test_usage_goes_to_its_own_response_or_to_the_session() -> None:
         started('r1'),
         SessionUsage(RequestUsage(input_tokens=1), provider_response_id='r1'),
         SessionUsage(RequestUsage(input_tokens=2), response_scoped=False),
+        # Naming no response: the one under way.
         SessionUsage(RequestUsage(input_tokens=4), provider_response_id=None),
         ended('r1', provider_details={'status': 'completed'}),
         SessionUsage(RequestUsage(input_tokens=8), provider_response_id='r1'),
@@ -178,7 +184,72 @@ def test_usage_goes_to_its_own_response_or_to_the_session() -> None:
     (message,) = session_core.all_messages()
     assert isinstance(message, ModelResponse)
     assert (message.usage.input_tokens, session_core.usage.input_tokens, session_core.usage.requests) == snapshot(
-        (1, 15, 3)
+        (5, 15, 3)
+    )
+
+
+def test_usage_naming_no_response_between_responses_is_the_next_ones() -> None:
+    """Gemini's usage names no response: reported between two (a boundary that said nothing else), it is the next's."""
+    session_core = feed(
+        core(),
+        SessionUsage(RequestUsage(input_tokens=2), finish_reason='stop', provider_details={'x': 1}),
+        ResponseStarted(response_id='made_up', provider_id=False),
+        said('made_up', 'Hi.'),
+        SessionUsage(RequestUsage(input_tokens=3)),
+        ended('made_up'),
+    )
+    (message,) = session_core.all_messages()
+    assert isinstance(message, ModelResponse)
+    assert (message.usage.input_tokens, message.provider_response_id, message.provider_details) == snapshot(
+        (5, None, {'x': 1})
+    )
+
+
+def test_native_tool_parts_lead_the_response() -> None:
+    call = NativeToolCallPart(tool_name='web_search', args={'query': 'weather'}, tool_call_id='native_1')
+    session_core = feed(
+        core(),
+        started('r1'),
+        said('r1', 'Sunny.'),
+        PartStartEvent(index=0, part=call),
+        PartEndEvent(index=0, part=call),
+        ended('r1'),
+    )
+    (message,) = session_core.all_messages()
+    assert [type(part).__name__ for part in message.parts] == snapshot(['NativeToolCallPart', 'SpeechPart'])
+    # A native part with no response under way has nothing to belong to.
+    feed(session_core, PartStartEvent(index=1, part=call))
+    assert len(session_core.all_messages()) == 1
+
+
+def test_a_wait_follows_a_response_to_the_one_that_carries_it_on() -> None:
+    """Gemini's extended-thinking model ends a filler saying the exchange goes on: the wait goes on with it."""
+    session_core = feed(core(), InputSent(input_id=0, request=text_request('Weather?'), solicits=True))
+    wait = session_core.wait_tokens()
+    feed(session_core, started('r1', 0), said('r1', 'Let me see.'), ended('r1'))
+    feed(session_core, ResponseStarted(response_id='r2', continues='r1'), said('r2', 'Still looking.'))
+    assert session_core.still_owed(wait) == snapshot(frozenset({Owed(kind='response', key='r2', epoch=0)}))
+    feed(session_core, ended('r2'))
+    assert session_core.still_owed(wait) == snapshot(frozenset())
+
+
+def test_a_turn_heard_after_its_reply_started_joins_ahead_of_it() -> None:
+    """Gemini transcribes the user after the model starts answering them: the turn goes before the reply."""
+    session_core = feed(
+        core(),
+        started('r1'),
+        said('r1', 'Sure.'),
+        UserTurnStarted(turn_id='turn_1'),
+        UserTurnEnded(turn_id='turn_1', before_response='r1'),
+        InputTranscript('Can you help?', is_final=True),
+        ended('r1'),
+        # A response already over can't be joined ahead of any more: the turn goes at the end.
+        UserTurnStarted(turn_id='turn_2'),
+        UserTurnEnded(turn_id='turn_2', before_response='r1'),
+        InputTranscript('Thanks.', is_final=True),
+    )
+    assert summary(session_core.all_messages()) == snapshot(
+        ['{user:Can you help?}', 'r1 [assistant:Sure.] complete stop', '{user:Thanks.}']
     )
 
 
@@ -452,6 +523,7 @@ def test_a_call_that_settles_without_a_result_owes_nothing() -> None:
 
 
 def test_a_call_the_session_refused_is_left_out() -> None:
+    """Unless its response is recorded already: then it gets an interrupted return."""
     session_core = feed(
         core(),
         started('r1'),
@@ -462,7 +534,7 @@ def test_a_call_the_session_refused_is_left_out() -> None:
         ended('r1'),
         ToolCallRefused(tool_call_id='call_1'),
     )
-    assert summary(session_core.all_messages()) == snapshot(['r1 [call:call_1] complete stop'])
+    assert summary(session_core.all_messages()) == snapshot(['r1 [call:call_1] complete stop', '{return:call_1}'])
 
 
 def test_a_turn_whose_transcript_can_no_longer_be_read_ends_with_what_it_has() -> None:
@@ -1057,3 +1129,68 @@ def test_a_turn_recorded_after_the_reply_to_it_is_evicted_before_that_reply() ->
     )
     turn, response = session_core._turns['u1'], session_core._responses['r1']  # pyright: ignore[reportPrivateUsage]
     assert list(session_core._recorded_audio) == [turn, response]  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_held_filler_keeps_the_wait_through_a_transcript_until_the_model_carries_on() -> None:
+    """Gemini's extended-thinking model holds its filler open (`IN_PROGRESS`): the user's words then don't end the wait."""
+    tracker = GeminiLifecycle(transcribes=True)
+    session_core = core()
+
+    def message(*codec: Any) -> None:
+        for event, _ in tracker.message(list(codec)):
+            session_core.apply(event)
+
+    session_core.apply(InputSent(input_id=0, request=text_request('Weather?'), solicits=True))
+    tracker.input_sent(0, 'Weather?')
+    message(OutputTranscript('Let me check.'))
+    message(SessionUsage(RequestUsage(input_tokens=1)), ResponseDone(more_expected=True))
+    wait = session_core.wait_tokens()
+    message(InputTranscript('Hm'))
+    assert session_core.still_owed(wait) != frozenset()
+    message(OutputTranscript('Still checking.'))
+    assert session_core.still_owed(wait) != frozenset()
+    message(SessionUsage(RequestUsage(input_tokens=2)), ResponseDone())
+    assert session_core.still_owed(wait) == frozenset()
+    assert summary(session_core.all_messages()) == snapshot(
+        [
+            '{prompt:Weather?}',
+            'None [assistant:Let me check.] complete stop',
+            '{user:Hm}',
+            'None [assistant:Still checking.] complete stop',
+        ]
+    )
+
+
+def test_what_the_user_says_as_they_cut_in_is_a_turn_of_its_own() -> None:
+    """Gemini reports the words that cut a reply off ahead of the cut, in one message: they are new speech."""
+    tracker = GeminiLifecycle(transcribes=True)
+    session_core = core()
+
+    def message(*codec: Any) -> None:
+        for event, _ in tracker.message(list(codec)):
+            session_core.apply(event)
+
+    message(InputTranscript('First question'))
+    message(OutputTranscript('Let me check.'))
+    message(SessionUsage(RequestUsage(input_tokens=1)), ResponseDone(more_expected=True))
+    message(InputTranscript('Second question'), RealtimeResponseInterruptedEvent())
+    message(SessionUsage(RequestUsage(input_tokens=2)), ResponseDone(interrupted=True))
+    message(OutputTranscript('Sure.'))
+    message(SessionUsage(RequestUsage(input_tokens=3)), ResponseDone())
+    assert summary(session_core.all_messages()) == snapshot(
+        [
+            '{user:First question}',
+            'None [assistant:Let me check.] interrupted None',
+            '{user:Second question}',
+            'None [assistant:Sure.] complete stop',
+        ]
+    )
+    # Likewise over a reply the model started on its own, before any transcript of what it answers came.
+    message(OutputTranscript('By the way...'))
+    message(InputTranscript('Stop'), RealtimeResponseInterruptedEvent())
+    message(SessionUsage(RequestUsage(input_tokens=4)), ResponseDone(interrupted=True))
+    message(OutputTranscript('Okay.'))
+    message(SessionUsage(RequestUsage(input_tokens=5)), ResponseDone())
+    assert summary(session_core.all_messages()[4:]) == snapshot(
+        ['None [assistant:By the way...] interrupted None', '{user:Stop}', 'None [assistant:Okay.] complete stop']
+    )

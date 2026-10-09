@@ -208,11 +208,13 @@ Input transcription defaults to `'auto'`; see [Input transcription](audio.md#inp
 and each provider page for configuration. Transcripts are recorded with the user turn they describe,
 even when they arrive after that turn's response or overlap the following turn.
 
-On OpenAI, Azure OpenAI, and xAI, history follows the order of the provider's own conversation:
+On OpenAI, Azure OpenAI, xAI, and Gemini Live, history follows the order of the provider's own conversation:
 
 - A spoken turn sits where the provider added it, and text, images, and tool results where they reached
   it. A turn the user started while the model was still answering, but which the provider only committed
-  after that answer ended, is recorded after the answer.
+  after that answer ended, is recorded after the answer. Gemini Live doesn't say where an input joined its
+  conversation, nor when a reply starts: a spoken turn is recorded ahead of the reply to it, and something
+  sent while a reply is owed (requested, or already being spoken) is recorded after that reply.
 - A message appears in `all_messages()` once everything before it is final. A reply waits for the
   transcript of the spoken turn before it, which can arrive after the reply itself is done, for up to 30
   seconds after that; past that, the turn is recorded with the transcript it has so far.
@@ -224,7 +226,7 @@ On OpenAI, Azure OpenAI, and xAI, history follows the order of the provider's ow
   call, or `'final_answer'`) as `'phase'` in the part's `provider_details`, the way a standard OpenAI run
   records [text phases](../models/openai.md#text-phases).
 
-On Gemini Live and GPT-Live, a turn the user starts while the model is still answering, whether they
+On GPT-Live, a turn the user starts while the model is still answering, whether they
 [barge in](turns.md#barge-in) or push to talk over it, is recorded after that answer. Such a turn joins
 history once the provider ends the answer it cut off, or after a few seconds if the provider never does.
 In that fallback the turn is recorded where history stands, so it lands before the answer it interrupted,
@@ -240,8 +242,8 @@ With transcription disabled:
 - without input retention, the session records a content-less user `SpeechPart`;
 - on providers that report speech boundaries (OpenAI, Azure, and xAI with server VAD), each turn is
   the speech between them: the silence an always-on microphone streams between utterances is no turn.
-  Gemini Live reports none, so a turn there runs to the response that answers it, and audio sent after
-  the last response is recorded as one more turn when the session closes;
+  Gemini Live reports none, so a turn there is the audio sent since the last reply, recorded as the model
+  replies to it;
 - with [push-to-talk](turns.md#push-to-talk), each `commit_audio()` after sending audio is a turn once the
   provider has it (on xAI, commits made while a reply is still under way go out together after it, as one turn,
   and one still held back when the session closes records nothing); a commit with no audio since the last one

@@ -4289,8 +4289,9 @@ class RealtimeSession:
     async def _pump(self, context: Context | None) -> None:
         """Drain the connection into the session queue under the explicit session-span context."""
         token = otel_context.attach(context) if context is not None else None
+        core_events = self._core_events(self._core) if self._core is not None else None
         try:
-            events = self._connection if self._core is None else self._core_events(self._core)
+            events = self._connection if core_events is None else core_events
             async for event in events:
                 if merged := self._connection._take_merged_response_requests():  # pyright: ignore[reportPrivateUsage]
                     # Requests the connection answered with a response it was already asking for: none of
@@ -4304,6 +4305,9 @@ class RealtimeSession:
         except Exception as e:
             self._pump_error = e
         finally:
+            if core_events is not None:
+                # Closed here rather than whenever it is collected, so what it settles is settled before receiving ends.
+                await core_events.aclose()
             self._pump_finished = True
             self._apply_core(ReceiveEnded())
             self._exchange_progress.set()
@@ -4335,7 +4339,7 @@ class RealtimeSession:
         del self._transcript_watchdogs[turn_id]
         self._apply_core(TranscriptOverdue(turn_id=turn_id))
 
-    async def _core_events(self, core: SessionCore) -> AsyncIterator[RealtimeCodecEvent]:
+    async def _core_events(self, core: SessionCore) -> AsyncGenerator[RealtimeCodecEvent]:
         """The connection's codec events, feeding the core its lifecycle stream on the way."""
         async for frame in self._connection._tagged_frames():  # pyright: ignore[reportPrivateUsage]  # pragma: no branch
             # Applied a whole frame at a time, before this session handles any of it: a consumer reacting
@@ -4344,9 +4348,18 @@ class RealtimeSession:
                 if not stale:
                     core.apply(event)
             self._core_advanced(core)
-            for event, _ in frame:
-                if not isinstance(event, LIFECYCLE_EVENT_TYPES):
+            codec = [event for event, _ in frame if not isinstance(event, LIFECYCLE_EVENT_TYPES)]
+            handled = 0
+            try:
+                for event in codec:
+                    handled += 1
                     yield event
+            finally:
+                # Receiving stopped (a limit tripped, or the session closed) before this session got to the rest of
+                # the frame: a tool call in it never runs, so it is left out of history, as one refused is.
+                for event in codec[handled:]:
+                    if isinstance(event, ToolCall):
+                        self._apply_core(ToolCallRefused(tool_call_id=event.tool_call_id))
 
     def _ensure_streamable(self) -> None:
         if not self._entered:
