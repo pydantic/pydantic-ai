@@ -136,6 +136,7 @@ def _setting_label(key: str) -> str:
     labels = {
         'max_tokens': 'Max Output Tokens',
         'top_p': 'Top-P (Nucleus Sampling)',
+        'cache': 'Prompt Caching',
         'openai_text_verbosity': 'Verbosity',
         'anthropic_thinking_mode': 'Extended Thinking',
         'anthropic_thinking_budget': 'Thinking Budget',
@@ -410,7 +411,8 @@ def build_model_settings_picker(*, context: CommandContext, current: str | None)
 def model_settings_summary(*, store: SettingsStore, model: str, settings_as: str | None = None) -> str:
     """Preview effective settings without mutating the model or its saved overrides."""
     values = {**model_defaults(model=settings_as or model), **store.model_settings(model)}
-    lines = [model, '', 'Configured settings:' if values else 'No custom settings (model defaults).']
+    # Never empty: every model has at least CLAI's prompt caching default.
+    lines = [model, '', 'Configured settings:']
     lines.extend(f'{_setting_label(key)}: {shown(value)}' for key, value in values.items())
     return '\n'.join(lines)
 
