@@ -63,7 +63,13 @@ from pydantic_ai.exceptions import (
     ModelRetry,
     SuspendedResponseExpired,
 )
-from pydantic_ai.messages import INVALID_JSON_KEY, ToolSearchCallPart, ToolSearchReturnPart, sanitize_messages
+from pydantic_ai.messages import (
+    INVALID_JSON_KEY,
+    ModelResponseStreamEvent,
+    ToolSearchCallPart,
+    ToolSearchReturnPart,
+    sanitize_messages,
+)
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
@@ -1349,7 +1355,7 @@ def _function_call_item(
 
 async def _collect_function_call_stream(
     stream_events: list[resp.ResponseStreamEvent],
-) -> tuple[list[Any], ModelResponse]:
+) -> tuple[list[ModelResponseStreamEvent], ModelResponse]:
     response = response_message([])
     stream = [
         resp.ResponseCreatedEvent(response=response, type='response.created', sequence_number=0),
@@ -1377,6 +1383,10 @@ async def _collect_function_call_stream(
 async def test_openai_responses_stream_function_call_args_from_done_event(
     allow_model_requests: None, args_event: Literal['function_call_arguments.done', 'output_item.done']
 ):
+    """Codex sequence (issue #9996): args arrive only in a done event, no deltas.
+
+    Mocked: the ChatGPT/Codex backend can't be recorded reliably.
+    """
     full_args = '{"city":"Paris"}'
     added_item = _function_call_item('fc_1', '')
     done_item = added_item.model_copy(update={'arguments': full_args})
@@ -1451,6 +1461,10 @@ async def test_openai_responses_stream_function_call_args_from_done_event(
 
 
 async def test_openai_responses_stream_function_call_complete_deltas_not_duplicated(allow_model_requests: None):
+    """Normal OpenAI sequence: complete deltas then matching done events add nothing.
+
+    Mocked to pin the exact event list.
+    """
     full_args = '{"city":"Paris"}'
     item = _function_call_item('fc_1', '')
     events, response = await _collect_function_call_stream(
@@ -1496,6 +1510,10 @@ async def test_openai_responses_stream_function_call_complete_deltas_not_duplica
 
 
 async def test_openai_responses_stream_parallel_function_call_args(allow_model_requests: None):
+    """Codex parallel calls: one done-only and one delta-driven item, empty `completed.output`.
+
+    Mocked: Codex-only sequence.
+    """
     done_args = '{"city":"Paris"}'
     delta_args = '{"city":"London"}'
     done_item = _function_call_item('fc_done', '')
@@ -1614,6 +1632,10 @@ async def test_openai_responses_stream_parallel_function_call_args(allow_model_r
 
 
 async def test_openai_responses_stream_function_call_done_appends_missing_suffix(allow_model_requests: None):
+    """Defensive: partial deltas then a full done snapshot append only the suffix.
+
+    Mocked: no live API sends this reliably.
+    """
     full_args = '{"city":"Paris"}'
     item = _function_call_item('fc_1', '')
     events, response = await _collect_function_call_stream(
@@ -1647,6 +1669,10 @@ async def test_openai_responses_stream_function_call_done_appends_missing_suffix
 
 
 async def test_openai_responses_stream_function_call_done_replaces_disagreeing_args(allow_model_requests: None):
+    """Defensive: deltas that disagree with the done snapshot are replaced by it.
+
+    Mocked: no live API sends this reliably.
+    """
     item = _function_call_item('fc_1', '', name='lookup_weather', namespace='weather')
     events, response = await _collect_function_call_stream(
         [
@@ -1700,6 +1726,10 @@ async def test_openai_responses_stream_function_call_done_replaces_disagreeing_a
 
 
 async def test_openai_responses_stream_function_call_empty_done_and_late_delta(allow_model_requests: None):
+    """Defensive: an empty done snapshot keeps streamed args and a late delta is ignored.
+
+    Mocked: not reproducible live.
+    """
     item = _function_call_item('fc_1', '')
     full_args = '{"city":"Paris"}'
     events, response = await _collect_function_call_stream(
@@ -1748,6 +1778,10 @@ async def test_openai_responses_stream_function_call_empty_done_and_late_delta(a
 
 
 async def test_openai_responses_stream_function_call_output_done_without_added(allow_model_requests: None):
+    """Defensive: a resumed stream with only `output_item.done` creates the call.
+
+    Mocked: resume points aren't recordable.
+    """
     events, response = await _collect_function_call_stream(
         [
             resp.ResponseOutputItemDoneEvent(
@@ -1797,6 +1831,10 @@ async def test_openai_responses_stream_function_call_output_done_without_added(a
 
 
 async def test_openai_responses_stream_function_call_resumed_mid_deltas(allow_model_requests: None):
+    """Defensive: a stream resumed mid-deltas takes the call from `output_item.done`.
+
+    Mocked: resume points aren't recordable.
+    """
     full_args = '{"city":"Paris"}'
     _, response = await _collect_function_call_stream(
         [
