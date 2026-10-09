@@ -1639,15 +1639,31 @@ activity, and failures each have their own role colour.
 
 CLAI loads custom agents from disk, in Claude Markdown (`*.md`) or Codex TOML
 (`*.toml`) format. Choose folders in `/plugins configure coder` under
-**Agent folders**, as a JSON list. Each entry is a folder name or a path:
+**Agent folders**. The list saves each change immediately; no JSON editing is
+needed. These folders contain sub-agent definitions, not files for code search.
+
+- **Add directory path** (`a`) accepts one local directory, including `~/...` and
+  paths relative to the project. An unprefixed directory name is saved as a path,
+  so entering `agents` here means `./agents`, not the folder-name shortcut below.
+- **Browse local directories** (`b`) includes hidden folders. Type to filter,
+  Enter to open a folder, Left to go to its parent, and **Use this directory**
+  to select it. Ctrl+L opens the full current path for viewing or navigation.
+- Enter on an entry opens its actions. `e` edits its current value; `d` removes
+  it from the search without deleting files. Esc cancels an edit or returns to
+  the previous menu; **Save & close** returns with changes already saved.
+- Missing directories, files, unreadable locations, and duplicate entries are
+  rejected when adding or editing paths. Existing saved entries stay editable
+  and removable even if their directory no longer exists.
+
+**Add folder name** keeps the existing shortcut behavior:
 
 - A name such as `agents` searches `.agents/agents`, `.claude/agents`, and
   `.codex/agents`, first in the project, then in your home directory. Project
   definitions win over personal ones with the same name.
-- Add more names, for example `["agents", "global"]`, to also load
+- Add another name, for example `global`, to also load
   `.claude/global` and its siblings.
-- A path such as `./team-agents` or `~/my-agents` loads exactly that folder.
-- `[]` turns disk agents off.
+- Named locations do not have to exist yet. Missing ones are skipped.
+- Remove every entry to turn disk-defined agents off.
 
 The stock CLI starts with `["agents"]`, so existing `.claude/agents` and
 `.codex/agents` definitions work without setup. If you saved Coder settings
