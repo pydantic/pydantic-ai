@@ -3484,8 +3484,9 @@ class TestKeepUserMessages:
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
             result = await comp.compact(messages, _make_ctx())
         assert _user_texts(result) == ['x']
+        assert result[-1] == messages[-1]
         assert comp.keep_tokens is not None
-        assert estimate_token_count(result[1:], len) <= comp.keep_tokens
+        assert estimate_token_count(result[1:-1], len) <= comp.keep_tokens
 
     async def test_older_user_is_not_retained_when_the_newest_does_not_fit(self):
         comp = SummarizingCompaction(
@@ -3502,6 +3503,64 @@ class TestKeepUserMessages:
             result = await comp.compact(messages, _make_ctx())
         assert _user_texts(result) == []
         assert result[-1] == messages[-1]
+
+    async def test_retained_user_turns_exhausting_keep_messages_preserve_current_request(self):
+        comp = SummarizingCompaction(
+            model='test:m',
+            max_messages=3,
+            keep_messages=2,
+            keep_user_messages=True,
+            bridge_prefix=False,
+        )
+        messages: list[ModelMessage] = [
+            _user('turn 1'),
+            _assistant('a'),
+            _user('turn 2'),
+            _assistant('b'),
+            _user('turn 3'),
+        ]
+        with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
+            result = await comp.compact(messages, _make_ctx())
+        assert _user_texts(result) == ['turn 1', 'turn 2', 'turn 3']
+        assert result[-1] == messages[-1]
+
+    async def test_retained_user_turns_exhausting_single_tail_slot_preserve_current_request(self):
+        comp = SummarizingCompaction(
+            model='test:m',
+            max_messages=3,
+            keep_messages=1,
+            keep_user_messages=True,
+            bridge_prefix=False,
+        )
+        messages: list[ModelMessage] = [
+            _user('turn 1'),
+            _assistant('a'),
+            _user('turn 2'),
+            _assistant('b'),
+            _user('turn 3'),
+        ]
+        with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
+            result = await comp.compact(messages, _make_ctx())
+        assert _user_texts(result) == ['turn 2', 'turn 3']
+        assert result[-1] == messages[-1]
+
+    async def test_retained_user_turns_exhausting_token_tail_budget_preserve_current_request(self):
+        comp = SummarizingCompaction(
+            model='test:m',
+            max_tokens=4,
+            keep_tokens=2,
+            keep_messages=3,
+            keep_user_messages=True,
+            bridge_prefix=False,
+            tokenizer=len,
+        )
+        messages: list[ModelMessage] = [_user('ab'), _assistant('c'), _user('d')]
+        with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
+            result = await comp.compact(messages, _make_ctx())
+        assert _user_texts(result) == ['ab', 'd']
+        assert result[-1] == messages[-1]
+        assert comp.keep_tokens is not None
+        assert estimate_token_count(result[1:-1], len) <= comp.keep_tokens
 
     async def test_pin_is_not_rebuilt_as_a_kept_user_message(self):
         comp = SummarizingCompaction(
