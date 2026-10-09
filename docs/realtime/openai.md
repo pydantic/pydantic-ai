@@ -430,8 +430,10 @@ binding the agent's session configuration (instructions, tools, voice, VAD) serv
   that negotiates the WebRTC call itself, when you don't relay the SDP through your backend.
   gpt-realtime only: GPT-Live has no client secrets.
 
-A GPT-Live session is configured once, by the offer, so a sideband attaching to it can't seed
-`message_history`; the browser's data channel stays closed unless `openai_live_data_channel` opens it.
+A GPT-Live session is configured once, by the offer, so history bound with
+`agent.realtime(model, message_history=...)` is seeded there, and a sideband opened with different
+history refuses to attach. The browser's data channel stays closed unless `openai_live_data_channel`
+opens it.
 
 See [Connecting a frontend](deployment.md#browser-webrtc-server-sideband) for the topology, the
 secure offer-relay flow, and the sideband trust model, and the
@@ -474,6 +476,8 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt].
 - An image sent without `respond=True`, text over the 500-token cap, and seeded history that contains
   audio or images.
+- A WebRTC sideband whose `message_history` differs from what the offer seeded, including none at all
+  when the offer seeded some.
 
 ### gpt-realtime {#gpt-realtime-feature-support-and-limitations}
 

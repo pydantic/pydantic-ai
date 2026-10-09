@@ -402,8 +402,16 @@ from the edit point onward -- the next request pays a cache-write. Use `ClearToo
 `SummarizingCompaction(model=...)` accepts a model name or `Model`; when left `None` it inherits the
 running agent's model. That model has to write text, so an agent running a model that can't, such as a
 decision model like TypeSafe's Jev, needs `model=` set to a language model; without it, the first compaction
-raises a `UserError` saying so. Its nested summary run inherits the parent usage limits and reserves one request from a
-finite request limit for the pending parent request. Pass `model_settings` to give the dedicated summary call
+raises a `UserError` saying so. A summary that is empty or only whitespace is retried within the summary
+run's output retries. Exhausting those retries raises `UnexpectedModelBehavior` rather than replacing
+history with an empty summary. Its nested summary run inherits the parent usage limits and reserves
+one request from a finite request limit for the pending parent request. These limits also apply to
+retries: if the summary run exhausts its budget first, it raises `UsageLimitExceeded` instead. To fall
+back on either failure, set `FallbackCompaction`'s
+`fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded)`, preferably with a fallback strategy that
+makes no model requests. This does not increase the parent run's limits.
+
+Pass `model_settings` to give the dedicated summary call
 settings that differ from defaults carried by that model; the supplied settings merge over the model defaults
 without mutating the model or the settings dictionary. Pass `summarization_capabilities` to attach
 capabilities to the summary agent; capabilities on the outer agent do not run on the summary call.
@@ -531,6 +539,9 @@ SlidingWindowCompaction(max_messages=80, keep_messages=40, receipts=True)
   above is secondhand; `SlidingWindowCompaction` drops history outright, so its receipt says that context
   is gone. The blank-in-place strategies (`ClearToolResults`, `DeduplicateFileReads`,
   `ClampOversizedMessages`) keep every message and cross no boundary, so they emit no receipt.
+- **Receipt slot.** `SlidingWindowCompaction` counts its receipt toward `keep_messages`, so
+  `keep_messages=40` keeps the receipt and 39 messages. The receipt never takes the last slot:
+  `keep_messages=1` keeps the receipt and the newest message.
 - **Transcript handle.** Attach any capability exposing `compaction_transcript_handle() -> str | None`
   (the `TranscriptHandleProvider` protocol) and the receipt gains a `Persisted run handle:` pointer.
   `StepPersistence` implements it (returning its `run_id`), so attaching it is enough. The handle
@@ -572,9 +583,12 @@ User turns are the highest signal-per-token content in a conversation, and losin
 main driver of resumption drift. `SummarizingCompaction(keep_user_messages=True)` preserves
 the newest user turns from the summarized prefix alongside the summary. They consume the
 existing `keep_messages` tail budget, so at most that many retained user messages and tail
-messages survive together; compaction therefore does not grow retained copies on each cycle.
-When `keep_tokens` is set, those same retained user messages and tail messages also share its
-token budget; a user turn that does not fit is summarized instead.
+messages survive together, except that one tail slot is reserved for the request being
+answered when retained user turns would otherwise consume it; compaction therefore does not
+grow retained copies on each cycle. When `keep_tokens` is set, those same retained user
+messages and tail messages also share its token budget; a user turn that does not fit is
+summarized instead, and the newest tail message survives even when retained user turns
+exhaust that budget too.
 Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) with an explicit
 truncation marker when it overruns. The character budget applies per part, shared across the
 text items of a multi-part prompt; images, audio, and cache points pass through untouched. This

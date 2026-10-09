@@ -27,7 +27,8 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins import logfire as logfire_plugin
-from pydantic_clai2.builtin_plugins.logfire import CREDENTIALS_FILE, PROJECT, LogfirePlugin, LogfireSource, logfire_dir
+from pydantic_clai2.builtin_plugins.logfire import CREDENTIALS_FILE, PROJECT, LogfirePlugin, LogfireSource
+from pydantic_clai2.builtin_plugins.logfire_destination import logfire_dir
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.api_keys import save_key
@@ -530,7 +531,8 @@ async def test_ui_events_can_be_explicitly_disabled(recorder: Recorder) -> None:
         telemetry.record('setting {setting} changed', setting='display.theme', value='default')
     finally:
         await close(plugin)
-    assert messages(recorder) == ['CLAI session']
+    # The root's announcement is not a UI event: it is sent either way.
+    assert messages(recorder) == ['CLAI session opened', 'CLAI session']
 
 
 @pytest.mark.parametrize('model', [Settings().model, None])
@@ -551,13 +553,14 @@ async def test_ui_events_follow_the_plugin_and_keep_setting_names(
         await close(plugin)
     telemetry.record('after the plugin unloaded')
     assert messages(recorder) == [
+        'CLAI session opened',
         'session started',
         'turn cancelled',
         'setting sessions.naming changed',
         'not a UI event',
         'CLAI session',
     ]
-    started, _, changed, other, _ = recorder.spans()
+    _, started, _, changed, other, _ = recorder.spans()
     # The exemption covers only UI records: another span's `setting` is scrubbed as usual.
     assert (other.attributes or {})['setting'] == "[Scrubbed due to 'password']"
     assert (started.attributes or {})['model'] == (model or 'agent default')
@@ -604,13 +607,14 @@ async def test_token_from_keys_chooses_the_project(
     assert ('CLAI2_LOGFIRE_TOKEN is not in /keys' in output.getvalue()) == (not saved and send is not False)
 
 
-async def test_self_hosted_base_url_reaches_the_sdk(recorder: Recorder) -> None:
-    await close(load_logfire(make_host(base_url='logfire.example.com/')))
+@pytest.mark.parametrize('base_url', ['logfire.example.com/', 'https://logfire.example.com/mcp'])
+async def test_self_hosted_base_url_reaches_the_sdk(recorder: Recorder, base_url: str) -> None:
+    await close(load_logfire(make_host(base_url=base_url)))
     assert recorder.options[0]['base_url'] == 'https://logfire.example.com'
 
 
 def test_base_url_must_be_an_https_origin(recorder: Recorder) -> None:
-    with pytest.raises(ValidationError, match='https URL with no path'):
+    with pytest.raises(ValidationError, match='Type a host'):
         load_logfire(make_host(base_url='http://logfire.example.com'))
     assert not recorder.instances
 
@@ -728,7 +732,9 @@ def test_project_row_names_the_chosen_key_and_resets_to_the_environment() -> Non
     source = LogfireSource(host)
     project = source.rows()[0]
     assert project.note == '', 'a chosen key replaces the environment, so no note about it'
-    assert source.current(project) == 'LOGFIRE_TOKEN_TEAM at https://logfire.example.com'
+    assert source.current(project) == 'LOGFIRE_TOKEN_TEAM at logfire.example.com'
+    eu = LogfireSource(make_host(token={'name': 'LOGFIRE_TOKEN_EU'}, base_url='https://logfire-eu.pydantic.dev'))
+    assert eu.current(eu.rows()[0]) == 'LOGFIRE_TOKEN_EU at Logfire EU'
     hosted = LogfireSource(make_host(token={'name': 'LOGFIRE_TOKEN_US'}))
     assert hosted.current(hosted.rows()[0]) == 'LOGFIRE_TOKEN_US'
     assert source.reset(project) == 'Reset Logfire project.'
