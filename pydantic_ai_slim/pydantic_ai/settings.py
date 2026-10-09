@@ -78,7 +78,7 @@ class ToolOrOutput:
 
     Use this when you want to control which function tools the model can use
     in an agent run while still allowing all output tools and direct text/image output.
-    A plain list instead restricts the model to exactly the named function and/or output tools.
+    A plain list instead forces a call to one of the named function and/or output tools.
 
     See the [Tool Choice guide](../tools-advanced.md#tool-choice) for examples.
     """
@@ -317,7 +317,7 @@ class ModelSettings(TypedDict, total=False):
     * `'auto'`: All tools available, model decides whether to use them
     * `'none'`: Disables function tools; model responds with text only (output tools remain for structured output)
     * `'required'`: Forces tool use; excludes output tools so the agent cannot produce a final response when set statically
-    * `list[str]`: Exactly the specified function and/or output tools; name an output tool to force it
+    * `list[str]`: Force a call to one of the specified function and/or output tools; name an output tool to let an agent run finish
     * [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]: Specified function tools plus output tools/text/image
 
     Note: setting `'required'` *statically* (via the `model_settings` argument of

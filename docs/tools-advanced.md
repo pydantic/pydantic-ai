@@ -439,11 +439,13 @@ Pydantic AI distinguishes between **[function tools](tools.md)** (tools you regi
 | `'auto'` (default) | Model decides whether to use tools. All tools available. |
 | `'none'` | Disable function tools. Model can respond with text or use output tools. |
 | `'required'` | Force the model to use a function tool. Excludes output tools, so set dynamically via a [capability](#dynamic-tool-choice-via-capabilities) or use [direct model requests](direct.md); raises an error when set statically in `agent.run()`. |
-| `['tool_a', ...]` | Require exactly the named function and/or output tools. A static list must name an output tool so an agent run can finish. |
+| `['tool_a', ...]` | Force a call to one of the named function and/or output tools. A static list must name an output tool so an agent run can finish. |
 | [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]`(function_tools=['...'])` | Restrict function tools while auto-including all output tools. |
 
-A list can force one specific output tool among several by naming its generated name, such as
-`['final_result']`. In contrast, `'required'` excludes output tools, while `ToolOrOutput` keeps the
+A list can force one specific output tool among several. Give each output tool a stable name with
+[`ToolOutput(..., name=...)`](output.md#tool-output) and name it in the list: with
+`output_type=[ToolOutput(Fruit, name='return_fruit'), ToolOutput(Vehicle, name='return_vehicle')]`,
+`tool_choice=['return_fruit']` forces the model to return a `Fruit`. In contrast, `'required'` excludes output tools, while `ToolOrOutput` keeps the
 selected function tools plus all output tools available and also allows text or image output.
 
 Tools hidden by [deferred loading](#tool-search) interact with `tool_choice`: a tool that is still

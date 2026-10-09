@@ -30,8 +30,8 @@ def resolve_tool_choice(  # noqa: C901
         - `'none'` / `[]`: Disables function tools. If output tools exist, returns them with
             appropriate mode. Otherwise returns `'none'`.
         - `'required'`: Requires function tool use. Raises if no function tools are defined.
-        - `list[str]`: Restricts to exactly the specified function and/or output tools with
-            `'required'` mode. Validates tool names against all known tools.
+        - `list[str]`: Restricts to the specified function and/or output tools with `'required'` mode,
+            so the model must call one of them. Validates tool names against all known tools.
         - `ToolOrOutput`: Combines specified function tools with all output tools.
             Returns `'auto'` mode if direct output is allowed, otherwise `'required'`.
 
