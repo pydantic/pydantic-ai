@@ -5,7 +5,7 @@ uv sync --frozen
 uv run pytest tests/benchmarks --codspeed --codspeed-mode=walltime
 ```
 
-Run these commands from the repository root. For a correctness check without timing, omit the CodSpeed flags.
+Run these commands from the repository root. For a correctness check without timing, omit the CodSpeed flags. Without CodSpeed, each benchmark runs only its smallest workload: the larger workloads are marked `codspeed_only` and deselected by [`conftest.py`](conftest.py), because they reach the same code paths and would only slow down the regular test jobs, which collect this directory too.
 
 The [CodSpeed workflow](../../.github/workflows/benchmark.yml) measures wall time on CodSpeed's dedicated ARM64 Graviton runners, with Python 3.14. It runs on pull requests and pushes to `main`. Fixed hardware avoids the CPU differences of GitHub-hosted runners, while isolation reduces timing noise.
 

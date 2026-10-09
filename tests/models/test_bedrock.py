@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import io
 import json
 import os
-from collections.abc import Generator, Iterator
+from collections.abc import Generator, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -688,6 +688,45 @@ async def test_bedrock_count_tokens_error(allow_model_requests: None, bedrock_pr
     assert exc_info.value.status_code == 400
     assert exc_info.value.model_name == model_id
     assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
+    assert exc_info.value.hint is None
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_bedrock_data_retention_error_hint(allow_model_requests: None, stream: bool):
+    """A mock is required because reproducing this error requires an account without the required retention mode."""
+    error = ClientError(
+        {
+            'Error': {
+                'Code': 'ValidationException',
+                'Message': "data retention mode 'default' is not available for this model",
+            },
+            'ResponseMetadata': {
+                'RequestId': 'test-request-id',
+                'HostId': '',
+                'HTTPStatusCode': 400,
+                'HTTPHeaders': {},
+                'RetryAttempts': 0,
+            },
+        },
+        'converse_stream' if stream else 'converse',
+    )
+    model = _bedrock_model_with_error(error)
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        if stream:
+            async with agent.run_stream('hello'):
+                pass
+        else:
+            await agent.run('hello')
+
+    exc = exc_info.value
+    assert exc.status_code == 400
+    assert exc.body == error.response
+    assert str(exc) == snapshot(
+        "status_code: 400, model_name: us.amazon.nova-micro-v1:0, body: {'Error': {'Code': 'ValidationException', 'Message': \"data retention mode 'default' is not available for this model\"}, 'ResponseMetadata': {'RequestId': 'test-request-id', 'HostId': '', 'HTTPStatusCode': 400, 'HTTPHeaders': {}, 'RetryAttempts': 0}}. Bedrock rejected this model under the account's data retention mode for this Region. Models that require human review, such as Claude Fable 5 and 5.1, need the account's data retention mode set to `aws_review` (or the legacy `provider_data_share`) with the Bedrock control plane's `PutAccountDataRetention` API, as it can't be set per request. See https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html"
+    )
+    assert exc.hint is not None and str(exc).endswith(f'. {exc.hint}')
 
 
 async def test_bedrock_request_non_http_error(allow_model_requests: None):
@@ -5565,6 +5604,74 @@ async def test_bedrock_manual_cache_point_with_explicit_ttl(
             }
         ]
     )
+
+
+def _cache_point_ttls(converse: Mapping[str, Any]) -> list[str]:
+    """The TTL of every cache point in a Converse request, in the order Bedrock processes them: tools, system, messages."""
+    blocks = [*converse.get('toolConfig', {}).get('tools', []), *converse['system']]
+    for wire_message in converse['messages']:
+        blocks.extend(wire_message['content'])
+    return [block['cachePoint'].get('ttl', '5m') for block in blocks if 'cachePoint' in block]
+
+
+@pytest.mark.parametrize(
+    ('settings', 'cache_point_ttl', 'expected_ttls'),
+    [
+        # Plain dicts: parameters are built at collection time, also on installs without `bedrock`.
+        pytest.param(
+            {'bedrock_cache_tool_definitions': '5m', 'bedrock_cache_instructions': True},
+            '1h',
+            ['1h', '1h', '1h'],
+            id='5m-before-1h',
+        ),
+        pytest.param(
+            {'bedrock_cache_tool_definitions': '1h', 'bedrock_cache_instructions': '5m'},
+            '1h',
+            ['1h', '1h', '1h'],
+            id='5m-between-1h',
+        ),
+        pytest.param(
+            {'bedrock_cache_tool_definitions': '1h', 'bedrock_cache_messages': True},
+            '5m',
+            ['1h', '5m', '5m'],
+            id='shorter-after-longer-unchanged',
+        ),
+    ],
+)
+async def test_bedrock_earlier_cache_points_raised_to_later_longer_ttl(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    settings: BedrockModelSettings,
+    cache_point_ttl: Literal['5m', '1h'],
+    expected_ttls: list[str],
+):
+    """A five-minute cache point before a one-hour one is raised to an hour, in both the request and the
+    `count_tokens` request built like it: "Cache entries with longer TTL must appear before shorter TTLs"
+    (https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html). A later five-minute cache point stays
+    as it is."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    mock_count_tokens = mocker.patch.object(model.client, 'count_tokens', return_value={'inputTokens': 10})
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 10, 'outputTokens': 5, 'totalTokens': 15},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+    agent = Agent(model, instructions='System instructions.', model_settings=settings)
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    await agent.run(
+        ['Some context', CachePoint(ttl=cache_point_ttl), 'Question'],
+        usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True),
+    )
+
+    assert _cache_point_ttls(mock_converse.call_args.kwargs) == expected_ttls
+    assert _cache_point_ttls(mock_count_tokens.call_args.kwargs['input']['converse']) == expected_ttls
 
 
 async def test_bedrock_cache_messages_with_binary_content(

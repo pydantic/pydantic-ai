@@ -45,7 +45,9 @@ def _takes_two_positional_arguments(cls: type) -> bool | None:
     return positional >= 2
 
 
-@pytest.fixture
+# Module-scoped: walking imports every `pydantic_ai` module, provider SDKs included, which is shared setup rather than
+# the test's own cost (see "Test cost" in `tests/AGENTS.md`).
+@pytest.fixture(scope='module')
 def public_dataclasses() -> dict[str, list[str]]:
     coverage = Coverage.current()
     # Coverage has no public API for pausing and resuming an active collector.

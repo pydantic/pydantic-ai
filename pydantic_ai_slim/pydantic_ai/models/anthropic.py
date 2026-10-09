@@ -99,8 +99,13 @@ from . import (
     get_user_agent,
 )
 from ._anthropic_containers import is_tool_result_only as _is_tool_result_only
-from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
-from ._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
+from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
+from ._prompt_cache import (
+    excess_cache_points,
+    previous_tail_needing_breakpoint,
+    raise_earlier_cache_ttls,
+    split_cache_setting,
+)
 from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 from ._transport_errors import transport_error_message
 
@@ -1124,6 +1129,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
         response = await self._messages_create(messages, False, model_settings, model_request_parameters)
+        response = check_json_response(self.model_name, response)
         if isinstance(response, BetaMessage):
             return self._process_response(response, model_request_parameters, model_settings)
         # The request was streamed behind the scenes, see `_messages_create`. `_map_api_errors` maps a transport error
@@ -1152,7 +1158,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             messages, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
 
-        return usage.RequestUsage(input_tokens=response.input_tokens)
+        return usage.RequestUsage(input_tokens=check_json_response(self.model_name, response).input_tokens)
 
     @asynccontextmanager
     async def request_stream(
@@ -1330,6 +1336,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
+        _raise_earlier_cache_ttls(system_prompt, anthropic_messages, tools, auto_cache_control)
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
         thinking = self._translate_thinking(model_settings, model_request_parameters)
@@ -1713,6 +1720,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
+        _raise_earlier_cache_ttls(system_prompt, anthropic_messages, tools, auto_cache_control)
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
         thinking = self._translate_thinking(model_settings, model_request_parameters)
@@ -4432,6 +4440,32 @@ def _support_tool_forcing(
         unavailable_reason,
         disables_thinking=thinking_type == 'adaptive' and profile.get('forced_tool_choice_disables_thinking', False),
     )
+
+
+def _raise_earlier_cache_ttls(
+    system_prompt: str | list[BetaTextBlockParam],
+    anthropic_messages: list[BetaMessageParam],
+    tools: list[BetaToolUnionParam],
+    automatic_cache_control: BetaCacheControlEphemeralParam | None,
+) -> None:
+    """Raise each breakpoint's TTL to the longest TTL of a breakpoint after it, as Anthropic requires.
+
+    Anthropic processes `tools`, then `system`, then `messages`, and the top-level automatic breakpoint lands on the
+    last cacheable block, after all of them.
+    """
+    blocks: list[object] = [*tools, *(system_prompt if isinstance(system_prompt, list) else [])]
+    for message in anthropic_messages:
+        content = message['content']
+        blocks.extend([] if isinstance(content, str) else content)
+    carriers = [block for block in blocks if is_str_dict(block) and block.get('cache_control')]
+    ttls: list[Literal['5m', '1h']] = [carrier['cache_control'].get('ttl', '5m') for carrier in carriers]
+    automatic_ttls: list[Literal['5m', '1h']] = (
+        [automatic_cache_control.get('ttl', '5m')] if automatic_cache_control is not None else []
+    )
+    raised = raise_earlier_cache_ttls([*ttls, *automatic_ttls])
+    for carrier, ttl, raised_ttl in zip(carriers, ttls, raised[: len(carriers)], strict=True):
+        if raised_ttl != ttl:
+            carrier['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=raised_ttl)
 
 
 def _last_cacheable_block_has_cache_control(anthropic_messages: list[BetaMessageParam]) -> bool:

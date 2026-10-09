@@ -35,6 +35,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Nebius AI Studio](compatible-apis.md#nebius-ai-studio) | Inference platform | `nebius:` |
 | [Ollama](ollama.md) | Local inference; cloud inference | `ollama:` |
 | [OpenAI Codex](openai-codex.md) | Subscription access | `openai-codex:` |
+| [OpenAI Decisions API](openai.md#decisions-api) | [Decision model](decision.md) | `openai-decisions:` |
 | [OpenRouter](openrouter.md) | Gateway | `openrouter:` |
 | [OVHcloud AI Endpoints](compatible-apis.md#ovhcloud-ai-endpoints) | Cloud platform | `ovhcloud:` |
 | [SambaNova](compatible-apis.md#sambanova) | Inference platform | `sambanova:` |
@@ -275,6 +276,10 @@ suggestion is also available as
 [`suggested_model_id`][pydantic_ai.exceptions.ModelHTTPError.suggested_model_id]. This is
 best-effort guidance after the provider rejects a request, not local validation: unknown model
 identifiers remain valid so custom deployments and newly released models continue to work.
+
+When a provider error has a known fix outside the request, such as the [data retention](bedrock.md#data-retention)
+mode Amazon Bedrock requires for some models, Pydantic AI appends guidance to the error message. It is also
+available as [`hint`][pydantic_ai.exceptions.ModelHTTPError.hint].
 
 The motivating use case is propagating the `Retry-After` header from a 429 response to a
 caller's own HTTP client.  A convenience property

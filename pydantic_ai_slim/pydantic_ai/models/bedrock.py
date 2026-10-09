@@ -83,7 +83,12 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
-from pydantic_ai.models._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
+from pydantic_ai.models._prompt_cache import (
+    excess_cache_points,
+    previous_tail_needing_breakpoint,
+    raise_earlier_cache_ttls,
+    split_cache_setting,
+)
 from pydantic_ai.models._tool_choice import (
     FORCING_UNSUPPORTED_REASON,
     resolve_tool_choice,
@@ -154,6 +159,12 @@ if TYPE_CHECKING:
 # botocore parses a 200 body that's empty, not JSON, or JSON without the operation's fields to a response lacking them,
 # instead of raising.
 _MISSING_RESPONSE_FIELD = 'Response has no {field!r} field'
+_DATA_RETENTION_HINT = (
+    "Bedrock rejected this model under the account's data retention mode for this Region. Models that require human "
+    "review, such as Claude Fable 5 and 5.1, need the account's data retention mode set to `aws_review` (or the legacy "
+    "`provider_data_share`) with the Bedrock control plane's `PutAccountDataRetention` API, as it can't be set per "
+    'request. See https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html'
+)
 
 
 @contextmanager
@@ -166,14 +177,21 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
         if isinstance(status_code, int):
             suggested_model_id = None
             error = e.response.get('Error')
-            if _utils.is_str_dict(error) and error.get('Message') == 'The provided model identifier is invalid.':
+            error_message = error.get('Message') if _utils.is_str_dict(error) else None
+            if error_message == 'The provided model identifier is invalid.':
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+            hint = (
+                _DATA_RETENTION_HINT
+                if isinstance(error_message, str) and 'data retention mode' in error_message.lower()
+                else None
+            )
             raise ModelHTTPError(
                 status_code=status_code,
                 model_name=model_name,
                 body=e.response,
                 headers=metadata.get('HTTPHeaders'),
                 suggested_model_id=suggested_model_id,
+                hint=hint,
             ) from e
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
     except (HTTPClientError, BotocoreConnectionError) as e:
@@ -950,6 +968,7 @@ class BedrockConverseModel(Model[BaseClient]):
             converse['toolConfig'] = tool_config
         tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
+        _raise_earlier_cache_ttls(system_prompt, bedrock_messages, tools)
         if additional_model_requests_fields := self._build_additional_model_request_fields(
             settings, model_request_parameters
         ):
@@ -1159,6 +1178,7 @@ class BedrockConverseModel(Model[BaseClient]):
 
         tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
+        _raise_earlier_cache_ttls(system_prompt, bedrock_messages, tools)
 
         if output_config := self._native_output_format(model_request_parameters):
             params['outputConfig'] = output_config
@@ -2139,3 +2159,23 @@ def _support_tool_forcing(
         unavailable_reason,
         disables_thinking=thinking_type == 'adaptive' and profile.get('forced_tool_choice_disables_thinking', False),
     )
+
+
+def _raise_earlier_cache_ttls(
+    system_prompt: list[SystemContentBlockTypeDef],
+    bedrock_messages: list[MessageUnionTypeDef],
+    tools: list[ToolTypeDef],
+) -> None:
+    """Raise each cache point's TTL to the longest TTL of a cache point after it, as Bedrock requires.
+
+    Bedrock processes cache points in `tools`, then `system`, then `messages` order: "Cache entries with longer TTL must
+    appear before shorter TTLs" (https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html).
+    """
+    blocks: list[object] = [*tools, *system_prompt]
+    for message in bedrock_messages:
+        blocks.extend(message.get('content', []))
+    carriers = [block for block in blocks if _utils.is_str_dict(block) and 'cachePoint' in block]
+    ttls: list[Literal['5m', '1h']] = [carrier['cachePoint'].get('ttl', '5m') for carrier in carriers]
+    for carrier, ttl, raised_ttl in zip(carriers, ttls, raise_earlier_cache_ttls(ttls), strict=True):
+        if raised_ttl != ttl:
+            carrier['cachePoint'] = {**carrier['cachePoint'], 'ttl': raised_ttl}

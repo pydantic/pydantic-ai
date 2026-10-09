@@ -105,6 +105,7 @@ from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 from pydantic_clai2.ui.rendering.usage_report import cost_line, session_usage
+from pydantic_clai2.ui.stderr_relay import relay_stderr
 from pydantic_clai2.ui.telemetry_log import telemetry_log
 
 if TYPE_CHECKING:
@@ -303,7 +304,10 @@ async def chat(
         )
     fresh = False
     warming: Thread | None = None
-    with telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console):
+    with (
+        telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console),
+        relay_stderr() if console.is_terminal else nullcontext(),
+    ):
         async with agent:
             while True:
                 reason: SessionEndReason = 'error'

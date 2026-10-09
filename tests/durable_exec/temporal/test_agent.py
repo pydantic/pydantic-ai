@@ -712,6 +712,7 @@ async def test_temporal_durability_accepts_legacy_cancel_activity_payload() -> N
     assert failing_events == ['enter', 'cancel:failing', 'exit:RuntimeError']
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_complex_agent_run_in_workflow(
     allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire
 ):

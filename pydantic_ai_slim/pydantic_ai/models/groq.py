@@ -62,7 +62,7 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
+from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
 from ._tool_choice import resolve_tool_choice
 from ._transport_errors import transport_error_message
 
@@ -272,7 +272,7 @@ class GroqModel(Model[AsyncGroq]):
                     finish_reason='error',
                 )
             raise
-        model_response = self._process_response(response)
+        model_response = self._process_response(check_json_response(self.model_name, response))
         return model_response
 
     @asynccontextmanager
