@@ -133,6 +133,24 @@ def _check_content_type(request: Request, allowed_content_types: frozenset[str] 
     )
 
 
+def validation_error_response(e: ValidationError) -> Response:
+    """Build the 422 response returned when a UI request body fails validation."""
+    from starlette.responses import Response
+
+    try:
+        content = e.json()
+    except ValueError:
+        # A body that isn't valid UTF-8 leaves the raw bytes on `input_value`, which
+        # `e.json()` can't serialize — drop the echoed input so the client still gets its
+        # 422 rather than a 500.
+        content = e.json(include_input=False)
+    return Response(
+        content=content,
+        media_type='application/json',
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+    )
+
+
 # TODO(v3): remove this helper along with the Vercel AI adapter's deprecated `preserve_file_data` alias (AG-UI's `preserve_file_data` is a separate, non-deprecated setting)
 def resolve_allow_uploaded_files(
     allow_uploaded_files: bool, preserve_file_data: bool | None, *, stacklevel: int = 3
@@ -842,7 +860,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             A streaming Starlette response with protocol-specific events encoded per the request's `Accept` header value.
         """
         try:
-            from starlette.responses import Response
+            from starlette.responses import Response  # noqa: F401  # pyright: ignore[reportUnusedImport]
         except ImportError as e:  # pragma: no cover
             raise ImportError(
                 'Please install the `starlette` package to use `dispatch_request()` method, '
@@ -866,18 +884,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 ),
             )
         except ValidationError as e:
-            try:
-                content = e.json()
-            except ValueError:
-                # A body that isn't valid UTF-8 leaves the raw bytes on `input_value`, which
-                # `e.json()` can't serialize — drop the echoed input so the client still gets its
-                # 422 rather than a 500.
-                content = e.json(include_input=False)
-            return Response(
-                content=content,
-                media_type='application/json',
-                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            )
+            return validation_error_response(e)
 
         return adapter.streaming_response(
             adapter.run_stream(
