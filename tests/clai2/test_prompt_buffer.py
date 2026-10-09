@@ -3,7 +3,7 @@
 import pytest
 from termflow.ansi.utils import visible_length
 
-from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
+from pydantic_clai2.ui.prompt.prompt_buffer import UNDO_LIMIT, PromptBuffer
 
 
 @pytest.mark.parametrize(
@@ -160,3 +160,148 @@ def test_history_control_bytes_are_not_terminal_instructions() -> None:
     rows = buffer.rows(width=40, limit=3)
     assert not any('\x1b[2J' in row for row in rows)
     assert 'bad?[2J' in rows[0]
+
+
+def typed(buffer: PromptBuffer, text: str) -> None:
+    for key in text:
+        assert buffer.edit(key)
+
+
+@pytest.mark.parametrize(
+    ('keys', 'edited'),
+    [
+        (['backspace'], 'one tw'),
+        (['ctrl-a', 'delete'], 'ne two'),
+        (['ctrl-w'], 'one '),
+        (['alt-backspace'], 'one '),
+        (['ctrl-u'], ''),
+        (['alt-b', 'ctrl-k'], 'one '),
+    ],
+)
+@pytest.mark.parametrize(
+    ('undo', 'redo'), [('ctrl-z', 'ctrl-y'), ('super-z', 'super-shift-z'), ('ctrl-z', 'ctrl-shift-z')]
+)
+def test_undo_restores_deleted_text_and_redo_deletes_it_again(
+    keys: list[str], edited: str, undo: str, redo: str
+) -> None:
+    buffer = PromptBuffer()
+    typed(buffer, 'one two')
+    for key in keys:
+        buffer.edit(key)
+    assert buffer.text == edited
+    cursor = buffer.cursor
+    before = {'ctrl-k': 4, 'delete': 0}.get(keys[-1], 7)
+    assert buffer.edit(undo)
+    assert (buffer.text, buffer.cursor) == ('one two', before)
+    assert buffer.edit(redo)
+    assert (buffer.text, buffer.cursor) == (edited, cursor)
+
+
+def test_undo_steps_group_words_and_runs_of_deletion() -> None:
+    buffer = PromptBuffer()
+    typed(buffer, 'hello world')
+    for key in ('backspace', 'backspace', 'backspace', 'ctrl-w'):
+        buffer.edit(key)
+    assert buffer.text == 'hello '
+    undone: list[str] = []
+    for _ in range(5):
+        buffer.undo()
+        undone.append(buffer.text)
+    assert undone == ['hello wo', 'hello world', 'hello ', '', '']
+    redone: list[str] = []
+    for _ in range(5):
+        buffer.redo()
+        redone.append(buffer.text)
+    assert redone == ['hello ', 'hello world', 'hello wo', 'hello ', 'hello ']
+
+
+def test_moving_the_cursor_or_switching_direction_starts_a_new_step() -> None:
+    buffer = PromptBuffer()
+    typed(buffer, 'abc')
+    buffer.edit('left')
+    typed(buffer, 'X')
+    buffer.edit('backspace')
+    buffer.edit('delete')
+    assert buffer.text == 'ab'
+    steps: list[str] = []
+    while buffer.text:
+        buffer.undo()
+        steps.append(buffer.text)
+    assert steps == ['abc', 'abXc', 'abc', '']
+    typed(buffer, 'new')
+    buffer.redo()
+    assert buffer.text == 'new', 'a new change discards the redo steps'
+
+
+def test_undo_with_nothing_to_undo_or_redo_is_a_no_op() -> None:
+    buffer = PromptBuffer(text='kept', cursor=2)
+    for key in ('ctrl-z', 'super-z', 'ctrl-y', 'super-shift-z', 'ctrl-shift-z'):
+        assert buffer.edit(key)
+        assert (buffer.text, buffer.cursor) == ('kept', 2)
+    buffer.edit('backspace')
+    buffer.edit('left')
+    buffer.edit('backspace')
+    assert (buffer.text, buffer.cursor) == ('kpt', 0)
+    buffer.undo()
+    assert (buffer.text, buffer.cursor) == ('kept', 2)
+    buffer.undo()
+    assert (buffer.text, buffer.cursor) == ('kept', 2), 'the text it started with is the oldest step'
+
+
+def test_undo_restores_a_folded_paste_and_inserted_strings_are_steps() -> None:
+    buffer = PromptBuffer()
+    pasted = '\n'.join(f'line {index}' for index in range(5))
+    buffer.insert('before ')
+    buffer.insert(pasted, paste=True)
+    buffer.edit('ctrl-u')
+    assert buffer.text == ''
+    buffer.undo()
+    assert buffer.display() == ('before [paste 5 lines]', 22)
+    buffer.undo()
+    assert buffer.text == 'before '
+    buffer.redo()
+    assert buffer.display()[0] == 'before [paste 5 lines]'
+
+
+def test_undo_keeps_only_the_newest_steps() -> None:
+    buffer = PromptBuffer()
+    for index in range(UNDO_LIMIT + 20):
+        buffer.insert(f'<{index}>')
+    while True:
+        text = buffer.text
+        buffer.undo()
+        if buffer.text == text:
+            break
+    assert buffer.text == ''.join(f'<{index}>' for index in range(20))
+
+
+def test_history_walks_and_searches_are_single_steps_that_end_on_undo() -> None:
+    buffer = PromptBuffer(history=['first', 'second', 'third'])
+    typed(buffer, 'draft')
+    for key in ('up', 'up', 'up'):
+        buffer.edit(key)
+    assert buffer.text == 'first'
+    buffer.undo()
+    assert buffer.text == 'draft' and buffer.history_index is None
+    buffer.edit('up')
+    buffer.edit('down')
+    assert buffer.text == 'draft'
+    buffer.undo()
+    assert buffer.text == '', 'returning to the draft leaves no step to undo'
+    buffer.redo()
+    buffer.edit('ctrl-r')
+    typed(buffer, 'sec')
+    buffer.edit('enter')
+    assert buffer.text == 'second'
+    buffer.undo()
+    assert buffer.text == 'draft'
+
+
+def test_reset_forgets_the_submitted_draft() -> None:
+    buffer = PromptBuffer()
+    typed(buffer, 'sent')
+    buffer.edit('backspace')
+    buffer.reset()
+    for key in ('ctrl-z', 'ctrl-y'):
+        buffer.edit(key)
+        assert buffer.text == ''
