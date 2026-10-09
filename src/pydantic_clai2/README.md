@@ -1048,6 +1048,10 @@ Explicit native thinking settings take precedence over generic `thinking`.
 GPT-6 and GPT-5.6 families, including provider-qualified and namespaced names,
 default to `thinking=true`, `service_tier=default`, reasoning effort `medium`,
 context `all_turns`, mode `standard`, summary `detailed`, and verbosity `low`.
+Claude models also default to adaptive thinking, effort `high`, and preserved thinking `drop_block`,
+each where the model supports it, under any profile. Only models that bind thinking to the
+conversation prefix (Fable 5.1, Opus 5.5, Sonnet 5.5) get `drop_block`, so a compacted or edited
+history drops that turn's reasoning instead of failing the request.
 Explicit per-model values win; reset restores the family default without saving
 it as an override. Other models keep their existing defaults. Family defaults
 follow the model each request uses and sit beneath the settings of

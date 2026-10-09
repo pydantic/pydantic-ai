@@ -183,6 +183,8 @@ async def test_model_names_resolve_through_clai(tmp_path: Path, monkeypatch: pyt
                     'anthropic_cache': '5m',
                     'anthropic_cache_instructions': '5m',
                     'anthropic_cache_tool_definitions': '5m',
+                    'anthropic_effort': 'high',
+                    'anthropic_thinking': {'type': 'adaptive'},
                 },
             ),
             (
@@ -278,6 +280,8 @@ async def test_approval_gated_host_configuration(tmp_path: Path, monkeypatch: py
             'anthropic_cache': '5m',
             'anthropic_cache_instructions': '5m',
             'anthropic_cache_tool_definitions': '5m',
+            'anthropic_effort': 'high',
+            'anthropic_thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}},
             'thinking': 'high',
         }
     )

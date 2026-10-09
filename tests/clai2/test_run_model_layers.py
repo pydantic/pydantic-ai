@@ -359,6 +359,8 @@ async def test_capability_model_beats_default_model(tmp_path: Path) -> None:
                     'anthropic_cache': '5m',
                     'anthropic_cache_instructions': '5m',
                     'anthropic_cache_tool_definitions': '5m',
+                    'anthropic_effort': 'high',
+                    'anthropic_thinking': {'type': 'adaptive'},
                 },
             )
         ]
@@ -384,8 +386,14 @@ async def test_saved_settings_stay_with_their_model(tmp_path: Path, stock: bool)
         recorder=recorder,
     )
     # Only the Claude model's own caching defaults; nothing saved for the GPT model.
-    cache = {'anthropic_cache': '5m', 'anthropic_cache_instructions': '5m', 'anthropic_cache_tool_definitions': '5m'}
-    assert recorder.calls == [(other, cache)]
+    defaults = {
+        'anthropic_cache': '5m',
+        'anthropic_cache_instructions': '5m',
+        'anthropic_cache_tool_definitions': '5m',
+        'anthropic_effort': 'high',
+        'anthropic_thinking': {'type': 'adaptive'},
+    }
+    assert recorder.calls == [(other, defaults)]
 
 
 async def test_agent_capability_settings_beat_family_defaults(tmp_path: Path) -> None:
