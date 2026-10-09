@@ -7,7 +7,7 @@ import re
 from collections.abc import Sequence
 from functools import partial
 from pathlib import Path
-from typing import Generic
+from typing import Generic, Self
 
 import anyio
 from pydantic import (
@@ -21,7 +21,6 @@ from pydantic import (
     field_validator,
     model_serializer,
 )
-from typing_extensions import Self
 
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError

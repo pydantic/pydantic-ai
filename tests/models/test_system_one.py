@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Callable, Mapping
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import httpx2
 import pytest
@@ -235,6 +235,66 @@ async def test_output_type(allow_model_requests: None):
             },
         }
     )
+
+
+Spam = Annotated[
+    bool,
+    WithJsonSchema({'anyOf': [{'const': True, 'description': 'Spam'}, {'const': False, 'description': 'Not spam'}]}),
+]
+
+
+@pytest.mark.parametrize(
+    ('output_type', 'answer', 'output', 'question'),
+    [
+        pytest.param(
+            Literal['billing', 'bug'],
+            {'type': 'choice', 'choice': 'bug', 'confidence': 0.8, 'probabilities': {'billing': 0.1, 'bug': 0.9}},
+            'bug',
+            snapshot(
+                {
+                    'type': 'choice',
+                    'criteria': {'billing': None, 'bug': None},
+                    'instructions': 'Which of these applies?',
+                }
+            ),
+            id='choice',
+        ),
+        pytest.param(
+            Frustration,
+            {'type': 'score', 'score': 2.0, 'confidence': 1.0, 'probabilities': {'0': 0.0, '1': 0.0, '2': 1.0}},
+            2,
+            snapshot(
+                {
+                    'type': 'score',
+                    'criteria': ['Calm', 'Frustrated', 'Very angry'],
+                    'instructions': 'Which of these applies?',
+                }
+            ),
+            id='score',
+        ),
+        pytest.param(
+            Spam,
+            {'type': 'noul', 'noul': 0.9},
+            True,
+            snapshot(
+                {
+                    'type': 'noul',
+                    'criteria': {'true': 'Spam', 'false': 'Not spam'},
+                    'instructions': 'Which of these applies?',
+                }
+            ),
+            id='noul',
+        ),
+    ],
+)
+async def test_question_without_instructions(
+    output_type: Any, answer: dict[str, object], output: object, question: object, allow_model_requests: None
+):
+    """The API requires `instructions` on every question, so one with nothing else to ask asks which option applies."""
+    captured = Captured(lambda request: answers(response=answer))
+    result = await Agent(mock_model(captured), output_type=output_type).run('Our checkout returns 500 errors.')
+    assert result.output == output
+    assert captured.body['questions'] == {'response': question}
 
 
 async def test_score_levels_come_back_as_numbers(allow_model_requests: None):

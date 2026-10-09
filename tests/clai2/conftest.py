@@ -63,6 +63,12 @@ def fake_gh(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Monkey
 
 
 @pytest.fixture(autouse=True)
+def no_native_clipboard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Copy out through OSC 52 only: the local clipboard command would replace the developer's clipboard."""
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.text_clipboard.copy_command', lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def isolated_environment(
     tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -72,6 +78,9 @@ def isolated_environment(
     # Away from this repository's own files, such as the Agent Skills the `coder` plugin would load.
     monkeypatch.chdir(tmp_path_factory.mktemp('work'))
     monkeypatch.delenv('CLAI_MODEL', raising=False)
+    # Claude Code and Codex sessions are read from the isolated home, never the developer's own.
+    monkeypatch.delenv('CLAUDE_CONFIG_DIR', raising=False)
+    monkeypatch.delenv('CODEX_HOME', raising=False)
     for name in (
         'LOGFIRE_TOKEN',
         'LOGFIRE_API_KEY',
@@ -101,6 +110,7 @@ def isolated_environment(
     monkeypatch.setenv('PYTHON_KEYRING_BACKEND', 'keyring.backends.null.Keyring')
     # The encryption key is read once per process; each test gets a fresh keyring, so a fresh read.
     credential_store._stored_key.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    credential_store._NO_OLDER_ENTRY.clear()  # pyright: ignore[reportPrivateUsage]
 
 
 def stored_accounts() -> set[str]:

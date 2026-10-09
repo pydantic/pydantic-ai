@@ -4,7 +4,7 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, cast
 
@@ -159,8 +159,8 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -168,7 +168,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(cost=Decimal('0.0000')),
                 model_name='command-r7b-12-2024',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
@@ -177,8 +177,8 @@ async def test_request_simple_success(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -186,7 +186,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(cost=Decimal('0.0000')),
                 model_name='command-r7b-12-2024',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
@@ -344,8 +344,8 @@ async def test_request_structured_response(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -359,7 +359,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 ],
                 usage=RequestUsage(cost=Decimal('0.0000')),
                 model_name='command-r7b-12-2024',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
@@ -373,10 +373,10 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -441,10 +441,10 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
-                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=UTC)),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC)),
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -458,7 +458,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(cost=Decimal('0.0000')),
                 model_name='command-r7b-12-2024',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
@@ -472,10 +472,10 @@ async def test_request_tool_call(allow_model_requests: None):
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -494,7 +494,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cost=Decimal('6.375E-7'),
                 ),
                 model_name='command-r7b-12-2024',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
@@ -508,10 +508,10 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -519,7 +519,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[TextPart(content='final response')],
                 usage=RequestUsage(cost=Decimal('0.0000')),
                 model_name='command-r7b-12-2024',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
@@ -679,7 +679,7 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -734,7 +734,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
         [
             ModelRequest(
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -758,7 +758,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 5, 22, 7, 17, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 5, 22, 7, 17, tzinfo=UTC),
                     'service_tier': 'default',
                 },
                 provider_response_id='resp_68bb5f153efc81a2b3958ddb1f257ff30886f4f20524f3b9',
@@ -784,7 +784,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),

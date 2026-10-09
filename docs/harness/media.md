@@ -1,6 +1,6 @@
 ---
 title: Media Externalization
-description: "Store large images, audio, and text from Pydantic AI message history in content-addressed disk, SQLite, S3, or MongoDB stores to keep run snapshots small."
+description: "Store large images, audio, and text from Pydantic AI message history in content-addressed disk, SQLite, S3, MongoDB, or PostgreSQL stores to keep run snapshots small."
 ---
 
 # Media Externalization
@@ -26,7 +26,7 @@ Why it exists: a conversation that carries images, audio, or other `BinaryConten
 
 ## Consumers
 
-[`StepPersistence`](step-persistence.md) uses these stores to externalize large `BinaryContent` and text parts in run snapshots through its file, sqlite, and mongo backends (see [Persisting media](step-persistence.md#persisting-media)).
+[`StepPersistence`](step-persistence.md) uses these stores to externalize large `BinaryContent` and text parts in run snapshots through its file, sqlite, mongo, and postgres backends (see [Persisting media](step-persistence.md#persisting-media)).
 
 ## Why content-addressing
 
@@ -42,6 +42,7 @@ Every store implements the `MediaStore` protocol -- `put`, `get`, `exists`, `pub
 | `SqliteMediaStore(database=...)` | A SQLite database | A single-file store that travels with the data |
 | `S3MediaStore(bucket=, endpoint=, region=, ...)` | S3 or an S3-compatible bucket | Shared or production storage |
 | `MongoMediaStore(client= or db_url=, database=, ...)` | MongoDB (sha256-addressed manual chunking) | A MongoDB deployment; blobs larger than one BSON document |
+| `PostgresMediaStore(pool, table=...)` | PostgreSQL (one `BYTEA` row per blob) | A PostgreSQL deployment; blobs up to 1 GB |
 
 `S3MediaStore` uses path-style URLs plus handrolled SigV4, so it is compatible with AWS S3, Cloudflare R2 (`region='auto'`), MinIO, and other S3-compatible providers. `SqliteMediaStore` also accepts `connection=` instead of `database=` to share a `sqlite3.Connection`.
 
@@ -63,6 +64,27 @@ from pydantic_ai_harness.media import MongoMediaStore
 client = AsyncMongoClient('mongodb://localhost:27017')
 store = MongoMediaStore(client=client, database='agent_media')
 ```
+
+`PostgresMediaStore` takes a caller-owned asyncpg-compatible pool, described by the `PostgresPool` protocol exported from this package. The harness imports no driver and defines no extra for it: the application installs the driver and owns the pool, and the store does not close it. Each blob is one row in the `media` table (`table=` renames it; names outside `[a-z_][a-z0-9_]*` or longer than 63 characters are rejected, lowercase because PostgreSQL folds unquoted identifiers and `'Media'` would share a table with `'media'`), keyed by its sha256 digest, so a second `put` of the same bytes is a no-op (`ON CONFLICT (sha256) DO NOTHING`). The bytes are one `BYTEA` value, which PostgreSQL caps at 1 GB, and there is no streaming API, so a blob has to fit in process memory in both directions.
+
+```bash
+pip/uv-add asyncpg
+```
+
+On its first operation the store issues `CREATE TABLE IF NOT EXISTS` in a transaction that first takes `pg_advisory_xact_lock` on a hash of the table name, so processes that start together do not collide. The connecting role therefore needs `CREATE` on the schema for that first call. There is no migration step: an existing `media` table with a different layout is left as it is and the first `put` or `get` fails on a missing column, so pass `table=` when the database already has a table of that name.
+
+```python
+import asyncpg
+
+from pydantic_ai_harness.media import PostgresMediaStore
+
+
+async def build_media_store() -> tuple[PostgresMediaStore, asyncpg.Pool]:
+    pool = await asyncpg.create_pool('postgres://localhost/app')
+    return PostgresMediaStore(pool), pool
+```
+
+Close the returned pool during application shutdown. The store does not manage it.
 
 ## Walker helpers
 
@@ -135,11 +157,11 @@ class MediaContext:
     metadata: Mapping[str, str] = field(default_factory=dict)  # user-supplied tags
 ```
 
-All fields default, so you pass what you have and ignore the rest; new fields are added non-breakingly as use cases emerge. `get_metadata(uri)` round-trips the user-supplied `metadata` mapping on all four stores; `media_type` is persisted separately (as the byte payload's `Content-Type`).
+All fields default, so you pass what you have and ignore the rest; new fields are added non-breakingly as use cases emerge. `get_metadata(uri)` round-trips the user-supplied `metadata` mapping on all five stores; `media_type` is persisted separately (as the byte payload's `Content-Type`).
 
 ## `KeyStrategy`
 
-The default on-store key layout is `<sha256>.bin`. `DiskMediaStore` and `S3MediaStore` accept a `key_strategy=` override to fit an existing layout. `SqliteMediaStore` and `MongoMediaStore` do not, since the digest is their primary key -- use `table=` / `collection=` to move the rows or documents instead:
+The default on-store key layout is `<sha256>.bin`. `DiskMediaStore` and `S3MediaStore` accept a `key_strategy=` override to fit an existing layout. `SqliteMediaStore`, `MongoMediaStore`, and `PostgresMediaStore` do not, since the digest is their primary key -- use `table=` / `collection=` to move the rows or documents instead:
 
 ```python
 from pydantic_ai_harness.media import DiskMediaStore, MediaContext
@@ -161,7 +183,8 @@ If your strategy depends on `ctx.media_type`, the same context must be supplied 
 | Symbol | Purpose |
 |---|---|
 | `MediaStore` | Async content-addressed store protocol (`put` / `get` / `exists` / `public_url` / `get_metadata`) |
-| `DiskMediaStore`, `SqliteMediaStore`, `S3MediaStore`, `MongoMediaStore` | Concrete stores (`MongoMediaStore` needs the `mongodb` extra) |
+| `DiskMediaStore`, `SqliteMediaStore`, `S3MediaStore`, `MongoMediaStore`, `PostgresMediaStore` | Concrete stores (`MongoMediaStore` needs the `mongodb` extra) |
+| `PostgresPool`, `PostgresConnection` | The asyncpg-compatible pool and connection protocols `PostgresMediaStore` accepts |
 | `MediaContext` | Per-operation context (media type, filename, tags) threaded through store operations |
 | `KeyStrategy`, `default_key_strategy` | On-store key layout |
 | `PublicUrlResolver`, `make_static_public_url` | Resolve a stored URI to a public URL |

@@ -14,6 +14,7 @@ Run:  uv run --with pytest pytest .github/scripts/test_pydantic_ai_runner.py
 
 import asyncio
 import importlib
+import inspect
 import io
 import json
 import os
@@ -482,9 +483,9 @@ def test_harness_backed_tools_are_async_and_pin_the_remaining_gaps():
     assert harness_backed.isdisjoint(hand_rolled)
     assert harness_backed | hand_rolled == set(pkg.CLAUDE_CODE_TOOL_NAMES) == set(fn_by_name)
     for name in harness_backed:
-        assert asyncio.iscoroutinefunction(fn_by_name[name]), f'{name} should be harness-backed (async)'
+        assert inspect.iscoroutinefunction(fn_by_name[name]), f'{name} should be harness-backed (async)'
     for name in hand_rolled:
-        assert not asyncio.iscoroutinefunction(fn_by_name[name]), f'{name} has no stable harness equivalent (sync)'
+        assert not inspect.iscoroutinefunction(fn_by_name[name]), f'{name} has no stable harness equivalent (sync)'
 
 
 # --------------------------------------------------------------------------- #

@@ -1024,7 +1024,7 @@ The [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool] enables your age
 
 #### OpenAI Responses
 
-With OpenAI, you need to first [upload files to a vector store](https://platform.openai.com/docs/assistants/tools/file-search), then reference the vector store IDs when using the `FileSearchTool`.
+With OpenAI, you need to first [upload files to a vector store](https://developers.openai.com/api/docs/guides/tools-file-search), then reference the vector store IDs when using the `FileSearchTool`.
 
 ```py {title="file_search_openai_upload.py" test="skip"}
 import asyncio

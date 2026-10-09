@@ -158,4 +158,4 @@ async def test_auth_function_runs_under_temporal(client: Client, whoami_url: str
             execution_timeout=timedelta(seconds=25),
         )
 
-    assert output == '{"whoami":"Bearer alice-token"}'
+    assert output == '{"logfire_whoami":"Bearer alice-token"}'
