@@ -69,7 +69,8 @@ FamilyDefaults = Callable[[str], ModelSettings | None]
 """CLAI's family default settings for a model, given its name."""
 
 
-def _supports_local_workspace() -> bool:
+def supports_local_workspace() -> bool:
+    """Whether CLAI can give runs a `LocalWorkspace` on this platform; it has none on Windows."""
     return sys.platform != 'win32'
 
 
@@ -225,7 +226,7 @@ def local_workspace(
     None is added on platforms without a local workspace, or when a capability loaded up front supplies
     the workspace, such as a sandbox. When only a capability function might, the local one defers to it.
     """
-    if not _supports_local_workspace() or _supplies_workspace(configured, include_dynamic=False):
+    if not supports_local_workspace() or _supplies_workspace(configured, include_dynamic=False):
         return None
     if _supplies_workspace(configured):
         # No id: a function's `LocalWorkspace` shares the default id and would replace this whole.

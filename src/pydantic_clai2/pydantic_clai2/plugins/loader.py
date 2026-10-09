@@ -175,13 +175,14 @@ class PluginLoader(Generic[DepsT]):
         status: Status | None = None,
         full_screen: FullScreen = bare_screen,
         enabled: bool = True,
+        submit_prompt: Callable[[str], None] | None = None,
     ) -> None:
         """`builtin` ships with CLAI, `project` comes from `.clai/settings.json`; the store overrides both.
 
         `enabled=False` lists and loads no plugins at all, without changing anything saved.
 
         `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
-        `conversation` and `status` are handed to every host; see `PluginHost` for the defaults.
+        `conversation`, `status`, and `submit_prompt` are handed to every host; see `PluginHost` for the defaults.
         """
         self._store = store
         self._console = console
@@ -191,6 +192,7 @@ class PluginLoader(Generic[DepsT]):
         self._conversation = conversation
         self._session_id = session_id
         self._status = status
+        self._submit_prompt = submit_prompt
         self._builtin = canonical_plugin_declarations(builtin)
         self._project = canonical_plugin_declarations(project)
         self._entries: dict[str, PluginEntry[DepsT]] = {}
@@ -438,6 +440,7 @@ class PluginLoader(Generic[DepsT]):
             status=self._status,
             save_settings=save,
             requirements=CAPABILITY_REQUIREMENTS.get(declaration.factory),
+            submit_prompt=self._submit_prompt,
         )
         activating = False
         plugin: Plugin[BaseModel, DepsT] | None = None
@@ -448,9 +451,15 @@ class PluginLoader(Generic[DepsT]):
             built = settings_capability(plugin)
             if built is not None:
                 self._from_settings[name] = built
-            loaded = collect(plugin)
             activating = False
-            self._commands.register_many(loaded.commands)
+            await plugin.prepare()
+            loaded = collect(plugin)
+            for hidden in self._commands.register_many(loaded.commands):
+                self._console.print(
+                    f'/{hidden.name} ({hidden.description}) is hidden by another /{hidden.name} command.',
+                    style=theme.color(theme.WARNING),
+                    markup=False,
+                )
             entry.loaded = loaded
             self._loaded[name] = loaded
             await loaded.dispatch(self._session_start())
@@ -585,7 +594,7 @@ class PluginLoader(Generic[DepsT]):
 
     def _drop(self, entry: PluginEntry[DepsT]) -> None:
         if entry.loaded is not None:
-            self._commands.unregister(command.name for command in entry.loaded.commands)
+            self._commands.unregister(entry.loaded.commands)
         entry.loaded = None
         self._loaded.pop(entry.name, None)
         self._suspended.pop(entry.name, None)

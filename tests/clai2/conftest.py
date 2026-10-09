@@ -69,10 +69,14 @@ def no_native_clipboard(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def isolated_environment(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Redirect default databases, including subprocesses, away from user data."""
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    # Away from this repository's own files, such as the Agent Skills the `coder` plugin would load.
+    monkeypatch.chdir(tmp_path_factory.mktemp('work'))
     monkeypatch.delenv('CLAI_MODEL', raising=False)
     # Claude Code and Codex sessions are read from the isolated home, never the developer's own.
     monkeypatch.delenv('CLAUDE_CONFIG_DIR', raising=False)

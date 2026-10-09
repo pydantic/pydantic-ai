@@ -1695,6 +1695,43 @@ the managed task UI is not installed on them. Saved Coder `sub_agents: false`
 and declarations omitting that setting remain opt-outs. CLAI adds no tools when
 delegation is disabled.
 
+### Agent Skills
+
+The `coder` plugin loads [Agent Skills](https://agentskills.io/specification)
+(`<folder>/<skill>/SKILL.md`) from these folders, in this order:
+
+1. `.agents/skills` and `.claude/skills` in the project
+2. `~/.agents/skills` and `~/.claude/skills` in your home directory
+
+Folders that do not exist are skipped. Skills need a local workspace, so they
+are off on Windows. The model sees each skill's name and
+description and loads the instructions it needs, which tell it the skill's
+directory so it can follow references to `scripts/` or `references/`. Without
+any skills, nothing is added to the prompt and the model gets no extra tool.
+
+Each skill is also a command: `/code-review src/app.py` sends the
+`code-review` skill as your next prompt, with `src/app.py` in place of
+`$ARGUMENTS`, or appended as `ARGUMENTS: src/app.py` when the skill has no
+`$ARGUMENTS`. A skill named like a CLAI or plugin command, such as `model`,
+leaves that command alone and stays available to the model.
+
+When two folders have a skill with the same name, the earlier folder wins:
+project skills over personal ones, `.agents` over `.claude`. A skill reached
+twice, such as through a symlinked `.agents/skills`, or a byte-identical copy,
+counts once. CLAI prints one line for each skipped skill when it starts: a
+malformed `SKILL.md`, or a name another skill already has.
+
+The model's catalog is read at the start of every turn, so it lists a skill you
+add mid-session. Its `/command` arrives after `/reload` or
+`/plugins reload coder`. Choose different folders in `/plugins configure coder`
+under **Skill folders**, as a JSON list of paths; `~/` means your home directory
+and `[]` turns skills off. A folder CLAI cannot read turns skills off, with a
+notice, until the next `/reload`; the coding tools still load.
+
+Skill commands are read on this machine. With a plugin that runs the agent in a
+sandbox, the model's catalog is read from the sandbox's workspace instead, so the
+two can differ.
+
 ## Bring an agent
 
 ```python

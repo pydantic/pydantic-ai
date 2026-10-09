@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_clai2.plugins import DepsT, Plugin
-from pydantic_clai2.runtime._session import _supports_local_workspace  # pyright: ignore[reportPrivateUsage]
+from pydantic_clai2.runtime._session import supports_local_workspace
 
 
 class RepoContextSettings(BaseModel):
@@ -37,7 +37,7 @@ class RepoContextPlugin(Plugin[RepoContextSettings, DepsT]):
     """`RepoContext`, anchored at the run workspace's working directory like the `coder` plugin."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
-        if not _supports_local_workspace():
+        if not supports_local_workspace():
             return ()
         settings = self.settings
         return (

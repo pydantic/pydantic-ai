@@ -197,7 +197,7 @@ def test_install_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     ]
     assert update.overrides() == (
         f'pydantic-clai2 @ {release}/pydantic_clai2-{NEWER}.tar.gz\n'
-        f'pydantic-ai-harness[coder] @ {release}/pydantic_ai_harness-{NEWER}.tar.gz\n'
+        f'pydantic-ai-harness[coder,skills] @ {release}/pydantic_ai_harness-{NEWER}.tar.gz\n'
         f'pydantic-ai-slim[anthropic,mcp,openai] @ {release}/pydantic_ai_slim-{NEWER}.tar.gz\n'
         f'pydantic-graph @ {release}/pydantic_graph-{NEWER}.tar.gz\n'
     )
@@ -245,7 +245,7 @@ def _updates(
         if '--overrides' in command:
             # The overrides file exists while uv runs and preserves the packages' required extras.
             text = Path(command[command.index('--overrides') + 1]).read_text(encoding='utf-8')
-            assert 'pydantic-ai-harness[coder] @ ' in text
+            assert 'pydantic-ai-harness[coder,skills] @ ' in text
             assert 'pydantic-ai-slim[anthropic,mcp,openai] @ ' in text
         return (codes or [0]).pop(0)
 
