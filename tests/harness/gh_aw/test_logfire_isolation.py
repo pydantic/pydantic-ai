@@ -68,8 +68,15 @@ exec(compile(sys.argv.pop(1), '<launcher>', 'exec'))
 """
 
 
-@pytest.mark.parametrize('token', ['', 'test-maintainer-token'])
-@pytest.mark.parametrize('exit_code', [0, 7])
+# Each case is a fresh interpreter importing `pydantic_ai` and Logfire, so the two
+# axes are paired rather than crossed: the token decides whether Logfire starts its
+# exporter and token-validation thread, the exit code only which `SystemExit` the
+# launcher re-raises, and neither changes how the other reaches shutdown.
+@pytest.mark.parametrize(
+    ('exit_code', 'token'),
+    [(0, 'test-maintainer-token'), (7, '')],
+    ids=['token-success', 'no-token-failure'],
+)
 def test_launcher_ignores_checkout_logfire_configuration(tmp_path: Path, token: str, exit_code: int) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
