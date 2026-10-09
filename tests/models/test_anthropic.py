@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import json
 import os
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -268,9 +268,10 @@ async def test_anthropic_read_error_is_raised_when_not_cancelled():
         _enabled_server_tool_names=frozenset(),
     )
 
-    with pytest.raises(httpx2.ReadError):
+    with pytest.raises(ModelAPIError) as exc_info:
         async for _event in response:
             pass
+    assert isinstance(exc_info.value.__cause__, httpx2.ReadError)
 
 
 @dataclass
@@ -3348,6 +3349,50 @@ def test_model_connection_error(allow_model_requests: None) -> None:
         agent.run_sync('hello')
     assert exc_info.value.model_name == 'claude-sonnet-4-5'
     assert 'Connection to https://api.anthropic.com timed out' in str(exc_info.value.message)
+
+
+async def test_stream_transport_error_mid_stream(allow_model_requests: None) -> None:
+    """A connection that breaks off mid-stream surfaces as `ModelAPIError`, not the raw `httpx2` error.
+
+    The SDK wraps transport failures in `APIConnectionError` only until the response starts, and a cassette can't
+    replay a broken-off connection, so a mock transport raises it.
+    """
+    events: list[dict[str, Any]] = [
+        {
+            'type': 'message_start',
+            'message': {
+                'id': 'msg_1',
+                'type': 'message',
+                'role': 'assistant',
+                'model': 'claude-sonnet-4-5',
+                'content': [],
+                'stop_reason': None,
+                'stop_sequence': None,
+                'usage': {'input_tokens': 1, 'output_tokens': 1},
+            },
+        },
+        {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+        {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'Hello'}},
+    ]
+
+    class StreamBreakingOff(httpx2.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield ''.join(f'event: {e["type"]}\ndata: {json.dumps(e)}\n\n' for e in events).encode()
+            raise httpx2.ReadError('connection reset')
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, stream=StreamBreakingOff())
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        client = AsyncAnthropic(api_key='test-key', base_url='http://localhost', http_client=http_client)
+        agent = Agent(AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client)))
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == 'connection reset'
+    assert isinstance(exc_info.value.__cause__, httpx2.ReadError)
 
 
 async def test_count_tokens_connection_error(allow_model_requests: None) -> None:
