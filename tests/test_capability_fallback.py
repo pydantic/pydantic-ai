@@ -13,8 +13,16 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, RunContext, TextPart, UserPromptPart
-from pydantic_ai._fallback import FALLBACK_CAPABILITY_PIN_KEY, continuation_pin
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RunContext,
+    TextPart,
+    UserPromptPart,
+    capture_run_messages,
+)
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CapabilityOrdering,
@@ -43,6 +51,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
 from .conftest import try_import
+from .continuation_utils import ScriptedContinuationModel, StreamSegment
 from .model_lifecycle_utils import LifecycleTrackingModel
 
 with try_import() as logfire_imports_successful:
@@ -205,20 +214,31 @@ async def test_streamed_failed_pinned_continuation_rewinds_to_the_step_model():
 
 
 async def test_suspended_response_is_pinned_to_the_model_that_served_it():
-    fallback = Fallback[None](TestModel())
-    served = FunctionModel(success, model_name='served')
-    ctx = RunContext[None](deps=None, model=served, usage=RunUsage())
-    request_context = ModelRequestContext(
-        model=served, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    """Walking away from a suspended stream leaves it in history pinned to the candidate that started the job."""
+    served = ScriptedContinuationModel(
+        segments=[
+            StreamSegment(
+                texts=['partial '], state='suspended', provider_response_id='job-1', input_tokens=5, output_tokens=2
+            )
+        ]
     )
-    suspended = await fallback.after_model_request(
-        ctx, request_context=request_context, response=ModelResponse(parts=[], state='suspended')
-    )
-    assert continuation_pin(suspended, key=FALLBACK_CAPABILITY_PIN_KEY) == served.model_id
-    complete = await fallback.after_model_request(
-        ctx, request_context=request_context, response=ModelResponse(parts=[])
-    )
-    assert continuation_pin(complete, key=FALLBACK_CAPABILITY_PIN_KEY) is None
+    agent = Agent(FunctionModel(stream_function=failure_stream, model_name='step'), capabilities=[Fallback(served)])
+    with capture_run_messages() as messages:
+        async with agent.run_stream('x') as result:
+            async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+                break
+    suspended = messages[-1]
+    assert isinstance(suspended, ModelResponse)
+    assert suspended.state == 'suspended'
+    assert suspended.metadata == snapshot({'__pydantic_ai__': {'fallback_candidate': 'scripted:scripted'}})
+
+
+async def test_complete_response_is_not_pinned():
+    agent = Agent(FunctionModel(failure, model_name='step'), capabilities=[Fallback(FunctionModel(success))])
+    result = await agent.run('x')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.metadata is None
 
 
 async def test_select_model_outranks_the_fallback_default():

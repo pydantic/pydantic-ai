@@ -214,10 +214,21 @@ class RetryModelRequest(Exception):
     Pass `model` to attempt a different model, or omit it to attempt the same one again:
 
     ```python {test="skip"}
-    from pydantic_ai import RetryModelRequest
+    from pydantic_ai import ModelResponse, RetryModelRequest, RunContext
+    from pydantic_ai.capabilities import AbstractCapability
+    from pydantic_ai.exceptions import ModelHTTPError
+    from pydantic_ai.models import ModelRequestContext
 
-    raise RetryModelRequest('anthropic:claude-fable-5')  # a different model
-    raise RetryModelRequest()  # the same model, e.g. after a backoff
+
+    class RetryOnOverload(AbstractCapability[None]):
+        async def on_model_request_error(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            if not isinstance(error, ModelHTTPError) or error.status_code != 529:
+                raise error
+            if request_context.attempt == 1:
+                raise RetryModelRequest()  # the same model again
+            raise RetryModelRequest('anthropic:claude-fable-5')  # a different model
     ```
 
     Each attempt re-runs
