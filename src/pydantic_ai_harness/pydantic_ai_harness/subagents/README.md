@@ -67,7 +67,7 @@ agent = Agent(
 ```
 
 - **Only what is bound to the `Agent` carries over.** Capabilities, toolsets, instructions, and model settings passed to the parent's `run()` are not part of the agent, so the delegate does not get them. Passing `SubAgents(include_self=True)` itself to `run()` raises a `UserError` when the run starts, since the delegate would come up without it.
-- **Delegation depth is capped.** The delegate carries `delegate_task` too, so `max_depth` (default `3`, counting the top-level run) bounds the tree: the top-level run delegates, its delegates delegate once more, and a run at the limit gets neither `delegate_task` nor the sub-agent listing. The limit applies to every delegation through `SubAgents`, including explicit rosters.
+- **Delegation depth is capped.** The delegate is the same agent, so it carries `SubAgents` too, and `max_depth` (default `2`, counting the top-level run) bounds the tree. By default only the top-level run delegates: a run at the limit gets neither `delegate_task` nor the sub-agent listing, so a delegate does the work itself. Pass `max_depth=3` to let delegates delegate once more, as earlier releases did by default. The limit applies to every delegation through `SubAgents`, including explicit rosters.
 - **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation, and the delegate returns the agent's own `output_type`, rendered with `str()`.
 - The deprecated `inherit_tools` does not apply to `self`, whose tools are already the parent's. The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
 
@@ -323,7 +323,7 @@ SubAgents(
     contain_errors=False,  # default for SubAgent.contain_errors: contain an unexpected crash as a bounded retry
     workspace=None,        # WorkspaceBackend to read agent_folders from instead of the run's workspace
     include_self=False,    # also list the running agent itself as the delegate `self`
-    max_depth=3,           # delegation levels, counting the top-level run
+    max_depth=2,           # delegation levels, counting the top-level run (2: only the top-level run delegates)
 )
 ```
 
@@ -395,9 +395,10 @@ async def converse():
 
 `opened()` drains workers on exit. Keep workspace and plugin resources alive outside
 that scope. Detached execution is refused for run-owned non-local workspaces;
-foreground delegation still works. `max_depth=4` counts the main run and allows
-three child layers. An explicitly configured non-default `SubAgents.max_depth`
-still takes precedence. Ordinary `SubAgents` retains its original depth default.
+foreground delegation still works. The owner's `max_depth` (default `2`) counts the
+main run, so by default only the main run delegates; pass `max_depth=4` to allow three
+child layers. A `SubAgents.max_depth` set to a value other than its default takes
+precedence over the owner's.
 
 `background(task_id)` releases a foreground waiter without restarting the child.
 `await cancel(task_id)` stops and drains that child and its descendants. A user stop
@@ -408,6 +409,24 @@ A child waits for its own descendants and consumes their reports before its fina
 output settles. Reports are routed to the direct parent; an idle parent receives
 pending reports on its next explicitly started run. Enqueue delivery is acknowledged
 only when core emits `EnqueuedMessagesEvent`, and acknowledgements are persisted.
+
+The model can manage the tasks it started, too: with an owner bound, `SubAgents` also
+offers `list_tasks`, `message_task(task_id, message)`, and `stop_task(task_id)`.
+`list_tasks` lists each task's ID, agent, status or outcome, foreground or background
+mode, start time, and the first 80 characters of its task; running tasks and the 50 most
+recent are listed, with a count of the rest. `message_task` steers a task: a running one
+receives the message, framed as coming from the delegating agent, through core's
+`enqueue` at `'asap'` priority, so it sees it before its next model request. A finished
+or stopped task is resumed with the message as its new task, exactly like
+`delegate_task(resume=task_id)`, so one-shot and user-stopped tasks refuse it. `stop_task` calls `cancel(task_id, user=False)`, stopping the
+task and its descendants without marking it as user-stopped, so the model can later
+continue it with `delegate_task(resume=task_id)` unless it is one-shot; the result says
+which. When the caller started the task itself, the tool's result stands in for the
+stopped task's report, so no report follows; a stopped task started by one of the
+caller's descendants still reports to that descendant. A top-level run reaches
+every task in its conversation; a delegated run reaches only the tasks below it, so it
+cannot list, message, or stop its siblings or its parent. None of these tools is offered without an
+owner or to a run at `max_depth`, which cannot delegate.
 
 An observer receives `DelegationTaskEvent`, with the task identity and an optional
 correlated child stream event. Events from the child's own stream also carry the

@@ -1613,7 +1613,7 @@ all agent-bound tools, instructions, and guardrails. `Explore` and `Plan` use
 only filesystem readers and a `ReadOnlyWorkspace`: neither shell commands nor
 `run_code` are available. They inherit the current model and are one-shot.
 Custom delegates and general-purpose children can resume with the same task ID.
-There are three child layers below the main agent by default.
+Only the main agent delegates: its children do not get `delegate_task`.
 
 Use foreground delegation when the answer is needed immediately, and background
 delegation for independent work. Give each child a self-contained task with
@@ -1663,6 +1663,10 @@ Definition files are read as data and never executed.
   parent to continue the saved child. Explore and Plan cannot resume. The parent
   uses `delegate_task` with the same ID and agent name; it remains responsible
   for reviewing the child's result.
+- The model has its own **`list_tasks`**, **`message_task`**, and **`stop_task`**
+  tools for the tasks it started; `message_task` steers a running child or
+  resumes a finished one with a follow-up. A task the model stopped, unlike one you stop, can be resumed by
+  the model without `/tasks resume`.
 
 The editor panel shows the task tree, activity, elapsed time, and descendant
 counts. The footer shows the context of the newest foreground child; see

@@ -169,7 +169,9 @@ which gives the agent `delegate_task` and one delegate, `self`: a fresh run of t
 to. The delegate starts without this conversation, so the agent passes it everything it needs, and it has
 everything the agent has -- the same model, workspace, instructions, and capabilities, including an approval
 gate, guardrail, or audit hook bound next to `Coder`, so those see the commands a delegate runs too. A
-delegate can delegate in turn, up to three levels counting the top-level run (`SubAgents.max_depth`).
+delegate does not delegate in turn (`SubAgents.max_depth` defaults to `2`, counting the top-level run). To let
+delegates delegate once more, as earlier releases did, pass `Coder(sub_agents=False)` and bind
+`SubAgents(include_self=True, agent_folders=None, max_depth=3)` next to it.
 
 Only what is bound to the `Agent` carries over to a delegate; capabilities, toolsets, instructions, and model
 settings passed to `run()` do not. So bind `Coder` with `Agent(capabilities=[...])`: passing it to `run()`
