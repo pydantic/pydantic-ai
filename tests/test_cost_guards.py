@@ -11,7 +11,12 @@ from typing import TypeAlias
 import pytest
 import xdist.workermanage
 
-from .cost_guards import BUDGET_ENV_VAR, _popen_argv, launches_python  # pyright: ignore[reportPrivateUsage]
+from .cost_guards import (
+    BUDGET_ENV_VAR,
+    COLLECT_BUDGET_ENV_VAR,
+    _popen_argv,  # pyright: ignore[reportPrivateUsage]
+    launches_python,
+)
 
 pytest_plugins = ['pytester']
 
@@ -25,6 +30,7 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunPytest
     """Run an in-process pytest session over `source` with only the cost guards loaded."""
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
     monkeypatch.delenv(BUDGET_ENV_VAR, raising=False)
+    monkeypatch.delenv(COLLECT_BUDGET_ENV_VAR, raising=False)
     monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
     pytester.makeini(
         """
@@ -250,6 +256,7 @@ def test_a_failing_marked_test_is_not_judged(run: RunPytest):
 
 @pytest.mark.subprocess(reason='checks the guard and the stale-marker verdict across pytest-xdist workers')
 def test_guards_work_under_xdist(run: RunPytest, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(COLLECT_BUDGET_ENV_VAR, '0.05')
     # Workers import `tests.cost_guards` from a fresh interpreter, and xdist replaces their `sys.path` with the one
     # this process started with (ignoring `PYTHONPATH`), which only has the repo root when an editable install adds it.
     monkeypatch.setattr(
@@ -259,6 +266,8 @@ def test_guards_work_under_xdist(run: RunPytest, monkeypatch: pytest.MonkeyPatch
     )
     result = run(
         f"""
+        time.sleep(0.1)
+
         @pytest.mark.subprocess(reason='used to launch Python')
         def test_stale():
             pass
@@ -276,6 +285,8 @@ def test_guards_work_under_xdist(run: RunPytest, monkeypatch: pytest.MonkeyPatch
         [
             '*`test_guarded.py::test_unmarked` launched a Python interpreter during call:*',
             '*test_guarded.py::test_stale: no test covered by its `@pytest.mark.subprocess`*',
+            '*slow test module collection*',
+            'test_guarded.py took 0.1*s to collect, over the 0.05s per-module budget (PYTEST_COLLECT_BUDGET_SECONDS).',
             '*worker startup and collection of 2 tests took *s (slowest worker collected in *s)',
         ]
     )
@@ -341,3 +352,24 @@ def test_collection_time_is_reported(run: RunPytest, tmp_path: Path, monkeypatch
     )
     assert step_summary.read_text().startswith('pytest collection of 1 tests took ')
     assert '- `test_guarded.py`: ' in step_summary.read_text()
+
+
+def test_the_collection_budget_fails_the_session_over_a_slow_module(run: RunPytest, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(COLLECT_BUDGET_ENV_VAR, '0.05')
+    result = run('time.sleep(0.1)\n\ndef test_nothing():\n    pass\n')
+    result.assert_outcomes(passed=1)
+    assert result.ret == pytest.ExitCode.TESTS_FAILED
+    result.stdout.fnmatch_lines(
+        [
+            '*slow test module collection*',
+            f'test_guarded.py took 0.1*s to collect, over the 0.05s per-module budget ({COLLECT_BUDGET_ENV_VAR}).',
+            '*Import heavy optional dependencies inside the tests or fixtures that need them*',
+        ]
+    )
+
+
+def test_a_module_within_the_collection_budget_passes(run: RunPytest, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(COLLECT_BUDGET_ENV_VAR, '5')
+    result = run('def test_nothing():\n    pass\n')
+    assert result.ret == pytest.ExitCode.OK
+    assert 'slow test module collection' not in result.stdout.str()

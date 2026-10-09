@@ -706,6 +706,11 @@ jobs:
       # jitter; the per-test report on the 3.12 cells surfaces anything new over 1s. List the tests over a budget from a
       # run's `--durations` with `scripts/list_over_budget_tests.py`.
       PYTEST_TEST_BUDGET_SECONDS: ${{ matrix.python-version == '3.13' && '8' || '' }}
+      # Per-module collection budget, also enforced by `tests/cost_guards.py`. The first module in a shard to import a
+      # dependency many modules share (`anthropic`, `openai`, `hypothesis`) is charged for it, up to 5s on these cells;
+      # 8s sits above that with headroom for runner jitter, and well below the 11-16s a module paid for importing
+      # `torch` at collection.
+      PYTEST_COLLECT_BUDGET_SECONDS: ${{ matrix.python-version == '3.13' && '8' || '' }}
       # `tests/harness/absurd` runs on Absurd's schema; an unreachable server fails rather than skips.
       ABSURD_REQUIRE_LIVE: "1"
       ABSURD_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres

@@ -7,7 +7,8 @@ towards. The plugin:
   and fails the session when a `subprocess` marker no longer covers any test that launches one;
 - when `PYTEST_TEST_BUDGET_SECONDS` is set, fails a test whose setup and call together take longer than that
   unless it is marked `@pytest.mark.slow(reason=...)`;
-- reports how long collection took, in the terminal summary and in `$GITHUB_STEP_SUMMARY` when that is set.
+- reports how long collection took, in the terminal summary and in `$GITHUB_STEP_SUMMARY` when that is set;
+- when `PYTEST_COLLECT_BUDGET_SECONDS` is set, fails the session when a test module takes longer than that to collect.
 """
 
 from __future__ import annotations as _annotations
@@ -30,6 +31,7 @@ import pytest
 
 PLUGIN_NAME = 'pydantic_ai_cost_guards'
 BUDGET_ENV_VAR = 'PYTEST_TEST_BUDGET_SECONDS'
+COLLECT_BUDGET_ENV_VAR = 'PYTEST_COLLECT_BUDGET_SECONDS'
 
 _THIS_FILE = __file__
 _TESTS_DIR = os.path.dirname(__file__) + os.sep
@@ -134,6 +136,7 @@ class _TestState:
 
 _STATE_KEY = pytest.StashKey[_TestState]()
 _BUDGET_KEY = pytest.StashKey[float]()
+_COLLECT_BUDGET_KEY = pytest.StashKey[float]()
 _DESELECTED_KEY = pytest.StashKey[set[str]]()
 _MARKER_SCOPES_KEY = pytest.StashKey[dict[str, tuple[int, bool]]]()
 _AGGREGATE_KEY = pytest.StashKey['_SessionAggregate']()
@@ -208,6 +211,7 @@ def pytest_configure(config: pytest.Config) -> None:
     _python_programs = _python_programs or _python_entry_points()
     _install_spawn_hooks()
     config.stash[_BUDGET_KEY] = float(os.environ.get(BUDGET_ENV_VAR) or 0)
+    config.stash[_COLLECT_BUDGET_KEY] = float(os.environ.get(COLLECT_BUDGET_ENV_VAR) or 0)
     if not hasattr(config, 'workerinput'):
         config.stash[_AGGREGATE_KEY] = aggregate = _SessionAggregate()
         _aggregates.append(aggregate)
@@ -411,6 +415,7 @@ class _SessionAggregate:
     collected: int = 0
     slowest_worker_collection: float = 0.0
     slowest_modules: dict[str, float] = field(default_factory=dict[str, float])
+    over_collection_budget: dict[str, float] = field(default_factory=dict[str, float])
 
     def stale_markers(self) -> list[str]:
         return sorted(
@@ -448,7 +453,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     if exitstatus not in (pytest.ExitCode.OK, pytest.ExitCode.TESTS_FAILED):
         return
     aggregate.stale = aggregate.stale_markers()
-    if aggregate.stale:
+    if aggregate.stale or aggregate.over_collection_budget:
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
@@ -456,7 +461,9 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 #
 # Collection runs once per `pytest-xdist` worker, so its cost multiplies with the worker count; it mostly comes from
 # test modules importing heavy optional dependencies. The summary names the slowest modules to collect, so a module
-# that starts importing something expensive shows up in the next CI run.
+# that starts importing something expensive shows up in the next CI run, and `PYTEST_COLLECT_BUDGET_SECONDS` fails the
+# session over one that takes longer than that. The first module in a run to import a dependency that many modules
+# share is charged for it, so the budget sits above the cost of the shared ones.
 
 _SLOWEST_MODULES_SHOWN = 10
 
@@ -479,6 +486,12 @@ def _slowest_modules(config: pytest.Config) -> dict[str, float]:
     return dict(sorted(seconds.items(), key=lambda item: item[1], reverse=True)[:_SLOWEST_MODULES_SHOWN])
 
 
+def _over_collection_budget(config: pytest.Config) -> dict[str, float]:
+    budget = config.stash[_COLLECT_BUDGET_KEY]
+    seconds = config.stash.get(_MODULE_COLLECTION_KEY, dict[str, float]())
+    return {module: spent for module, spent in seconds.items() if budget and spent > budget}
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_collection(session: pytest.Session) -> Generator[None, object, object]:
     start = time.perf_counter()
@@ -490,6 +503,7 @@ def pytest_collection(session: pytest.Session) -> Generator[None, object, object
             workeroutput: dict[str, Any] = getattr(config, 'workeroutput')  # set by `pytest-xdist` on workers
             workeroutput['collection_seconds'] = time.perf_counter() - start
             workeroutput['slowest_modules'] = _slowest_modules(config)
+            workeroutput['over_collection_budget'] = _over_collection_budget(config)
         elif (aggregate := config.stash.get(_AGGREGATE_KEY, None)) is not None and not config.pluginmanager.has_plugin(
             'dsession'
         ):
@@ -497,6 +511,7 @@ def pytest_collection(session: pytest.Session) -> Generator[None, object, object
             aggregate.collection_end = time.perf_counter()
             aggregate.collected = len(session.items)
             aggregate.slowest_modules = _slowest_modules(config)
+            aggregate.over_collection_budget = _over_collection_budget(config)
 
 
 @pytest.hookimpl(optionalhook=True)
@@ -513,6 +528,8 @@ def pytest_testnodedown(node: Any, error: object) -> None:
     aggregate.slowest_worker_collection = max(aggregate.slowest_worker_collection, output.get('collection_seconds', 0))
     for module, seconds in output.get('slowest_modules', {}).items():
         aggregate.slowest_modules[module] = max(aggregate.slowest_modules.get(module, 0), seconds)
+    for module, seconds in output.get('over_collection_budget', {}).items():
+        aggregate.over_collection_budget[module] = max(aggregate.over_collection_budget.get(module, 0), seconds)
 
 
 def pytest_terminal_summary(terminalreporter: Any, config: pytest.Config) -> None:
@@ -524,6 +541,20 @@ def pytest_terminal_summary(terminalreporter: Any, config: pytest.Config) -> Non
                 f'{location}: no test covered by its `@pytest.mark.subprocess` launched a Python interpreter; '
                 'remove the stale marker'
             )
+    if aggregate.over_collection_budget:
+        terminalreporter.section('slow test module collection', red=True)
+        budget = config.stash[_COLLECT_BUDGET_KEY]
+        for module, seconds in sorted(aggregate.over_collection_budget.items()):
+            terminalreporter.write_line(
+                f'{module} took {seconds:.2f}s to collect, over the {budget:g}s per-module budget '
+                f'({COLLECT_BUDGET_ENV_VAR}).'
+            )
+        terminalreporter.write_line(
+            'Every pytest-xdist worker collects every module in its shard, so this is paid once per worker. Import '
+            'heavy optional dependencies inside the tests or fixtures that need them, checking whether they are '
+            'installed with `importlib.util.find_spec`: a `module`- or `session`-scoped fixture keeps the import '
+            f'outside the per-test budget. Build large parametrizations and data lazily too; see {_GUIDANCE_DOC}.'
+        )
     # Not set when every `pytest-xdist` worker died before collecting.
     if not aggregate.collection_end:  # pragma: lax no cover
         return
