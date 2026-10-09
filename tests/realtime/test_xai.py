@@ -915,6 +915,48 @@ async def test_max_duration_error_reconnects_into_a_new_conversation(monkeypatch
     assert conn.conversation_id == 'conversation-2'
 
 
+class _StaysOpen(FakeWebSocket):
+    """Yields its frames, then stays open with nothing more to say."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        while self._incoming:
+            yield self._incoming.pop(0)
+        await asyncio.Event().wait()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+
+async def test_max_duration_error_reconnects_without_waiting_for_the_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The connection re-dials after a `max_duration` error even if xAI keeps the socket open, and closes it."""
+    ended = _StaysOpen(
+        [
+            _created(),
+            _conversation_created(),
+            _updated(),
+            json.dumps(_error_frame('max_duration', 'Maximum conversation duration exceeded.')),
+        ]
+    )
+    transcript = json.dumps({'type': 'response.output_audio_transcript.done', 'transcript': 'hi'})
+    fresh = FakeWebSocket([_created(), _conversation_created('conversation-2'), _updated(), transcript])
+    connect = _RecordingConnect([ended, fresh])
+    monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
+
+    model = _model(rt_xai.XaiRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1}))
+    async with _connect(model, 'x') as conn:
+        events = await collect_codec_events(conn)
+
+    assert events[:3] == [
+        RealtimeSessionErrorEvent(
+            message='Maximum conversation duration exceeded.',
+            type='max_duration',
+            code='max_duration',
+            recoverable=True,
+        ),
+        RealtimeSessionReconnectEvent(state_restored=False),
+        OutputTranscript(text='hi', is_final=True, response_id='response'),
+    ]
+    assert connect.closed[0] is ended
+
+
 async def test_session_carries_on_past_max_duration(monkeypatch: pytest.MonkeyPatch) -> None:
     """The session reports the `max_duration` error and keeps going in the new conversation."""
     ended = FakeWebSocket(

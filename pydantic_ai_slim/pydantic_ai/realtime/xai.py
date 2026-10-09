@@ -302,6 +302,8 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             model_name_getter=model_name_getter,
         )
         self._conversation_id = conversation_id
+        # Set by a `max_duration` error a reconnect recovers from, so the frame carrying it re-dials.
+        self._conversation_ended = False
         # xAI reports `billable_audio_seconds` as the conversation's running total, not the response's own
         # share (live: three turns of 0.71s, 0.71s and 0.87s report 1, 2 and 3), so each response is
         # credited the increase since the last report. The total restarts with a new conversation, which
@@ -484,6 +486,11 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
 
     async def _decode_frame(self, raw: str) -> _DecodedFrame:
         events = await super()._decode_frame(raw)
+        if self._conversation_ended:
+            # Nothing more goes out on this socket: the re-dial replaces it.
+            self._conversation_ended = False
+            events.redial = 'the conversation reached its maximum duration'
+            return events
         if self._held_audio and not self._commit_held and not self._response_active:
             await self._send_held_audio()
         return events
@@ -550,9 +557,10 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         if isinstance(event, ConversationCreated):
             self._conversation_id = event.conversation_id
         elif isinstance(event, RealtimeSessionErrorEvent) and event.type == 'max_duration' and self._can_reconnect:
-            # The reconnect after the close that follows starts a new conversation, with the history replayed
-            # into it, so the session carries on there.
+            # The connection re-dials right away, without waiting for xAI to close the socket, and the new
+            # conversation gets the history replayed into it, so the session carries on there.
             event = replace(event, recoverable=True)
+            self._conversation_ended = True
         return event
 
 

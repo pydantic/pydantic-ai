@@ -142,10 +142,7 @@ those limits. Exact limits and provider behavior can change, so provider pages a
 - [OpenAI session behavior](openai.md#feature-support-and-limitations)
 - [Azure OpenAI session behavior](azure.md#feature-support-and-limitations)
 - [Gemini session resumption](gemini.md#session-resumption)
-- [xAI session behavior](xai.md#feature-support-and-limitations)
-
-xAI reports its cap with a `max_duration` error before closing, which a reconnect policy recovers from
-like any other drop.
+- [xAI session length](xai.md#session-length)
 
 Gemini sends `GoAway` shortly before its cap but Pydantic AI currently reconnects only after the
 connection drops, so a long call can briefly drop mid-turn.
