@@ -21,11 +21,14 @@ from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateU
 from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import (
-    ContextWindowExceeded,
     ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
     ModelOverloadedError,
+    ModelQuotaExceededError,
     ModelRateLimitError,
     UserError,
+    _HTTPErrorCategory,  # pyright: ignore[reportPrivateUsage]
 )
 from ..messages import (
     AudioUrl,
@@ -430,13 +433,17 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> G
         category = _ERROR_TYPE_CATEGORIES.get(error_type) if isinstance(error_type, str) else None
         if error_type == 'invalid_request_error' and isinstance(error_message, str):
             if 'prompt is too long' in error_message.lower():
-                category = ContextWindowExceeded
+                category = ModelContextWindowExceededError
+            elif 'credit balance is too low' in error_message.lower():
+                # Anthropic reports an exhausted prepaid balance as a 400, identifiable only by its message.
+                category = ModelQuotaExceededError
         provider_error_type = error_type if isinstance(error_type, str) else None
         if (status_code := _error_status_code(e)) >= 400:
             suggested_model_id = None
             if error_type == 'not_found_error' and error_message == f'model: {model_name}':
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-            raise _model_errors.http_error_class(category or _model_errors.http_status_category(status_code))(
+            raise ModelHTTPError.for_category(
+                category or _model_errors.http_status_category(status_code, error_message),
                 status_code=status_code,
                 model_name=model_name,
                 body=body,
@@ -459,8 +466,9 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> G
         raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
 
 
-_ERROR_TYPE_CATEGORIES: dict[str, type[ModelAPIError]] = {
+_ERROR_TYPE_CATEGORIES: dict[str, _HTTPErrorCategory] = {
     'rate_limit_error': ModelRateLimitError,
+    'billing_error': ModelQuotaExceededError,
     'overloaded_error': ModelOverloadedError,
 }
 """Error categories for the `error.type` Anthropic sends, both in an HTTP error body and in a stream's `error` event."""

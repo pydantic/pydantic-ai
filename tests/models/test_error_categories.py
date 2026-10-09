@@ -19,13 +19,16 @@ import pytest
 
 from pydantic_ai import (
     Agent,
-    ContextWindowExceeded,
     ModelAPIError,
     ModelConnectionError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
     ModelOverloadedError,
+    ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelServerError,
     ModelTimeoutError,
+    ModelUnavailableError,
 )
 from pydantic_ai.models import Model
 
@@ -78,11 +81,17 @@ Handler = Callable[[Any], Any]
 _CATEGORIES: tuple[type[ModelAPIError], ...] = (
     ModelHTTPError,
     ModelRateLimitError,
+    ModelQuotaExceededError,
+    ModelUnavailableError,
     ModelOverloadedError,
+    ModelServerError,
     ModelConnectionError,
     ModelTimeoutError,
-    ContextWindowExceeded,
+    ModelContextWindowExceededError,
 )
+
+_OVERLOADED: set[type[ModelAPIError]] = {ModelHTTPError, ModelUnavailableError, ModelOverloadedError}
+"""An overloaded provider is also unavailable."""
 
 
 def _openai(handler: Handler) -> Model:
@@ -242,14 +251,14 @@ CASES = [
             429,
             {'error': {'message': 'Quota exceeded', 'type': 'insufficient_quota', 'code': 'insufficient_quota'}},
         ),
-        categories={ModelHTTPError},
+        categories={ModelHTTPError, ModelQuotaExceededError},
         attrs={'status_code': 429, 'provider_error_code': 'insufficient_quota'},
     ),
     Case(
         id='openai-overloaded',
         model=_openai,
         handler=_json(503, {'error': {'message': 'The engine is currently overloaded', 'type': 'server_error'}}),
-        categories={ModelHTTPError, ModelOverloadedError},
+        categories=_OVERLOADED,
         attrs={'status_code': 503, 'provider_error_code': None, 'provider_error_type': 'server_error'},
     ),
     Case(
@@ -267,7 +276,7 @@ CASES = [
                 }
             },
         ),
-        categories={ModelHTTPError, ContextWindowExceeded},
+        categories={ModelHTTPError, ModelContextWindowExceededError},
         attrs={'status_code': 400, 'provider_error_code': 'context_length_exceeded'},
     ),
     Case(
@@ -319,7 +328,7 @@ CASES = [
                 }
             }
         ),
-        categories={ModelHTTPError, ContextWindowExceeded},
+        categories={ModelHTTPError, ModelContextWindowExceededError},
         attrs={
             'status_code': 400,
             'in_stream': True,
@@ -353,7 +362,7 @@ CASES = [
         id='openai-stream-overloaded-type',
         model=_openai,
         handler=_sse_data({'error': {'message': 'Overloaded', 'type': 'overloaded'}}),
-        categories={ModelHTTPError, ModelOverloadedError},
+        categories=_OVERLOADED,
         attrs={'status_code': 503, 'in_stream': True, 'provider_error_code': None, 'provider_error_type': 'overloaded'},
         stream=True,
     ),
@@ -370,7 +379,7 @@ CASES = [
                 }
             },
         ),
-        categories={ModelHTTPError, ContextWindowExceeded},
+        categories={ModelHTTPError, ModelContextWindowExceededError},
         attrs={'status_code': 400, 'provider_error_code': '400'},
     ),
     Case(
@@ -388,7 +397,7 @@ CASES = [
             200,
             {'error': {'code': 400, 'message': "This endpoint's maximum context length is 128000 tokens."}},
         ),
-        categories={ModelHTTPError, ContextWindowExceeded},
+        categories={ModelHTTPError, ModelContextWindowExceededError},
         attrs={'status_code': 400, 'provider_error_code': '400'},
         has_cause=False,
     ),
@@ -396,7 +405,7 @@ CASES = [
         id='anthropic-overloaded',
         model=_anthropic,
         handler=_json(529, {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}}),
-        categories={ModelHTTPError, ModelOverloadedError},
+        categories=_OVERLOADED,
         attrs={'status_code': 529, 'provider_error_code': None, 'provider_error_type': 'overloaded_error'},
     ),
     Case(
@@ -424,7 +433,7 @@ CASES = [
                 'request_id': 'req_011CXsbVC34PujYNC6P8wAbP',
             },
         ),
-        categories={ModelHTTPError, ContextWindowExceeded},
+        categories={ModelHTTPError, ModelContextWindowExceededError},
         attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
     ),
     Case(
@@ -436,7 +445,7 @@ CASES = [
         ),
         # The error event follows a 200, but `AnthropicModel` reports the status the same error has on a
         # non-streaming request, since it may stream a `run()` behind the scenes.
-        categories={ModelHTTPError, ModelOverloadedError},
+        categories=_OVERLOADED,
         attrs={
             'status_code': 529,
             'in_stream': True,
@@ -453,7 +462,7 @@ CASES = [
             _ANTHROPIC_MESSAGE_START,
             ('error', {'type': 'error', 'error': {'type': 'api_error', 'message': 'Internal server error'}}),
         ),
-        categories={ModelHTTPError},
+        categories={ModelHTTPError, ModelServerError},
         attrs={'status_code': 500, 'in_stream': True, 'provider_error_type': 'api_error'},
         stream=True,
     ),
@@ -477,7 +486,7 @@ CASES = [
                 }
             },
         ),
-        categories={ModelHTTPError, ContextWindowExceeded},
+        categories={ModelHTTPError, ModelContextWindowExceededError},
         attrs={'status_code': 400, 'provider_error_code': None, 'provider_error_type': 'invalid_request_error'},
     ),
     Case(
@@ -493,7 +502,7 @@ CASES = [
                 }
             },
         ),
-        categories={ModelHTTPError, ContextWindowExceeded},
+        categories={ModelHTTPError, ModelContextWindowExceededError},
         attrs={'status_code': 400, 'provider_error_code': 'context_length_exceeded'},
     ),
     Case(
@@ -532,7 +541,7 @@ CASES = [
         id='google-overloaded',
         model=_google,
         handler=_json(503, {'error': {'code': 503, 'message': 'The model is overloaded.', 'status': 'UNAVAILABLE'}}),
-        categories={ModelHTTPError, ModelOverloadedError},
+        categories=_OVERLOADED,
         attrs={'status_code': 503, 'provider_error_code': 'UNAVAILABLE'},
     ),
     Case(
@@ -548,7 +557,7 @@ CASES = [
                 }
             },
         ),
-        categories={ModelHTTPError, ContextWindowExceeded},
+        categories={ModelHTTPError, ModelContextWindowExceededError},
         attrs={'status_code': 400, 'provider_error_code': 'INVALID_ARGUMENT'},
     ),
     Case(
@@ -574,7 +583,7 @@ CASES = [
                 'code': '3051',
             },
         ),
-        categories={ModelHTTPError, ContextWindowExceeded},
+        categories={ModelHTTPError, ModelContextWindowExceededError},
         attrs={
             'status_code': 400,
             'provider_error_code': '3051',
@@ -592,7 +601,7 @@ CASES = [
         id='mistral-non-json-error',
         model=_mistral,
         handler=lambda request: httpx2.Response(502, content=b'Bad Gateway', headers={'content-type': 'text/plain'}),
-        categories={ModelHTTPError},
+        categories={ModelHTTPError, ModelServerError},
         attrs={'status_code': 502, 'provider_error_code': None},
     ),
     Case(
@@ -606,8 +615,228 @@ CASES = [
                 'The limit for this model is 132000 tokens.',
             },
         ),
-        categories={ModelHTTPError, ContextWindowExceeded},
+        categories={ModelHTTPError, ModelContextWindowExceededError},
         attrs={'status_code': 400},
+    ),
+    Case(
+        id='openai-unavailable',
+        model=_openai,
+        handler=_json(503, {'error': {'message': 'Service Unavailable', 'type': 'server_error'}}),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
+    ),
+    Case(
+        id='openai-server-error',
+        model=_openai,
+        handler=_json(500, {'error': {'message': 'The server had an error', 'type': 'server_error'}}),
+        categories={ModelHTTPError, ModelServerError},
+        attrs={'status_code': 500, 'provider_error_type': 'server_error'},
+    ),
+    Case(
+        id='openai-bad-gateway',
+        model=_openai,
+        handler=_json(502, {'error': {'message': 'Bad gateway', 'type': 'server_error'}}),
+        categories={ModelHTTPError, ModelServerError},
+        attrs={'status_code': 502},
+    ),
+    Case(
+        id='openai-billing-hard-limit',
+        model=_openai,
+        handler=_json(
+            400,
+            {
+                'error': {
+                    'message': 'Billing hard limit has been reached',
+                    'type': 'invalid_request_error',
+                    'code': 'billing_hard_limit_reached',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 400, 'provider_error_code': 'billing_hard_limit_reached'},
+    ),
+    Case(
+        id='openai-stream-insufficient-quota',
+        model=_openai,
+        handler=_sse_data({'error': {'message': 'Quota exceeded', 'code': 'insufficient_quota'}}),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'in_stream': True, 'provider_error_code': 'insufficient_quota'},
+        stream=True,
+    ),
+    Case(
+        id='openai-stream-server-error',
+        model=_openai,
+        handler=_sse_data({'error': {'message': 'The server had an error', 'code': 'server_error'}}),
+        categories={ModelHTTPError, ModelServerError},
+        attrs={'status_code': 500, 'in_stream': True, 'provider_error_code': 'server_error'},
+        stream=True,
+    ),
+    Case(
+        id='openai-stream-unavailable',
+        model=_openai,
+        handler=_sse_data({'error': {'message': 'Service unavailable', 'code': 'service_unavailable'}}),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'in_stream': True, 'provider_error_code': 'service_unavailable'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-body-insufficient-credits',
+        model=_openrouter,
+        handler=_json(200, {'error': {'code': 402, 'message': 'Insufficient credits'}}),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 402, 'provider_error_code': '402'},
+        has_cause=False,
+    ),
+    Case(
+        id='openrouter-body-bad-gateway',
+        model=_openrouter,
+        handler=_json(200, {'error': {'code': 502, 'message': 'Provider returned error'}}),
+        categories={ModelHTTPError, ModelServerError},
+        attrs={'status_code': 502, 'provider_error_code': '502'},
+        has_cause=False,
+    ),
+    Case(
+        id='anthropic-billing-error',
+        model=_anthropic,
+        handler=_json(402, {'type': 'error', 'error': {'type': 'billing_error', 'message': 'Billing issue'}}),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 402, 'provider_error_type': 'billing_error'},
+    ),
+    Case(
+        id='anthropic-credit-balance',
+        model=_anthropic,
+        handler=_json(
+            400,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & '
+                    'Billing to upgrade or purchase credits.',
+                },
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
+    ),
+    Case(
+        id='anthropic-api-error',
+        model=_anthropic,
+        handler=_json(500, {'type': 'error', 'error': {'type': 'api_error', 'message': 'Internal server error'}}),
+        categories={ModelHTTPError, ModelServerError},
+        attrs={'status_code': 500, 'provider_error_type': 'api_error'},
+    ),
+    Case(
+        id='anthropic-unavailable',
+        model=_anthropic,
+        handler=_json(503, {'type': 'error', 'error': {'type': 'api_error', 'message': 'Service unavailable'}}),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
+    ),
+    Case(
+        id='anthropic-stream-rate-limit',
+        model=_anthropic,
+        handler=_sse(
+            _ANTHROPIC_MESSAGE_START,
+            ('error', {'type': 'error', 'error': {'type': 'rate_limit_error', 'message': 'Rate limited'}}),
+        ),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'in_stream': True, 'provider_error_type': 'rate_limit_error'},
+        stream=True,
+    ),
+    Case(
+        id='groq-unavailable',
+        model=_groq,
+        handler=_json(503, {'error': {'message': 'Service Unavailable', 'type': 'internal_server_error'}}),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
+    ),
+    Case(
+        id='groq-server-error',
+        model=_groq,
+        handler=_json(500, {'error': {'message': 'Internal Server Error', 'type': 'internal_server_error'}}),
+        categories={ModelHTTPError, ModelServerError},
+        attrs={'status_code': 500},
+    ),
+    Case(
+        id='google-unavailable',
+        model=_google,
+        handler=_json(
+            503, {'error': {'code': 503, 'message': 'The service is currently unavailable.', 'status': 'UNAVAILABLE'}}
+        ),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'provider_error_code': 'UNAVAILABLE'},
+    ),
+    Case(
+        id='google-internal',
+        model=_google,
+        handler=_json(
+            500, {'error': {'code': 500, 'message': 'An internal error has occurred.', 'status': 'INTERNAL'}}
+        ),
+        categories={ModelHTTPError, ModelServerError},
+        attrs={'status_code': 500, 'provider_error_code': 'INTERNAL'},
+    ),
+    Case(
+        id='google-deadline-exceeded',
+        model=_google,
+        handler=_json(
+            504,
+            {
+                'error': {
+                    'code': 504,
+                    'message': 'Deadline expired before operation could complete.',
+                    'status': 'DEADLINE_EXCEEDED',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelServerError},
+        attrs={'status_code': 504, 'provider_error_code': 'DEADLINE_EXCEEDED'},
+    ),
+    Case(
+        id='google-stream-unavailable',
+        model=_google,
+        handler=_sse_data(
+            {'error': {'code': 503, 'message': 'The service is currently unavailable.', 'status': 'UNAVAILABLE'}}
+        ),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'in_stream': True, 'provider_error_code': 'UNAVAILABLE'},
+        stream=True,
+    ),
+    Case(
+        id='google-stream-internal',
+        model=_google,
+        handler=_sse_data({'error': {'code': 500, 'message': 'An internal error has occurred.', 'status': 'INTERNAL'}}),
+        categories={ModelHTTPError, ModelServerError},
+        attrs={'status_code': 500, 'in_stream': True, 'provider_error_code': 'INTERNAL'},
+        stream=True,
+    ),
+    Case(
+        id='mistral-unavailable',
+        model=_mistral,
+        handler=_json(503, {'object': 'error', 'message': 'Service unavailable', 'type': 'service_unavailable'}),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
+    ),
+    Case(
+        id='mistral-payment-required',
+        model=_mistral,
+        handler=_json(402, {'object': 'error', 'message': 'Payment required', 'type': 'payment_required'}),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 402},
+    ),
+    Case(
+        id='cohere-server-error',
+        model=_cohere,
+        handler=_json(500, {'id': 'x', 'message': 'internal server error'}),
+        categories={ModelHTTPError, ModelServerError},
+        attrs={'status_code': 500},
+    ),
+    Case(
+        id='cohere-unavailable',
+        model=_cohere,
+        handler=_json(503, {'id': 'x', 'message': 'service unavailable'}),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
     ),
 ]
 
@@ -649,9 +878,47 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
         ),
         pytest.param(
             lambda: _bedrock_error('ServiceUnavailableException', 'Service unavailable.', 503),
-            {ModelHTTPError, ModelOverloadedError},
+            {ModelHTTPError, ModelUnavailableError},
+            {'status_code': 503, 'provider_error_code': 'ServiceUnavailableException'},
+            id='unavailable',
+        ),
+        pytest.param(
+            lambda: _bedrock_error('ServiceUnavailableException', 'The model is overloaded. Try again later.', 503),
+            _OVERLOADED,
             {'status_code': 503, 'provider_error_code': 'ServiceUnavailableException'},
             id='overloaded',
+        ),
+        pytest.param(
+            lambda: _bedrock_error('ModelNotReadyException', 'The model is not ready to serve requests.', 429),
+            {ModelHTTPError, ModelUnavailableError},
+            {'status_code': 429, 'provider_error_code': 'ModelNotReadyException'},
+            id='model-not-ready',
+        ),
+        pytest.param(
+            lambda: _bedrock_error(
+                'ServiceQuotaExceededException', 'Your request exceeds the service quota for your account.', 400
+            ),
+            {ModelHTTPError, ModelQuotaExceededError},
+            {'status_code': 400, 'provider_error_code': 'ServiceQuotaExceededException'},
+            id='quota',
+        ),
+        pytest.param(
+            lambda: _bedrock_error('InternalServerException', 'An internal server error occurred.', 500),
+            {ModelHTTPError, ModelServerError},
+            {'status_code': 500, 'provider_error_code': 'InternalServerException'},
+            id='server-error',
+        ),
+        pytest.param(
+            lambda: _bedrock_error('serviceUnavailableException', 'Service unavailable.', None),
+            {ModelHTTPError, ModelUnavailableError},
+            {'status_code': 503, 'in_stream': True, 'provider_error_code': 'serviceUnavailableException'},
+            id='stream-unavailable',
+        ),
+        pytest.param(
+            lambda: _bedrock_error('internalServerException', 'An internal server error occurred.', None),
+            {ModelHTTPError, ModelServerError},
+            {'status_code': 500, 'in_stream': True, 'provider_error_code': 'internalServerException'},
+            id='stream-server-error',
         ),
         pytest.param(
             lambda: _bedrock_error(
@@ -659,7 +926,7 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
                 'The model returned the following errors: Input is too long for requested model.',
                 400,
             ),
-            {ModelHTTPError, ContextWindowExceeded},
+            {ModelHTTPError, ModelContextWindowExceededError},
             {'status_code': 400, 'provider_error_code': 'ValidationException'},
             id='context-window',
         ),
@@ -677,7 +944,7 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
         ),
         pytest.param(
             lambda: _bedrock_error('validationException', 'Input is too long for requested model.', None),
-            {ModelHTTPError, ContextWindowExceeded},
+            {ModelHTTPError, ModelContextWindowExceededError},
             {'status_code': 400, 'in_stream': True, 'provider_error_code': 'validationException'},
             id='stream-context-window',
         ),
@@ -746,14 +1013,28 @@ def _rpc_error(status: str, details: str) -> grpc.RpcError:
         pytest.param(
             'UNAVAILABLE',
             'Service unavailable',
-            {ModelHTTPError, ModelOverloadedError},
+            {ModelHTTPError, ModelUnavailableError},
+            {'status_code': 503, 'provider_error_code': 'UNAVAILABLE'},
+            id='unavailable',
+        ),
+        pytest.param(
+            'UNAVAILABLE',
+            'The model is overloaded, please try again',
+            _OVERLOADED,
             {'status_code': 503, 'provider_error_code': 'UNAVAILABLE'},
             id='overloaded',
         ),
         pytest.param(
+            'INTERNAL',
+            'Internal error',
+            {ModelHTTPError, ModelServerError},
+            {'status_code': 500, 'provider_error_code': 'INTERNAL'},
+            id='internal',
+        ),
+        pytest.param(
             'INVALID_ARGUMENT',
             "This model's maximum prompt length is 131072 but the request contains 150004 tokens.",
-            {ModelHTTPError, ContextWindowExceeded},
+            {ModelHTTPError, ModelContextWindowExceededError},
             {'status_code': 400, 'provider_error_code': 'INVALID_ARGUMENT'},
             id='context-window',
         ),
@@ -793,11 +1074,12 @@ async def test_xai_error_category_mid_stream(allow_model_requests: None):
     model = XaiModel(
         'grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=MockXai.create_mock_stream([stream]))
     )
-    with pytest.raises(ModelOverloadedError) as exc_info:
+    with pytest.raises(ModelUnavailableError) as exc_info:
         async with Agent(model).run_stream('hello') as result:
             await result.get_output()
 
     exc = exc_info.value
+    assert not isinstance(exc, ModelOverloadedError)
     assert isinstance(exc, ModelHTTPError)
     assert exc.status_code == 503
     assert exc.in_stream is True
@@ -824,3 +1106,41 @@ async def test_huggingface_error_category(allow_model_requests: None):
 
     assert isinstance(exc_info.value, ModelHTTPError)
     assert exc_info.value.status_code == 503
+
+
+@pytest.mark.parametrize(
+    ('status_code', 'content', 'categories'),
+    [
+        pytest.param(
+            503, b'{"error":"Model is currently loading"}', {ModelHTTPError, ModelUnavailableError}, id='unavailable'
+        ),
+        pytest.param(
+            402,
+            b'{"error":"You have exceeded your monthly included credits for Inference Providers."}',
+            {ModelHTTPError, ModelQuotaExceededError},
+            id='quota',
+        ),
+        pytest.param(500, b'{"error":"Internal Server Error"}', {ModelHTTPError, ModelServerError}, id='server-error'),
+    ],
+)
+async def test_huggingface_status_category(
+    allow_model_requests: None, status_code: int, content: bytes, categories: set[type[ModelAPIError]]
+):
+    response = httpx.Response(
+        status_code, content=content, request=httpx.Request('POST', 'http://localhost/v1/chat/completions')
+    )
+    error = HfHubHTTPError('failed', response=response)
+
+    async def create(*args: Any, **kwargs: Any) -> Any:
+        raise error
+
+    hf_client = cast(
+        AsyncInferenceClient, SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    )
+    model = HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=hf_client, api_key='test'))
+    with pytest.raises(ModelAPIError) as exc_info:
+        await Agent(model).run('hello')
+
+    assert {cls for cls in _CATEGORIES if isinstance(exc_info.value, cls)} == categories
+    assert isinstance(exc_info.value, ModelHTTPError)
+    assert exc_info.value.status_code == status_code

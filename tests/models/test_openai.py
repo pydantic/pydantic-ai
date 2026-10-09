@@ -33,6 +33,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    ModelServerError,
     PartDeltaEvent,
     PartEndEvent,
     RetryPromptPart,
@@ -2218,8 +2219,8 @@ async def test_stream_error_object_raises_model_api_error(allow_model_requests: 
             async with Agent(model).run_stream('hello') as result:
                 await result.get_output()
 
-    # A server error isn't classified into a category.
-    assert type(exc_info.value) is ModelHTTPError
+    assert isinstance(exc_info.value, ModelHTTPError)
+    assert isinstance(exc_info.value, ModelServerError)
     assert exc_info.value.status_code == 500
     assert exc_info.value.in_stream is True
     assert exc_info.value.body == {'message': 'upstream model failed', 'type': 'server_error', 'code': 500}

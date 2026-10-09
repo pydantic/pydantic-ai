@@ -72,11 +72,15 @@ from pydantic_ai import (
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import (
-    ContextWindowExceeded,
     ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
     ModelOverloadedError,
+    ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelUnavailableError,
     UserError,
+    _HTTPErrorCategory,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.messages import (
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
@@ -190,7 +194,8 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
             suggested_model_id = None
             if message == 'The provided model identifier is invalid.':
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-            raise _model_errors.http_error_class(category or _model_errors.http_status_category(status_code))(
+            raise ModelHTTPError.for_category(
+                category or _model_errors.http_status_category(status_code, message),
                 status_code=status_code,
                 model_name=model_name,
                 body=e.response,
@@ -235,17 +240,19 @@ _STREAM_EXCEPTION_STATUS_CODES: dict[str, int] = {
 """The HTTP status Bedrock documents for each `ConverseStream` exception event's error before the stream opens."""
 
 
-def _error_category(code: str | None, message: object) -> type[ModelAPIError] | None:
+def _error_category(code: str | None, message: object) -> _HTTPErrorCategory | None:
     """The error category for a Bedrock error code, which is capitalized in an HTTP error and not in a stream."""
     match code and code.lower():
         case 'throttlingexception':
             return ModelRateLimitError
-        case 'serviceunavailableexception':
-            return ModelOverloadedError
+        case 'servicequotaexceededexception':
+            return ModelQuotaExceededError
+        case 'serviceunavailableexception' | 'modelnotreadyexception':
+            return ModelOverloadedError if _model_errors.says_overloaded(message) else ModelUnavailableError
         case 'validationexception' if isinstance(message, str) and any(
             m in message.lower() for m in _CONTEXT_WINDOW_ERROR_MESSAGES
         ):
-            return ContextWindowExceeded
+            return ModelContextWindowExceededError
         case _:
             return None
 

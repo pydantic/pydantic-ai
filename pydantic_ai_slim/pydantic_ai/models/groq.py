@@ -112,7 +112,8 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
             if code == 'model_not_found':
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
             category = _model_errors.openai_compatible_category(status_code, code, error_type, message)
-            raise _model_errors.http_error_class(category)(
+            raise ModelHTTPError.for_category(
+                category,
                 status_code=status_code,
                 model_name=model_name,
                 body=body,

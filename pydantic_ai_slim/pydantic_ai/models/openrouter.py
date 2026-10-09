@@ -384,7 +384,8 @@ def _map_openrouter_error(error: _OpenRouterError, model_name: str, *, in_stream
     the response's own status was 200.
     """
     category = _model_errors.openai_compatible_category(error.code, None, None, error.message)
-    return _model_errors.http_error_class(category)(
+    return ModelHTTPError.for_category(
+        category,
         status_code=error.code,
         model_name=model_name,
         body=error.message,

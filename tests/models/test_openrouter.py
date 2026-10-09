@@ -22,6 +22,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelServerError,
     ModelTimeoutError,
     PartEndEvent,
     PartStartEvent,
@@ -2258,7 +2259,8 @@ async def test_openrouter_stream_error_without_integer_code_raises_model_api_err
     error_chunk = b'data: {"error":{"code":"server_error","message":"upstream failed"}}\n\n'
     error = await _run_openrouter_stream(httpx2.ByteStream(_MID_STREAM_TEXT_CHUNK + error_chunk))
 
-    assert type(error) is ModelHTTPError
+    assert isinstance(error, ModelHTTPError)
+    assert isinstance(error, ModelServerError)
     assert error.status_code == 500
     assert error.in_stream is True
     assert error.provider_error_code == 'server_error'

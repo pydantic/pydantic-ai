@@ -11,7 +11,7 @@ from .. import ModelAPIError, UnexpectedModelBehavior, _model_errors, _utils, us
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..exceptions import ModelOverloadedError
+from ..exceptions import ModelHTTPError, ModelOverloadedError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -96,7 +96,8 @@ def _map_api_errors(model_name: str) -> Generator[None]:
             if _tgi_error_type(e.response.content) == 'overloaded'
             else _model_errors.http_status_category(e.response.status_code)
         )
-        raise _model_errors.http_error_class(category)(
+        raise ModelHTTPError.for_category(
+            category,
             status_code=e.response.status_code,
             model_name=model_name,
             body=e.response.content,
@@ -107,8 +108,8 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         # TGI server answers with a 429 before a stream opens, so the in-stream error gets that too; other errors
         # have no clear status.
         if isinstance(e, OverloadedError):
-            raise _model_errors.http_error_class(ModelOverloadedError)(
-                status_code=429, model_name=model_name, body=str(e), in_stream=True
+            raise ModelHTTPError.for_category(
+                ModelOverloadedError, status_code=429, model_name=model_name, body=str(e), in_stream=True
             ) from e
         raise ModelAPIError(model_name=model_name, message=str(e), in_stream=True) from e
     except (httpx.TransportError, InferenceTimeoutError) as e:

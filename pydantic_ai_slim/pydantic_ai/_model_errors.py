@@ -4,47 +4,46 @@ from __future__ import annotations as _annotations
 
 from ._utils import is_str_dict
 from .exceptions import (
-    ContextWindowExceeded,
     ModelAPIError,
     ModelConnectionError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
     ModelOverloadedError,
+    ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelServerError,
     ModelTimeoutError,
+    ModelUnavailableError,
     TransportPhase,
+    _HTTPErrorCategory,  # pyright: ignore[reportPrivateUsage]
 )
 
-
-class HTTPModelRateLimitError(ModelHTTPError, ModelRateLimitError):
-    """A rate limit reported with an HTTP status code."""
+_OVERLOADED_PHRASES = ('overloaded', 'over capacity')
 
 
-class HTTPModelOverloadedError(ModelHTTPError, ModelOverloadedError):
-    """An overloaded provider reported with an HTTP status code."""
+def says_overloaded(*texts: object) -> bool:
+    """Whether any of a provider's error code, type or message says it's overloaded, e.g. `'overloaded_error'`."""
+    return any(
+        isinstance(text, str) and any(phrase in text.lower() for phrase in _OVERLOADED_PHRASES) for text in texts
+    )
 
 
-class HTTPContextWindowExceeded(ModelHTTPError, ContextWindowExceeded):
-    """A context window overflow reported with an HTTP status code."""
+def http_status_category(status_code: int, message: object = None) -> _HTTPErrorCategory | None:
+    """The error category an HTTP status code implies on its own, without the provider's error code.
 
-
-_HTTP_ERROR_CLASSES: dict[type[ModelAPIError], type[ModelHTTPError]] = {
-    ModelRateLimitError: HTTPModelRateLimitError,
-    ModelOverloadedError: HTTPModelOverloadedError,
-    ContextWindowExceeded: HTTPContextWindowExceeded,
-}
-
-
-def http_error_class(category: type[ModelAPIError] | None) -> type[ModelHTTPError]:
-    """The `ModelHTTPError` class to raise for an HTTP error in `category`, which is also an instance of the category."""
-    return ModelHTTPError if category is None else _HTTP_ERROR_CLASSES[category]
-
-
-def http_status_category(status_code: int) -> type[ModelAPIError] | None:
-    """The error category an HTTP status code implies on its own, without the provider's error code."""
+    A 503 whose `message` says the provider is overloaded is a `ModelOverloadedError`; any other 503 is only
+    unavailable.
+    """
+    if status_code == 402:
+        return ModelQuotaExceededError
     if status_code == 429:
         return ModelRateLimitError
-    if status_code in (503, 529):
+    if status_code == 529:
         return ModelOverloadedError
+    if status_code == 503:
+        return ModelOverloadedError if says_overloaded(message) else ModelUnavailableError
+    if 500 <= status_code < 600:
+        return ModelServerError
     return None
 
 
@@ -57,6 +56,9 @@ _OPENAI_COMPATIBLE_STATUSES: dict[str, int] = {
     'server_error': 500,
 }
 """The HTTP status OpenAI-compatible APIs use for an error, by its `code` or `type`, for errors that come without one."""
+
+_QUOTA_CODES = ('insufficient_quota', 'billing_hard_limit_reached')
+"""OpenAI error codes that say the account's quota or billing limit is exhausted, rather than a rate limit."""
 
 _CONTEXT_WINDOW_MESSAGES = ('maximum context length', 'reduce the length of the messages')
 """How OpenAI-compatible APIs that send no `context_length_exceeded` code (OpenRouter, vLLM, Groq) word an overflow."""
@@ -76,16 +78,18 @@ def openai_compatible_status(code: str | None, error_type: str | None) -> int | 
 
 def openai_compatible_category(
     status_code: int | None, code: str | None, error_type: str | None, message: object
-) -> type[ModelAPIError] | None:
+) -> _HTTPErrorCategory | None:
     """The error category of an error from an OpenAI-compatible API (OpenAI, Groq, OpenRouter), wherever it was sent."""
-    if 'insufficient_quota' in (code, error_type):
+    if code in _QUOTA_CODES or error_type in _QUOTA_CODES:
         # Exhausted quota is also a 429, but waiting won't help.
-        return None
+        return ModelQuotaExceededError
     if code == 'context_length_exceeded' or (
         isinstance(message, str) and any(m in message.lower() for m in _CONTEXT_WINDOW_MESSAGES)
     ):
-        return ContextWindowExceeded
-    return http_status_category(status_code) if status_code is not None else None
+        return ModelContextWindowExceededError
+    if says_overloaded(code, error_type):
+        return ModelOverloadedError
+    return http_status_category(status_code, message) if status_code is not None else None
 
 
 def stream_error(model_name: str, message: str, body: object) -> ModelAPIError:
@@ -109,10 +113,11 @@ def stream_error(model_name: str, message: str, body: object) -> ModelAPIError:
             provider_error_type=error_type,
             in_stream=True,
         )
-    return http_error_class(category)(
-        status_code,
-        model_name,
-        body,
+    return ModelHTTPError.for_category(
+        category,
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
         provider_error_code=code,
         provider_error_type=error_type,
         in_stream=True,

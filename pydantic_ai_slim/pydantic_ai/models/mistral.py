@@ -20,8 +20,9 @@ from .._utils import (
     number_to_datetime,
 )
 from ..exceptions import (
-    ContextWindowExceeded,
     ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
 )
 from ..messages import (
     AudioUrl,
@@ -137,8 +138,14 @@ def _map_api_errors(model_name: str) -> Generator[None]:
             error_type = error.get('type') if _utils.is_str_dict(error) else None
             # Mistral sends its numeric error codes as strings, e.g. `'3051'` for a context window overflow.
             code = str(code) if isinstance(code, str | int) else None
-            category = ContextWindowExceeded if code == '3051' else _model_errors.http_status_category(status_code)
-            raise _model_errors.http_error_class(category)(
+            message = error.get('message') if _utils.is_str_dict(error) else None
+            category = (
+                ModelContextWindowExceededError
+                if code == '3051'
+                else _model_errors.http_status_category(status_code, message)
+            )
+            raise ModelHTTPError.for_category(
+                category,
                 status_code=status_code,
                 model_name=model_name,
                 body=e.body,

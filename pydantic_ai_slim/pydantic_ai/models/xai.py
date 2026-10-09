@@ -13,12 +13,16 @@ from .. import _model_errors, _utils
 from .._run_context import RunContext
 from ..capabilities.x_search import XSearch as XSearch  # re-export for backward compat
 from ..exceptions import (
-    ContextWindowExceeded,
     ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
     ModelOverloadedError,
     ModelRateLimitError,
+    ModelServerError,
+    ModelUnavailableError,
     UnexpectedModelBehavior,
     UserError,
+    _HTTPErrorCategory,  # pyright: ignore[reportPrivateUsage]
 )
 from ..messages import (
     AudioUrl,
@@ -118,9 +122,12 @@ def _map_api_errors(model_name: str, *, in_stream: bool = False) -> Generator[No
         details = e.details() or str(e)
         category = _GRPC_STATUS_CATEGORIES.get(grpc_status)
         if grpc_status == grpc.StatusCode.INVALID_ARGUMENT and 'maximum prompt length' in details.lower():
-            category = ContextWindowExceeded
+            category = ModelContextWindowExceededError
+        elif grpc_status == grpc.StatusCode.UNAVAILABLE and _model_errors.says_overloaded(details):
+            category = ModelOverloadedError
         if status_code is not None:
-            raise _model_errors.http_error_class(category)(
+            raise ModelHTTPError.for_category(
+                category,
                 status_code=status_code,
                 model_name=model_name,
                 body=details,
@@ -137,9 +144,10 @@ def _map_api_errors(model_name: str, *, in_stream: bool = False) -> Generator[No
         ) from e
 
 
-_GRPC_STATUS_CATEGORIES: dict[grpc.StatusCode, type[ModelAPIError]] = {
+_GRPC_STATUS_CATEGORIES: dict[grpc.StatusCode, _HTTPErrorCategory] = {
     grpc.StatusCode.RESOURCE_EXHAUSTED: ModelRateLimitError,
-    grpc.StatusCode.UNAVAILABLE: ModelOverloadedError,
+    grpc.StatusCode.UNAVAILABLE: ModelUnavailableError,
+    grpc.StatusCode.INTERNAL: ModelServerError,
 }
 """Error categories for gRPC status codes.
 

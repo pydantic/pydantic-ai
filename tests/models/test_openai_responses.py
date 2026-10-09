@@ -58,11 +58,12 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import (
     ContentFilterError,
-    ContextWindowExceeded,
     ModelAPIError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
     ModelRateLimitError,
     ModelRetry,
+    ModelServerError,
     SuspendedResponseExpired,
 )
 from pydantic_ai.messages import (
@@ -14451,7 +14452,10 @@ async def test_response_error_raises_model_api_error(
         assert exc_info.value.status_code == status_code
         assert exc_info.value.in_stream is True
     else:
-        assert type(exc_info.value) is ModelAPIError
+        # A failed response body has no status, but a `server_error` still has a category.
+        assert type(exc_info.value) is (
+            ModelServerError if message == 'server_error: The model failed' else ModelAPIError
+        )
         assert exc_info.value.message == message
         assert exc_info.value.in_stream is stream
     # No output retry, re-poll, or cancellation of a background job the provider already marked as failed.
@@ -14463,7 +14467,7 @@ async def test_response_error_raises_model_api_error(
     ('code', 'category'),
     [
         pytest.param('rate_limit_exceeded', ModelRateLimitError, id='rate-limit'),
-        pytest.param('context_length_exceeded', ContextWindowExceeded, id='context-window'),
+        pytest.param('context_length_exceeded', ModelContextWindowExceededError, id='context-window'),
     ],
 )
 async def test_failed_response_body_gets_category(allow_model_requests: None, code: str, category: type[ModelAPIError]):

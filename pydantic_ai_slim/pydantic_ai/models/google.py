@@ -16,11 +16,15 @@ import httpx2
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._run_context import RunContext
 from ..exceptions import (
-    ContextWindowExceeded,
     ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
     ModelOverloadedError,
     ModelRateLimitError,
+    ModelServerError,
+    ModelUnavailableError,
     UserError,
+    _HTTPErrorCategory,  # pyright: ignore[reportPrivateUsage]
 )
 from ..messages import (
     BinaryContent,
@@ -435,7 +439,8 @@ def _map_api_error(
         category = _error_category(status, e.message)
         # An error chunk inside a stream comes with the stream's own 200 response; its `code` is the error's status.
         response_status = getattr(e.response, 'status_code', None)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-        return _model_errors.http_error_class(category or _model_errors.http_status_category(status_code))(
+        return ModelHTTPError.for_category(
+            category or _model_errors.http_status_category(status_code, e.message),
             status_code=status_code,
             model_name=model_name,
             body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
@@ -455,17 +460,24 @@ variant drops the leading clause.
 """
 
 
-def _error_category(status: str | None, message: object) -> type[ModelAPIError] | None:
-    """The error category for a Google API error status, like `RESOURCE_EXHAUSTED`."""
+def _error_category(status: str | None, message: object) -> _HTTPErrorCategory | None:
+    """The error category for a Google API error status, like `RESOURCE_EXHAUSTED`.
+
+    Gemini sends `RESOURCE_EXHAUSTED` for both rate limits and exhausted quota, with the same message, so it's
+    always a rate limit.
+    """
     match status:
         case 'RESOURCE_EXHAUSTED':
             return ModelRateLimitError
         case 'UNAVAILABLE':
-            return ModelOverloadedError
+            # Like `The model is overloaded. Please try again later.`
+            return ModelOverloadedError if _model_errors.says_overloaded(message) else ModelUnavailableError
+        case 'INTERNAL':
+            return ModelServerError
         case 'INVALID_ARGUMENT' if isinstance(message, str) and any(
             m in message.lower() for m in _CONTEXT_WINDOW_ERROR_MESSAGES
         ):
-            return ContextWindowExceeded
+            return ModelContextWindowExceededError
         case _:
             return None
 

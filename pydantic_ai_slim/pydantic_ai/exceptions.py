@@ -38,11 +38,14 @@ __all__ = (
     'ModelAPIError',
     'ModelHTTPError',
     'ModelRateLimitError',
+    'ModelQuotaExceededError',
+    'ModelUnavailableError',
     'ModelOverloadedError',
+    'ModelServerError',
     'ModelConnectionError',
     'TransportPhase',
     'ModelTimeoutError',
-    'ContextWindowExceeded',
+    'ModelContextWindowExceededError',
     'ContentFilterError',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
@@ -511,11 +514,16 @@ class ModelAPIError(AgentRunError):
 
     Adapters raise one of its category subclasses when the provider's error says what went wrong:
     [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError],
-    [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError],
+    [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError],
+    [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] (and its
+    [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError]),
+    [`ModelServerError`][pydantic_ai.exceptions.ModelServerError],
     [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] (and its
     [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]), or
-    [`ContextWindowExceeded`][pydantic_ai.exceptions.ContextWindowExceeded]. When the error came with an HTTP
-    status code, the raised exception is also a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError].
+    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError]. When the error
+    came with an HTTP status code, the raised exception is also a
+    [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]; see
+    [`ModelHTTPError.for_category`][pydantic_ai.exceptions.ModelHTTPError.for_category].
 
     A request can be streamed without you asking for it, e.g. when the agent has an event stream handler, so an error
     the provider sends inside an already open stream is reported the same way as the same error before the stream
@@ -594,20 +602,48 @@ class ModelRateLimitError(ModelAPIError):
     """Raised when the provider rejected the request because a rate limit was reached.
 
     For example an HTTP 429 with `rate_limit_exceeded`, Bedrock's `ThrottlingException`, or a gRPC
-    `RESOURCE_EXHAUSTED`, whether it arrived as an HTTP status or inside a stream. Exhausted quota or billing
-    (e.g. OpenAI's `insufficient_quota`) is not a rate limit and stays a plain
-    [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError].
+    `RESOURCE_EXHAUSTED`, whether it arrived as an HTTP status or inside a stream. Exhausted quota or billing that
+    the provider says so explicitly is a [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError]
+    instead, since waiting won't help.
 
     Check [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] for how long the provider asked
     you to wait.
     """
 
 
-class ModelOverloadedError(ModelAPIError):
-    """Raised when the provider or model was temporarily unable to serve the request due to load.
+class ModelQuotaExceededError(ModelAPIError):
+    """Raised when the provider rejected the request because the account's quota, credits, or billing is exhausted.
 
-    For example an HTTP 503 or 529, Anthropic's `overloaded_error`, Bedrock's `ServiceUnavailableException`,
-    or a gRPC `UNAVAILABLE`, whether it arrived as an HTTP status or inside a stream.
+    Only raised when the provider says so explicitly, e.g. an HTTP 402, OpenAI's `insufficient_quota`,
+    Anthropic's `billing_error`, or Bedrock's `ServiceQuotaExceededException`. Unlike a
+    [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError], retrying after a wait won't help.
+    """
+
+
+class ModelUnavailableError(ModelAPIError):
+    """Raised when the provider or model was temporarily unable to serve the request.
+
+    For example an HTTP 503, Bedrock's `ServiceUnavailableException`, or a gRPC `UNAVAILABLE`, whether it arrived
+    as an HTTP status or inside a stream. When the provider says the cause is load, it's the more specific
+    [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError].
+    """
+
+
+class ModelOverloadedError(ModelUnavailableError):
+    """Raised when the provider or model was temporarily unable to serve the request because it's overloaded.
+
+    Only raised when the provider says so: an HTTP 529, Anthropic's `overloaded_error`, Hugging Face Text
+    Generation Inference's `overloaded` error, or an unavailable error whose code or message says overloaded.
+    A subclass of [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError].
+    """
+
+
+class ModelServerError(ModelAPIError):
+    """Raised when the provider failed with a server error that isn't otherwise categorized.
+
+    For example an HTTP 500, 502 or 504, or a gRPC `INTERNAL`, whether it arrived as an HTTP status or inside a
+    stream. An unavailable or overloaded provider is a
+    [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] instead.
     """
 
 
@@ -670,7 +706,7 @@ class ModelTimeoutError(ModelConnectionError):
     """
 
 
-class ContextWindowExceeded(ModelAPIError):
+class ModelContextWindowExceededError(ModelAPIError):
     """Raised when the provider rejected the request because the input exceeds the model's context window.
 
     Catch it to compact or truncate the message history and try again; see
@@ -756,8 +792,69 @@ class ModelHTTPError(ModelAPIError):
             self.message += f'. Did you mean {self.suggested_model_id!r}?'
             self.args = (self.message,)
 
+    @staticmethod
+    def for_category(
+        category: _HTTPErrorCategory | None,
+        *,
+        status_code: int,
+        model_name: str,
+        body: object | None = None,
+        headers: Mapping[str, str] | None = None,
+        suggested_model_id: str | None = None,
+        provider_error_code: str | None = None,
+        provider_error_type: str | None = None,
+        retry_after: float | None = None,
+        in_stream: bool = False,
+    ) -> ModelHTTPError:
+        """Create a `ModelHTTPError` that is also an instance of the error `category`, as Pydantic AI's models raise.
+
+        Use it in a [custom model](../models/overview.md#custom-models) or a test to raise an HTTP error that
+        both `except ModelHTTPError` and `except` the category catch:
+
+        ```python {title="for_category.py"}
+        from pydantic_ai import ModelHTTPError, ModelRateLimitError
+
+        error = ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='my-model')
+        print(isinstance(error, ModelHTTPError), isinstance(error, ModelRateLimitError))
+        #> True True
+        ```
+
+        Args:
+            category: The error category, or `None` for a plain `ModelHTTPError`. One of
+                [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError],
+                [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError],
+                [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError],
+                [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError],
+                [`ModelServerError`][pydantic_ai.exceptions.ModelServerError], or
+                [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError].
+            status_code: The HTTP status code.
+            model_name: The name of the model.
+            body: The body of the error response.
+            headers: The response headers.
+            suggested_model_id: A close known model identifier, for a model-name error.
+            provider_error_code: The provider's machine-readable error code.
+            provider_error_type: The provider's error type.
+            retry_after: Seconds the provider asked to wait; read from `headers` when not given.
+            in_stream: Whether the provider reported the error inside an already open stream.
+        """
+        if category is None:
+            error_class = ModelHTTPError
+        elif (error_class := _HTTP_CATEGORY_CLASSES.get(category)) is None:
+            raise TypeError(f'{category.__name__} is not an error category an HTTP error can belong to.')
+        return error_class(
+            status_code,
+            model_name,
+            body,
+            headers=headers,
+            suggested_model_id=suggested_model_id,
+            provider_error_code=provider_error_code,
+            provider_error_type=provider_error_type,
+            retry_after=retry_after,
+            in_stream=in_stream,
+        )
+
     @property
-    def should_retry(self) -> bool | None:
+    def provider_retry_hint(self) -> bool | None:
         """Whether the provider said retrying the request may succeed, from its `x-should-retry` response header.
 
         `None` when the header is absent or isn't `true` or `false`. OpenAI and Anthropic send it, and their SDKs
@@ -766,6 +863,53 @@ class ModelHTTPError(ModelAPIError):
         if self.headers is None:
             return None
         return {'true': True, 'false': False}.get(self.headers.get('x-should-retry', '').strip().lower())
+
+
+_HTTPErrorCategory = type[
+    ModelRateLimitError
+    | ModelQuotaExceededError
+    | ModelUnavailableError
+    | ModelServerError
+    | ModelContextWindowExceededError
+]
+"""An error category an HTTP error can belong to; see `ModelHTTPError.for_category`."""
+
+
+# The classes `ModelHTTPError.for_category` raises. They're private: catch `ModelHTTPError` or the category.
+
+
+class _HTTPModelRateLimitError(ModelHTTPError, ModelRateLimitError):
+    pass
+
+
+class _HTTPModelQuotaExceededError(ModelHTTPError, ModelQuotaExceededError):
+    pass
+
+
+class _HTTPModelUnavailableError(ModelHTTPError, ModelUnavailableError):
+    pass
+
+
+class _HTTPModelOverloadedError(ModelHTTPError, ModelOverloadedError):
+    pass
+
+
+class _HTTPModelServerError(ModelHTTPError, ModelServerError):
+    pass
+
+
+class _HTTPModelContextWindowExceededError(ModelHTTPError, ModelContextWindowExceededError):
+    pass
+
+
+_HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[ModelHTTPError]] = {
+    ModelRateLimitError: _HTTPModelRateLimitError,
+    ModelQuotaExceededError: _HTTPModelQuotaExceededError,
+    ModelUnavailableError: _HTTPModelUnavailableError,
+    ModelOverloadedError: _HTTPModelOverloadedError,
+    ModelServerError: _HTTPModelServerError,
+    ModelContextWindowExceededError: _HTTPModelContextWindowExceededError,
+}
 
 
 def _parse_retry_after(headers: Mapping[str, str] | None) -> float | None:

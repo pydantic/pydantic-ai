@@ -254,7 +254,8 @@ def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: st
     if e.code == 'model_not_found':
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
     category = _model_errors.openai_compatible_category(e.status_code, e.code, e.type, e.message)
-    return _model_errors.http_error_class(category)(
+    return ModelHTTPError.for_category(
+        category,
         status_code=e.status_code,
         model_name=model_name,
         body=body,
