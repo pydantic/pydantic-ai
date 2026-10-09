@@ -3,7 +3,7 @@
 Harness capabilities that touch files or run commands (`Coder`, `FileSystem`, `Shell`, `RepoContext`,
 `Macroscope`) act in the run's **workspace**, never on a path they pick themselves. Attach the
 workspace as its own capability: `LocalWorkspace` for this machine, or `ModalSandbox` / `E2BSandbox` /
-`SpritesSandbox` for an isolated cloud machine. Core workspace semantics (refs, `workspace=`
+`SpritesSandbox` for an isolated cloud machine, or `DockerSandbox` for a local container. Core workspace semantics (refs, `workspace=`
 precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 `building-pydantic-ai-agents` skill's WORKSPACES.md reference; this file covers the harness side.
 
@@ -14,6 +14,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | General coding agent: investigate, edit, test, delegate | `Coder()` + a workspace |
 | Narrower agent: file tools and/or commands with policy (allowlists, patterns, read-only) | `FileSystem()` and/or `Shell()` + a workspace |
 | Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `SpritesSandbox()`; tool capabilities stay the same |
+| Isolation on this machine, no cloud account | `DockerSandbox('python:3.13-slim')`: a local Docker or Podman container |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
 
@@ -303,7 +304,22 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
 
-## Remote hosts and bubblewrap
+## Local containers, remote hosts and bubblewrap
+
+### DockerSandbox
+
+`DockerSandbox(image, *, working_dir='/workspace', env=None, network=True, docker_args=(), executable='docker')`
+(backend `DockerSandboxBackend`) runs commands and file operations in a local container through the
+`docker` CLI (`executable='podman'` works). No extra, no SDK.
+
+- The first operation runs `docker run --detach --init --entrypoint sh <image>`; the image needs a POSIX
+  `sh`. Pulling is not bounded by a command's `timeout`.
+- The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`; attaching runs `docker start`, so a
+  stopped container comes back. The container outlives the run: `await DockerSandbox(...).destroy(ref)`.
+- `network=False` adds `--network none`. `docker_args` come after the defaults (`['--memory', '2g']`,
+  `['--volume', f'{project}:/workspace']` to work on a host directory).
+- A background child holding stdout/stderr open keeps `run()` waiting (`docker exec` waits for the
+  output): redirect it.
 
 ### SSHWorkspace
 
