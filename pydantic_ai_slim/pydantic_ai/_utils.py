@@ -5,8 +5,10 @@ import asyncio
 import copy
 import functools
 import inspect
+import os
 import re
 import sys
+import tempfile
 import textwrap
 import time
 import uuid
@@ -27,6 +29,7 @@ from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
 from enum import Enum
+from pathlib import Path
 from types import GenericAlias
 from typing import (
     TYPE_CHECKING,
@@ -1163,3 +1166,38 @@ def enum_member_docstrings(cls: type[Enum]) -> dict[str, str]:
         for name in [target.id for target in targets if isinstance(target, ast.Name) and target.id in cls.__members__]:
             docstrings[name] = inspect.cleandoc(node.value.value)
     return docstrings
+
+
+def user_cache_dir() -> Path:
+    """Where Pydantic AI keeps what it caches for the user: `pydantic-ai` under the platform's user cache directory.
+
+    `LOCALAPPDATA` on Windows, `XDG_CACHE_HOME` or `~/.cache` elsewhere. Shared by every cache, so the
+    places the docs describe as one location can't drift apart. Doesn't create the directory.
+    """
+    if os.name == 'nt':
+        base = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+    else:
+        base = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache'))
+    return base / 'pydantic-ai'
+
+
+def atomic_write_bytes(path: Path, content: bytes) -> None:
+    """Write `content` to `path` atomically via a same-directory temporary file.
+
+    The temporary file lives in `path.parent` (on the same filesystem, so the rename is atomic)
+    and is unlinked on any failure — including a write failure or interruption — so a crashed
+    write can never leave the destination existing-but-incomplete or leak a temporary file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file = tempfile.NamedTemporaryFile(dir=path.parent, prefix=f'.{path.name}.', delete=False)
+    tmp_path = Path(tmp_file.name)
+    try:
+        # Close the handle before the rename: Windows refuses to replace a file that still has an
+        # open handle, which would break the atomic write there.
+        with tmp_file:
+            tmp_file.write(content)
+            tmp_file.flush()
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise

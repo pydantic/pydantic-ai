@@ -19,7 +19,17 @@ from rich.live import Live
 from rich.markdown import Markdown
 from rich.text import Text
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, ModelRetry, TextPart, ToolCallPart, __version__, _display
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelResponse,
+    ModelRetry,
+    TextPart,
+    ToolCallPart,
+    __version__,
+    _display,
+    _version_check,
+)
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
@@ -1531,9 +1541,12 @@ LOGO_MARKER = _display._LOGO_LINES[-1]  # pyright: ignore[reportPrivateUsage]
 def terminal_clai(env: TestEnv) -> Iterator[None]:
     """A `clai` session that believes it owns a terminal, and starts with the banner unclaimed."""
     env.set('FORCE_COLOR', '1')
+    # Rich ignores an explicit width on a dumb terminal, so the suite owns this signal too.
+    env.set('TERM', 'xterm-256color')
     env.remove('CI')
     env.remove('COLUMNS')
     env.remove('PYDANTIC_AI_NO_BANNER')
+    env.set('PYDANTIC_AI_NO_VERSION_CHECK', '1')
     # The suite that asserts on the banner is the one place a test run is allowed to show one.
     env.remove('PYTEST_VERSION')
     _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
@@ -1550,6 +1563,7 @@ def agent_clai(env: TestEnv) -> Iterator[None]:
     env.remove('CI')
     env.remove('COLUMNS')
     env.remove('PYDANTIC_AI_NO_BANNER')
+    env.set('PYDANTIC_AI_NO_VERSION_CHECK', '1')
     env.remove('PYTEST_VERSION')
     _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
     try:
@@ -1579,6 +1593,31 @@ def test_clai_intro_shows_banner(capfd: CaptureFixture[str], mocker: MockerFixtu
     # Matched on the label, not the prose, which is the banner's to reword.
     assert 'observability:' in output
     assert 'with openai:gpt-5' not in output
+
+
+def test_clai_intro_shows_cached_updates_then_starts_the_check(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    env: TestEnv,
+    terminal_clai: None,
+):
+    # `monkeypatch` rather than `env`, which would restore the value `terminal_clai` set on teardown.
+    monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK')
+    monkeypatch.delenv('DO_NOT_TRACK', raising=False)
+    env.set('OPENAI_API_KEY', 'test')
+    mocker.patch('pydantic_ai._cli.ask_agent')
+    cache: _version_check.VersionCache = {'checked_at': 0, 'latest': {'pydantic-ai': '2.46.0'}}
+    read_cache = mocker.patch.object(_version_check, 'read_cache', return_value=cache)
+    cached_updates = mocker.patch.object(_version_check, 'cached_updates', return_value=[('pydantic-ai', '2.46.0')])
+    start = mocker.patch.object(_version_check, 'start_version_check')
+
+    assert cli(['hello']) == 0
+
+    assert 'update available: pydantic-ai v2.46.0' in _plain(capfd.readouterr().out)
+    read_cache.assert_called_once_with()
+    cached_updates.assert_called_once_with(cache)
+    start.assert_called_once_with(cache)
 
 
 def test_clai_nested_in_an_agent_still_opens_with_a_banner(

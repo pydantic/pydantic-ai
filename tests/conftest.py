@@ -386,6 +386,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.listdir', 'pydantic_ai/_display.py', '_version_line'),
     ('io.TextIOWrapper.read', 'pydantic_ai/_display.py', '_version_line'),
     ('io.BufferedReader.read', 'pydantic_ai/_display.py', '_version_line'),
+    # The same banner reads the version check's small cache file to say whether an update is out:
+    # once per process, and only where a banner is actually shown.
+    ('io.BufferedReader.read', 'pydantic_ai/_version_check.py', 'read_cache'),
     # `load_mcp_toolsets` is a sync config-file loader; reading the file is its documented job.
     ('os.stat', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
     ('io.BufferedReader.read', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
