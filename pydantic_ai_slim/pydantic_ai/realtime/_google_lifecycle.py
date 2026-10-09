@@ -128,6 +128,12 @@ class GeminiLifecycle:
     def message(self, codec: list[RealtimeCodecEvent]) -> list[TaggedEvent]:
         """The lifecycle events around the codec events one server message makes, in order."""
         tagged: list[TaggedEvent] = [(event, False) for event in self.take_pending()]
+        if any(isinstance(event, RealtimeResponseInterruptedEvent) for event in codec):
+            # The user cut in, and the message reports what they said ahead of the cut: that is new speech, not
+            # more of the turn being answered, whose transcript is over.
+            closed: list[LifecycleEvent] = []
+            self._close_turn(closed)
+            tagged.extend((event, False) for event in closed)
         for event in codec:
             before, after = self._event(event)
             tagged.extend((lifecycle, False) for lifecycle in before)
@@ -151,8 +157,8 @@ class GeminiLifecycle:
                 # this one carries on.
                 self._end_deferred(before, continued=True)
             elif isinstance(event, RealtimeResponseInterruptedEvent):
-                # The user cut in: the exchange is over.
-                self._end_deferred(before, continued=False)
+                # The user cut in: the exchange is over, and the filler is ended by the terminal that follows.
+                self._deferred = None
             # Anything else (the user's transcript, usage) leaves it held: the exchange isn't over.
         if output:
             self._ensure_response(before)

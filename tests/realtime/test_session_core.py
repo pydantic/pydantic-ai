@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     RealtimeInputSpeechEndEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeInputTranscriptionErrorEvent,
+    RealtimeResponseInterruptedEvent,
     RealtimeSessionReconnectEvent,
     SpeechPart,
     TextPart,
@@ -1156,5 +1157,31 @@ def test_a_held_filler_keeps_the_wait_through_a_transcript_until_the_model_carri
             'None [assistant:Let me check.] complete stop',
             '{user:Hm}',
             'None [assistant:Still checking.] complete stop',
+        ]
+    )
+
+
+def test_what_the_user_says_as_they_cut_in_is_a_turn_of_its_own() -> None:
+    """Gemini reports the words that cut a reply off ahead of the cut, in one message: they are new speech."""
+    tracker = GeminiLifecycle(transcribes=True)
+    session_core = core()
+
+    def message(*codec: Any) -> None:
+        for event, _ in tracker.message(list(codec)):
+            session_core.apply(event)
+
+    message(InputTranscript('First question'))
+    message(OutputTranscript('Let me check.'))
+    message(SessionUsage(RequestUsage(input_tokens=1)), ResponseDone(more_expected=True))
+    message(InputTranscript('Second question'), RealtimeResponseInterruptedEvent())
+    message(SessionUsage(RequestUsage(input_tokens=2)), ResponseDone(interrupted=True))
+    message(OutputTranscript('Sure.'))
+    message(SessionUsage(RequestUsage(input_tokens=3)), ResponseDone())
+    assert summary(session_core.all_messages()) == snapshot(
+        [
+            '{user:First question}',
+            'None [assistant:Let me check.] interrupted None',
+            '{user:Second question}',
+            'None [assistant:Sure.] complete stop',
         ]
     )
