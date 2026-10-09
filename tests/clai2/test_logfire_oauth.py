@@ -113,7 +113,7 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         links.append(url)
         return True
 
-    monkeypatch.setattr(webbrowser, 'open', open_link)
+    monkeypatch.setattr('pydantic_clai2.logfire_oauth.open_browser', open_link)
     return links
 
 
@@ -220,7 +220,7 @@ class TestSignIn:
         def no_browser(url: str) -> bool:
             raise webbrowser.Error('could not locate runnable browser')
 
-        monkeypatch.setattr(webbrowser, 'open', no_browser)
+        monkeypatch.setattr('pydantic_clai2.logfire_oauth.open_browser', no_browser)
         logfire = Logfire()
         logfire.device = (200, {**DEVICE, 'verification_uri_complete': None})
         lines = await run_sign_in(logfire)

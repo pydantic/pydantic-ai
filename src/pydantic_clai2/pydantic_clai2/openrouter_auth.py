@@ -20,6 +20,7 @@ from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.auth import ReadLine, read_line
+from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.rendering import theme
 
 
@@ -53,7 +54,7 @@ class OpenRouterAuth:
         *,
         console: Console,
         read_line: ReadLine = read_line,
-        open_browser: Callable[[str], bool] = webbrowser.open,
+        open_browser: Callable[[str], bool] = open_browser,
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = 300,
     ) -> None:

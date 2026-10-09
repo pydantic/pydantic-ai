@@ -644,7 +644,7 @@ def test_a_url_wrapped_inside_markdown_opens_whole() -> None:
 
 def test_opening_a_url_does_not_wait_for_the_browser(monkeypatch: pytest.MonkeyPatch) -> None:
     opened: list[str] = []
-    monkeypatch.setattr('webbrowser.open', opened.append)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.prompt_surface.open_browser', opened.append)
     monkeypatch.setattr('pydantic_clai2.ui.prompt.prompt_surface.Thread', _Inline)
     open_in_browser('https://ai.pydantic.dev')
     assert opened == ['https://ai.pydantic.dev']

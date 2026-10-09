@@ -1,7 +1,6 @@
 """Subscription login dispatch and Codex OAuth credential management."""
 
 import asyncio
-import webbrowser
 from collections.abc import Awaitable, Callable, Mapping
 from functools import partial
 from urllib.parse import parse_qs, urlparse
@@ -34,6 +33,7 @@ from pydantic_clai2.models import LOGIN_ALIASES, github_copilot, login_names
 from pydantic_clai2.models.accounts import remember
 from pydantic_clai2.models.profiles import ALL, DEFAULT, account, parse_model, split_profile, with_profile
 from pydantic_clai2.plugins import PluginLogin
+from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.rendering import theme
@@ -237,10 +237,10 @@ class CodexAuth:
         )
 
         # Launching in a thread keeps the loop available for core's callback listener.
-        async def open_browser() -> None:
-            await anyio.to_thread.run_sync(webbrowser.open, flow.authorization_url(), abandon_on_cancel=True)
+        async def launch_browser() -> None:
+            await anyio.to_thread.run_sync(open_browser, flow.authorization_url(), abandon_on_cancel=True)
 
-        browser = asyncio.create_task(open_browser())
+        browser = asyncio.create_task(launch_browser())
         try:
             with fail_after(self.login_timeout):
                 credentials = await self._receive(flow)

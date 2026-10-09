@@ -3,7 +3,6 @@
 import inspect
 import io
 import threading
-import webbrowser
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -102,7 +101,7 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         links.append(url)
         return True
 
-    monkeypatch.setattr(webbrowser, 'open', open_link)
+    monkeypatch.setattr('pydantic_clai2.logfire_oauth.open_browser', open_link)
     return links
 
 
