@@ -88,10 +88,12 @@ from .models._continuation import (
     MAX_GENERATION_CONTINUATIONS,
     MergeMode,
     _ContinuationStreamedResponse,
+    billed_beyond,
     cancel_suspended_job,
     merge_mode,
     merge_responses,
     report_continuation_segment,
+    resumed_response,
 )
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
@@ -1092,8 +1094,8 @@ def _split_resume_seed(
     A normal request ends in a `ModelRequest`, so the seed is `None` and the messages pass
     through untouched.
     """
-    if messages and isinstance(last := messages[-1], _messages.ModelResponse) and last.state == 'suspended':
-        return list(messages[:-1]), last
+    if (seed := resumed_response(messages)) is not None:
+        return list(messages[:-1]), seed
     return list(messages), None
 
 
@@ -1106,6 +1108,28 @@ def _record_attempts_usage(usage: _usage.RunUsage, attempts: Sequence[_messages.
     for attempt in attempts or ():
         if attempt.usage is not None:
             _usage_attribution.record_usage(usage, attempt.usage)
+
+
+def _billed_by_request(
+    response: _messages.ModelResponse, request_messages: Sequence[_messages.ModelMessage]
+) -> _messages.ModelResponse:
+    """What the provider billed for `response` during this request, beyond the suspended response it resumed.
+
+    The run that produced a suspended response committed its usage, so a request that resumes it from
+    history counts only the segments it requested itself.
+    """
+    resumed = resumed_response(request_messages)
+    if resumed is not None:
+        # Priced like the response it was merged into, so subtracting it leaves only the new segments' cost.
+        fill_response_cost(resumed)
+    return billed_beyond(response, resumed)
+
+
+def _record_billed_usage(usage: _usage.RunUsage, billed: _messages.ModelResponse) -> None:
+    """Record a response's billed usage, and that of the attempts that failed before it."""
+    # Attempts that failed before the response, such as responses a `FallbackModel` rejected, were billed too.
+    _record_attempts_usage(usage, billed.failed_attempts)
+    _usage_attribution.record_usage(usage, billed.usage)
 
 
 def _check_continuation_usage(
@@ -1137,21 +1161,6 @@ def _check_continuation_usage(
         if continuation_usage.cost is not None or any(usage.cost is not None for usage in attempt_usages):
             # Continuation usage is provisional, so only warn after the run successfully finishes.
             run_context.usage_limits.check_cost(provisional, warn_if_cost_unavailable=False)
-
-
-async def _check_resume_seed_usage(
-    model: models.Model, run_context: RunContext[Any], seed: _messages.ModelResponse | None
-) -> None:
-    """Check a suspended history seed before sending the continuation that resumes it."""
-    usage_limits = run_context.usage_limits
-    if seed is None or usage_limits is None or usage_limits.cost_limit is None:
-        return
-    try:
-        fill_response_cost(seed)
-        _check_continuation_usage(run_context, seed.usage, seed.failed_attempts)
-    except BaseException:
-        await cancel_suspended_job(model, seed)
-        raise
 
 
 async def model_request(
@@ -1189,7 +1198,6 @@ async def model_request(
         The (merged) model response.
     """
     base_messages, seed = _split_resume_seed(request_context.messages)
-    await _check_resume_seed_usage(model, run_context, seed)
 
     # Two independent ceilings distinguished by the generic `merge_mode` signal, mirroring the
     # streamed composite in `_continuation`: every *fresh-generation* re-suspension (accumulate
@@ -1274,9 +1282,11 @@ async def model_request(
                 last_mode = merge_mode(response, new_response)
                 response = merge_responses(response, new_response)
                 # Enforce token limits early against a provisional total so a runaway
-                # continuation can't blow the budget; the total is committed once later.
+                # continuation can't blow the budget; the total is committed once later. A resumed
+                # `seed` was counted by the run that suspended it, so only what this run billed counts.
+                billed = billed_beyond(response, seed)
                 try:
-                    _check_continuation_usage(run_context, response.usage, response.failed_attempts)
+                    _check_continuation_usage(run_context, billed.usage, billed.failed_attempts)
                 except BaseException:
                     # The limit tripped on a still-suspended merge: cancel the live
                     # server-side job before propagating so it doesn't leak (mirrors the
@@ -1319,7 +1329,6 @@ async def model_request_stream(
         A `StreamedResponse` to iterate inside the durable boundary.
     """
     base_messages, seed = _split_resume_seed(request_context.messages)
-    await _check_resume_seed_usage(model, run_context, seed)
     with set_current_run_context(run_context):
         sr = _ContinuationStreamedResponse(
             model_request_parameters=request_context.model_request_parameters,
@@ -1430,6 +1439,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
 
         _handler_response: _messages.ModelResponse | None = None
+        _handler_request_context: ModelRequestContext | None = None
         _handler_called = False
         _handler_usage_recorded = False
         _stream_cut_short = False
@@ -1440,7 +1450,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         async def _streaming_handler(
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
-            nonlocal _handler_called, _handler_response, _handler_usage_recorded, _stream_cut_short, time_to_first_chunk
+            nonlocal _handler_called, _handler_response, _handler_request_context, _handler_usage_recorded
+            nonlocal _stream_cut_short, time_to_first_chunk
             if _handler_called:
                 raise exceptions.UserError('`wrap_model_request` may call its handler only once')
             _handler_called = True
@@ -1452,6 +1463,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             finally:
                 context_after_hooks = copy_context()
                 before_model_request_context[:] = _context_changes(context_before_hooks, context_after_hooks)
+            _handler_request_context = req_ctx
             # After the before-chain, so the check applies to the model actually being called
             # (a `before_model_request` hook may have swapped it).
             _ensure_model_supports_streaming(req_ctx.model)
@@ -1610,7 +1622,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     # check; raising `UsageLimitExceeded` here would mask `stream_error`.
                     if agent_stream_holder:  # pragma: no branch
                         await self._commit_interrupted_response(
-                            ctx, wrap_request_context.model, stream_error, agent_stream_holder[0].response
+                            ctx,
+                            wrap_request_context.model,
+                            stream_error,
+                            agent_stream_holder[0].response,
+                            (_handler_request_context or wrap_request_context).messages,
                         )
                 else:
                     try:
@@ -1649,8 +1665,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model: models.Model,
         stream_error: BaseException,
         partial: _messages.ModelResponse,
+        request_messages: Sequence[_messages.ModelMessage],
     ) -> None:
-        """Record the response an interrupted stream produced so far, without checking usage limits."""
+        """Record the response an interrupted stream produced so far, without checking usage limits.
+
+        `request_messages` are the messages the stream was requested with, which end in the suspended
+        response it resumed, if any.
+        """
         recorded_state = await _resolve_interrupted_stream_state(model, stream_error, partial)
         partial_response = replace(
             partial,
@@ -1660,8 +1681,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         )
         fill_response_cost(partial_response)
         partial_response.workspace_ref = ctx.deps.workspace_ref
-        _record_attempts_usage(ctx.state.usage, partial_response.failed_attempts)
-        _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)
+        _record_billed_usage(ctx.state.usage, _billed_by_request(partial_response, request_messages))
         if partial_response.parts:
             # The agent acted on what was streamed before the interruption, so the step counts;
             # a stream that failed before producing anything doesn't.
@@ -2167,13 +2187,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         request_context: ModelRequestContext | None = None,
     ) -> None:
-        """Commit billed usage at the provider-response boundary."""
-        if request_context is not None:
-            request_context._usage_response_ledger.responses.append(response)  # pyright: ignore[reportPrivateUsage]
+        """Commit billed usage at the provider-response boundary.
+
+        A request that resumed a suspended response from history counts only what it billed beyond it,
+        and records that in the request's billed-response record too: see `billed_beyond`.
+        """
         fill_response_cost(response)
-        # Attempts that failed before the response, such as responses a `FallbackModel` rejected, were billed too.
-        _record_attempts_usage(ctx.state.usage, response.failed_attempts)
-        _usage_attribution.record_usage(ctx.state.usage, response.usage)
+        billed = response
+        if request_context is not None:
+            billed = _billed_by_request(response, request_context.messages)
+            request_context._usage_response_ledger.responses.append(billed)  # pyright: ignore[reportPrivateUsage]
+        _record_billed_usage(ctx.state.usage, billed)
 
     @staticmethod
     def _enforce_usage_limits(
