@@ -45,7 +45,7 @@ from .messages import (
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
-    from .messages import ModelMessage, ModelRequestPart, ModelResponse, ModelResponsePart
+    from .messages import ModelMessage, ModelResponse, ModelResponsePart
 
 
 _NO_MATCHES_MESSAGE = 'No matching tools found. The tools you need may not be available.'
@@ -476,37 +476,9 @@ def synthesize_local_tool_search_messages(
             else:
                 out.append(msg)
         elif isinstance(msg, _messages.ModelRequest):
-            # Translate any framework-emitted `ToolReturnPart` with `tool_kind='tool-search'`
-            # on requests — covers fresh code paths that constructed a base `ToolReturnPart`
-            # directly while still flagging it as framework-emitted. Dispatching on `tool_kind`
-            # rather than `tool_name` means a user tool literally named `search_tools` is left
-            # alone as a base `ToolReturnPart`.
-            #
-            # Common case: the request carries no tool-search returns at all — bail before
-            # allocating a fresh parts list.
-            if not any(isinstance(part, ToolReturnPart) and part.tool_kind == 'tool-search' for part in msg.parts):
-                out.append(msg)
-                continue
-            request_changed = False
-            new_request_parts: list[ModelRequestPart] = []
-            for part in msg.parts:
-                if (
-                    isinstance(part, ToolReturnPart)
-                    and not isinstance(part, ToolSearchReturnPart)
-                    and part.tool_kind == 'tool-search'
-                ):
-                    promoted = ToolReturnPart.narrow_type(part)
-                    # A return that isn't a success keeps its `tool_kind` but stays a base part.
-                    if isinstance(promoted, ToolSearchReturnPart):
-                        new_request_parts.append(promoted)
-                        request_changed = True
-                        continue
-                new_request_parts.append(part)
-            if request_changed:
-                any_changed = True
-                out.append(replace(msg, parts=new_request_parts))
-            else:
-                out.append(msg)
+            # A base `ToolReturnPart` with `tool_kind='tool-search'` was already promoted to
+            # `ToolSearchReturnPart` when its `ModelRequest` was built, so requests pass through.
+            out.append(msg)
         else:
             assert_never(msg)
 

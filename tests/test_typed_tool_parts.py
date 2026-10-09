@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
+    narrow_message_parts,
     parse_tool_kind,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -228,6 +229,18 @@ def test_a_speech_part_still_needs_the_right_speaker() -> None:
         )
     with pytest.raises(ValueError, match=r"`SpeechPart` in `ModelRequest\.parts` must have `speaker='user'`"):
         ModelRequest(parts=[SpeechPart(speaker='assistant')])
+
+
+def test_narrow_message_parts_promotes_a_kind_set_after_the_message_was_built() -> None:
+    request = ModelRequest(parts=[ToolReturnPart('lookup', {'in_stock': True}, tool_call_id='c1')])
+    response = ModelResponse(parts=[ToolCallPart('lookup', {'sku': 'A-1'}, tool_call_id='c1')])
+    request.parts[0].tool_kind = 'test.lookup'  # pyright: ignore[reportAttributeAccessIssue]
+    response.parts[0].tool_kind = 'test.lookup'  # pyright: ignore[reportAttributeAccessIssue]
+
+    narrowed_response, narrowed_request = narrow_message_parts([response, request])
+
+    assert isinstance(narrowed_response.parts[0], LookupCallPart)
+    assert isinstance(narrowed_request.parts[0], LookupReturnPart)
 
 
 def test_json_string_content_is_parsed_before_promotion() -> None:
