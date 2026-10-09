@@ -709,6 +709,11 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Check fizzbuzz.py for bugs.': ToolCallPart(
         tool_name='read_file', args={'path': 'fizzbuzz.py'}, tool_call_id='pyd_ai_tool_call_id'
     ),
+    # docs/capabilities/caching.md
+    'Can I expense a home office chair?': 'Yes, up to $300 with manager approval.',
+    'Is remote work allowed on Fridays?': 'Yes, every Friday is a remote day.',
+    'How many vacation days do new employees get?': 'New employees get 20 vacation days a year.',
+    'And after five years?': 'After five years, employees get 25 vacation days a year.',
     # docs/models/decision.md
     'pytest tests/test_agent.py': ToolCallPart(tool_name='final_result', args={'safe_to_run': True}),
     'A dashboard that shows every SaaS subscription a company pays for.': ToolCallPart(

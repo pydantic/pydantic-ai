@@ -58,6 +58,7 @@ For every variable, tuple, and literal you're about to touch, grep its readers a
 Specifically, for a typical model add, grep for:
 
 - The previous model id literal you're mirroring (e.g. `gpt-5.4`, `claude-opus-4-5`) — `rg '<prev-id>' --glob '!**/*.yaml' --glob '!**/cassettes/**'`
+- Search for the previous model's display name in docs and public docstrings; inspect capability rosters for the same features.
 - Every prefix/membership key in the profile module you're editing (e.g. OpenAI's `_REASONING_SUPPORT_BY_PREFIX` keys, Anthropic's inline `model_name.startswith((...))` tuples, xAI's `_GROK_43_REASONING_MODELS`)
 - `KnownModelName` and its provider-block neighbours
 - Snapshot test files: `tests/models/test_model_names.py`, `tests/test_capability_spec.py`
@@ -71,12 +72,16 @@ If `rg` output looks mangled (unicode/regex artifacts), drop to `grep -n` — do
 
 ## Step 3b — Pair the genai-prices entry
 
-Cost and `context_window` do not live in this repo. Both come from `pydantic/genai-prices` through
-`_genai_prices.py`, and `Model.profile` only consults it when nothing else set `context_window`, so a
-new id has neither until genai-prices ships an entry and this repo's lock picks up that release.
-Until then, for that id: `ModelResponse.cost()` raises `LookupError`, `RunContext.context_window_used`
-is `None`, and a `cost_limit` cannot be enforced — the run warns `CostNotFoundWarning` at the end
-instead. Open the genai-prices PR alongside the model add and link the two.
+Cost and `context_window` data come from `pydantic/genai-prices` through `_genai_prices.py`.
+Bundled data requires a `genai-prices` release.
+Update the Pydantic AI lock to verify the bundled entry locally.
+The live merged feed can supply entries through `pydantic_ai.prices.update_in_background()`.
+Check the updater for an entry before claiming a package release blocks support.
+`Model.profile` only consults genai-prices when nothing else set `context_window`.
+Without a price entry in either source, `ModelResponse.cost()` raises `LookupError` and a
+`cost_limit` cannot be enforced — the run warns `CostNotFoundWarning` at the end instead.
+Without a `context_window` value from any source, `RunContext.context_window_used` is `None`.
+If no genai-prices entry exists, open the genai-prices PR alongside the model add and link the two.
 
 Before you write the entry, check that no one has added it already. Someone else may have added
 it on release day. Grep genai-prices `main` for each provider file you plan to edit, then the
@@ -159,6 +164,9 @@ The gateway reaches the canonical API through an ordinary SDK client carrying a 
 - **Probe the gateway leg rather than reasoning about it.** `Model('<id>', provider='gateway')`, then
   exercise whatever capability you gated. If `PYDANTIC_AI_GATEWAY_BASE_URL` is set in the environment,
   check it points at the gateway root: a provider-specific proxy path 404s every other provider.
+- **Probe Bedrock Gateway profile regions individually.** A successful `gateway/bedrock:` inference-profile ID
+  does not establish support for another region prefix or the bare ID. Probe each candidate; exclude only IDs
+  Gateway rejects.
 
 A model the gateway genuinely does not serve is the other case entirely: it belongs in
 `UNSUPPORTED_GATEWAY_MODEL_NAMES`, on evidence that the gateway rejects the id. Never leave the id
@@ -231,7 +239,7 @@ check. Keep the model-specific evidence concise:
 - **Capability flags live as `startswith` prefix tuples in `profiles/anthropic.py`** inside `anthropic_model_profile()` (+ the module-level `_ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES`). A new family is NOT a literal-only add — it almost always needs at least one profile override (a literal-only add is only right when the family truly inherits every default branch, which is rare). Probe and set each independently: `models_that_support_json_schema_output`, `supports_adaptive`, `supports_effort`, `supports_xhigh_effort`, `disallows_budget_thinking`, `disallows_sampling_settings`, `supports_task_budgets`, `supports_tool_search`, code-exec version, `anthropic_supports_fast_speed`. Default-`False` flags (e.g. fast speed) are subtractive — just omit the id from that tuple.
 - **A point release inherits every flag of its base id silently.** The tuples are `startswith` prefixes, so `'claude-opus-5'` already matches `claude-opus-5-5` (as `'claude-fable-5'` matches `claude-fable-5-1`): before you touch anything, the new id resolves to the base model's profile. Tests stay green and nothing warns, so the only way to find a divergence is to read the model's migration guide and probe side by side with the base id. Opus 5.5 looked like an Opus 5 mirror and broke default `output_type` runs with a 400 until it opted out of forcing. Where a flag must *not* carry over, carve the id out explicitly (`startswith('claude-opus-5') and not startswith('claude-opus-5-5')`).
 - **Read the migration guide's "breaking changes" before probing.** Anthropic's `platform.claude.com/docs/en/models/<id>/migration-guide` and `whats-new-<id>` pages list every divergence from the previous model and name which other models share it (e.g. "the first three also apply on Claude Fable 5.1"). Those map straight onto profile flags, and they tell you what to probe.
-- **Bump the SDK through the 7-day quarantine rather than bridging, once the SDK lists the id.** `exclude-newer = "7 days"` in the root `pyproject.toml` keeps a same-day `anthropic` release out of the lock; admit exactly that release with a timestamp cutoff under `[tool.uv.exclude-newer-package]` (one second past its last artifact's PyPI `upload_time`, plus a `TODO` to remove it once the global window covers it — past that date it turns into a ceiling), raise the floor in `pydantic_ai_slim/pyproject.toml`, run `uv lock --upgrade-package anthropic`, and refresh the gh-aw runner's own lock with `uv lock --script .github/scripts/pydantic-ai-runner` (no CI step checks it, so a stale one stays green while silently dropping its pinned hashes). File a tracking issue for removing the cutoff and link it from the `TODO`. Precedents: #7989 (1.3.0), #8637 (1.8.0). The local-`Literal` bridge below is the fallback for when no SDK release lists the id yet.
+- **Bump the SDK through the 7-day quarantine rather than bridging, once the SDK lists the id.** `exclude-newer = "7 days"` in the root `pyproject.toml` keeps a same-day `anthropic` release out of the lock; admit exactly that release with a timestamp cutoff under `[tool.uv.exclude-newer-package]` (one second past its last artifact's PyPI `upload_time`, plus a `TODO` to remove it once the global window covers it — past that date it turns into a ceiling), raise the floor under `tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies` in `pydantic_ai_slim/pyproject.toml` (move the exact `uv add --optional`-generated requirement there and remove its conflicting `[project.optional-dependencies]` table), run `uv lock --upgrade-package anthropic`, and refresh the gh-aw runner's own lock with `uv lock --script .github/scripts/pydantic-ai-runner` (no CI step checks it, so a stale one stays green while silently dropping its pinned hashes). File a tracking issue for removing the cutoff and link it from the `TODO`. Precedents: #7989 (1.3.0), #8637 (1.8.0). The local-`Literal` bridge below is the fallback for when no SDK release lists the id yet.
 - **An SDK bump is a real change: pyright `models/anthropic.py` and the Anthropic tests against it.** 1.8.0 renamed the citations request TypedDict to `BetaCitationsConfigParamParam` (`BetaCitationsConfigParam` became a response model, and passing it into a request param broke a dict assertion) and widened `BetaInputTransformation` to a union with `thinking_mismatch_allowed`.
 - **Opus 5.5 skips thinking on trivial prompts at its default `medium` effort.** A cassette test that needs a thinking block (e.g. `stale_thinking_block_history`) has to raise `anthropic_effort` for it.
 - **A point release falls into its base model's price entry.** The base entries' prefix and `contains` clauses (`starts_with: claude-opus-5`) also capture `claude-opus-5-5`. So until the new entry exists, `calc_price` returns the *old* model's price with no error: genai-prices 0.1.7 priced Opus 5.5 at Opus 5's $5/$25 instead of $4/$20. Check `calc_price(..., model_ref='<new-id>')` against the published price. The genai-prices PR has to narrow the base entry's clauses so they stop at the base model, keeping every form they matched before and pinning those forms with a positive test (genai-prices #671, #709), as well as add the new entry per Step 3b.

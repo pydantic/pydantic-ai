@@ -521,8 +521,6 @@ class Simulation(ABC):
             snapshot=frozenset(op.key for op in self.operations if op.done and op.key is not None and op.error is None),
         )
         self.waiters.append(waiter)
-        if (shadow := self.checker.shadow) is not None:
-            shadow.waiter_started(waiter)
 
         async def wait() -> None:
             try:
