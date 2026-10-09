@@ -20,7 +20,14 @@ for example after a long wait between polls, times out at once, and the `Fallbac
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator, Generator
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    contextmanager,
+    nullcontext,
+)
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -106,6 +113,11 @@ def start_request_deadline(model: Model, model_settings: ModelSettings | None) -
     fresh one for each model it tries.
     """
     return model._start_request_deadline(model_settings)  # pyright: ignore[reportPrivateUsage]
+
+
+def enforce_request_deadline(deadline: RequestDeadline | None) -> AbstractContextManager[None]:
+    """Enforce `deadline` on the enclosed wait, if there is one."""
+    return deadline.enforce() if deadline is not None else nullcontext()
 
 
 @asynccontextmanager

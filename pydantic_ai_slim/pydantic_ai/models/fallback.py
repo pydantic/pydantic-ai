@@ -2,10 +2,8 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import (
-    AbstractContextManager,
     AsyncExitStack,
     asynccontextmanager,
-    nullcontext,
     suppress,
 )
 from dataclasses import dataclass, field, replace
@@ -42,6 +40,7 @@ from ._request_timeout import (
     ContinuationChain,
     RequestDeadline,
     current_continuation_chain,
+    enforce_request_deadline,
     start_request_deadline,
     stream_under_deadline,
 )
@@ -273,7 +272,7 @@ class FallbackModel(Model):
             try:
                 _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
-                with _enforce(deadline):
+                with enforce_request_deadline(deadline):
                     response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 duration = start.elapsed()
@@ -308,7 +307,7 @@ class FallbackModel(Model):
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
                 prepared_messages = model.prepare_messages(messages, model_request_parameters)
                 deadline = start_request_deadline(model, model_settings)
-                with _enforce(deadline):
+                with enforce_request_deadline(deadline):
                     response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 duration = start.elapsed()
@@ -600,10 +599,6 @@ class FallbackModel(Model):
             record_attempt_span(
                 attempt, failure, model=model, index=len(attempts) - 1, parent=span, tracer=policy.tracer
             )
-
-
-def _enforce(deadline: RequestDeadline | None) -> AbstractContextManager[None]:
-    return deadline.enforce() if deadline is not None else nullcontext()
 
 
 def _pinned_request_deadline(

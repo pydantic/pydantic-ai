@@ -10,7 +10,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 from collections.abc import Iterator, Sequence
-from contextlib import AbstractAsyncContextManager, nullcontext
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
 from types import TracebackType
@@ -21,7 +21,7 @@ from . import agent, messages, models, settings
 from ._sync_stream import SyncStreamBridge
 from ._utils import run_until_complete as _run_until_complete
 from .models import StreamedResponse, instrumented as instrumented_models
-from .models._request_timeout import open_request_stream, start_request_deadline
+from .models._request_timeout import enforce_request_deadline, open_request_stream, start_request_deadline
 
 __all__ = (
     'model_request',
@@ -100,7 +100,7 @@ async def model_request(
     model_instance = _prepare_model(model, instrument)
     mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
     deadline = start_request_deadline(model_instance, model_settings)
-    with deadline.enforce() if deadline is not None else nullcontext():
+    with enforce_request_deadline(deadline):
         return await model_instance.request(
             list(messages),
             model_settings,

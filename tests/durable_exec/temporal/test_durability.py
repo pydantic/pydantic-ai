@@ -523,6 +523,51 @@ async def test_durability_request_timeout_cancels_the_model_activity(client: Cli
     ).replay_workflow(history)
 
 
+async def _pauses_twice_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Pauses its response twice, each segment taking more than half of the `request_timeout` below."""
+    await asyncio.sleep(0.15)
+    last = messages[-1]
+    segment = len(last.parts) if isinstance(last, ModelResponse) and last.state == 'suspended' else 0
+    if segment < 2:
+        return ModelResponse(
+            parts=[TextPart(f'segment {segment}. ')], provider_response_id=f'segment-{segment}', state='suspended'
+        )
+    return ModelResponse(parts=[TextPart('done')])
+
+
+fallback_continuation_agent = Agent(
+    FallbackModel(FunctionModel(_pauses_twice_fn, model_name='pauses'), FunctionModel(_hanging_model_fn)),
+    name='durability_fallback_continuation',
+    deps_type=type(None),
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    model_settings={'request_timeout': 0.25},
+)
+
+
+@workflow.defn
+class FallbackContinuationWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await fallback_continuation_agent.run('hello')).output
+
+
+async def test_durability_fallback_continuation_gets_a_deadline_per_activity(client: Client):
+    """A `FallbackModel` gives its models their deadlines inside the activity, and each continuation segment is its
+    own activity: a turn whose segments together take longer than `request_timeout` completes, as documented."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FallbackContinuationWorkflow],
+        plugins=[AgentPlugin(fallback_continuation_agent)],
+    ):
+        output = await client.execute_workflow(
+            FallbackContinuationWorkflow.run,
+            id=FallbackContinuationWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == snapshot('segment 0. segment 1. done')
+
+
 # --- Durability with tools ---
 
 

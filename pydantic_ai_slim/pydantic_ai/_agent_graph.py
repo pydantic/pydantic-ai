@@ -7,7 +7,7 @@ import time
 from asyncio import Task
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
-from contextlib import asynccontextmanager, contextmanager, nullcontext
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import Context, ContextVar, copy_context
 from copy import copy, deepcopy
 from dataclasses import field, replace
@@ -93,7 +93,12 @@ from .models._continuation import (
     merge_responses,
     report_continuation_segment,
 )
-from .models._request_timeout import ContinuationChain, start_request_deadline, use_continuation_chain
+from .models._request_timeout import (
+    ContinuationChain,
+    enforce_request_deadline,
+    start_request_deadline,
+    use_continuation_chain,
+)
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
@@ -1211,7 +1216,7 @@ async def model_request(
     with (
         set_current_run_context(run_context),
         use_continuation_chain(ContinuationChain()),
-        deadline.enforce() if deadline is not None else nullcontext(),
+        enforce_request_deadline(deadline),
     ):
         while True:
             if response is None:
