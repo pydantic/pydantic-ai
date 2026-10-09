@@ -45,7 +45,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
 
@@ -577,8 +577,8 @@ def wait_retry_after(
                         assert isinstance(retry_time, datetime)
                         # asctime-date format (RFC 9110 §5.6.7) carries no timezone; treat as UTC.
                         if retry_time.tzinfo is None:
-                            retry_time = retry_time.replace(tzinfo=timezone.utc)
-                        now = datetime.now(timezone.utc)
+                            retry_time = retry_time.replace(tzinfo=UTC)
+                        now = datetime.now(UTC)
                         wait_seconds = (retry_time - now).total_seconds()
 
                         if wait_seconds > 0:

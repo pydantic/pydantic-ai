@@ -1,10 +1,10 @@
 from dataclasses import KW_ONLY, dataclass
 from functools import partial
 from inspect import signature
-from typing import Literal, overload
+from typing import Any, Literal, overload
 
 from pydantic import TypeAdapter
-from typing_extensions import Any, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai.tools import Tool
 

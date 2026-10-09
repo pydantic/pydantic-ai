@@ -1,4 +1,4 @@
-"""Plugins add `/login NAME` sign-ins next to CLAI's own `codex` and `copilot`."""
+"""Plugins add `/login NAME` sign-ins next to CLAI's own `openai-codex` and `github-copilot`."""
 
 import io
 from collections.abc import Sequence
@@ -88,8 +88,8 @@ def test_rejects_a_login_clai_already_has(name: str) -> None:
 
 
 def test_login_names_list_clai_sign_ins_first_then_plugins_sorted() -> None:
-    assert login_names() == ('codex', 'copilot')
-    assert login_names(['zeta', 'claude', 'claude']) == ('codex', 'copilot', 'claude', 'zeta')
+    assert login_names() == ('openai-codex', 'github-copilot')
+    assert login_names(['zeta', 'claude', 'claude']) == ('openai-codex', 'github-copilot', 'claude', 'zeta')
 
 
 async def test_loader_merges_logins_and_the_later_plugin_wins(tmp_path: Path) -> None:
@@ -134,5 +134,5 @@ async def test_shell_runs_and_completes_a_plugin_login(tmp_path: Path, monkeypat
         Agent('test'), deps=None, settings=Settings(model='test'), console=Console(file=output, width=200), store=store
     )
     assert 'Signed in to Claude Code.' in output.getvalue()
-    assert completions[0] == {'codex', 'copilot', 'claude'}
+    assert completions[0] == {'openai-codex', 'github-copilot', 'claude'}
     assert {'claude-test:a', 'claude-test:b'} <= set(store.models())

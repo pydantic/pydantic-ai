@@ -627,6 +627,7 @@ def test_model_request_context_projection_payload_golden() -> None:
             'allow_image_output': False,
             'instruction_parts': None,
             'thinking': None,
+            'cache': None,
         },
         'model_id': 'restricted',
         'streaming': False,

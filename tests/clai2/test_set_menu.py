@@ -26,6 +26,7 @@ def test_rows_details_and_validation(tmp_path: Path) -> None:
     menu = FieldMenu(SettingsSource(context))
     keys = [row.key for row in menu.rows]
     assert keys[:3] == ['model', 'run.request_limit', 'display.thinking']
+    assert 'run.instructions' not in keys, '/system_prompt edits them, keeping their line breaks'
     items = menu.items()
     assert items[0].label.startswith('model') and 'openai-codex:gpt-6-astra' in items[0].label
     thinking = next(row for row in menu.rows if row.key == 'display.thinking')
