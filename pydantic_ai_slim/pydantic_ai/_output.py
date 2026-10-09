@@ -1664,7 +1664,7 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
 def _function_return_types(func: Callable[..., Any]) -> Sequence[Any]:
     """The output types described by `func`'s return annotation, or `str` when it has none."""
     # A `partial`'s hints would resolve in the `functools` namespace, so read them off the wrapped function.
-    while isinstance(func, partial):
+    if isinstance(func, partial):
         func = func.func
     if return_annotation := get_function_type_hints(func).get('return', None):
         return types_from_output_spec(return_annotation)

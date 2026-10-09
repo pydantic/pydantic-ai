@@ -80,7 +80,7 @@ async def test_text_output_function_json_schema_no_return_hint():
 
 
 async def test_text_output_function_json_schema_partial_forward_ref():
-    output_function = functools.partial(functools.partial(_split_to_words), ' ')
+    output_function = functools.partial(_split_to_words, ' ')
     # `function_schema` reads `__name__`, which a bare `partial` lacks.
     output_function.__name__ = _split_to_words.__name__  # pyright: ignore[reportAttributeAccessIssue]
     output_function.__qualname__ = _split_to_words.__qualname__  # pyright: ignore[reportAttributeAccessIssue]
