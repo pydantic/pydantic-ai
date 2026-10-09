@@ -17,7 +17,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.capabilities import LocalWorkspace, WrapperCapability
 from pydantic_ai.durable_exec._workspace import WorkspaceCall
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import WorkspaceTimeoutError
@@ -139,20 +139,39 @@ async def test_prefect_flow_retry_replays_workspace_tasks_and_run_ids() -> None:
     )
 
 
-async def test_prefect_run_ids_without_a_workspace_are_fresh_uuid7s() -> None:
+async def test_prefect_default_ids_without_a_workspace_survive_a_flow_retry() -> None:
     agent = Agent(TestModel(), name='prefect_run_id', capabilities=[PrefectDurability()])
-    ids: list[str] = []
+    attempts: list[list[tuple[str, str]]] = []
 
     @flow(retries=1)
     async def run() -> None:
-        ids.append((await agent.run('hello')).run_id)
-        if len(ids) == 1:
+        results = [await agent.run('First.'), await agent.run('Second.')]
+        attempts.append([(result.run_id, result.conversation_id) for result in results])
+        if len(attempts) == 1:
             raise RuntimeError('retry')
 
     await run()
-    # Without a workspace, a run inside a flow gets the same fresh UUID7 as outside one.
-    assert [uuid.UUID(run_id).version for run_id in ids] == [7, 7]
-    assert ids[0] != ids[1]
+    # Each agent run in the flow gets its own IDs, and the retry gives each the same ones again.
+    first, second = attempts[0]
+    assert attempts[1] == attempts[0]
+    assert len({*first, *second}) == 4
+    assert first[0].endswith(':0') and second[0].endswith(':1')
+    # Outside a flow, the agent keeps generating fresh UUID7s.
+    outside = await agent.run('Outside.')
+    assert [uuid.UUID(outside.run_id).version, uuid.UUID(outside.conversation_id).version] == [7, 7]
+
+
+async def test_prefect_default_ids_reach_through_a_wrapped_durability_capability() -> None:
+    agent = Agent(TestModel(), name='prefect_wrapped_run_id', capabilities=[WrapperCapability(PrefectDurability())])
+
+    @flow
+    async def run() -> tuple[str, str]:
+        result = await agent.run('Hello.')
+        return result.run_id, result.conversation_id
+
+    run_id, conversation_id = await run()
+    assert run_id.endswith(':0')
+    assert uuid.UUID(conversation_id).version == 5
 
 
 async def test_prefect_repeated_identical_reads_are_not_served_from_cache() -> None:

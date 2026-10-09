@@ -111,7 +111,7 @@ If a resolved choice named a single tool, the available tool list is filtered to
 
 OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) for downstream providers that implement it.
 
-The provider-agnostic way to enable it is the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting (or the [`Caching`][pydantic_ai.capabilities.Caching] capability): on Anthropic and Gemini downstream models, `cache=True` is equivalent to `openrouter_cache_instructions`, `openrouter_cache_tool_definitions` and `openrouter_cache_messages` below (Gemini takes no TTL, so a requested retention caches at its default). See [Prompt Caching](../capabilities/caching.md) for the cost trade-off. The provider-specific `openrouter_cache_*` settings take precedence when any is set.
+The provider-agnostic way to enable it is the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting (or the [`Caching`][pydantic_ai.capabilities.Caching] capability): on Anthropic and Gemini downstream models, `cache=True` is equivalent to `openrouter_cache_instructions`, `openrouter_cache_tool_definitions` and `openrouter_cache_messages` below (Gemini takes no TTL, so a requested retention caches at its default). See [Caching](../capabilities/caching.md) for the cost trade-off. The provider-specific `openrouter_cache_*` settings take precedence when any is set.
 
 Pydantic AI's OpenRouter cache settings control explicit `cache_control` breakpoints for Anthropic and Gemini models:
 

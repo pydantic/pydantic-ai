@@ -322,7 +322,9 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/menus/custom_params.py` | the editor for custom model parameters |
 | `builtin_plugins/logfire.py` | the default-enabled `observability` plugin, configuring Logfire locally over core `Instrumentation`; `token` picks a `/keys` write token, `ui_events` subscribes it to UI telemetry; `configure` is a `FieldMenu` whose project row runs `logfire_setup` |
 | `builtin_plugins/logfire_session.py` | the `observability` plugin's `CLAI session` roots: `SessionTracing` and the `git_email` lookup for `user_tag: git-email` |
-| `builtin_plugins/logfire_setup.py` | the `observability` plugin's setup menu: region or self-hosted URL, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), account email from `/v1/account/me`, project pick, write token saved in `/keys` |
+| `builtin_plugins/logfire_setup.py` | the `observability` plugin's setup menu: which Logfire, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), account email from `/v1/account/me`, project pick, write token saved in `/keys` |
+| `builtin_plugins/logfire_destination.py` | "which Logfire", shared by `observability` setup and `logfire_mcp`: regions from harness, a host, UI URL, or MCP URL parsed to one origin, the picker, and the last pick remembered for the other plugin |
+| `ui/telemetry_log.py` | sends unhandled `logfire` and `opentelemetry` logger warnings to `telemetry.log` during the interactive session, so `logging.lastResort` never writes over the editor |
 | `ui/telemetry.py` | UI telemetry sinks, `record`/`span`, the menu naming, and `conversation_selected`, which calls every sink's session `root` (a sink subscribed with `ui_events=False` gets only that) once startup picks the conversation; instrument shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the loader, `/keys`, the prompt), never one menu at a time, and record names, not content; typed text goes only through `prompt_text`, which the subscriber's `include_content` gates |
 | `builtin_plugins/compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert, its settings menu |
 | `commands.py` | `Command`, the registry, completion |
@@ -362,7 +364,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/rendering/spinner_frames.py` | frame data for the Code Puppy cli-spinners pack |
 | `ui/menus/spinner_picker.py` | `/spinner`: animated picker, by-name selection with speed, `init` |
 
-The other built-in plugin implementations (`notifications`, `github`, `pylon`, `google_workspace`, `day_ai`, `ordinal`, `notion`, `logfire_mcp`, `posthog`, `grain`, and `linear`) also live in `builtin_plugins/`. The loader redirects old factory paths in saved declarations to this package.
+The other built-in plugin implementations (`notifications`, `github`, `pylon`, `google_workspace`, `day_ai`, `ordinal`, `notion`, `logfire_mcp` (shown as Logfire; its id cannot become `logfire`, the `observability` plugin's stored id), `posthog`, `grain`, and `linear`) also live in `builtin_plugins/`. The loader redirects old factory paths in saved declarations to this package.
 
 Keep files concise - we don't need any 10,000 line files. Single responsibility.
 

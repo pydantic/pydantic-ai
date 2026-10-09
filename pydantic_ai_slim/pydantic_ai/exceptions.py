@@ -597,7 +597,7 @@ class ModelHTTPError(ModelAPIError):
                 retry_time = retry_time.replace(tzinfo=UTC)
             wait = (retry_time - datetime.now(UTC)).total_seconds()
             return max(0.0, wait)
-        except (ValueError, TypeError, AssertionError):
+        except (ValueError, TypeError, AssertionError, OverflowError):
             return None
 
 
