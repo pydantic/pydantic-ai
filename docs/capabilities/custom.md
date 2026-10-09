@@ -422,9 +422,7 @@ Override [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent] 
 
 ```python {title="agent_bound_capability.py"}
 from dataclasses import dataclass, replace
-from typing import Any
-
-from typing_extensions import Self
+from typing import Any, Self
 
 from pydantic_ai import Agent
 from pydantic_ai.agent import AbstractAgent
@@ -515,7 +513,7 @@ A short-circuiting wrapper skips `before_*`, including policy hooks. Put mandato
 !!! note "Observing cancellation"
     A cancellation reaches a capability as an `asyncio.CancelledError`: through a `wrap_*` hook's `handler()` await (catch it around `await handler(...)`), or at the run's terminal funnel [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error], whose `error` is a `BaseException`. It does **not** reach the recovery-oriented `Exception`-typed hooks — [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error], [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error], [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] — because a cancellation is a terminal control signal, not a failure of that step you could recover from.
 
-    Cancellation is terminal: a hook may observe it and clean up, but returning a result to recover the run does not work — on Python 3.11+ the run re-asserts the cancellation at the next step boundary (best-effort on Python 3.10).
+    Cancellation is terminal: a hook may observe it and clean up, but returning a result to recover the run does not work. The run re-asserts the cancellation at the next step boundary.
 
 ### Node hooks
 
@@ -974,6 +972,8 @@ agent = Agent(TestModel(), capabilities=[Summaries()])
 Mark each operation method with `@durable_operation(name='...')`. The required name becomes part of persisted durable-unit names and must remain stable, while the Python method can be freely renamed. When a durability capability is bound, calling the method during a run dispatches it through that engine. Without durability, the same call awaits the original method directly.
 
 A [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] override may return a fresh instance — the operation dispatches on whichever instance the run is using, from `before_run` and from per-request hooks alike. The replacement has to keep the capability's `id`, since that is what dispatch and worker-side recovery resolve it by; Pydantic AI raises a `UserError` at the start of the run if a bound capability's ID is no longer present. Dispatch is established once `for_run()` has returned, so an operation called from inside `for_run()` itself runs directly rather than durably.
+
+An operation can also be called from a tool the capability contributes. Where the engine already runs the tool in its own activity, step, or task, as Temporal, Prefect, and AWS Lambda do, the operation runs directly inside it, under that unit's timeout, retry, and cache configuration rather than its own, since that unit records the result. Where the tool runs in workflow code, as function tools do under DBOS, the operation is its own unit. Either way the work is recorded once, so a capability whose tools do I/O can route that I/O through an operation and stay durable on every engine.
 
 Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
 

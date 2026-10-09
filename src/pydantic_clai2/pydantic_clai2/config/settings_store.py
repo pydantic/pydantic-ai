@@ -4,15 +4,17 @@ import os
 import sqlite3
 from collections.abc import Generator, Iterable
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, Settings, resolve_settings
+from pydantic_clai2.config import SETTING_FIELDS, STORED_MAIN_CHANNEL, PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.plugin_requirements import Requirements, merged_requirements
 
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _JSON_OBJECT: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
+_CHAIN: TypeAdapter[list[str]] = TypeAdapter(list[str])
 # Keep the original IDs on disk so older builds share the same preferences, without loading a second plugin.
 _PLUGIN_NAMES = {'logfire': 'observability'}
 _STORED_PLUGIN_NAMES = {name: stored for stored, name in _PLUGIN_NAMES.items()}
@@ -39,6 +41,20 @@ def _stored_plugin_id(plugin_id: str) -> str:
     """The ID a plugin's rows are stored under, so older builds that know the old name still find them."""
     current_id = canonical_plugin_id(plugin_id)
     return _STORED_PLUGIN_NAMES.get(current_id, current_id)
+
+
+@dataclass(frozen=True, kw_only=True)
+class StoredAccount:
+    """An account as saved: no secrets, only what lists and orders it."""
+
+    provider: str
+    """The model prefix it runs, such as `openai-codex` or a plugin's `claude-code`."""
+    profile: str | None
+    """`None` for the provider's default account."""
+    label: str | None = None
+    """A name the user gave it; the profile is shown when there is none."""
+    plugin_login: str | None = None
+    """The plugin `/login` name that signed it in, such as `claude`; `None` when CLAI keeps its credentials."""
 
 
 def config_dir() -> Path:
@@ -69,6 +85,16 @@ class SettingsStore:
             connection.execute(
                 'CREATE TABLE IF NOT EXISTS plugin_requirements (id TEXT PRIMARY KEY, requirements_json TEXT NOT NULL)'
             )
+            # Fallback chains are their own table for the same reason: builds without chains never read it.
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS model_chains (name TEXT PRIMARY KEY, models_json TEXT NOT NULL)'
+            )
+            # Accounts hold no secrets: their order, label, and the plugin sign-in that owns them. The
+            # default account's profile is ''.
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS accounts (provider TEXT NOT NULL, profile TEXT NOT NULL, label TEXT, '
+                'plugin_login TEXT, position INTEGER NOT NULL, PRIMARY KEY (provider, profile))'
+            )
             connection.execute('PRAGMA user_version = 1')
 
     @contextmanager
@@ -96,10 +122,12 @@ class SettingsStore:
     def set(self, key: str, value: JsonValue) -> None:
         """Validate before committing a single override."""
         resolve_settings({key: value})
+        # Older builds reject `main`, so it keeps the name they know; reading it back gives `main`.
+        stored = STORED_MAIN_CHANNEL if key == 'updates.channel' and value == 'main' else value
         with self._connect() as connection:
             connection.execute(
                 'INSERT INTO settings VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json',
-                (key, _JSON.dump_json(value).decode()),
+                (key, _JSON.dump_json(stored).decode()),
             )
 
             if key == 'model' and isinstance(value, str):
@@ -114,6 +142,116 @@ class SettingsStore:
         """Remember a model without changing the active preference."""
         with self._connect() as connection:
             connection.execute('INSERT OR IGNORE INTO models VALUES (?)', (name,))
+
+    def remove_model(self, *, name: str) -> bool:
+        """Forget a model and its overrides; return `False` if it is the saved default."""
+        with self._connect() as connection:
+            return self._remove_model(connection, name)
+
+    @staticmethod
+    def _remove_model(connection: sqlite3.Connection, name: str) -> bool:
+        # Keep the default check and the deletes atomic across CLAI sessions.
+        connection.execute('BEGIN IMMEDIATE')
+        row = connection.execute("SELECT value_json FROM settings WHERE key = 'model'").fetchone()
+        if row is not None and _JSON.validate_json(row[0]) == name:
+            return False
+        connection.execute('DELETE FROM models WHERE name = ?', (name,))
+        connection.execute('DELETE FROM model_settings WHERE model = ?', (name,))
+        if name.startswith('chain:'):
+            # Removing a chain from `/model` removes the chain itself, so nothing can still run it.
+            connection.execute('DELETE FROM model_chains WHERE name = ?', (name.removeprefix('chain:'),))
+        return True
+
+    def chains(self) -> dict[str, list[str]]:
+        """Saved fallback chains by name, each its models in order; an unreadable row is skipped, not changed."""
+        chains: dict[str, list[str]] = {}
+        with self._connect() as connection:
+            for name, models in connection.execute('SELECT name, models_json FROM model_chains ORDER BY name'):
+                try:
+                    chains[name] = _CHAIN.validate_json(models)
+                except ValidationError:
+                    continue
+        return chains
+
+    def save_chain(self, *, name: str, models: list[str]) -> None:
+        """Save a chain and offer it as `chain:NAME` in the model list."""
+        with self._connect() as connection:
+            connection.execute(
+                'INSERT INTO model_chains VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET models_json = excluded.models_json',
+                (name, _CHAIN.dump_json(models).decode()),
+            )
+            connection.execute('INSERT OR IGNORE INTO models VALUES (?)', (f'chain:{name}',))
+
+    def rename_chain(self, *, old: str, new: str) -> bool:
+        """Rename a chain with its `/model` entry and settings; return `False` if it is the saved default.
+
+        Raises `ValueError` if another session took `new` since the name was checked.
+        """
+        with self._connect() as connection:
+            # Keep the checks and the renames atomic across CLAI sessions, as removal does.
+            connection.execute('BEGIN IMMEDIATE')
+            row = connection.execute("SELECT value_json FROM settings WHERE key = 'model'").fetchone()
+            if row is not None and _JSON.validate_json(row[0]) == f'chain:{old}':
+                return False
+            taken = 'SELECT 1 FROM model_chains WHERE name = ? UNION SELECT 1 FROM models WHERE name = ?'
+            if connection.execute(taken, (new, f'chain:{new}')).fetchone() is not None:
+                raise ValueError(f'chain:{new} already exists.')
+            connection.execute('UPDATE model_chains SET name = ? WHERE name = ?', (new, old))
+            connection.execute('UPDATE models SET name = ? WHERE name = ?', (f'chain:{new}', f'chain:{old}'))
+            connection.execute('UPDATE model_settings SET model = ? WHERE model = ?', (f'chain:{new}', f'chain:{old}'))
+            return True
+
+    def accounts(self) -> list[StoredAccount]:
+        """Saved accounts, grouped by provider in the order the user chose."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                'SELECT provider, profile, label, plugin_login FROM accounts ORDER BY provider, position, profile'
+            ).fetchall()
+        return [
+            StoredAccount(provider=provider, profile=profile or None, label=label, plugin_login=plugin_login)
+            for provider, profile, label, plugin_login in rows
+        ]
+
+    def add_account(self, account: StoredAccount) -> None:
+        """Remember an account last in its provider's order; a known one keeps its place and label."""
+        with self._connect() as connection:
+            connection.execute(
+                'INSERT INTO accounts SELECT ?, ?, ?, ?, '
+                'COALESCE((SELECT MAX(position) + 1 FROM accounts WHERE provider = ?), 0) '
+                'WHERE true ON CONFLICT(provider, profile) DO UPDATE SET plugin_login = excluded.plugin_login',
+                (account.provider, account.profile or '', account.label, account.plugin_login, account.provider),
+            )
+
+    def rename_account(self, *, provider: str, profile: str | None, label: str | None) -> None:
+        """Change the name an account is shown with; `None` shows its profile again."""
+        with self._connect() as connection:
+            connection.execute(
+                'UPDATE accounts SET label = ? WHERE provider = ? AND profile = ?', (label, provider, profile or '')
+            )
+
+    def remove_account(self, *, provider: str, profile: str | None) -> None:
+        """Forget an account; its credentials are the caller's to delete."""
+        with self._connect() as connection:
+            connection.execute('DELETE FROM accounts WHERE provider = ? AND profile = ?', (provider, profile or ''))
+
+    def move_account(self, *, provider: str, profile: str | None, offset: int) -> None:
+        """Move an account `offset` places within its provider, clamped to the ends."""
+        with self._connect() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            order = [
+                row[0]
+                for row in connection.execute(
+                    'SELECT profile FROM accounts WHERE provider = ? ORDER BY position, profile', (provider,)
+                )
+            ]
+            if (profile or '') not in order:
+                return
+            index = order.index(profile or '')
+            order.insert(max(0, min(len(order) - 1, index + offset)), order.pop(index))
+            connection.executemany(
+                'UPDATE accounts SET position = ? WHERE provider = ? AND profile = ?',
+                [(position, provider, name) for position, name in enumerate(order)],
+            )
 
     def reset(self, key: str) -> None:
         """Remove a setting override, restoring its default."""
@@ -139,15 +277,22 @@ class SettingsStore:
         with self._connect() as connection:
             return self._requirements_row(connection, _stored_plugin_id(plugin_id))
 
-    def save_plugin(self, plugin: PluginSettings, *, requires: Requirements | None = None) -> None:
+    def save_plugin(
+        self, plugin: PluginSettings, *, requires: Requirements | None = None, overwrite: bool = True
+    ) -> None:
         """Persist an explicitly trusted plugin declaration with the writer's requirement tags.
 
         `requires` is what the plugin declares for its settings. Stored tags on values left unchanged
         are kept, so saving never strips a tag another build attached. Both rows change in one transaction.
+        `overwrite=False` atomically rejects an existing declaration, including a legacy ID alias.
         """
         current_id = canonical_plugin_id(plugin.id)
         plugin = plugin.model_copy(update={'id': _stored_plugin_id(current_id)})
         with self._connect() as connection:
+            if not overwrite:
+                connection.execute('BEGIN IMMEDIATE')
+                if connection.execute('SELECT 1 FROM plugins WHERE id IN (?, ?)', (current_id, plugin.id)).fetchone():
+                    raise ValueError(f'Plugin {current_id} already exists; it has not been changed.')
             old = connection.execute('SELECT declaration FROM plugins WHERE id = ?', (plugin.id,)).fetchone()
             saved = _saved_declaration(old[0]) if old is not None else {}
             # Tags without a declaration were left by a build that deleted it without knowing this table,

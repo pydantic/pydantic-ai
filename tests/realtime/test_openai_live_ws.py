@@ -144,7 +144,7 @@ async def test_audio_in_delegated_tool_round(
     assert session.usage.output_tokens > 0
     assert session.usage.audio_seconds > 0
     # Live reports how full its own context is; the backend's tokens don't measure it.
-    assert session.context_window_used == snapshot(0.01021875)
+    assert session.context_window_used == snapshot(0.0106484375)
     # Each backend response's tokens land on the `ModelResponse` it produced, as in a standard run: the
     # one that asked for the tool on the tool-call response, the continuation on the spoken answer.
     tool_call_response, spoken_reply = messages[1], messages[3]
@@ -158,13 +158,13 @@ async def test_audio_in_delegated_tool_round(
     assert tool_call_response.provider_details == snapshot(
         {
             'delegated_model': 'gpt-5.6-sol',
-            'delegated_response_id': 'resp_0f173858b0a30685006ab4608a48e487d182bd7ed5d3cf7080',
+            'delegated_response_id': 'resp_02967ef4d60b72e3006abc4434f40487d194be2a7080d73332',
         }
     )
     assert spoken_reply.provider_details == snapshot(
         {
             'delegated_model': 'gpt-5.6-sol',
-            'delegated_response_id': 'resp_0f173858b0a30685006ab4608b987087d192b5641ad71a8236',
+            'delegated_response_id': 'resp_02967ef4d60b72e3006abc4436367887d18f682cb59deccc5d',
         }
     )
     for response in (tool_call_response, spoken_reply):
@@ -230,7 +230,7 @@ async def test_text_reaches_the_model_as_context(
     takes effect while audio is flowing — hence the silence on both sides of it. Nobody speaks here:
     the reply is entirely the result of the injected text.
     """
-    provider, _ = openai_live_ws_cassette
+    provider, cassette = openai_live_ws_cassette
     # Relaying injected context takes the model a beat longer than answering, and a turn boundary
     # inferred from silence will cut in if it is too eager — the tradeoff the setting exists for.
     model = OpenAILiveModel(
@@ -260,6 +260,13 @@ async def test_text_reaches_the_model_as_context(
         if isinstance(part, SpeechPart)
     )
     assert 'Friday' in spoken
+    # Closing asked Live to end the session, and the seconds it billed came back with `session.closed`.
+    assert [
+        interaction.data['type']
+        for interaction in cassette.interactions
+        if isinstance(interaction, CassetteMessage) and interaction.data.get('type', '').startswith('session.clos')
+    ] == ['session.close', 'session.closed']
+    assert session.usage.audio_seconds > 0
 
 
 async def test_history_seeding(
@@ -377,13 +384,12 @@ async def test_the_backend_searches_the_web(
         [
             {
                 'type': 'search',
-                'queries': ['site:en.wikipedia.org/wiki/Amsterdam Amsterdam population 2026'],
-                'query': 'site:en.wikipedia.org/wiki/Amsterdam Amsterdam population 2026',
-            },
-            {'type': 'search', 'queries': ['Amsterdam population'], 'query': 'Amsterdam population'},
+                'queries': ['site:wikipedia.org Amsterdam population 2025 municipality'],
+                'query': 'site:wikipedia.org Amsterdam population 2025 municipality',
+            }
         ]
     )
-    assert [part.content for part in returns] == snapshot([{'status': 'completed'}, {'status': 'completed'}])
+    assert [part.content for part in returns] == snapshot([{'status': 'completed'}])
     # The searches come first, then what Live said with their results.
     speech = reply.parts[-1]
     assert isinstance(speech, SpeechPart) and speech.speaker == 'assistant'
@@ -392,9 +398,6 @@ async def test_the_backend_searches_the_web(
     # Each search follows the backend reasoning that led to it, as a direct Responses run records it.
     assert [type(part).__name__ for part in reply.parts] == snapshot(
         [
-            'ThinkingPart',
-            'NativeToolCallPart',
-            'NativeToolReturnPart',
             'ThinkingPart',
             'NativeToolCallPart',
             'NativeToolReturnPart',
@@ -469,7 +472,7 @@ _BrowserPeer = tuple[str, Callable[[str], Awaitable[None]], Callable[[], None]]
 
 
 @asynccontextmanager
-async def _speaking_browser(pcm: bytes) -> AsyncGenerator[_BrowserPeer]:  # pragma: no cover
+async def _speaking_browser(pcm: bytes, *, rate: int = 24000) -> AsyncGenerator[_BrowserPeer]:  # pragma: no cover
     """Negotiate a real WebRTC call with `aiortc`, standing in for a browser whose user asks a question.
 
     Recording only. Live's timeline moves with the audio it receives, and on a WebRTC call that audio
@@ -480,7 +483,7 @@ async def _speaking_browser(pcm: bytes) -> AsyncGenerator[_BrowserPeer]:  # prag
     """
     aiortc = importlib.import_module('aiortc')
     av = importlib.import_module('av')
-    rate, frame_samples = 24000, 480  # 20 ms frames of the 24 kHz clip
+    frame_samples = rate // 50  # 20 ms frames of the clip
     state = {'position': -1}
 
     class _Microphone(aiortc.MediaStreamTrack):
@@ -609,6 +612,82 @@ async def test_webrtc_sideband_runs_the_delegated_tool_round(
     # The browser plays the audio, so the sideband records the reply without its bytes.
     assert answer_part.audio is None
     assert session.usage.input_tokens > 0
+
+
+@pytest.mark.vcr
+async def test_webrtc_call_continues_the_bound_history(
+    openai_live_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    realtime_recording: bool,
+) -> None:
+    """History bound with `agent.realtime(...)` is seeded when the offer starts the Live session.
+
+    Live takes history only then, so the sideband opened from the same object seeds nothing, and the model
+    answers from the history it was started with.
+    """
+    provider, cassette = openai_live_ws_sideband_cassette
+    model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
+    agent = Agent(_BACKEND, instructions='Answer in a few words.')
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='My name is Ada.')]),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Nice to meet you, Ada.')]),
+    ]
+    realtime = agent.realtime(model, message_history=history)
+    pcm = assets_path.joinpath('remind_me_my_name_16khz.pcm').read_bytes()
+
+    @asynccontextmanager
+    async def browser() -> AsyncGenerator[_BrowserPeer]:
+        if realtime_recording:  # pragma: no cover
+            async with _speaking_browser(pcm, rate=16000) as peer:
+                yield peer
+            return
+        yield REAL_SDP_OFFER, _no_browser_to_connect, lambda: None
+
+    async with browser() as (offer, connect, speak):
+        answer = await realtime.answer_webrtc_offer(offer)
+        await connect(answer.sdp)
+
+        async with realtime.session(provider_session=answer.session) as session:
+            speak()
+            with anyio.fail_after(60):
+                async for event in session:  # pragma: no branch
+                    if isinstance(event, RealtimeTurnCompleteEvent):
+                        break
+
+    # The sideband seeded nothing: Live replayed the history the offer started the session with.
+    assert [i for i in cassette.interactions if isinstance(i, CassetteMessage) and i.direction == 'sent'] == []
+    messages = session.all_messages()
+    assert messages[:2] == history
+    spoken = ' '.join(
+        part.transcript or ''
+        for message in messages[2:]
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    )
+    assert 'Ada' in spoken
+
+
+@pytest.mark.vcr
+async def test_webrtc_hang_up_ends_the_call(
+    openai_live_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """`hang_up()` on a sideband ends the browser's call; `close()` alone would only detach from it.
+
+    Live ends the session when the call is hung up, and asking again finds no call to end, which is not an
+    error. The offer and both hangups are an HTTP VCR cassette, the sideband a WebSocket cassette.
+    """
+    provider, _ = openai_live_ws_sideband_cassette
+    model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
+    realtime = Agent(_BACKEND, instructions='Answer in a few words.').realtime(model)
+
+    answer = await realtime.answer_webrtc_offer(REAL_SDP_OFFER)
+    async with realtime.session(provider_session=answer.session) as session:
+        await session.hang_up()
+    assert session.closed
+
+    # The call is gone now: hanging it up again, without a sideband, finds nothing to end.
+    await realtime.hang_up(answer.session)
 
 
 _FAVORITE_COLOR = [

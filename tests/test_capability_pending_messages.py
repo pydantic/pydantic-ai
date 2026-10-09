@@ -11,7 +11,7 @@ import threading
 from collections.abc import AsyncIterable, AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
 
@@ -1109,7 +1109,7 @@ async def test_enqueue_accepts_model_request_passthrough():
         instructions='do this carefully',
         metadata={'origin': 'webhook-42'},
     )
-    preset_timestamp = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    preset_timestamp = datetime(2024, 1, 1, tzinfo=UTC)
     prestamped = ModelRequest(
         parts=[UserPromptPart(content='already stamped')],
         instructions='preserve me',

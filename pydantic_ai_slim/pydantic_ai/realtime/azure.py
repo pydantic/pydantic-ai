@@ -6,14 +6,14 @@ import warnings
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, Required, cast
 from urllib.parse import urlencode, urlparse, urlunparse
 
 from anyio.to_thread import run_sync
 from openai import AsyncOpenAI
 from openai.types.realtime.realtime_audio_config_output import VoiceID
 from pydantic import BaseModel
-from typing_extensions import Required, TypedDict
+from typing_extensions import TypedDict
 
 from ..exceptions import UserError
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, openai_model_profile
@@ -55,6 +55,9 @@ __all__ = (
     'AzureRealtimeConnection',
     'AzureRealtimeModelProfile',
     'AzureRealtimeModelSettings',
+    'AzureEndOfUtteranceDetection',
+    'AzureSemanticVAD',
+    'AzureServerVAD',
     'AzureTokenCredential',
     'AzureVoiceLiveVoice',
 )
@@ -244,6 +247,60 @@ class AzureVoiceLiveVoice(TypedDict, total=False):
     """URL of a custom lexicon that sets how the voice pronounces specific words."""
 
 
+class AzureEndOfUtteranceDetection(TypedDict, total=False):
+    """Azure AI Voice Live's end-of-utterance detection, which lets the user pause mid-sentence without ending their turn.
+
+    It reads the transcribed speech, so it works only on a cascade model (see
+    [`azure_voice_live_cascade`][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_voice_live_cascade]);
+    setting it for any other model raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting.
+    """
+
+    model: Required[Literal['semantic_detection_v1', 'semantic_detection_v1_en', 'semantic_detection_v1_multilingual']]
+    """The end-of-utterance detection model."""
+    threshold_level: Literal['low', 'medium', 'high', 'default']
+    """How sure the model must be that the user is done; `'default'` is `'medium'`."""
+    timeout_ms: int
+    """The longest to wait for more speech, in milliseconds. Defaults to 1000."""
+
+
+class AzureServerVAD(ServerVAD, total=False):
+    """Server VAD with the options only Azure AI Voice Live offers."""
+
+    speech_duration_ms: int
+    """Speech required to start a turn, in milliseconds."""
+    auto_truncate: bool
+    """Whether the server truncates the interrupted response when the user barges in."""
+    end_of_utterance_detection: AzureEndOfUtteranceDetection
+    """End-of-utterance detection, on a cascade model only."""
+
+
+class AzureSemanticVAD(TypedDict, total=False):
+    """Azure AI Voice Live's own semantic turn detection, which works on every model it serves."""
+
+    type: Required[Literal['azure_semantic_vad', 'azure_semantic_vad_multilingual']]
+    """`'azure_semantic_vad'` is tuned for English; `'azure_semantic_vad_multilingual'` for the `languages` it lists."""
+    threshold: float
+    """Activation threshold (0.0-1.0)."""
+    prefix_padding_ms: int
+    """Audio to include before detected speech, in milliseconds."""
+    silence_duration_ms: int
+    """Silence required to detect the end of speech, in milliseconds."""
+    speech_duration_ms: int
+    """Speech required to start a turn, in milliseconds."""
+    remove_filler_words: bool
+    """Whether filler words like "um" are ignored rather than taken as the user barging in."""
+    languages: list[str]
+    """The languages to expect, e.g. `['en', 'fr']`."""
+    end_of_utterance_detection: AzureEndOfUtteranceDetection
+    """End-of-utterance detection, on a cascade model only."""
+    create_response: bool
+    """Whether to automatically generate a response when the user stops speaking. Defaults to `True`."""
+    interrupt_response: bool
+    """Whether to interrupt an in-progress response when the user starts speaking. Defaults to `True`."""
+    auto_truncate: bool
+    """Whether the server truncates the interrupted response when the user barges in."""
+
+
 class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     """Settings specific to Azure realtime models.
 
@@ -252,13 +309,14 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     is set, the Voice Live session config is built from the fields Voice Live's beta session object
     has a counterpart for: `instructions`, `openai_voice` (by name, unless `azure_voice_live_voice` is
     set), `turn_detection` (or `openai_turn_detection`, or `azure_voice_live_turn_detection`),
-    `openai_input_noise_reduction`, `thinking` (as `reasoning_effort`, on models whose profile reports
+    `openai_input_noise_reduction` (or `azure_voice_live_noise_reduction`), `thinking` (as
+    `reasoning_effort`, on models whose profile reports
     [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking]),
-    `input_transcription_model`, `output_modality`, `max_tokens`, `tool_choice`, and tools, plus the
-    `azure_voice_live_*` settings.
+    `input_transcription_model`, `output_modality`, `max_tokens`, `parallel_tool_calls`, `tool_choice`,
+    and tools, plus the `azure_voice_live_*` settings.
 
-    The remaining inherited fields — `openai_output_speed`, `openai_truncation`, and
-    `parallel_tool_calls` — are **silently ignored** under Voice Live; they still apply on the GA path.
+    The remaining inherited fields — `openai_output_speed` and `openai_truncation` — are **silently
+    ignored** under Voice Live; they still apply on the GA path.
     Voice Live's own `truncation_strategy` takes different values from `openai_truncation` (`'auto'` or
     `'last_messages'`, not a retention ratio), so the two don't map onto each other.
     """
@@ -270,13 +328,31 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     reads its `AZURE_VOICELIVE_ENDPOINT` / `AZURE_VOICELIVE_API_KEY` / `AZURE_VOICELIVE_API_VERSION`
     credentials as a fallback to the `AZURE_OPENAI_*` variables.
     """
-    azure_voice_live_turn_detection: ServerVAD | SemanticVAD
-    """Voice Live server or semantic VAD config; only applies when `azure_voice_live=True`.
+    azure_voice_live_turn_detection: ServerVAD | SemanticVAD | AzureServerVAD | AzureSemanticVAD
+    """Voice Live turn detection; only applies when the session uses Voice Live.
 
-    When present, it overrides `openai_turn_detection` and `turn_detection` on Voice Live. On a cascade
+    When present, it overrides `openai_turn_detection` and `turn_detection` on Voice Live. Besides the
+    OpenAI [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] and
+    [`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD], it takes Voice Live's own
+    [`AzureServerVAD`][pydantic_ai.realtime.azure.AzureServerVAD] and
+    [`AzureSemanticVAD`][pydantic_ai.realtime.azure.AzureSemanticVAD], including
+    [end-of-utterance detection][pydantic_ai.realtime.azure.AzureEndOfUtteranceDetection]. On a cascade
     model (see [`azure_voice_live_cascade`][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_voice_live_cascade]),
-    which rejects OpenAI's semantic VAD, it's sent as Voice Live's own `azure_semantic_vad`, which has
-    no `eagerness` setting.
+    which rejects OpenAI's semantic VAD, `SemanticVAD` is sent as `azure_semantic_vad`, which has no
+    `eagerness` setting.
+    """
+    azure_voice_live_noise_reduction: Literal['azure_deep_noise_suppression', 'near_field', 'far_field']
+    """Input noise reduction on Voice Live; only applies when the session uses Voice Live.
+
+    `'azure_deep_noise_suppression'` is Azure's own and works on every model; this setting is sent as
+    given. It overrides `openai_input_noise_reduction`, which is sent as `azure_deep_noise_suppression`
+    on a cascade model because its `near_field`/`far_field` are for the native-audio `gpt-realtime` models.
+    """
+    azure_voice_live_echo_cancellation: bool
+    """Whether Voice Live removes the model's own voice from the input audio; only applies when the session uses Voice Live.
+
+    Useful when the reply plays through a speaker the microphone can hear, so the model doesn't
+    interrupt itself.
     """
     azure_voice_live_voice: str | AzureVoiceLiveVoice
     """The Azure voice for a Voice Live session; only applies when the session uses Voice Live.
@@ -291,25 +367,43 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     `openai_voice`, which native-audio models like `gpt-realtime` also accept under Voice Live.
     """
     azure_voice_live_temperature: float
-    """Sampling temperature for a Voice Live session, from 0 to 2; only applies when the session uses Voice Live.
+    """Sampling temperature for a Voice Live session; only applies when the session uses Voice Live.
 
-    The GA realtime API has no temperature setting. As with a standard OpenAI run, it's dropped with a
+    Microsoft documents a range of 0.6 to 1.2 (default 0.8), but Voice Live accepts 0 to 2. The GA
+    realtime API has no temperature setting. As with a standard OpenAI run, it's dropped with a
     warning while a reasoning model like `gpt-5` is reasoning, since those models then accept only the
     default.
     """
 
 
-def _voice_live_turn_detection(settings: AzureRealtimeModelSettings, *, cascade: bool) -> dict[str, Any] | None:
+def _voice_live_turn_detection(
+    settings: AzureRealtimeModelSettings, *, cascade: bool, model_name: str
+) -> dict[str, Any] | None:
     """The Voice Live `turn_detection` payload, or `None` to disable VAD."""
+    turn_detection: ServerVAD | SemanticVAD | AzureServerVAD | AzureSemanticVAD | None
     if 'azure_voice_live_turn_detection' in settings:
-        turn_detection: ServerVAD | SemanticVAD | None = settings['azure_voice_live_turn_detection']
+        turn_detection = settings['azure_voice_live_turn_detection']
     elif 'openai_turn_detection' in settings:
+        # An `AzureServerVAD` is a `ServerVAD` too, so its Azure-only options can arrive this way as well.
         turn_detection = settings['openai_turn_detection']
     elif 'turn_detection' in settings:
         turn_detection = resolve_base_turn_detection(settings['turn_detection'])
     else:
         turn_detection = ServerVAD(type='server_vad')
-    if turn_detection is not None and turn_detection['type'] == 'semantic_vad' and cascade:
+    if turn_detection is None:
+        return None
+    if 'end_of_utterance_detection' in turn_detection and not cascade:
+        # Voice Live rejects it for any other model, and then refuses every later frame of the session.
+        raise UserError(
+            f'End-of-utterance detection works only on an Azure AI Voice Live cascade model, and {model_name!r} '
+            'is not one. Remove `end_of_utterance_detection`, or, for a cascade model deployed under another '
+            'name, pass `profile=AzureRealtimeModelProfile(azure_voice_live_cascade=True)`.'
+        )
+    if turn_detection['type'] != 'semantic_vad':
+        # Server VAD and Voice Live's own semantic VAD are sent as given, Azure-only options included,
+        # with the response defaults `turn_detection_config` would fill in.
+        return {'create_response': True, 'interrupt_response': True, **turn_detection}
+    if cascade:
         # The cascade models reject OpenAI's semantic VAD, so use Voice Live's own model-based one,
         # which every model accepts; it has no `eagerness`.
         return {
@@ -318,6 +412,21 @@ def _voice_live_turn_detection(settings: AzureRealtimeModelSettings, *, cascade:
             'interrupt_response': turn_detection.get('interrupt_response', True),
         }
     return turn_detection_config(turn_detection)
+
+
+def _voice_live_audio_processing(settings: AzureRealtimeModelSettings, *, cascade: bool) -> dict[str, Any]:
+    """The Voice Live session's input noise reduction and echo cancellation, when set."""
+    config: dict[str, Any] = {}
+    if (noise_reduction := settings.get('azure_voice_live_noise_reduction')) is not None:
+        config['input_audio_noise_reduction'] = {'type': noise_reduction}
+    elif (openai_noise_reduction := settings.get('openai_input_noise_reduction')) is not None:
+        # `near_field`/`far_field` are for the native-audio models; a cascade uses Azure's own.
+        config['input_audio_noise_reduction'] = {
+            'type': 'azure_deep_noise_suppression' if cascade else openai_noise_reduction
+        }
+    if settings.get('azure_voice_live_echo_cancellation'):
+        config['input_audio_echo_cancellation'] = {'type': 'server_echo_cancellation'}
+    return config
 
 
 def _cascade_model_is_reasoning(model_name: str, thinking: ThinkingLevel | None) -> bool:
@@ -348,9 +457,33 @@ class _VoiceLiveSessionCreated(BaseModel):
     session: _VoiceLiveSession
 
 
+class _VoiceLiveWarning(BaseModel):
+    message: str
+    code: str | None = None
+    param: str | None = None
+
+
+class _VoiceLiveWarningEvent(BaseModel):
+    """Voice Live's `warning` event: informational, and the session goes on."""
+
+    warning: _VoiceLiveWarning
+
+
 def _map_voice_live_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     """Map Voice Live's beta text events and delegate the remaining OpenAI-compatible events."""
     event_type = data.get('type')
+    if event_type == 'warning':
+        # Nothing in the conversation changes, so it isn't a session event; surface it as a Python warning
+        # rather than dropping it, as the shared OpenAI mapper does with event types it doesn't know.
+        warning = _VoiceLiveWarningEvent.model_validate(data).warning
+        details = ', '.join(
+            f'{name}={value!r}' for name, value in (('code', warning.code), ('param', warning.param)) if value
+        )
+        warnings.warn(
+            f'Azure AI Voice Live warning: {warning.message}' + (f' ({details})' if details else ''),
+            UserWarning,
+        )
+        return None
     if event_type in ('response.text.delta', 'response.text.done'):
         is_final = event_type == 'response.text.done'
         content = data.get('text' if is_final else 'delta')
@@ -553,7 +686,10 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         instructions: str | None = None,
         tools: Sequence[ToolDefinition] | None = None,
         model_settings: RealtimeModelSettings | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
     ) -> WebRTCAnswer:
+        # As on OpenAI, the call takes no conversation items: the sideband seeds the history when it attaches.
+        del message_history
         secret = await self.create_client_secret(instructions=instructions, tools=tools, model_settings=model_settings)
         return await _relay_sdp_offer(
             http_client=self._http_client,
@@ -562,6 +698,13 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             provider_name=self.system,
             model_name=self.model_name,
             sdp_offer=sdp_offer,
+        )
+
+    def _check_hang_up(self, session: RealtimeProviderSession) -> None:
+        # Azure OpenAI's calls can't be ended from the server yet: the call ends when the browser hangs up.
+        raise UserError(
+            'Hanging up an Azure OpenAI WebRTC call from the server is not supported yet, so `hang_up()` is '
+            'unavailable. The call ends when the browser hangs up.'
         )
 
     async def create_client_secret(
@@ -620,12 +763,11 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             'input_audio_format': 'pcm16',
             'output_audio_format': 'pcm16',
             'input_audio_sampling_rate': self.profile.get('audio_input_sample_rate', 24000),
-            'turn_detection': _voice_live_turn_detection(settings, cascade=cascade),
+            'turn_detection': _voice_live_turn_detection(settings, cascade=cascade, model_name=self.model),
         }
         if transcription_model is not None:
             config['input_audio_transcription'] = {'model': transcription_model}
-        if (noise_reduction := settings.get('openai_input_noise_reduction')) is not None:
-            config['input_audio_noise_reduction'] = {'type': noise_reduction}
+        config.update(_voice_live_audio_processing(settings, cascade=cascade))
         if (azure_voice := settings.get('azure_voice_live_voice')) is not None:
             config['voice'] = (
                 AzureVoiceLiveVoice(type='azure-standard', name=azure_voice)
@@ -646,6 +788,10 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             config['tools'] = [tool_def_to_openai(tool) for tool in advertised_tools]
         if (max_tokens := settings.get('max_tokens')) is not None:
             config['max_response_output_tokens'] = max_tokens
+        if settings.get('parallel_tool_calls') is False:
+            # Voice Live defaults to parallel calls, and `gpt-realtime`/`-mini`/`-1.5` reject an explicit
+            # `True`, so only `False` is sent.
+            config['parallel_tool_calls'] = False
         if tool_choice is not None:
             config['tool_choice'] = tool_choice_config(tool_choice)
         thinking = settings.get('thinking')

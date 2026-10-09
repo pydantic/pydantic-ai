@@ -10,7 +10,7 @@ import uuid
 import warnings
 from collections.abc import AsyncIterator, MutableMapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -5581,7 +5581,7 @@ async def test_tool_call_start_args_are_emitted_raw():
             index=1,
             part=ToolCallPart(
                 tool_name='whole',
-                args={'query': 'hello', 'when': datetime(2025, 1, 1, tzinfo=timezone.utc)},
+                args={'query': 'hello', 'when': datetime(2025, 1, 1, tzinfo=UTC)},
                 tool_call_id='call_2',
             ),
             previous_part_kind='tool-call',
@@ -5658,7 +5658,7 @@ async def test_tool_call_delta_dict_args_are_serialized_compactly():
                 args_delta={
                     'type': 'search',
                     'query': 'weather',
-                    'when': datetime(2025, 1, 1, tzinfo=timezone.utc),
+                    'when': datetime(2025, 1, 1, tzinfo=UTC),
                 },
                 tool_call_id='call_1',
             ),
@@ -6967,6 +6967,66 @@ def test_dump_messages_multimodal_url() -> None:
             }
         ]
     )
+
+
+@requires_ag_ui('0.1.15')
+def test_dump_messages_extensionless_url_round_trips() -> None:
+    """A URL whose media type can't be inferred dumps an empty `mime_type` instead of raising.
+
+    The typed multimodal content types name the kind themselves, so the image comes back an image
+    ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/img')])])
+    ]
+    result = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.15')
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in result] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'source': {'type': 'url', 'value': 'https://example.com/img', 'mime_type': ''},
+                        'type': 'image',
+                    }
+                ],
+            }
+        ]
+    )
+
+    reloaded = AGUIAdapter.load_messages(result)
+    assert list(iter_message_parts(reloaded, ModelRequest, UserPromptPart)) == snapshot(
+        [UserPromptPart(content=[ImageUrl(url='https://example.com/img')], timestamp=IsDatetime())]
+    )
+    # `ImageUrl.__eq__` ignores the media type, so pin the whole dumped message rather than the part.
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in AGUIAdapter.dump_messages(reloaded)] == [
+        m.model_dump(exclude={'id'}, exclude_none=True) for m in result
+    ]
+
+
+def test_dump_messages_legacy_extensionless_url_loads_as_document() -> None:
+    """Before typed multimodal input, a URL with no media type loses its kind, but not its ability to dump.
+
+    `BinaryInputContent` has nowhere to carry the original kind, and its `mime_type` — empty here — is
+    what the kind is read back from, so the image returns as the catch-all `DocumentUrl`. It is still a
+    URL part that dumps ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/img')])])
+    ]
+    result = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.10')
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in result] == snapshot(
+        [{'role': 'user', 'content': [{'type': 'binary', 'url': 'https://example.com/img', 'mime_type': ''}]}]
+    )
+
+    reloaded = AGUIAdapter.load_messages(result)
+    assert list(iter_message_parts(reloaded, ModelRequest, UserPromptPart)) == snapshot(
+        [UserPromptPart(content=[DocumentUrl(url='https://example.com/img')], timestamp=IsDatetime())]
+    )
+    redumped = AGUIAdapter.dump_messages(reloaded, ag_ui_version='0.1.10')
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in redumped] == [
+        m.model_dump(exclude={'id'}, exclude_none=True) for m in result
+    ]
 
 
 def test_dump_messages_legacy_binary_content() -> None:

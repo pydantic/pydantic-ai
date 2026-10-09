@@ -224,20 +224,20 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     # configuration until `session()` opens the connection, so every keyword lands on a private
     # dataclass field (`_deps=deps`) rather than on a same-named parameter. The rename is what the
     # walk sees; nothing is dropped, and `AgentRealtime` passing them on is covered by the realtime
-    # session tests.
+    # session tests. `conversation` is resolved first, into the `message_history`, `usage` and
+    # `conversation_id` it stands in for; those three are passed on by keyword to that resolution, so
+    # the walk counts them as forwarded, and it is the resolved values `AgentRealtime` then holds.
     ('AbstractAgent', 'realtime'): frozenset(
         {
+            'conversation',
             'deps',
             'model_settings',
             'instructions',
             'toolsets',
             'capabilities',
-            'usage',
             'usage_limits',
             'metadata',
-            'conversation_id',
             'run_id',
-            'message_history',
         }
     ),
     # Same for `infer_name`, plus `event_stream_handler`, which these two consume rather than

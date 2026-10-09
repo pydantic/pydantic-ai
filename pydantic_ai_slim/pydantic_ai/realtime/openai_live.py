@@ -36,10 +36,10 @@ import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, ClassVar, Literal, cast
+from typing import Annotated, Any, ClassVar, Literal, assert_never, cast
 from urllib.parse import quote
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import TypedDict
 
@@ -102,6 +102,7 @@ from ._openai_protocol import (
     realtime_websocket_url,
     tool_choice_config,
 )
+from ._openai_webrtc import HANG_UP_MAX_RETRIES, HANG_UP_TIMEOUT, ignore_ended_call
 from ._utils import DEFAULT_MAX_RECONNECTS, inject_trace_context, reconnect_with_backoff, resolve_advertised_tools
 from .codec import (
     AudioDelta,
@@ -137,7 +138,6 @@ try:
         OutputAudioDeltaEvent,
         OutputTranscriptDeltaEvent,
         ResponseEvent,
-        ServerEvent,
         SessionClosedEvent,
         SessionStartedEvent,
         SessionUsageUpdatedEvent,
@@ -230,7 +230,33 @@ _OPENAI_MODEL_KINDS = frozenset({'openai', 'openai-chat', 'openai-responses'})
 #: live). The frame names no delegation, so this is what says delegated work ended.
 _HANDOFF_FAILURE_PREFIX = 'Responses handoff'
 
-_server_event_adapter: TypeAdapter[ServerEvent] = TypeAdapter(ServerEvent)
+_ActedOnEvent = Annotated[
+    OutputAudioDeltaEvent
+    | OutputTranscriptDeltaEvent
+    | InputTranscriptDeltaEvent
+    | DelegationCreatedEvent
+    | ResponseEvent
+    | SessionUsageUpdatedEvent
+    | SessionClosedEvent
+    | ErrorEvent,
+    Field(discriminator='type'),
+]
+#: The Live server events the connection acts on. Every other type, including ones this version of the SDK
+#: doesn't know, is a notice or an acknowledgement that changes nothing the session has said or heard.
+_ACTED_ON_EVENT_TYPES = frozenset(
+    {
+        'session.output_audio.delta',
+        'session.output_transcript.delta',
+        'session.input_transcript.delta',
+        'session.delegation.created',
+        'response.event',
+        'session.usage.updated',
+        'session.closed',
+        'error',
+    }
+)
+_acted_on_event_adapter: TypeAdapter[_ActedOnEvent] = TypeAdapter(_ActedOnEvent)
+_json_object_adapter: TypeAdapter[dict[str, Any]] = TypeAdapter(dict[str, Any])
 
 
 class _LiveErrorDetails(TypedDict):
@@ -247,9 +273,24 @@ class _LiveErrorFrame(TypedDict):
 # required `str`, so those fail `ServerEvent` validation. This narrower shape still parses them.
 _live_error_adapter: TypeAdapter[_LiveErrorFrame] = TypeAdapter(_LiveErrorFrame)
 
-#: Why a session can end without anyone asking. The others, `close_requested` and `remote_hangup`, are
-#: an ordinary end of the call.
-_ABNORMAL_CLOSE_REASONS = frozenset({'expired', 'content', 'connection_lost'})
+
+class _LiveSessionClosedFrame(TypedDict):
+    reason: str
+
+
+class _LiveSessionUsage(TypedDict):
+    seconds: float
+
+
+# The two fields of `session.closed` the connection reads, each validated on its own, so a frame whose
+# other fields have drifted from the SDK's shape still says why the session ended and, while its usage
+# still parses, records the final usage.
+_live_session_closed_adapter: TypeAdapter[_LiveSessionClosedFrame] = TypeAdapter(_LiveSessionClosedFrame)
+_live_session_usage_adapter: TypeAdapter[_LiveSessionUsage] = TypeAdapter(_LiveSessionUsage)
+
+#: Why a session ends as an ordinary end of the call. Any other reason, `expired`, `content` and
+#: `connection_lost` or one this version doesn't know, means it ended without anyone asking.
+_NORMAL_CLOSE_REASONS = frozenset({'close_requested', 'remote_hangup'})
 
 #: The ones a reconnect policy recovers from. A session the safety filter ended stays ended.
 _RECONNECTABLE_CLOSE_REASONS = frozenset({'expired', 'connection_lost'})
@@ -501,6 +542,18 @@ Returns the new socket and the new session's id.
 
 
 @dataclass
+class _SessionEnd:
+    """How far Live's session has ended, kept in one place so a replacement session starts from a fresh one."""
+
+    ended: bool = False
+    """Whether `session.closed` arrived, or the socket closed cleanly: there is nothing left to ask Live for."""
+
+    unclaimed: list[SessionUsage] = field(default_factory=list[SessionUsage])
+    """The final usage `session.closed` reported, until it has been yielded, so a session that stops reading in
+    between still gets it from `_end_session()`."""
+
+
+@dataclass
 class _Delegation:
     """A unit of work the Live model handed to the Responses backend."""
 
@@ -596,6 +649,7 @@ class OpenAILiveConnection(RealtimeConnection):
         # Calls asked for and not answered yet, which a replacement session wouldn't know.
         self._open_calls: set[str] = set()
         self._reported_seconds = 0.0
+        self._session_end = _SessionEnd()
         # Numbers the native tool parts this connection reports; the session maps them to its own indexes.
         self._native_part_index = 0
         # The backend's reasoning since its last other output item, per delegation. A search replays into
@@ -732,6 +786,39 @@ class OpenAILiveConnection(RealtimeConnection):
     async def _send_event(self, event: dict[str, Any]) -> None:
         await self._ws.send(to_json(event).decode())
 
+    async def _end_session(self) -> AsyncIterator[SessionUsage]:
+        """Send `session.close`, and read on until `session.closed` reports the session's final usage.
+
+        Live reports its billed seconds only periodically while a session runs, so without this the seconds
+        since the last report, all of them on a short call, would never be recorded. Called once the session
+        has stopped iterating: the read left in flight then is picked up here, so no frame is lost.
+
+        A backend response still finishing meanwhile has no reply left to land on, so its tokens are yielded
+        as session usage: counted in the session's total, attributed to no response.
+        """
+        if self._closed:
+            return
+        if self._session_end.ended:
+            # Live already ended the session; its final usage is yielded unless the session already took it.
+            unclaimed, self._session_end.unclaimed = self._session_end.unclaimed, []
+            for report in unclaimed:
+                yield report
+            return
+        await self._send_event({'type': 'session.close'})
+        while not self._session_end.ended:
+            read = self._recv_task if self._recv_task is not None else self._start_read()
+            self._recv_task = None
+            try:
+                raw = await read
+            except websockets.ConnectionClosedOK:
+                self._session_end.ended = True
+                break
+            for event in self._map_frame(raw):
+                if isinstance(event, SessionUsage):
+                    yield event if not event.response_scoped else SessionUsage(event.usage, response_scoped=False)
+            # Any final usage `session.closed` held back was just yielded.
+            self._session_end.unclaimed = []
+
     async def aclose(self) -> None:
         """Cancel the read in flight so closing the socket doesn't strand its exception."""
         self._closed = True
@@ -765,6 +852,8 @@ class OpenAILiveConnection(RealtimeConnection):
                     if not self._redial_on_close:
                         # The read started above can no longer complete, and nothing will await it.
                         self._cancel_read()
+                        # The session is over, so there is nothing left for `_end_session()` to ask Live for.
+                        self._session_end.ended = True
                         # A graceful close ends whatever was in flight. Live never says a turn is over,
                         # so without this the last reply would be settled as interrupted even though the
                         # model had finished speaking and the session closed normally.
@@ -776,6 +865,7 @@ class OpenAILiveConnection(RealtimeConnection):
                     dropped = e
                 else:
                     for event in self._map_frame(raw):
+                        self._hand_over(event)
                         yield event
                     try:
                         await self._send_due_continuations()
@@ -856,6 +946,16 @@ class OpenAILiveConnection(RealtimeConnection):
         self._call_delegations.clear()
         self._continuations_due.clear()
         self._reported_seconds = 0.0
+        # The new session hasn't ended: closing asks it to, and records the usage it reports then.
+        self._session_end = _SessionEnd()
+
+    def _hand_over(self, event: RealtimeCodecEvent) -> None:
+        """Note that the session is being handed final usage `_end_session()` would otherwise yield.
+
+        Handed over as it is yielded: a session that takes it records it before it can stop reading.
+        """
+        if isinstance(event, SessionUsage) and (unclaimed := self._session_end.unclaimed):
+            self._session_end.unclaimed = [report for report in unclaimed if report is not event]
 
     def _start_read(self) -> asyncio.Task[str | bytes]:
         """Begin the next read, remembering it so it can be cancelled on the way out."""
@@ -913,30 +1013,63 @@ class OpenAILiveConnection(RealtimeConnection):
         return events
 
     def _map_frame(self, raw: str | bytes) -> list[RealtimeCodecEvent]:
+        """Translate one frame, dispatching on its `type` before validating it, as the Realtime connection does.
+
+        A frame the connection acts on that no longer matches the SDK's shape is reported as a recoverable
+        error rather than dropped: dropping a drifted `session.closed` would lose the final usage and why
+        the session ended, and a drifted `response.event` the delegated work. Any other type is ignored,
+        known or not, so an event this version of the SDK doesn't know is not a reason to end the session.
+        """
+        if not isinstance(raw, str):
+            # Live sends only text frames; skip anything else, as the Realtime connection does.
+            return []
         try:
-            event = _server_event_adapter.validate_json(raw)
-        except ValidationError:
-            try:
-                error = _live_error_adapter.validate_json(raw)['error']
-            except ValidationError:
-                # An event type this version of the SDK doesn't know is not a reason to end the session.
+            data = _json_object_adapter.validate_json(raw)
+            event_type = data.get('type')
+            if not isinstance(event_type, str) or event_type not in _ACTED_ON_EVENT_TYPES:
                 return []
-            return self._map_error(error['message'], code=error['code'])
-        try:
+            try:
+                event = _acted_on_event_adapter.validate_python(data)
+            except ValidationError as e:
+                return self._map_drifted_event(event_type, data, e)
             return self._map_event(event)
         except ValueError as e:
-            # A well-formed event with a payload we can't decode (bad base64 audio, say) costs that
-            # frame, not the call: report it as recoverable and keep reading, as the Realtime
-            # connection does.
+            # Text that isn't a JSON object, or a well-formed event with a payload we can't decode (bad
+            # base64 audio, say), costs that frame, not the call: report it as recoverable and keep
+            # reading, as the Realtime connection does.
             return [RealtimeSessionErrorEvent(message=f'Failed to parse OpenAI GPT-Live event: {e}', recoverable=True)]
 
-    def _map_event(self, event: ServerEvent) -> list[RealtimeCodecEvent]:
-        """Translate one Live server event, ignoring the ones the session has no vocabulary for.
+    def _map_drifted_event(
+        self, event_type: str, data: dict[str, Any], error: ValidationError
+    ) -> list[RealtimeCodecEvent]:
+        """Salvage what the connection reads from an event that no longer matches the SDK's shape.
+
+        OpenAI's guide says to expect `error` frames whose `code` is null, which the SDK's `Error.code`
+        refuses. A `session.closed` is read for its reason and usage only, so it still ends the session
+        the way its reason says, and is reported as well only if its usage is what drifted. Anything else
+        that fails to validate is reported as a recoverable error naming its type.
+        """
+        parse_error = RealtimeSessionErrorEvent(
+            message=f'Failed to parse OpenAI GPT-Live event: `{event_type}` {error}', recoverable=True
+        )
+        with suppress(ValidationError):
+            if event_type == 'error':
+                details = _live_error_adapter.validate_python(data)['error']
+                return self._map_error(details['message'], code=details['code'])
+            if event_type == 'session.closed':
+                reason = _live_session_closed_adapter.validate_python(data)['reason']
+                try:
+                    seconds = _live_session_usage_adapter.validate_python(data.get('usage'))['seconds']
+                except ValidationError:
+                    return [parse_error, *self._map_session_closed(None, reason=reason)]
+                return self._map_session_closed(seconds, reason=reason)
+        return [parse_error]
+
+    def _map_event(self, event: _ActedOnEvent) -> list[RealtimeCodecEvent]:
+        """Translate one Live server event the connection acts on.
 
         Dispatch is on the parsed SDK types rather than the `type` string so each branch narrows to
-        the payload it reads. The events not handled here are the SIP transport notices, the sideband
-        audio reflections, and the acknowledgements of our own commands, none of which change what a
-        session has said or heard.
+        the payload it reads.
         """
         if isinstance(event, OutputAudioDeltaEvent):
             return self._map_output_audio(_b64decode(event.delta))
@@ -970,10 +1103,10 @@ class OpenAILiveConnection(RealtimeConnection):
                 event.usage.seconds, context_window_used=context_window.usage_ratio if context_window else None
             )
         if isinstance(event, SessionClosedEvent):
-            return self._map_session_closed(event)
+            return self._map_session_closed(event.usage.seconds, reason=event.reason)
         if isinstance(event, ErrorEvent):
             return self._map_error(event.error.message, code=event.error.code)
-        return []
+        assert_never(event)
 
     def _fragment(self, direction: Literal['input', 'output'], delta: str) -> str:
         """One transcript fragment, with the space Live leaves out where a new segment starts.
@@ -1026,24 +1159,27 @@ class OpenAILiveConnection(RealtimeConnection):
         )
         return events
 
-    def _map_session_closed(self, event: SessionClosedEvent) -> list[RealtimeCodecEvent]:
+    def _map_session_closed(self, cumulative_seconds: float | None, *, reason: str) -> list[RealtimeCodecEvent]:
         """Record the final usage, and say so when the session ended without anyone asking.
 
         The WebSocket close that follows is clean either way, so without this a reply cut off by the
         safety filter or the duration limit would be settled as though the model had finished it.
         """
-        events = self._map_usage(event.usage.seconds)
-        if event.reason not in _ABNORMAL_CLOSE_REASONS:
+        events: list[RealtimeCodecEvent] = [] if cumulative_seconds is None else self._map_usage(cumulative_seconds)
+        self._session_end = _SessionEnd(
+            ended=True, unclaimed=[report for report in events if isinstance(report, SessionUsage)]
+        )
+        if reason in _NORMAL_CLOSE_REASONS:
             return events
         events.extend(self._settle_open_turns(interrupted=True))
-        if event.reason in _RECONNECTABLE_CLOSE_REASONS and self._can_reconnect:
+        if reason in _RECONNECTABLE_CLOSE_REASONS and self._can_reconnect:
             # Not the end of the call: the reconnect policy re-opens the session once the socket closes.
             self._redial_on_close = True
             return events
         events.append(
             RealtimeSessionErrorEvent(
-                message=f'The OpenAI GPT-Live session ended: {event.reason}.',
-                code=f'live_session_{event.reason}',
+                message=f'The OpenAI GPT-Live session ended: {reason}.',
+                code=f'live_session_{reason}',
                 recoverable=False,
             )
         )
@@ -1410,6 +1546,28 @@ def _is_voiced(pcm: bytes) -> bool:
     return any(abs(sample) > _VOICE_FLOOR for sample in samples)
 
 
+def _check_seeded_history(expected: list[dict[str, Any]], started: SessionStartedEvent) -> None:
+    """Refuse to attach a sideband whose history isn't the history the Live session started with.
+
+    Live takes history only when a session starts, which on a WebRTC call is the offer. A sideband opened
+    with other history would record a conversation the model never saw, so it raises rather than attach.
+    """
+    # Compared with whitespace collapsed: what matters is that it is the same conversation, and a false
+    # mismatch would leave the call running with nothing to run its tools.
+    seeded = [
+        (item.role, [' '.join(part.text.split()) for part in item.content]) for item in started.session.input or []
+    ]
+    wanted = [(item['role'], [' '.join(part['text'].split()) for part in item['content']]) for item in expected]
+    if seeded == wanted:
+        return
+    raise UserError(
+        'An OpenAI GPT-Live session takes its history when it starts, which on a WebRTC call is when '
+        '`answer_webrtc_offer()` starts it, so the sideband must be opened with the same `message_history`. '
+        'Bind the history once with `agent.realtime(model, message_history=...)` and use that for both the '
+        'offer and the session, or pass the same history to `answer_webrtc_offer()` and `connect_webrtc()`.'
+    )
+
+
 def _backend_reasoning_effort(
     delegation_settings: OpenAILiveResponsesDelegation, settings: OpenAILiveModelSettings, backend_model: str
 ) -> ReasoningEffort:
@@ -1683,11 +1841,13 @@ class OpenAILiveModel(RealtimeModel):
         instructions: str | None = None,
         tools: Sequence[ToolDefinition] | None = None,
         model_settings: RealtimeModelSettings | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
     ) -> WebRTCAnswer:
         """Start a Live session for a browser's WebRTC offer, and return the SDP answer and the session to attach to.
 
         Live's configuration is fixed when the session starts, so everything is set here: the voice and
-        instructions, and the delegated backend with the agent's instructions and tools. The browser's
+        instructions, the delegated backend with the agent's instructions and tools, and the
+        `message_history` the call continues, seeded as on a WebSocket session. The browser's
         data channel is closed unless `openai_live_data_channel` opens it. The audio format is negotiated
         by WebRTC, so the profile's sample rates don't apply.
         """
@@ -1698,7 +1858,7 @@ class OpenAILiveModel(RealtimeModel):
             instructions=instructions or '',
             tools=list(tools) if tools else None,
             native_tools=[],
-            messages=[],
+            messages=message_history or [],
             settings=settings,
         )
         # WebRTC negotiates the audio format on the media transport, and Live rejects one set here.
@@ -1716,6 +1876,15 @@ class OpenAILiveModel(RealtimeModel):
             session=WebRTCSession(provider_name=self.system, session_id=created.session.id),
         )
 
+    def _check_hang_up(self, session: RealtimeProviderSession) -> None:
+        self._check_webrtc_session_provider(session)
+
+    async def hang_up(self, session: RealtimeProviderSession) -> None:
+        self._check_hang_up(session)
+        client = self.client.with_options(timeout=HANG_UP_TIMEOUT, max_retries=HANG_UP_MAX_RETRIES)
+        with ignore_ended_call('session_id_not_found'), map_openai_api_errors(self.model_name):
+            await client.live.sessions.hangup(session.session_id)
+
     @asynccontextmanager
     async def connect_webrtc(
         self,
@@ -1729,19 +1898,10 @@ class OpenAILiveModel(RealtimeModel):
 
         The session was fully configured when it started, and Live can't reconfigure it, so the sideband
         only runs it: it executes the backend's tool calls and records the conversation, while the browser
-        holds the audio. For the same reason it can't be seeded with `message_history`.
+        holds the audio. For the same reason it seeds nothing: the history it is opened with has to be the
+        history the offer seeded, which it checks against the session Live replays.
         """
-        if session.provider_name != self.system:
-            raise UserError(
-                f'This WebRTC call was negotiated by provider {session.provider_name!r}, but this realtime '
-                f'model connects through {self.system!r}. Answer the offer and attach the sideband with the '
-                'same model/provider.'
-            )
-        if seed_input_items(messages, provider_name=self.system):
-            raise UserError(
-                'An OpenAI GPT-Live session takes its history when it starts, so a WebRTC sideband attaching to '
-                'one cannot seed `message_history`. Start the session without it, or connect over WebSockets.'
-            )
+        self._check_webrtc_session_provider(session)
         settings = cast('OpenAILiveModelSettings', self._merge_model_settings(model_settings) or {})
         self._reject_unsupported(settings)
         handshake_timeout = settings.get('handshake_timeout', 30.0)
@@ -1762,6 +1922,7 @@ class OpenAILiveModel(RealtimeModel):
                     started = SessionStartedEvent.model_validate(started_frame)
                 except ValidationError as e:
                     raise RealtimeHandshakeError(f'Malformed `{_SESSION_STARTED_EVENT}` event: {e}') from e
+            _check_seeded_history(seed_input_items(messages, provider_name=self.system), started)
             delegation = started.session.delegation
             connection = OpenAILiveConnection(
                 ws,

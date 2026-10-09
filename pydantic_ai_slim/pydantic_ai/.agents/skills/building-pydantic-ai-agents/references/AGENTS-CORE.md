@@ -229,3 +229,9 @@ Good defaults:
 - primary expensive/strong model, cheaper fallback for resilience
 - same prompt/output contract across both models
 - per-model settings only when the user actually needs them
+
+The answering response's `failed_attempts` lists the attempts the fallback moved on from (model, provider,
+`'error'` or `'rejected'` outcome, error, start time, duration, usage); when every model fails they're on
+`FallbackExceptionGroup.attempts`. A rejected response's tokens and cost count in `RunUsage` and towards token and
+cost limits, but not in the answering response's `usage`. Neither they nor failed attempts count towards
+`UsageLimits.request_limit`, which bounds the model responses the agent acts on, not requests sent to the provider.

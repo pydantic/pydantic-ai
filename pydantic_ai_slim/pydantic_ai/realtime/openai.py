@@ -25,6 +25,7 @@ from typing_extensions import TypeAliasType
 try:
     import websockets
     from openai.types.realtime import (
+        InputAudioBufferTimeoutTriggered,
         RealtimeErrorEvent,
         RealtimeResponseUsage,
     )
@@ -54,12 +55,14 @@ from ..messages import (
     BinaryAudio,
     BinaryImage,
     ModelMessage,
+    RealtimeInputTranscriptionErrorEvent,
     RealtimeOutputSpeechEndEvent,
     RealtimeOutputSpeechStartEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
 )
 from ..models import ModelRequestParameters
+from ..models.openai import _map_api_errors as map_openai_api_errors  # pyright: ignore[reportPrivateUsage]
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
@@ -73,6 +76,7 @@ from ._openai_protocol import (
     INPUT_AUDIO_BUFFER_APPEND_EVENT,
     INPUT_AUDIO_BUFFER_CLEAR_EVENT,
     INPUT_AUDIO_BUFFER_COMMIT_EVENT,
+    INPUT_AUDIO_BUFFER_TIMEOUT_TRIGGERED_EVENT,
     INPUT_TRANSCRIPT_DONE_TYPES,
     RESPONSE_CANCEL_EVENT,
     RESPONSE_CREATE_EVENT,
@@ -109,7 +113,13 @@ from ._openai_protocol import (
     user_message_item,
     with_realtime_query,
 )
-from ._openai_webrtc import answer_webrtc_offer as _answer_webrtc_offer, mint_client_secret as _mint_client_secret
+from ._openai_webrtc import (
+    HANG_UP_MAX_RETRIES,
+    HANG_UP_TIMEOUT,
+    answer_webrtc_offer as _answer_webrtc_offer,
+    ignore_ended_call,
+    mint_client_secret as _mint_client_secret,
+)
 from ._utils import (
     DEFAULT_MAX_RECONNECTS,
     inject_trace_context,
@@ -386,6 +396,11 @@ class _DecodedFrame:
     """Whether the frame is about a response that has already ended, so its codec events repeat or trail
     that response's terminal and are left out of the lifecycle stream."""
 
+    @property
+    def ends_session(self) -> bool:
+        """Whether the frame reports the session over, with a non-recoverable error."""
+        return any(isinstance(event, RealtimeSessionErrorEvent) and not event.recoverable for event in self.codec)
+
     def tagged(self) -> list[TaggedEvent]:
         """The frame's events in order, each with whether it is stale (see `RealtimeConnection._tagged_frames`)."""
         return [
@@ -447,6 +462,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._input_transcription_enabled = input_transcription_enabled
         self._reconnects_used = 0
         self._gave_up = False
+        # Set once the server reports the session over, e.g. xAI's `max_duration` error.
+        self._session_ended = False
         self._observes_output_audio = observes_output_audio
         # Output audio is mono PCM16 at this rate: 2 bytes per sample, so a barge-in's truncation can be
         # clamped to the milliseconds of audio actually generated.
@@ -502,6 +519,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._output_items: dict[str, tuple[int, int]] = {}
         self._output_audio_playing = False
         self._output_speech_clear_sent = False
+        # Input items server VAD committed because its `idle_timeout_ms` ran out with nobody speaking. The
+        # server commits the silent buffer and starts a follow-up response to it, but no user turn happened:
+        # the lifecycle keeps the commit out of the user turns, and the connection drops the item's
+        # transcription (empty, or failed). Tracked only while transcribing, until that transcription ends.
+        self._idle_timeout_items: set[str] = set()
 
     @property
     def model_name(self) -> str | None:
@@ -529,6 +551,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     def _can_reconnect(self) -> bool:
         return (
             not self._gave_up
+            and not self._session_ended
             and self._dial is not None
             and self._reconnect is not None
             and self._reconnects_used < self._reconnect.get('max_reconnects', DEFAULT_MAX_RECONNECTS)
@@ -820,6 +843,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                         leading = [*self._lifecycle.take_leading(), *self._take_pending_lifecycle()]
                         yield [*((event, False) for event in leading), (_frame_error(e), False)]
                         continue
+                    # The server reporting the session over makes the close that follows final:
+                    # re-dialing would only run into the same end.
+                    self._session_ended = self._session_ended or frame.ends_session
                     yield frame.tagged()
                 # `websockets` ends iteration silently on a *normal* close (1000/1001) and only raises
                 # on an abnormal one, but a session the server hung up on is over either way: OpenAI
@@ -838,16 +864,20 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # instead of escaping the stream and bypassing the reconnect policy.
                 closed = str(e)
 
-            if self._reconnect is not None and self._dial is not None and await self._try_reconnect():
+            reconnects = not self._session_ended and self._reconnect is not None and self._dial is not None
+            if reconnects and await self._try_reconnect():
                 reconnected = RealtimeSessionReconnectEvent(state_restored=self._restores_state_on_reconnect)
                 yield [*((event, False) for event in self._take_pending_lifecycle()), (reconnected, False)]
                 continue
-            reconnects = self._reconnect is not None and self._dial is not None
             if reconnects:
                 # Out of attempts: no reconnect is coming any more.
                 self._gave_up = True
             self._lifecycle.closed(self._unanswered_inputs())
-            settled = [(event, False) for event in self._take_pending_lifecycle()]
+            settled: list[TaggedEvent] = [(event, False) for event in self._take_pending_lifecycle()]
+            if self._session_ended:
+                # The server already said why the session ended; the close adds nothing to report.
+                yield settled
+                return
             # No reconnect policy, or the reconnect failed: a closed connection is fatal. Surface it as a
             # non-recoverable error and end the stream cleanly, rather than raising.
             reconnect_failed = '; reconnect failed' if reconnects else ''
@@ -924,6 +954,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # response, emit usage, and clear the suppression.
         if self._is_cancelled_straggler(event_type, data):
             return _DecodedFrame()
+        if event_type == INPUT_AUDIO_BUFFER_TIMEOUT_TRIGGERED_EVENT and self._input_transcription_enabled:
+            self._idle_timeout_items.add(InputAudioBufferTimeoutTriggered.model_validate(data).item_id)
         # A frame about a response that has already ended repeats or trails its terminal.
         stale = self._lifecycle.is_ended(frame_response_id(event_type, data))
         self._lifecycle.before_frame(event_type, data)
@@ -993,7 +1025,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     self._generated_audio_bytes += len(event.data)
                 self._track_output_item(event.item_id, content_index, self._generated_audio_bytes)
         if event is not None and not (event_type == 'response.done' and superseded):
-            events.append(event)
+            if not (
+                isinstance(event, InputTranscript | RealtimeInputTranscriptionErrorEvent)
+                and event.item_id in self._idle_timeout_items
+            ):
+                events.append(event)
+            elif isinstance(event, RealtimeInputTranscriptionErrorEvent) or event.is_final:
+                # The item's transcription is over, whether it succeeded or failed.
+                self._idle_timeout_items.discard(event.item_id)
             if isinstance(event, InputTranscript) and event.is_final and event_type in INPUT_TRANSCRIPT_DONE_TYPES:
                 # The transcript is already recorded, so a malformed `usage` payload costs the usage
                 # event, not the user's words: report it as the same recoverable frame error `__aiter__`
@@ -1487,7 +1526,11 @@ class OpenAIRealtimeModel(RealtimeModel):
         instructions: str | None = None,
         tools: Sequence[ToolDefinition] | None = None,
         model_settings: RealtimeModelSettings | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
     ) -> WebRTCAnswer:
+        # The Realtime API's calls endpoint takes no conversation items (`session.input` is rejected), so
+        # history is seeded by the sideband when it attaches, as `connect_webrtc` does.
+        del message_history
         return await _answer_webrtc_offer(
             http_client=self._http_client,
             calls_url=self._webrtc_calls_url(),
@@ -1498,6 +1541,15 @@ class OpenAIRealtimeModel(RealtimeModel):
             session_config=self._webrtc_session_config(instructions, tools, model_settings),
         )
 
+    def _check_hang_up(self, session: RealtimeProviderSession) -> None:
+        self._check_webrtc_session_provider(session)
+
+    async def hang_up(self, session: RealtimeProviderSession) -> None:
+        self._check_hang_up(session)
+        client = self.client.with_options(timeout=HANG_UP_TIMEOUT, max_retries=HANG_UP_MAX_RETRIES)
+        with ignore_ended_call('call_id_not_found'), map_openai_api_errors(self.model_name):
+            await client.realtime.calls.hangup(session.session_id)
+
     @asynccontextmanager
     async def connect_webrtc(
         self,
@@ -1507,12 +1559,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
-        if session.provider_name != self.system:
-            raise UserError(
-                f'This WebRTC call was negotiated by provider {session.provider_name!r}, but this realtime '
-                f'model connects through {self.system!r}. Answer the offer and attach the sideband with the '
-                'same model/provider.'
-            )
+        self._check_webrtc_session_provider(session)
         settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
         instructions = get_instructions(messages, model_request_parameters) or ''

@@ -10,6 +10,7 @@ import sys
 import textwrap
 import time
 import uuid
+from builtins import BaseExceptionGroup as BaseExceptionGroup
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -24,7 +25,7 @@ from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from types import GenericAlias
 from typing import (
@@ -55,11 +56,6 @@ from pydantic_graph.exceptions import UnsupportedEventLoopError
 from pydantic_graph.util import get_callable_name
 
 from .exceptions import UserError
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
-else:
-    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 
 AbstractSpan = AbstractSpan
 
@@ -360,12 +356,7 @@ def raise_if_cancelling() -> None:
     message it carried) was consumed by whatever absorbed it and cannot be recovered — the
     cancellation *state* is re-asserted, not the original exception.
 
-    On Python 3.10 `Task.cancelling()` does not exist and this is a no-op: an absorbed external
-    cancellation cannot be reliably detected there, so the cancellation guarantee is documented
-    as best-effort on 3.10.
     """
-    if sys.version_info < (3, 11):  # pragma: lax no cover
-        return
     try:
         task = asyncio.current_task()
     except RuntimeError:  # pragma: no cover
@@ -562,7 +553,7 @@ def sync_anext(iterator: Iterator[T]) -> T:
 
 
 def now_utc() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def fill_run_metadata(message: _messages.ModelMessage, *, run_id: str | None, conversation_id: str | None) -> None:
@@ -941,25 +932,25 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
             new_name = name_mapping.get(original_name, original_name)
             s['$ref'] = f'#/$defs/{new_name}'
 
-    # Recursively update refs in properties
-    if 'properties' in s:
-        props: dict[str, dict[str, Any]] = s['properties']
-        for prop in props.values():
-            _update_mapped_json_schema_refs(prop, name_mapping)
+    # Recursively update refs in properties and patternProperties
+    for keyword in ['properties', 'patternProperties']:
+        if keyword in s:
+            props: dict[str, dict[str, Any]] = s[keyword]
+            for prop in props.values():
+                if isinstance(prop, dict):
+                    _update_mapped_json_schema_refs(prop, name_mapping)
 
-    # Handle arrays
-    if 'items' in s and isinstance(s['items'], dict):
-        items: dict[str, Any] = s['items']  # pyright: ignore[reportUnknownVariableType]
-        _update_mapped_json_schema_refs(items, name_mapping)
+    # Handle single-subschema keywords: arrays, additionalProperties, propertyNames and negation
+    for keyword in ['items', 'additionalProperties', 'propertyNames', 'not']:
+        subschema = s.get(keyword)
+        if isinstance(subschema, dict):
+            _update_mapped_json_schema_refs(subschema, name_mapping)  # pyright: ignore[reportUnknownArgumentType]
+
+    # Handle prefixItems
     if 'prefixItems' in s:
         prefix_items: list[dict[str, Any]] = s['prefixItems']
         for item in prefix_items:
             _update_mapped_json_schema_refs(item, name_mapping)
-
-    # Handle additionalProperties
-    if 'additionalProperties' in s and isinstance(s['additionalProperties'], dict):
-        additional_props: dict[str, Any] = s['additionalProperties']  # pyright: ignore[reportUnknownVariableType]
-        _update_mapped_json_schema_refs(additional_props, name_mapping)
 
     # Handle unions and composition keywords
     for keyword in ['anyOf', 'oneOf', 'allOf']:
@@ -967,11 +958,6 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
             keyword_items: list[dict[str, Any]] = s[keyword]
             for item in keyword_items:
                 _update_mapped_json_schema_refs(item, name_mapping)
-
-    # Handle negation
-    if 'not' in s and isinstance(s['not'], dict):
-        not_schema: dict[str, Any] = s['not']  # pyright: ignore[reportUnknownVariableType]
-        _update_mapped_json_schema_refs(not_schema, name_mapping)
 
 
 def _unique_def_name(name: str, schema: dict[str, Any], all_defs: dict[str, dict[str, Any]]) -> str:
@@ -1112,6 +1098,8 @@ def is_text_like_media_type(media_type: str) -> bool:
 
     Returns True for `text/*`, JSON, XML, YAML, TOML, and their structured syntax suffixes.
     """
+    # Media types may carry parameters (RFC 2045); classify on the bare type.
+    media_type = media_type.split(';', 1)[0].strip()
     return (
         media_type.startswith('text/')
         or media_type == 'application/json'

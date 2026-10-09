@@ -271,6 +271,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def _prepare_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
         return self.wrapped._prepare_workspace(ctx, workspace, explicit=explicit)
 
+    def _default_run_id(self) -> str | None:
+        return self.wrapped._default_run_id()
+
+    def _default_conversation_id(self, run_id: str) -> str | None:
+        return self.wrapped._default_conversation_id(run_id)
+
     async def prepare_tools(
         self,
         ctx: RunContext[AgentDepsT],

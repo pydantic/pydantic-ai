@@ -270,7 +270,7 @@ class Fallback(AbstractCapability[AgentDepsT]):
             self._cursor += 1
             if not self._already_attempted(candidate):
                 return RetryModelRequest(candidate)
-        raise_fallback_exception_group(self._exceptions, self._rejected_responses, owner='Fallback')
+        raise_fallback_exception_group(self._exceptions, self._rejected_responses, [], owner='Fallback')
 
     def _already_attempted(self, candidate: Model | KnownModelName | str) -> bool:
         if isinstance(candidate, Model):

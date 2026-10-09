@@ -11,13 +11,11 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
-
-from typing_extensions import assert_never
+from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, assert_never
 
 from ._utils import await_maybe, get_first_param_type, is_str_dict
 from .exceptions import FallbackExceptionGroup, UserError
-from .messages import ModelResponse
+from .messages import ModelRequestAttempt, ModelResponse
 
 if TYPE_CHECKING:
     from .models import StreamedResponse
@@ -133,11 +131,7 @@ class FallbackPredicates:
         points at whichever entry point the user actually called.
         """
         predicates = cls(exception_handlers=[], response_handlers=[])
-        if isinstance(fallback_on, tuple):
-            if fallback_on:
-                # Tuple of exception types (typing guarantees tuple contents are exception types)
-                predicates.exception_handlers.append(_exception_types_to_handler(fallback_on))  # type: ignore[arg-type]
-        elif _is_exception_type(fallback_on):
+        if _is_exception_type(fallback_on):
             # Single exception type
             predicates.exception_handlers.append(_exception_types_to_handler((fallback_on,)))
         elif callable(fallback_on):
@@ -183,16 +177,23 @@ class FallbackPredicates:
 
 
 def raise_fallback_exception_group(
-    exceptions: list[Exception], rejected_responses: list[ModelResponse], *, owner: str
+    exceptions: list[Exception],
+    rejected_responses: list[ModelResponse],
+    attempts: list[ModelRequestAttempt],
+    *,
+    owner: str,
 ) -> NoReturn:
     """Raise a `FallbackExceptionGroup` combining exceptions and response rejections.
 
     Args:
         exceptions: Exceptions raised by models.
         rejected_responses: Responses rejected by `fallback_on` handlers.
+        attempts: Every attempt that was made, in order.
         owner: The class whose chain was exhausted, named in the group's message.
     """
     all_errors = list(exceptions)
     if rejected_responses:
         all_errors.append(ResponseRejected(len(rejected_responses)))
-    raise FallbackExceptionGroup(f'All models from {owner} failed', all_errors)
+    group = FallbackExceptionGroup(f'All models from {owner} failed', all_errors)
+    group.attempts = attempts
+    raise group

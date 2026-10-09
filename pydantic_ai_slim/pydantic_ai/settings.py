@@ -29,6 +29,46 @@ it maps to the closest available value (e.g. `'xhigh'` -> `'high'` on providers
 that don't support it, `'minimal'` -> `'low'` on providers without a minimal level).
 """
 
+CacheRetention: TypeAlias = Literal['5m', '30m', '1h']
+"""The retention tiers for prompt-cache configuration.
+
+Not all providers support all tiers. A requested retention snaps down to the
+nearest tier the provider supports (e.g. `'1h'` -> `'5m'` on a provider whose
+longest tier is 5 minutes); a retention below every supported tier snaps up to
+the shortest one. On a provider with no retention tier to request, caching uses
+the provider's default retention.
+"""
+
+
+class CacheConfig(TypedDict, total=False):
+    """Detailed prompt-cache configuration, for the [`cache`][pydantic_ai.settings.ModelSettings.cache] setting.
+
+    `{}` is the same as `cache=True`, and `{'retention': '1h'}` the same as `cache='1h'`.
+    """
+
+    retention: CacheRetention
+    """The retention to cache with, snapped to the nearest tier the provider supports.
+
+    When omitted, the provider's default retention is used.
+    """
+
+    messages: bool
+    """Whether to also cache the growing conversation, not only the stable prompt prefix. Default: `True`.
+
+    With `False`, only the tool definitions and static instructions are cached: useful for many short,
+    one-off conversations that share long instructions or tools, where writing each conversation to the
+    cache would cost more than it saves because it's never read back. On OpenAI requests that can't carry an
+    instruction breakpoint, such as those continuing server-side state, the conversation is cached as well,
+    as caching only the prefix would cache nothing.
+    """
+
+
+CacheSetting: TypeAlias = bool | CacheRetention | CacheConfig
+"""Type alias for prompt-cache configuration values.
+
+See [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] for the value semantics.
+"""
+
 ToolChoiceScalar = Literal['none', 'required', 'auto']
 
 
@@ -218,6 +258,13 @@ class ModelSettings(TypedDict, total=False):
     Numeric seconds work everywhere. A legacy `httpx.Timeout` is also accepted and is converted to an
     `httpx2.Timeout` on the paths whose SDK expects one. `httpx2.Timeout` is deliberately not part of
     this contract, because some SDKs behind these settings still reject it.
+
+    On an HTTP client Pydantic AI created (including one from
+    [`create_async_httpx2_client()`][pydantic_ai.models.create_async_httpx2_client]), a number of
+    seconds (or an `httpx.Timeout` whose phases are all equal) can shorten but never lengthen the
+    client's own connect timeout (5 seconds by default) and pool timeout, so a long request timeout
+    doesn't also allow a long wait to connect. An `httpx.Timeout` whose phases differ, and any timeout
+    on another client you pass in yourself, is used as given.
 
     Supported by:
 
@@ -472,6 +519,49 @@ class ModelSettings(TypedDict, total=False):
     * Z.AI (as `extra_body['thinking']`)
     * Bedrock Mantle (the Responses interface only; the Chat Completions interface serves only the
       `gpt-oss-safeguard` models, which take no thinking parameter)
+    """
+
+    cache: CacheSetting
+    """Enable, configure, or disable library-managed prompt caching for the model request.
+
+    Prompt caching lets the provider serve a long or multi-turn prompt's stable prefix from its cache
+    instead of re-processing it. Cache writes cost more than uncached input (1.25x for Anthropic's
+    5-minute and OpenAI's GPT-5.6 caches, 2x for Anthropic's 1-hour cache) while cache reads cost about
+    0.1x, so a 1.25x write breaks even after one read and a 2x write after two.
+
+    - `True`: Cache the stable prompt prefix (tool definitions and static instructions)
+      and the growing conversation, with the provider's default retention. Uses the provider's
+      automatic caching mode where one exists; elsewhere the library places cache breakpoints.
+    - `False`: Disable library-managed caching, the same as leaving the setting unset but also
+      overriding a `cache` value in the model's default settings. Explicit
+      [`CachePoint`][pydantic_ai.messages.CachePoint] markers and provider-specific cache settings
+      still apply, and providers that cache implicitly (e.g. OpenAI, Gemini) still do.
+    - `'5m'`/`'30m'`/`'1h'`: Cache with a specific retention, snapped to the nearest tier the
+      provider supports (down where a shorter tier exists).
+    - A [`CacheConfig`][pydantic_ai.settings.CacheConfig]: Cache with an optional `retention`, and with
+      `messages=False` cache only the stable prefix (tool definitions and static instructions), not the
+      conversation: useful for many one-off conversations that share long instructions or tools.
+
+    Explicit `CachePoint` markers in the message history can be combined with this setting; when
+    a request would exceed the provider's maximum number of cache breakpoints, the oldest message
+    breakpoints are dropped first (on OpenAI, the server drops the earliest breakpoints first, starting
+    with the instruction breakpoint). Provider-specific cache settings (e.g. `anthropic_cache`,
+    `bedrock_cache_instructions`) take precedence: if any is set, including to `False`, this unified
+    field is ignored entirely for that request.
+
+    Silently ignored by model classes not listed below, and by models that cache implicitly without
+    request-side configuration.
+
+    Supported by:
+
+    * Anthropic (as `anthropic_cache`; as instruction, tool definition and message breakpoints on
+      the Bedrock and Vertex SDK clients)
+    * Bedrock (Anthropic and Amazon Nova models only; as `bedrock_cache_instructions`,
+      `bedrock_cache_tool_definitions` and `bedrock_cache_messages`)
+    * OpenRouter (Anthropic and Gemini models only; as `openrouter_cache_instructions`,
+      `openrouter_cache_tool_definitions` and `openrouter_cache_messages`)
+    * OpenAI (GPT-5.6 and later on the OpenAI API only; as `openai_prompt_cache_options` and
+      `openai_cache_instructions`)
     """
 
     service_tier: ServiceTier

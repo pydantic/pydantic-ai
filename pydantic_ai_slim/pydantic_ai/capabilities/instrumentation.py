@@ -9,10 +9,11 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
-from opentelemetry.trace import StatusCode
+from opentelemetry.trace import StatusCode, get_current_span
 from pydantic_core import ValidationError, to_json
 
 from pydantic_ai import _usage_attribution
+from pydantic_ai._cache_health import CacheHealthDetector, CollapseReason, ConversationCacheMarkStore
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     InstrumentationNames,
@@ -39,6 +40,7 @@ from pydantic_ai.exceptions import (
     ToolRetryError,
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, ToolCallPart, tool_return_ta
+from pydantic_ai.models._continuation import observe_continuation_segments
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -74,6 +76,14 @@ if TYPE_CHECKING:
     from pydantic_ai.tools import AgentDepsT
 
 
+_CACHE_COLLAPSE_EVENT_REASONS: frozenset[CollapseReason] = frozenset({'unexpected'})
+"""Only a collapse while the retention window should still have been active emits the span event."""
+
+_conversation_cache_marks = ConversationCacheMarkStore()
+"""Process-wide, because the `Instrumentation` capability can't carry the marks across runs: the one
+`Agent(instrument=...)` and `Agent.instrument_all()` inject is built afresh for every run."""
+
+
 def _default_settings() -> InstrumentationSettings:
     """Lazy import to avoid loading the OTel SDK eagerly at module import time."""
     from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -90,6 +100,20 @@ class Instrumentation(AbstractCapability[Any]):
 
     Other capabilities can add attributes to these spans using the OpenTelemetry API
     (`opentelemetry.trace.get_current_span().set_attribute(key, value)`).
+
+    Prompt-cache health is recorded on model-request spans using the
+    `pydantic_ai.cache.hit_ratio`, `pydantic_ai.cache.established_tokens`,
+    `pydantic_ai.cache.collapsed`, `pydantic_ai.cache.missed_tokens`, and
+    `pydantic_ai.cache.collapse_reason` attributes. Collapses are classified as
+    `unexpected`, `ttl_expired`, `compacted`, `unknown`, or `unreported`; only `unexpected` collapses
+    emit a `pydantic_ai.cache.collapse` span event, so the event means the cacheable
+    prefix moved while it should still have been warm. A sustained collapse emits the event
+    once, until a healthy read-back re-stabilizes the cache. The established prefix is tracked
+    per conversation and per provider, endpoint, and model, so the first request of a run that
+    continues a conversation is judged against what the previous run cached. A request long enough
+    to cache on a model that needs prompt caching configured, but has none configured, sets
+    `pydantic_ai.cache.not_enabled` and emits a `pydantic_ai.cache.not_enabled` span event, once per
+    conversation.
     """
 
     _safe_at_runtime: ClassVar[bool] = True
@@ -134,6 +158,14 @@ class Instrumentation(AbstractCapability[Any]):
     """Per-run cache of input messages' serialized OTel JSON fragments (see `MessageJsonCache`).
     `for_run`'s `replace(self)` re-runs the factory, so each run starts with an empty cache
     that's discarded when the run ends."""
+    _cache_health: CacheHealthDetector = field(
+        default_factory=lambda: CacheHealthDetector(
+            _conversation_cache_marks, None, None, alert_on=_CACHE_COLLAPSE_EVENT_REASONS
+        ),
+        repr=False,
+        init=False,
+    )
+    """Judges this run's responses against its conversation's cache marks, shared with its other runs."""
     # Resolved once from `self.settings.version` in `__post_init__` and preserved across
     # `dataclasses.replace` calls in `for_run` (which only touches init=True fields).
     _instrumentation_names: InstrumentationNames = field(
@@ -197,6 +229,9 @@ class Instrumentation(AbstractCapability[Any]):
         # Usage this run's span is accountable for, credited by `_usage_attribution` for as long as
         # the span is open in `wrap_run`; see `_run_span_end_attributes`.
         inst._run_usage = RunUsage()
+        inst._cache_health = CacheHealthDetector(
+            _conversation_cache_marks, ctx.conversation_id, ctx.run_id, alert_on=_CACHE_COLLAPSE_EVENT_REASONS
+        )
         return inst
 
     # ------------------------------------------------------------------
@@ -380,12 +415,17 @@ class Instrumentation(AbstractCapability[Any]):
             captured_response: ModelResponse | None = None
             captured_time_to_first_chunk: float | None = None
 
+            segments: list[ModelResponse] = []
+
             def capture_response(response: ModelResponse, time_to_first_chunk: float | None) -> None:
                 nonlocal captured_response, captured_time_to_first_chunk
                 captured_response = response
                 captured_time_to_first_chunk = time_to_first_chunk
 
-            with model_response_span_capture(request_context, capture_response):
+            with (
+                model_response_span_capture(request_context, capture_response),
+                observe_continuation_segments(request_context, segments.append),
+            ):
                 try:
                     response = await handler(request_context)
                 except BaseException:
@@ -400,6 +440,9 @@ class Instrumentation(AbstractCapability[Any]):
                             usage_response=_usage_response(request_context),
                         )
                         track_request(prepared_request_context)
+                        # The provider served this request even if a later hook rejected the response
+                        # (e.g. `after_model_request` raising `ModelRetry`), so its cache usage counts.
+                        self._record_cache_health(request_context, captured_response, segments)
                     raise
 
                 prepared_request_context = finish(
@@ -409,7 +452,62 @@ class Instrumentation(AbstractCapability[Any]):
                 )
                 # Use the prepared parameters so prompted-output instructions match the model payload.
                 track_request(prepared_request_context)
+                self._record_cache_health(request_context, response, segments)
                 return response
+
+    def _record_cache_health(
+        self, request_context: ModelRequestContext, response: ModelResponse, segments: list[ModelResponse]
+    ) -> None:
+        # A continuation chain (Anthropic `pause_turn`, ...) is merged into one response whose usage sums
+        # every segment's, including a suspended response a resumed run continues from, so it is judged
+        # by the final segment the provider served, whose prompt carries the whole prefix.
+        final_segment = segments[-1] if segments else None
+        # Observed even when the span isn't recording, so a sampled-out request still advances the marks.
+        health = self._cache_health.observe(request_context, response, final_segment=final_segment)
+        if health is None:
+            return
+        span = get_current_span()
+        if not span.is_recording():
+            return
+
+        # The cache is in play for this request (or was for an earlier one on the same key), so both
+        # are meaningful: a request that establishes a prefix without reading any of it back honestly
+        # has a `0.0` hit ratio, and that cold-start cost belongs in the run's cache-efficiency picture.
+        span.set_attribute('pydantic_ai.cache.hit_ratio', health.hit_ratio)
+        span.set_attribute('pydantic_ai.cache.established_tokens', health.established_tokens)
+
+        if health.not_enabled:
+            span.set_attribute('pydantic_ai.cache.not_enabled', True)
+            not_enabled_attributes = {
+                'input_tokens': response.usage.input_tokens,
+                'provider_name': response.provider_name,
+                'model_name': response.model_name,
+            }
+            # OTel attributes cannot be `None`.
+            span.add_event(
+                'pydantic_ai.cache.not_enabled',
+                attributes={key: value for key, value in not_enabled_attributes.items() if value is not None},
+            )
+            return
+
+        collapse = health.collapse
+        if collapse is None:
+            return
+        span.set_attribute('pydantic_ai.cache.collapsed', True)
+        span.set_attribute('pydantic_ai.cache.missed_tokens', collapse.missed_tokens)
+        span.set_attribute('pydantic_ai.cache.collapse_reason', collapse.reason)
+
+        if collapse.alert:
+            event_attributes: dict[str, str | int] = {
+                'established_tokens': collapse.previous.established_tokens,
+                'cache_read_tokens': collapse.cache_read_tokens,
+                'missed_tokens': collapse.missed_tokens,
+            }
+            if response.provider_name is not None:
+                event_attributes['provider_name'] = response.provider_name
+            if response.model_name is not None:  # pragma: no branch
+                event_attributes['model_name'] = response.model_name
+            span.add_event('pydantic_ai.cache.collapse', attributes=event_attributes)
 
     # ------------------------------------------------------------------
     # wrap_tool_execute — tool execution span

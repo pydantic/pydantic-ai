@@ -2,22 +2,23 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
-from copy import copy
 from dataclasses import dataclass, field, replace
-from decimal import Decimal
+from datetime import timedelta
 from functools import cached_property
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
 import anyio
-from opentelemetry.trace import get_current_span
+from opentelemetry.trace import Span, get_current_span
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai._instrumentation import (
     model_attributes,
     model_request_parameters_attributes,
+    open_request_policy,
     span_include_content,
 )
+from pydantic_ai._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
 from pydantic_ai._run_context import RunContext
 
 from .._fallback import (
@@ -31,9 +32,8 @@ from .._fallback import (
     raise_fallback_exception_group,
     stamp_continuation_pin,
 )
-from .._genai_prices import fill_response_cost
-from ..exceptions import ModelAPIError
-from ..messages import ModelResponse
+from ..exceptions import FallbackExceptionGroup, ModelAPIError
+from ..messages import ModelRequestAttempt, ModelResponse
 from ..profiles import ModelProfile
 from . import (
     KnownModelName,
@@ -167,7 +167,7 @@ class FallbackModel(Model):
         """
         exceptions: list[Exception] = []
         rejected_responses: list[ModelResponse] = []
-        rejected_cost: Decimal | None = None
+        attempts: list[ModelRequestAttempt] = []
         # Set once a pinned continuation fails and we rewind to the chain: the first successful response
         # the chain then produces is fresh generation superseding the stale suspended turn, so it must
         # be stamped as a replace (see `_stamp_replace_previous`) rather than accumulated onto it.
@@ -178,11 +178,13 @@ class FallbackModel(Model):
             suspended_response = messages[-1]
             assert isinstance(suspended_response, ModelResponse)
             prepared_parameters = model_request_parameters
+            start = AttemptStart()
             try:
                 _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                 response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
+                duration = start.elapsed()
                 if not await self._predicates.should_fallback(exc):
                     self._set_span_attributes(pinned, prepared_parameters)
                     raise
@@ -195,6 +197,7 @@ class FallbackModel(Model):
                 messages = _rewind_messages(messages)
                 rewound = True
                 exceptions.append(exc)
+                self._record_failed_attempt(pinned, attempts, exc, start=start, duration=duration)
                 # Fall through to normal chain below
             else:
                 if response.state == 'suspended':
@@ -204,30 +207,29 @@ class FallbackModel(Model):
 
         for model in self.models:
             prepared_parameters = model_request_parameters
+            start = AttemptStart()
             try:
                 _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
                 prepared_messages = model.prepare_messages(messages, model_request_parameters)
                 response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
+                duration = start.elapsed()
                 if await self._predicates.should_fallback(exc):
                     exceptions.append(exc)
+                    self._record_failed_attempt(model, attempts, exc, start=start, duration=duration)
                     continue
                 self._set_span_attributes(model, prepared_parameters)
                 raise exc
 
+            duration = start.elapsed()
             if await self._predicates.should_fallback(response):
-                fill_response_cost(response)
-                if response.usage.cost is not None:
-                    rejected_cost = (rejected_cost or Decimal()) + response.usage.cost
                 rejected_responses.append(response)
+                self._record_failed_attempt(model, attempts, response, start=start, duration=duration)
                 continue
 
-            if rejected_cost is not None:
-                fill_response_cost(response)
-                usage = copy(response.usage)
-                usage.cost = (usage.cost or Decimal()) + rejected_cost
-                response = replace(response, usage=usage)
+            if attempts:
+                response = replace(response, failed_attempts=[*attempts, *(response.failed_attempts or [])])
 
             # After a rewind, the first successful response is fresh generation that supersedes the
             # abandoned suspended turn (whether it ends complete or suspended), so mark it as a replace.
@@ -238,7 +240,7 @@ class FallbackModel(Model):
             self._set_span_attributes(model, prepared_parameters)
             return response
 
-        raise_fallback_exception_group(exceptions, rejected_responses, owner='FallbackModel')
+        raise_fallback_exception_group(exceptions, rejected_responses, attempts, owner='FallbackModel')
 
     @asynccontextmanager
     async def request_stream(
@@ -256,6 +258,7 @@ class FallbackModel(Model):
         and the normal fallback chain is tried. Mid-stream failures still propagate.
         """
         exceptions: list[Exception] = []
+        attempts: list[ModelRequestAttempt] = []
         # Set once a pinned continuation fails and we rewind to the chain: see the non-streaming `request`.
         rewound = False
 
@@ -265,6 +268,7 @@ class FallbackModel(Model):
             assert isinstance(suspended_response, ModelResponse)
             async with AsyncExitStack() as stack:
                 prepared_parameters = model_request_parameters
+                start = AttemptStart()
                 try:
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
@@ -272,6 +276,7 @@ class FallbackModel(Model):
                         pinned.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
                     )
                 except Exception as exc:
+                    duration = start.elapsed()
                     if not await self._predicates.should_fallback(exc):
                         self._set_span_attributes(pinned, prepared_parameters)
                         raise
@@ -283,6 +288,7 @@ class FallbackModel(Model):
                     messages = _rewind_messages(messages)
                     rewound = True
                     exceptions.append(exc)
+                    self._record_failed_attempt(pinned, attempts, exc, start=start, duration=duration)
                     # Fall through to normal chain below
                 else:
                     self._set_span_attributes(pinned, prepared_parameters)
@@ -297,6 +303,7 @@ class FallbackModel(Model):
         for model in self.models:
             async with AsyncExitStack() as stack:
                 prepared_parameters = model_request_parameters
+                start = AttemptStart()
                 try:
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = model.prepare_messages(messages, model_request_parameters)
@@ -304,8 +311,10 @@ class FallbackModel(Model):
                         model.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
                     )
                 except Exception as exc:
+                    duration = start.elapsed()
                     if await self._predicates.should_fallback(exc):
                         exceptions.append(exc)
+                        self._record_failed_attempt(model, attempts, exc, start=start, duration=duration)
                         continue
                     self._set_span_attributes(model, prepared_parameters)
                     raise exc
@@ -318,6 +327,8 @@ class FallbackModel(Model):
                 # stream supersedes the suspended turn is known the moment the rewound chain is entered.
                 if rewound:
                     _stamp_replace_previous(streamed_response)
+                if attempts:
+                    streamed_response.failed_attempts = [*attempts, *(streamed_response.failed_attempts or [])]
                 self._set_span_attributes(model, prepared_parameters)
                 yield streamed_response
                 # Stamp after `yield` (see the pinned path above): `state` is only final once the
@@ -326,7 +337,7 @@ class FallbackModel(Model):
                     _stamp_continuation(streamed_response, model)
                 return
 
-        raise_fallback_exception_group(exceptions, [], owner='FallbackModel')
+        raise_fallback_exception_group(exceptions, [], attempts, owner='FallbackModel')
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         """Cancel a suspended continuation on the underlying model holding the server-side job.
@@ -364,6 +375,14 @@ class FallbackModel(Model):
     @cached_property
     def profile(self) -> ModelProfile:
         raise NotImplementedError('FallbackModel does not have its own model profile.')
+
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """A fallback model can't know which model will serve the request, so no retention is claimed."""
+        return None
+
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
+        # Which model serves the request isn't known here, so nothing is claimed about its caching either.
+        return False
 
     @property
     def context_window(self) -> int | None:
@@ -407,30 +426,61 @@ class FallbackModel(Model):
             return next((m for m in self.models if m.model_id == model_id), None)
         return None
 
+    def _fallback_span(self) -> Span | None:
+        """The recording `chat` span instrumentation opened for this request, if any.
+
+        Matching the span's request model to this `FallbackModel` keeps attempts off an unrelated
+        ambient span, such as a user's own span around an uninstrumented model.
+        """
+        span = get_current_span()
+        if span.is_recording() and getattr(span, 'attributes', {}).get('gen_ai.request.model') == self.model_name:
+            return span
+        return None
+
     def _set_span_attributes(self, model: Model, model_request_parameters: ModelRequestParameters) -> None:
         with suppress(Exception):
-            span = get_current_span()
-            if span.is_recording():
-                attributes = getattr(span, 'attributes', {})
-                if attributes.get('gen_ai.request.model') == self.model_name:  # pragma: no branch
-                    span_attributes: dict[str, AttributeValue] = {**model_attributes(model)}
-                    # Only refresh `model_request_parameters` if it was emitted at span open; its absence
-                    # means `InstrumentationSettings.include_model_request_parameters` is off, and re-adding
-                    # it here would leak the attribute the setting is meant to suppress.
-                    if 'model_request_parameters' in attributes:
-                        span_attributes.update(
-                            model_request_parameters_attributes(
-                                model_request_parameters,
-                                # The settings aren't reachable from here, so the span carries its
-                                # own `include_content` in a context variable, keyed by the span it
-                                # was set for. This refresh serializes the *selected* model's
-                                # parameters, whose instruction parts the outer request may not have
-                                # had at all, so it cannot be inferred from what is already
-                                # recorded. Fails closed on anything but this span's own policy.
-                                include_content=span_include_content(span),
-                            )
+            if span := self._fallback_span():
+                span_attributes: dict[str, AttributeValue] = {**model_attributes(model)}
+                # Only refresh `model_request_parameters` if it was emitted at span open; its absence
+                # means `InstrumentationSettings.include_model_request_parameters` is off, and re-adding
+                # it here would leak the attribute the setting is meant to suppress.
+                if 'model_request_parameters' in getattr(span, 'attributes', {}):
+                    span_attributes.update(
+                        model_request_parameters_attributes(
+                            model_request_parameters,
+                            # The settings aren't reachable from here, so the span carries its
+                            # own `include_content` in a context variable, keyed by the span it
+                            # was set for. This refresh serializes the *selected* model's
+                            # parameters, whose instruction parts the outer request may not have
+                            # had at all, so it cannot be inferred from what is already
+                            # recorded. Fails closed on anything but this span's own policy.
+                            include_content=span_include_content(span),
                         )
-                    span.set_attributes(span_attributes)
+                    )
+                span.set_attributes(span_attributes)
+
+    def _record_failed_attempt(
+        self,
+        model: Model,
+        attempts: list[ModelRequestAttempt],
+        failure: Exception | ModelResponse,
+        *,
+        start: AttemptStart,
+        duration: timedelta,
+    ) -> None:
+        """Append the attempt this request is falling back from to `attempts`, and record it as a span under `chat`."""
+        # A nested `FallbackModel` recorded the attempts it made itself, and their usage was billed too.
+        if isinstance(failure, ModelResponse):
+            attempts.extend(failure.failed_attempts or [])
+        elif isinstance(failure, FallbackExceptionGroup):
+            attempts.extend(failure.attempts)
+        attempt = failed_attempt(model, failure, start=start, duration=duration)
+        attempts.append(attempt)
+        # Only under the `chat` span instrumentation opened for this request, and on its tracer provider.
+        if (span := self._fallback_span()) and (policy := open_request_policy()):
+            record_attempt_span(
+                attempt, failure, model=model, index=len(attempts) - 1, parent=span, tracer=policy.tracer
+            )
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:

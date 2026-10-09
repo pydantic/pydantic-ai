@@ -20,6 +20,7 @@ from httpx import AsyncClient
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Caching
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -38,6 +39,7 @@ weather_agent = Agent(
     instructions='Be concise, reply with one sentence.',
     deps_type=Deps,
     retries=2,
+    capabilities=[Caching()],
 )
 
 
