@@ -254,8 +254,7 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         # supersedes, and a revised turn would end up saying everything twice.
         event = replace(event, cumulative=True)
     elif isinstance(event, RealtimeSessionErrorEvent) and event.type == 'max_duration':
-        # xAI ends a conversation that runs past its maximum duration, and closes the socket, so the session
-        # can't carry on in it.
+        # xAI ends a conversation that runs past its maximum duration, so the session can't carry on in it.
         event = replace(event, recoverable=False)
     return event
 

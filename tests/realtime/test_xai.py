@@ -881,10 +881,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
 
 
 async def test_max_duration_error_reconnects_into_a_new_conversation(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With a reconnect policy, the close after a `max_duration` error is a drop like any other.
-
-    The reconnect starts a new conversation, so the error is recoverable.
-    """
+    """With a reconnect policy, a `max_duration` error re-dials into a new conversation, so the error is recoverable."""
     ended = FakeWebSocket(
         [
             _created(),
@@ -921,7 +918,8 @@ class _StaysOpen(FakeWebSocket):
     async def __aiter__(self) -> AsyncIterator[Any]:
         while self._incoming:
             yield self._incoming.pop(0)
-        await asyncio.Event().wait()  # pragma: no cover (the connection re-dials without reading on)
+        # The connection re-dials without reading on.
+        await asyncio.Event().wait()  # pragma: no cover
 
 
 async def test_max_duration_error_reconnects_without_waiting_for_the_close(monkeypatch: pytest.MonkeyPatch) -> None:
