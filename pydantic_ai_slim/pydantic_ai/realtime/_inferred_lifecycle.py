@@ -111,12 +111,13 @@ class InferredLifecycle:
             self._audio_since_reply = True
             return
         if self._reply_owed():
+            # It reaches the provider while the model works on a reply, which it follows. (A response that answers
+            # it places it ahead of itself, should that come first.)
             self._held.append(input_id)
-        elif not isinstance(content, (str, ToolResult)):
+        else:
             # Nothing is going on: it joins the conversation as it arrives.
             self._pending.append(InputAdded(input_id=input_id))
         if isinstance(content, (str, ToolResult)):
-            # It asks for a reply: the response that answers it places it, ahead of that response.
             self._unanswered.append(input_id)
 
     def input_failed(self, input_id: InputId) -> None:
@@ -156,16 +157,23 @@ class InferredLifecycle:
     def _event(self, event: RealtimeCodecEvent) -> tuple[list[LifecycleEvent], list[LifecycleEvent]]:
         before: list[LifecycleEvent] = []
         after: list[LifecycleEvent] = []
+        output = isinstance(event, (AudioDelta, PartStartEvent, ToolCall)) or (
+            isinstance(event, OutputTranscript) and bool(event.text)
+        )
         if self._deferred is not None:
-            if isinstance(event, ToolCall):
-                # The tool call the model was stalling for: it belongs to the filler's response.
+            if isinstance(event, (ToolCall, ResponseDone)):
+                # The tool call the model was stalling for belongs to the filler's response, and so does the next
+                # boundary (handled below).
                 self._deferred = None
-            else:
-                # The stall didn't end in the tool call it was for: the filler was a response of its own.
-                self._end_deferred(before)
-        if isinstance(event, (AudioDelta, PartStartEvent, ToolCall)) or (
-            isinstance(event, OutputTranscript) and event.text
-        ):
+            elif output:
+                # The stall didn't end in the tool call it was for: the filler was a response of its own, which
+                # this one carries on.
+                self._end_deferred(before, continued=True)
+            elif isinstance(event, RealtimeResponseInterruptedEvent):
+                # The user cut in: the exchange is over.
+                self._end_deferred(before, continued=False)
+            # Anything else (the user's transcript, usage) leaves it held: the exchange isn't over.
+        if output:
             self._ensure_response(before)
             if isinstance(event, ToolCall) and event.response_usage_follows:
                 self._calls_awaiting_usage = True
@@ -296,13 +304,14 @@ class InferredLifecycle:
             self._close_turn(events)
         self._place_held(events)
 
-    def _end_deferred(self, events: list[LifecycleEvent]) -> None:
+    def _end_deferred(self, events: list[LifecycleEvent], *, continued: bool) -> None:
         deferred, self._deferred = self._deferred, None
         assert deferred is not None
-        continued = self._open
+        held = self._open
         self._end(events, status='completed', finish_reason=deferred.finish_reason or 'stop')
-        # The exchange goes on past it, in whatever the model does next.
-        self._continues = continued
+        if continued:
+            # The exchange goes on past it, in the response starting now.
+            self._continues = held
 
     # --- user turns and inputs ----------------------------------------------------------------------
 

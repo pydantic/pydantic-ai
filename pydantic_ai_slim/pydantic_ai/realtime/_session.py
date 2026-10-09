@@ -4339,7 +4339,7 @@ class RealtimeSession:
         del self._transcript_watchdogs[turn_id]
         self._apply_core(TranscriptOverdue(turn_id=turn_id))
 
-    async def _core_events(self, core: SessionCore) -> AsyncIterator[RealtimeCodecEvent]:
+    async def _core_events(self, core: SessionCore) -> AsyncGenerator[RealtimeCodecEvent]:
         """The connection's codec events, feeding the core its lifecycle stream on the way."""
         async for frame in self._connection._tagged_frames():  # pyright: ignore[reportPrivateUsage]  # pragma: no branch
             # Applied a whole frame at a time, before this session handles any of it: a consumer reacting

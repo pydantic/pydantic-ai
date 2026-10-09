@@ -49,6 +49,7 @@ from pydantic_ai.realtime._core import (
     ToolReturned,
     TranscriptOverdue,
 )
+from pydantic_ai.realtime._google_lifecycle import GeminiLifecycle
 from pydantic_ai.realtime._lifecycle import (
     InputAdded,
     InputLost,
@@ -1127,3 +1128,34 @@ def test_a_turn_recorded_after_the_reply_to_it_is_evicted_before_that_reply() ->
     )
     turn, response = session_core._turns['u1'], session_core._responses['r1']  # pyright: ignore[reportPrivateUsage]
     assert list(session_core._recorded_audio) == [turn, response]  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_held_filler_keeps_the_wait_through_a_transcript_until_the_model_carries_on() -> None:
+    """Gemini's extended-thinking model holds its filler open (`IN_PROGRESS`): the user's words then don't end the wait."""
+    tracker = GeminiLifecycle(transcribes=True)
+    session_core = core()
+
+    def message(*codec: Any) -> None:
+        for event, stale in tracker.message(list(codec)):
+            if not stale:
+                session_core.apply(event)
+
+    session_core.apply(InputSent(input_id=0, request=text_request('Weather?'), solicits=True))
+    tracker.input_sent(0, 'Weather?')
+    message(OutputTranscript('Let me check.'))
+    message(SessionUsage(RequestUsage(input_tokens=1)), ResponseDone(more_expected=True))
+    wait = session_core.wait_tokens()
+    message(InputTranscript('Hm'))
+    assert session_core.still_owed(wait) != frozenset()
+    message(OutputTranscript('Still checking.'))
+    assert session_core.still_owed(wait) != frozenset()
+    message(SessionUsage(RequestUsage(input_tokens=2)), ResponseDone())
+    assert session_core.still_owed(wait) == frozenset()
+    assert summary(session_core.all_messages()) == snapshot(
+        [
+            '{prompt:Weather?}',
+            'None [assistant:Let me check.] complete stop',
+            '{user:Hm}',
+            'None [assistant:Still checking.] complete stop',
+        ]
+    )
