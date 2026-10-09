@@ -2626,7 +2626,7 @@ def test_fallback_on_single_exception_type_direct() -> None:
 
 def test_empty_fallback_on_list_error() -> None:
     """Test that empty fallback_on list raises UserError."""
-    with pytest.raises(UserError, match='empty fallback_on'):
+    with pytest.raises(UserError, match='empty `fallback_on`'):
         FallbackModel(
             primary_model,
             fallback_model_impl,
@@ -2636,7 +2636,7 @@ def test_empty_fallback_on_list_error() -> None:
 
 def test_empty_fallback_on_tuple_error() -> None:
     """Test that empty fallback_on tuple raises UserError."""
-    with pytest.raises(UserError, match='empty fallback_on'):
+    with pytest.raises(UserError, match='empty `fallback_on`'):
         FallbackModel(
             primary_model,
             fallback_model_impl,

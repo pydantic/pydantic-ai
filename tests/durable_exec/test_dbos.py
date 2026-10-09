@@ -48,7 +48,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import MCP, Capability, DynamicCapability, Hooks
+from pydantic_ai.capabilities import MCP, Capability, DynamicCapability, Fallback, Hooks
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
@@ -3652,7 +3652,6 @@ async def test_dbos_durability_allows_instrumented_default_model(dbos: DBOS) -> 
 
 def test_dbos_durability_get_ordering() -> None:
     """DBOSDurability declares innermost ordering."""
-    from pydantic_ai.capabilities import Fallback
     from pydantic_ai.capabilities.abstract import CapabilityOrdering
 
     durability = DBOSDurability()

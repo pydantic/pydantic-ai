@@ -152,9 +152,8 @@ class FallbackPredicates:
 
         if not predicates.exception_handlers and not predicates.response_handlers:
             raise UserError(
-                f'{owner} created with empty fallback_on. '
-                'All exceptions will propagate and all responses will be accepted. '
-                'Use fallback_on=(ModelAPIError,) for default behavior.'
+                f'`{owner}` created with an empty `fallback_on`: all exceptions will propagate and all responses '
+                'will be accepted. Use `fallback_on=(ModelAPIError,)` for the default behavior.'
             )
         return predicates
 
