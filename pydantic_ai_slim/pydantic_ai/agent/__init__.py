@@ -1700,8 +1700,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Validate `tool_choice` on the static baseline. Callable layers (agent-level callable,
         # run-level callable, capability-supplied) may inject `'required'` or `list[str]` per-step
-        # and are trusted to adapt across steps; static dict values would lock every step into a
-        # tool call and prevent the agent from producing a final response.
+        # and are trusted to adapt across steps. A static forcing choice must leave at least one
+        # output tool available so the agent can produce a final response.
         baseline_settings: ModelSettings | None = model_used.settings
         if not callable(agent_model_settings):
             baseline_settings = merge_model_settings(baseline_settings, agent_model_settings)
@@ -1709,7 +1709,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             baseline_settings = merge_model_settings(baseline_settings, run_model_settings)
         if baseline_settings:
             tool_choice = baseline_settings.get('tool_choice')
-            if tool_choice == 'required' or isinstance(tool_choice, list):
+            if tool_choice == 'required':
                 raise exceptions.UserError(
                     f'`tool_choice={tool_choice!r}` prevents the agent from producing a final response '
                     f'because output tools are excluded. Use `ToolOrOutput` to combine specific function '
@@ -1717,6 +1717,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     f'`get_model_settings()` to vary `tool_choice` per step, or use '
                     f'`pydantic_ai.direct.model_request` for single-shot model calls.'
                 )
+            if isinstance(tool_choice, list):
+                output_tool_names = set(output_toolset.processors) if output_toolset is not None else set[str]()
+                if output_tool_names.isdisjoint(tool_choice):
+                    raise exceptions.UserError(
+                        f'`tool_choice={tool_choice!r}` names no output tool, so the agent cannot produce a final '
+                        f'response because it must call one of the listed tools on every step. Name an output tool '
+                        f'in the list, use `ToolOrOutput` to combine specific function tools with output capability, '
+                        f"return a callable from a capability's `get_model_settings()` to vary `tool_choice` per "
+                        f'step, or use `pydantic_ai.direct.model_request` for single-shot model calls.'
+                    )
 
         usage_limits = usage_limits or _usage.UsageLimits()
 
