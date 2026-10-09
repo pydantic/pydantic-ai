@@ -8,12 +8,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
-from typing import Any, Literal
+from typing import Any, Literal, assert_never
 
 import httpx
 import httpx2
 import pytest
-from typing_extensions import assert_never
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError

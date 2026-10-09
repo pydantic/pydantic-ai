@@ -1,4 +1,8 @@
-"""A plugin settings menu's credential rows: a `/keys` entry, or a browser sign-in, never in plugin settings."""
+"""A plugin settings menu's credential rows: a `/keys` entry, or a browser sign-in, never in plugin settings.
+
+A browser sign-in runs here, behind a screen Esc closes, never while a plugin loads: loading waits for every
+plugin, so a sign-in nobody finishes would hold up the whole session.
+"""
 
 import asyncio
 import concurrent.futures
@@ -105,16 +109,31 @@ async def browser_sign_in(session: PKCESignIn, runners: Runners) -> bool:
     flow = session.start()
     url = flow.authorization_url()
     minutes = round(session.timeout / 60)
+    return await wait_for_sign_in(
+        session.sign_in(flow, show=lambda url: None),
+        service=session.service,
+        note=f'Waiting up to {minutes} minutes. If no browser opened, open this URL:\n\n{url}',
+        runners=runners,
+    )
+
+
+async def wait_for_sign_in(
+    sign_in: Coroutine[object, object, object], *, service: str, note: str, runners: Runners
+) -> bool:
+    """Run `sign_in` behind a waiting screen showing `note`; whether it finished (Esc cancels it).
+
+    The screen closes by itself when `sign_in` returns. Its errors propagate.
+    """
     screen = (
-        MenuBuilder(f'Finish signing in to {session.service} in your browser')
+        MenuBuilder(f'Finish signing in to {service} in your browser')
         .style(markdown_style())
         .items([MenuItem('Cancel sign-in', value=None)])
-        .preview(lambda item: f'Waiting up to {minutes} minutes. If no browser opened, open this URL:\n\n{url}')
+        .preview(lambda item: note)
         .footer_hint('Enter or Esc cancel')
         .key_source(menu_key)
         .build()
     )
-    signing = asyncio.ensure_future(session.sign_in(flow, show=lambda url: None))
+    signing = asyncio.ensure_future(sign_in)
     waiting = asyncio.ensure_future(run_worker(lambda: runners.run_choice(screen)))
     try:
         await asyncio.wait({signing, waiting}, return_when=asyncio.FIRST_COMPLETED)

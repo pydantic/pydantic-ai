@@ -6,9 +6,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from types import TracebackType
-from typing import Any
-
-from typing_extensions import Self
+from typing import Any, Self
 
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
@@ -152,9 +150,13 @@ class WrapperModel(Model):
         return self.wrapped.settings
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        # `Model.resolve_cache_retention` returns `None`, so without this override normal attribute
-        # lookup succeeds and `__getattr__` never forwards.
+        # `Model.resolve_cache_retention` is defined on the base class, so without this override normal
+        # attribute lookup succeeds and `__getattr__` never forwards.
         return self.wrapped.resolve_cache_retention(model_settings)
+
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
+        # Defined on the base class too, so it must forward explicitly, like `resolve_cache_retention`.
+        return self.wrapped._caching_not_enabled(model_settings)
 
     @property
     def base_url(self) -> str | None:

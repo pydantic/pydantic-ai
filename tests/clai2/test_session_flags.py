@@ -61,7 +61,7 @@ async def test_fork_copies_and_leaves_the_original(tmp_path: Path) -> None:
     assert store is not None
     await session.prompt('original work')
     original = session.summary
-    notice = await session.fork(NEW_ID)
+    notice = await session._fork(NEW_ID)  # pyright: ignore[reportPrivateUsage]
     assert notice == f'Forked original work ({original.id}) into {NEW_ID}.'
     assert session.conversation_id == NEW_ID
     assert session.title == 'original work'
@@ -72,11 +72,11 @@ async def test_fork_copies_and_leaves_the_original(tmp_path: Path) -> None:
     assert len(copy.messages) > len(source.messages)
     assert source.summary.revision == original.revision
 
-    assert UUID(await session.fork() and session.conversation_id)
+    assert UUID(await session._fork() and session.conversation_id)  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(ValueError, match='already uses the ID'):
-        await session.fork(original.id)
+        await session._fork(original.id)  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(ValueError, match='not configured'):
-        await Session(Agent(TestModel()), deps=None).fork()
+        await Session(Agent(TestModel()), deps=None)._fork()  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_fork_refuses_a_running_conversation(tmp_path: Path) -> None:
@@ -100,7 +100,7 @@ async def test_fork_refuses_a_running_conversation(tmp_path: Path) -> None:
         tasks.start_soon(session.prompt, 'go')
         await started.wait()
         with pytest.raises(RuntimeError, match='Cannot fork a running conversation'):
-            await session.fork()
+            await session._fork()  # pyright: ignore[reportPrivateUsage]
         release.set()
 
 
@@ -210,6 +210,51 @@ async def test_chat_applies_launch_options_before_plugins(tmp_path: Path) -> Non
     assert new == (NEW_ID, None, True)
     assert fork[0] not in (NEW_ID, saved.conversation_id) and fork[1:] == ('earlier work', True)
     assert plain[1:] == (None, False)
+
+
+async def test_browser_selection_forks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    session = session_in(tmp_path)
+    store = session.conversations
+    assert store is not None
+    service = Sessions(
+        session=session,
+        store=store,
+        context=CommandContext(
+            settings=Settings(model=None, session_namer=False),
+            store=SettingsStore(tmp_path / 'config.db'),
+            apply_setting=lambda key, settings: None,
+        ),
+    )
+    await session.prompt('saved work')
+    saved = session.conversation_id
+    await session.clear()
+
+    def pick(browser: SessionBrowser) -> str:
+        return saved
+
+    monkeypatch.setattr(SessionBrowser, 'run', pick)
+    assert await service.start(resume='', session_id=NEW_ID, fork=True) == (
+        f'Resumed saved work ({saved}).\nForked saved work ({saved}) into {NEW_ID}.'
+    )
+    assert (session.conversation_id, service.chosen) == (NEW_ID, True)
+    copy = await store.get(conversation_id=NEW_ID)
+    original = await store.get(conversation_id=saved)
+    assert copy.messages == original.messages and copy.messages
+
+
+async def test_headless_session_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(headless, 'create_agent', lambda: create_stock_agent(TestModel(call_tools=[])))
+    result = await headless.run_headless(
+        text='go',
+        settings=Settings(model=None),
+        store=SettingsStore(tmp_path / 'config.db'),
+        project=ProjectSettings(),
+        session_id=NEW_ID,
+    )
+    assert result == 0
+    saved = await SqliteConversationStore(database=tmp_path / 'sessions.db').get(conversation_id=NEW_ID)
+    assert saved.summary.title == 'go' and saved.messages
 
 
 async def test_fork_keeps_the_interrupted_warning(tmp_path: Path) -> None:

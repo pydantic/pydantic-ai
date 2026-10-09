@@ -10,9 +10,10 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass, field
+from typing import Any
 
 import httpx2
-from typing_extensions import Any, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai._ssrf import safe_download
 from pydantic_ai._utils import is_text_like_media_type, run_in_executor
