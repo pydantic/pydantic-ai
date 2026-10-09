@@ -71,16 +71,16 @@ class TestRunCodeCallPart:
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             tool_defs.extend(info.function_tools)
-            return ModelResponse(parts=[TextPart('done')])
+            return _run_code_then_answer("await lookup(item='widget')")(messages, info)
 
         agent = Agent(
             FunctionModel(model_fn), tools=[Tool(lookup, prepare=with_lookup_kind)], capabilities=[CodeMode[object]()]
         )
-        await agent.run('hi')
+        result = await agent.run('hi')
 
-        (run_code,) = tool_defs
-        assert run_code.name == 'run_code'
-        assert run_code.description is not None and 'async def lookup' in run_code.description
+        assert {tool_def.name for tool_def in tool_defs} == {'run_code'}
+        tool_return = result.all_messages()[2].parts[0]
+        assert isinstance(tool_return, ToolReturnPart) and tool_return.content == 'widget'
 
     async def test_run_code_tool_declares_its_kind(self) -> None:
         tool_defs: list[ToolDefinition] = []
