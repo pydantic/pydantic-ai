@@ -14,13 +14,9 @@ from pydantic_ai.toolsets import AbstractToolset
 from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
+    # Imported lazily at runtime: `pydantic_ai.mcp` pulls in `fastmcp` and `mcp`, which would
+    # otherwise dominate the time it takes to `import pydantic_ai`.
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
-else:
-    try:
-        from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
-    except ImportError:  # pragma: lax no cover
-        MCPToolset = Any
-        MCPToolsetClient = Any
 
 
 @dataclass(init=False)
@@ -102,13 +98,15 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         # `MCPToolset` here. Strings flow through `_resolve_local_strategy` below; pre-built
         # toolsets, callables, bools, and `None` pass through to `NativeOrLocalTool` unchanged.
         # Reaching this branch implies a fastmcp-typed object, which can only exist when the `mcp`
-        # extra (and hence fastmcp) is installed; the module-level `MCPToolset` is the real class.
+        # extra (and hence fastmcp) is installed, so the import below succeeds.
         if (
             local is not None
             and not isinstance(local, (bool, str))
             and not isinstance(local, AbstractToolset)
             and not callable(local)
         ):
+            from pydantic_ai.mcp import MCPToolset
+
             # Stamp the derived id so this leaf can be used with durable execution too. `self.url` is
             # usually `None` here (the input carries its own connection), so the id comes from an
             # explicit `id=` or a native `MCPServerTool`, matching the `_build_local` URL path.

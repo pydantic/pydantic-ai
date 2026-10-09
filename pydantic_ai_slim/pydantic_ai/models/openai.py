@@ -4844,15 +4844,17 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         args=final_args[len(received_args) :],
                     )
                 else:
-                    event = self._parts_manager.handle_tool_call_part(
-                        vendor_part_id=item_id,
-                        tool_name=existing_part.tool_name,
-                        args=final_args,
-                        tool_call_id=existing_part.tool_call_id,
-                        id=existing_part.id,
-                        provider_name=existing_part.provider_name,
-                        provider_details=existing_part.provider_details,
+                    # Replacing the part would emit a second `PartStartEvent` for the same call,
+                    # which UI event streams render as a duplicate tool call, so keep what streamed.
+                    finalized_function_calls.add(item_id)
+                    warnings.warn(
+                        'The provider sent a `function_call_arguments.done`/`output_item.done` snapshot whose '
+                        f'arguments differ from the streamed argument deltas for function call item {item_id!r} '
+                        f'(tool {existing_part.tool_name!r}); the streamed arguments were kept. '
+                        'Please open an issue at https://github.com/pydantic/pydantic-ai/issues.',
+                        UserWarning,
                     )
+                    return None
 
                 function_call_args[item_id] = final_args
                 finalized_function_calls.add(item_id)

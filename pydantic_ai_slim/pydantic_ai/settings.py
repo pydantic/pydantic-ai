@@ -530,8 +530,8 @@ class ModelSettings(TypedDict, total=False):
     0.1x, so a 1.25x write breaks even after one read and a 2x write after two.
 
     - `True`: Cache the stable prompt prefix (tool definitions and static instructions)
-      and the growing conversation, with the provider's default retention. Uses the provider's
-      automatic caching mode where one exists; elsewhere the library places cache breakpoints.
+      and the growing conversation, with the provider's default retention. The library places cache
+      breakpoints, using the provider's automatic caching mode for the conversation where one exists.
     - `False`: Disable library-managed caching, the same as leaving the setting unset but also
       overriding a `cache` value in the model's default settings. Explicit
       [`CachePoint`][pydantic_ai.messages.CachePoint] markers and provider-specific cache settings
@@ -554,8 +554,9 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic (as `anthropic_cache`; as instruction, tool definition and message breakpoints on
-      the Bedrock and Vertex SDK clients)
+    * Anthropic (as `anthropic_cache_instructions`, `anthropic_cache_tool_definitions` and
+      `anthropic_cache`, with `anthropic_cache_messages` instead of `anthropic_cache` on the Bedrock
+      and Vertex SDK clients)
     * Bedrock (Anthropic and Amazon Nova models only; as `bedrock_cache_instructions`,
       `bedrock_cache_tool_definitions` and `bedrock_cache_messages`)
     * OpenRouter (Anthropic and Gemini models only; as `openrouter_cache_instructions`,

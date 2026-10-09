@@ -76,6 +76,10 @@ async def break_out_of_stream():
 
 asyncio.run(break_out_of_stream())
 assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), 'the SDK-less core imported httpx'
+# `pydantic_ai.mcp` pulls in `fastmcp` and `mcp`, which used to account for about half of `import pydantic_ai`.
+assert not any(
+    name in ('pydantic_ai.mcp', 'mcp', 'fastmcp') or name.startswith(('mcp.', 'fastmcp.')) for name in sys.modules
+), 'the SDK-less core imported MCP'
 """
 )
 

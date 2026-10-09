@@ -362,6 +362,8 @@ class OpenAILifecycle:
         events: list[LifecycleEvent] = [UserTurnDiscarded(turn_id=turn_id) for turn_id in self._speaking]
         # One that hadn't joined never will, whatever the provider still reports about it.
         self._committed.update(self._speaking)
+        # Nor is a transcript waited for any more: the turn is settled.
+        self._untranscribed.difference_update(self._speaking)
         self._speaking.clear()
         return events
 
@@ -417,8 +419,7 @@ class OpenAILifecycle:
     def socket_replaced(self) -> None:
         """A new socket is being dialed: what the old one hadn't acknowledged, it never will.
 
-        Those inputs are in the conversation all the same: a replaying reconnect sends the history that holds
-        them, and a resuming one carries on the conversation they were sent into.
+        Those inputs are in the conversation all the same: the reconnect replays the history that holds them.
         """
         placed = [input_id for input_id in self._messages if input_id is not None]
         placed += self._tool_outputs.values()
@@ -429,9 +430,7 @@ class OpenAILifecycle:
         # A commit the old socket never acknowledged won't be on the new one.
         self._sent_before_commits.clear()
 
-    def reconnected(
-        self, *, restores_in_flight: bool, lost_inputs: Sequence[InputId], asked_again: Sequence[InputId]
-    ) -> None:
+    def reconnected(self, *, lost_inputs: Sequence[InputId], asked_again: Sequence[InputId]) -> None:
         """A reconnect succeeded: settle what it did not carry over, before it is reported.
 
         `asked_again` are the inputs whose request the connection is about to send again on the new socket.
@@ -440,22 +439,16 @@ class OpenAILifecycle:
         self._carried_over.clear()
         self.requests_dropped(lost_inputs)
         self._pending.extend(self._refusals_unanswered())
-        if not restores_in_flight:
-            # Whatever the connection still thought of it, a request the old socket neither started nor
-            # refused, and that isn't asked for again, will never be answered.
-            self.requests_dropped(
-                [
-                    input_id
-                    for answers, _ in self._requests.values()
-                    for input_id in answers
-                    if input_id not in asked_again
-                ]
-            )
-            self._requests.clear()
-            self._lose_everything_open()
-            # A transcript still to come for a turn of the old connection never will.
-            self._pending.extend(UserTurnDiscarded(turn_id=turn_id) for turn_id in sorted(self._untranscribed))
-            self._untranscribed.clear()
+        # Whatever the connection still thought of it, a request the old socket neither started nor
+        # refused, and that isn't asked for again, will never be answered.
+        self.requests_dropped(
+            [input_id for answers, _ in self._requests.values() for input_id in answers if input_id not in asked_again]
+        )
+        self._requests.clear()
+        self._lose_everything_open()
+        # A transcript still to come for a turn of the old connection never will.
+        self._pending.extend(UserTurnDiscarded(turn_id=turn_id) for turn_id in sorted(self._untranscribed))
+        self._untranscribed.clear()
 
     def closed(self, unanswered: Sequence[InputId]) -> None:
         """The connection is gone for good: nothing still open will ever end on its own, or be answered."""
