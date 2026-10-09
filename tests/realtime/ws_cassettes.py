@@ -208,7 +208,10 @@ class RealtimeCassette:
 
     @classmethod
     def load(cls, path: Path) -> RealtimeCassette:
-        raw = cast('dict[str, Any]', yaml.safe_load(path.read_text(encoding='utf-8')))
+        # libyaml's loader where PyYAML was built with it: the pure-Python one takes a noticeable share of a
+        # second over a cassette's thousands of frames.
+        loader = getattr(yaml, 'CSafeLoader', yaml.SafeLoader)
+        raw = cast('dict[str, Any]', yaml.load(path.read_text(encoding='utf-8'), Loader=loader))
         interactions: list[RealtimeCassetteInteraction] = []
         for item in cast('list[dict[str, Any]]', raw.get('interactions', [])):
             at = item.get('at')

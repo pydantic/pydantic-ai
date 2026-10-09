@@ -10,11 +10,11 @@ which a lifecycle stream's responses may answer.
 from __future__ import annotations as _annotations
 
 import json
+import re
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any, Literal
 
-import yaml
 from google.genai import _live_converters as live_converters, types as genai_types
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 from websockets.frames import Close
@@ -85,12 +85,16 @@ def websocket_cassettes() -> list[Path]:
     return sorted(path for path in CASSETTES_DIR.glob('*/*.yaml') if _is_websocket(path))
 
 
+# An HTTP recording's top-level interactions are `request`/`response` pairs; a WebSocket one's are
+# frames and closes, whose payloads are indented, so no line of theirs can open like this.
+_HTTP_INTERACTION = re.compile(r'^- request:', re.MULTILINE)
+
+
 def _is_websocket(path: Path) -> bool:
     # Both formats can open with `version:`, so tell them apart by their interactions: HTTP recordings
     # (e.g. WebRTC signaling) hold `request`/`response` pairs, WebSocket ones hold frames and closes.
-    raw: dict[str, Any] = yaml.safe_load(path.read_text(encoding='utf-8'))
-    interactions: list[dict[str, Any]] = raw.get('interactions') or [{}]
-    return 'request' not in interactions[0]
+    # Matched on the text rather than parsed: this runs at collection, in every worker, over every cassette.
+    return _HTTP_INTERACTION.search(path.read_text(encoding='utf-8')) is None
 
 
 def _segments(cassette: RealtimeCassette) -> Iterator[tuple[list[dict[str, Any]], CassetteClose | None, int]]:
