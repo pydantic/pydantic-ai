@@ -58,7 +58,7 @@ See [Google context caching](../models/google.md#context-caching-google_cached_c
 
 ### Other providers
 
-Other providers that cache prompts, such as DeepSeek and xAI, do so implicitly. Some take a hint that keeps related requests on the same cache: xAI's [cache sticky routing](../models/xai.md#configuration) metadata, Mistral's [`mistral_prompt_cache_key`][pydantic_ai.models.mistral.MistralModelSettings.mistral_prompt_cache_key], and the [prompt cache identity](../models/openai-codex.md#prompt-caching) the OpenAI Codex model derives from the conversation.
+Other providers that cache prompts, such as DeepSeek and xAI, do so implicitly. Some take a hint that keeps related requests on the same cache: xAI's [cache sticky routing](../models/xai.md#environment-variable) metadata, Mistral's [`mistral_prompt_cache_key`][pydantic_ai.models.mistral.MistralModelSettings.mistral_prompt_cache_key], and the [prompt cache identity](../models/openai-codex.md#prompt-caching) the OpenAI Codex model derives from the conversation.
 
 ## Cost
 
@@ -124,7 +124,7 @@ agent = Agent(
 
 ### Provider translation
 
-Where the provider has an automatic caching mode, the unified setting uses it. Elsewhere, Pydantic AI places cache breakpoints at the end of the tool definitions, the static instructions, and the conversation, so the stable prefix is shared between conversations and each request reads back everything the previous one cached. When explicit `CachePoint`s would push a request over the provider's breakpoint limit, the oldest message breakpoints are dropped first.
+Where the provider has an automatic caching mode, the unified setting uses it. Elsewhere, Pydantic AI places cache breakpoints at the end of the tool definitions, the static instructions, and the conversation, so the stable prefix is shared between conversations and each request reads back everything the previous one cached. When explicit `CachePoint`s would push a request over the provider's breakpoint limit, the oldest message breakpoints are dropped first; on OpenAI, which doesn't trim the request client-side, the server instead drops the earliest breakpoints first, starting with the instruction breakpoint (see [OpenAI prompt caching](../models/openai.md#prompt-caching)).
 
 | Provider | `Caching()` | `Caching('1h')` | `Caching(messages=False)` | Notes |
 |---|---|---|---|---|
