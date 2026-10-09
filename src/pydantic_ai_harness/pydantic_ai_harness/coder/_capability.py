@@ -34,10 +34,10 @@ class _BoundToolOutputs(ToolOutputLimits[AgentDepsT]):
 
 @dataclass
 class _DefaultCaching(AbstractCapability[AgentDepsT]):
-    """`Caching()` that yields to a `cache` value set before it, by the model, the agent, or a capability."""
+    """`Caching()` that yields to a `cache` value set before it, by the model, the agent, or a capability.
 
-    id: str | None = 'coder_caching'
-    """Distinct from `Caching`'s id, so a `Caching` bound next to `Coder` is not combined away."""
+    Without `Caching`'s fixed id, so a `Caching` bound next to `Coder` is not combined away.
+    """
 
     def get_model_settings(self) -> Callable[[RunContext[AgentDepsT]], ModelSettings]:
         def unless_configured(ctx: RunContext[AgentDepsT]) -> ModelSettings:
