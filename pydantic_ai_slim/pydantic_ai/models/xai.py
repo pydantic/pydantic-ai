@@ -550,12 +550,13 @@ class XaiModel(Model[AsyncClient]):
                 ),
             )
         elif item.tool_name == WebSearchTool.kind:
+            function_name = (item.provider_details or {}).get('function_name', WebSearchTool.kind)
             return chat_types.chat_pb2.ToolCall(
                 id=item.tool_call_id,
                 type=chat_types.chat_pb2.TOOL_CALL_TYPE_WEB_SEARCH_TOOL,
                 status=chat_types.chat_pb2.TOOL_CALL_STATUS_COMPLETED,
                 function=chat_types.chat_pb2.FunctionCall(
-                    name=WebSearchTool.kind,
+                    name=function_name,
                     arguments=item.args_as_json_str(),
                 ),
             )

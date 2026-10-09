@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -18,6 +19,7 @@ from pydantic_ai import (
     TextPart,
     ThinkingPart,
     UserPromptPart,
+    WebSearchTool,
     XSearchTool,
 )
 from pydantic_ai.capabilities import NativeTool
@@ -1157,3 +1159,71 @@ async def test_xai_file_search_usage_mapping(allow_model_requests: None):
             cost=Decimal('0.000025'),
         )
     )
+
+
+async def test_xai_web_search_function_name_round_trip(allow_model_requests: None):
+    """Test that a stored web-search function name is replayed unchanged."""
+    response = create_response(content='The latest release is Python 3.14.0.')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    message_history = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Open python.org/downloads and tell me the latest Python release.')]
+        ),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name=WebSearchTool.kind,
+                    args={'url': 'https://www.python.org/downloads'},
+                    tool_call_id='web_search_001',
+                    provider_details={'function_name': 'open_page'},
+                    provider_name='xai',
+                ),
+            ]
+        ),
+    ]
+
+    result = await agent.run('What is the latest Python release?', message_history=message_history)
+    assert result.output == 'The latest release is Python 3.14.0.'
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    tool_calls = [call for message in kwargs[0]['messages'] for call in message.get('tool_calls', [])]
+    assert len(tool_calls) == 1
+    assert tool_calls[0]['function']['name'] == 'open_page'
+    assert json.loads(tool_calls[0]['function']['arguments']) == {'url': 'https://www.python.org/downloads'}
+
+
+@pytest.mark.parametrize('provider_details', [None, {}], ids=['absent', 'empty'])
+async def test_xai_web_search_function_name_fallback(
+    allow_model_requests: None, provider_details: dict[str, Any] | None
+):
+    """Test that absent or empty provider details fall back to the normalized `web_search` function name."""
+    response = create_response(content='The latest release is Python 3.14.0.')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Search the web for the latest Python release.')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name=WebSearchTool.kind,
+                    args={'query': 'latest python release'},
+                    tool_call_id='web_search_002',
+                    provider_details=provider_details,
+                    provider_name='xai',
+                ),
+            ]
+        ),
+    ]
+
+    result = await agent.run('What did you find?', message_history=message_history)
+    assert result.output == 'The latest release is Python 3.14.0.'
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    tool_calls = [call for message in kwargs[0]['messages'] for call in message.get('tool_calls', [])]
+    assert len(tool_calls) == 1
+    assert tool_calls[0]['function']['name'] == 'web_search'
