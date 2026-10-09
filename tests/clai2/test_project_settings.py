@@ -145,7 +145,7 @@ async def test_startup_reports_unknown_keys_once(tmp_path: Path) -> None:
     project = load_project_settings(tmp_path)
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('/set display.thinking true\n/set display.thinking\n/plugins list\n/exit\n')
+        pipe.send_text('/set display.thinking true\r/set display.thinking\r/plugins list\r/exit\r')
         await chat(
             Agent(TestModel(), deps_type=type(None)),
             deps=None,
@@ -168,7 +168,7 @@ async def test_startup_reports_a_clean_file_or_nothing(tmp_path: Path, with_file
     output = io.StringIO()
     project = ProjectSettings(path=tmp_path / PROJECT_FILE) if with_file else None
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('/exit\n')
+        pipe.send_text('/exit\r')
         await chat(
             Agent(TestModel(), deps_type=type(None)),
             deps=None,
