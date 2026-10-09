@@ -33,9 +33,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Generator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
-from typing import Any, Literal, ParamSpec, TypeVar
-
-from typing_extensions import Self
+from typing import Any, Literal, ParamSpec, Self, TypeVar
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.messages import BinaryImage, ModelMessage, ToolReturn

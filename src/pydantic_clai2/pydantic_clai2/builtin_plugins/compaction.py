@@ -55,7 +55,9 @@ class CompactionSettings(BaseModel):
         description='Compact once the history exceeds this fraction of the context window.',
     )
     protected_tokens: int = Field(
-        default=50_000, ge=0, description='Tokens of the most recent messages that are never compacted.'
+        default=50_000,
+        ge=0,
+        description='Tokens of the most recent messages that are never compacted; /compact keeps at most half.',
     )
     context_window: int | None = Field(
         default=None,
@@ -200,6 +202,7 @@ class CompactionPlugin(Plugin[CompactionSettings]):
                 description='Compact the conversation so far; add words to say what the summary must keep',
                 handler=self._compact,
                 raw=True,
+                live=True,
             ),
         )
 
@@ -221,9 +224,14 @@ class CompactionPlugin(Plugin[CompactionSettings]):
         model = await conversation.resolved_model()
         if model is None:
             raise ValueError('Choose a model first: /set model <Tab>')
-        after = await compact_now(self.chain, before, model=model, focus=' '.join(args) or None)
-        if after == before:
-            return f'Nothing to compact: the last {self.settings.protected_tokens:,} tokens are always kept.'
+        tokens = estimate_token_count(before)
+        # Protect at most half the history: a conversation just over the protected tail would
+        # otherwise trade a sliver of its head for a summary plus the kept first prompt, and grow.
+        tail = min(self.settings.protected_tokens, tokens // 2)
+        chain = build_chain(self.settings.model_copy(update={'protected_tokens': tail}))
+        after = await compact_now(chain, before, model=model, focus=' '.join(args) or None)
+        saved = tokens - estimate_token_count(after)
+        if saved <= 0:
+            return 'Nothing to compact: compacting would not make the conversation smaller.'
         await conversation.commit_messages(after)
-        saved = max(estimate_token_count(before) - estimate_token_count(after), 0)
-        return f'Compacted {len(before)} messages down to {len(after)}; about {saved:,} tokens saved.'
+        return f'Compacted {len(before)} messages down to {len(after)}; about {saved:,} of {tokens:,} tokens saved.'
