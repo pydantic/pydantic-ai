@@ -1143,6 +1143,7 @@ def _resolve_branch_leaf_value_type(branch: dict[str, Any], defs: dict[str, dict
 def test_merge_json_schema_defs_transitive_rename_all_orderings(
     names: tuple[str, str, str, str], defs_layout: Literal['sorted', 'chain']
 ) -> None:
+    """Every 4-level chain ordering keeps branch types; too many cases to run through `Agent.output_json_schema()`."""
     schemas = [
         _chain_schema(names, 'string', defs_layout=defs_layout, title='StringRoot'),
         _chain_schema(names, 'integer', defs_layout=defs_layout, title='IntegerRoot'),
@@ -1159,6 +1160,7 @@ def test_merge_json_schema_defs_transitive_rename_all_orderings(
 
 
 def test_merge_json_schema_defs_transitive_rename_snapshot():
+    """Pins the names for one previously broken ordering; the Agent-level test covers the user-facing path."""
     names = ('A', 'C', 'B', 'D')
     schemas = [
         _chain_schema(names, 'string', defs_layout='sorted', title='StringRoot'),
@@ -1188,6 +1190,7 @@ def test_merge_json_schema_defs_transitive_rename_snapshot():
 
 
 def test_merge_json_schema_defs_shared_chain_not_renamed_for_unrelated_collision():
+    """Shared defs that do not reach a renamed def are reused, not copied; a merge-level detail of the def names."""
     shared_defs = {
         'SharedRoot': {'type': 'object', 'properties': {'leaf': {'$ref': '#/$defs/SharedLeaf'}}},
         'SharedLeaf': {'type': 'object', 'properties': {'value': {'type': 'boolean'}}},
@@ -1213,10 +1216,20 @@ def test_merge_json_schema_defs_shared_chain_not_renamed_for_unrelated_collision
 
     rewritten_schemas, all_defs = merge_json_schema_defs(schemas)
 
-    assert set(all_defs) == {'SharedRoot', 'SharedLeaf', 'Collision', 'Second_Collision_1'}
-    assert all_defs['SharedRoot']['properties']['leaf']['$ref'] == '#/$defs/SharedLeaf'
-    assert rewritten_schemas[0]['properties']['shared']['$ref'] == '#/$defs/SharedRoot'
-    assert rewritten_schemas[1]['properties']['shared']['$ref'] == '#/$defs/SharedRoot'
+    assert (all_defs, rewritten_schemas) == snapshot(
+        (
+            {
+                'SharedRoot': {'type': 'object', 'properties': {'leaf': {'$ref': '#/$defs/SharedLeaf'}}},
+                'SharedLeaf': {'type': 'object', 'properties': {'value': {'type': 'boolean'}}},
+                'Collision': {'type': 'object', 'properties': {'value': {'type': 'string'}}},
+                'Second_Collision_1': {'type': 'object', 'properties': {'value': {'type': 'integer'}}},
+            },
+            [
+                {'title': 'First', 'properties': {'shared': {'$ref': '#/$defs/SharedRoot'}}},
+                {'title': 'Second', 'properties': {'shared': {'$ref': '#/$defs/SharedRoot'}}},
+            ],
+        )
+    )
 
 
 def test_strip_markdown_fences():

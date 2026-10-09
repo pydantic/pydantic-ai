@@ -98,8 +98,110 @@ async def test_auto_output_json_schema():
     )
 
 
-@pytest.mark.parametrize('names', [('AOuter', 'Middle', 'ZLeaf'), ('A', 'C', 'B')])
-def test_output_json_schema_transitive_collision_preserves_branches(names: tuple[str, str, str]):
+@pytest.mark.parametrize(
+    ('names', 'expected'),
+    [
+        pytest.param(
+            ('AOuter', 'Middle', 'ZLeaf'),
+            snapshot(
+                {
+                    'anyOf': [
+                        {
+                            'properties': {'middle': {'$ref': '#/$defs/Middle'}},
+                            'required': ['middle'],
+                            'title': 'AOuter',
+                            'type': 'object',
+                        },
+                        {
+                            'properties': {'middle': {'$ref': '#/$defs/AOuter_Middle_1'}},
+                            'required': ['middle'],
+                            'title': 'AOuter',
+                            'type': 'object',
+                        },
+                    ],
+                    '$defs': {
+                        'Middle': {
+                            'properties': {'leaf': {'$ref': '#/$defs/ZLeaf'}},
+                            'required': ['leaf'],
+                            'title': 'Middle',
+                            'type': 'object',
+                        },
+                        'ZLeaf': {
+                            'properties': {'value': {'title': 'Value', 'type': 'string'}},
+                            'required': ['value'],
+                            'title': 'ZLeaf',
+                            'type': 'object',
+                        },
+                        'AOuter_ZLeaf_1': {
+                            'properties': {'value': {'title': 'Value', 'type': 'integer'}},
+                            'required': ['value'],
+                            'title': 'ZLeaf',
+                            'type': 'object',
+                        },
+                        'AOuter_Middle_1': {
+                            'properties': {'leaf': {'$ref': '#/$defs/AOuter_ZLeaf_1'}},
+                            'required': ['leaf'],
+                            'title': 'Middle',
+                            'type': 'object',
+                        },
+                    },
+                }
+            ),
+            id='sorted-chain',
+        ),
+        pytest.param(
+            ('A', 'C', 'B'),
+            snapshot(
+                {
+                    'anyOf': [
+                        {
+                            'properties': {'middle': {'$ref': '#/$defs/C'}},
+                            'required': ['middle'],
+                            'title': 'A',
+                            'type': 'object',
+                        },
+                        {
+                            'properties': {'middle': {'$ref': '#/$defs/A_C_1'}},
+                            'required': ['middle'],
+                            'title': 'A',
+                            'type': 'object',
+                        },
+                    ],
+                    '$defs': {
+                        'B': {
+                            'properties': {'value': {'title': 'Value', 'type': 'string'}},
+                            'required': ['value'],
+                            'title': 'B',
+                            'type': 'object',
+                        },
+                        'C': {
+                            'properties': {'leaf': {'$ref': '#/$defs/B'}},
+                            'required': ['leaf'],
+                            'title': 'C',
+                            'type': 'object',
+                        },
+                        'A_B_1': {
+                            'properties': {'value': {'title': 'Value', 'type': 'integer'}},
+                            'required': ['value'],
+                            'title': 'B',
+                            'type': 'object',
+                        },
+                        'A_C_1': {
+                            'properties': {'leaf': {'$ref': '#/$defs/A_B_1'}},
+                            'required': ['leaf'],
+                            'title': 'C',
+                            'type': 'object',
+                        },
+                    },
+                }
+            ),
+            id='out-of-order-chain',
+        ),
+    ],
+)
+def test_output_json_schema_transitive_collision_preserves_branches(
+    names: tuple[str, str, str], expected: dict[str, Any]
+):
     """Same-named nested defs with different bodies keep per-branch fidelity."""
     outer_name, middle_name, leaf_name = names
     first_leaf = create_model(leaf_name, value=(str, ...))
@@ -111,96 +213,6 @@ def test_output_json_schema_transitive_collision_preserves_branches(names: tuple
 
     schema = Agent(TestModel(), output_type=[first, second]).output_json_schema()
 
-    if names == ('AOuter', 'Middle', 'ZLeaf'):
-        expected = snapshot(
-            {
-                'anyOf': [
-                    {
-                        'properties': {'middle': {'$ref': '#/$defs/Middle'}},
-                        'required': ['middle'],
-                        'title': 'AOuter',
-                        'type': 'object',
-                    },
-                    {
-                        'properties': {'middle': {'$ref': '#/$defs/AOuter_Middle_1'}},
-                        'required': ['middle'],
-                        'title': 'AOuter',
-                        'type': 'object',
-                    },
-                ],
-                '$defs': {
-                    'Middle': {
-                        'properties': {'leaf': {'$ref': '#/$defs/ZLeaf'}},
-                        'required': ['leaf'],
-                        'title': 'Middle',
-                        'type': 'object',
-                    },
-                    'ZLeaf': {
-                        'properties': {'value': {'title': 'Value', 'type': 'string'}},
-                        'required': ['value'],
-                        'title': 'ZLeaf',
-                        'type': 'object',
-                    },
-                    'AOuter_ZLeaf_1': {
-                        'properties': {'value': {'title': 'Value', 'type': 'integer'}},
-                        'required': ['value'],
-                        'title': 'ZLeaf',
-                        'type': 'object',
-                    },
-                    'AOuter_Middle_1': {
-                        'properties': {'leaf': {'$ref': '#/$defs/AOuter_ZLeaf_1'}},
-                        'required': ['leaf'],
-                        'title': 'Middle',
-                        'type': 'object',
-                    },
-                },
-            }
-        )
-    else:
-        expected = snapshot(
-            {
-                'anyOf': [
-                    {
-                        'properties': {'middle': {'$ref': '#/$defs/C'}},
-                        'required': ['middle'],
-                        'title': 'A',
-                        'type': 'object',
-                    },
-                    {
-                        'properties': {'middle': {'$ref': '#/$defs/A_C_1'}},
-                        'required': ['middle'],
-                        'title': 'A',
-                        'type': 'object',
-                    },
-                ],
-                '$defs': {
-                    'B': {
-                        'properties': {'value': {'title': 'Value', 'type': 'string'}},
-                        'required': ['value'],
-                        'title': 'B',
-                        'type': 'object',
-                    },
-                    'C': {
-                        'properties': {'leaf': {'$ref': '#/$defs/B'}},
-                        'required': ['leaf'],
-                        'title': 'C',
-                        'type': 'object',
-                    },
-                    'A_B_1': {
-                        'properties': {'value': {'title': 'Value', 'type': 'integer'}},
-                        'required': ['value'],
-                        'title': 'B',
-                        'type': 'object',
-                    },
-                    'A_C_1': {
-                        'properties': {'leaf': {'$ref': '#/$defs/A_B_1'}},
-                        'required': ['leaf'],
-                        'title': 'C',
-                        'type': 'object',
-                    },
-                },
-            }
-        )
     assert schema == expected
 
 
