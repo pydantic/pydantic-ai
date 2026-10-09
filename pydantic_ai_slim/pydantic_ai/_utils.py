@@ -8,6 +8,7 @@ import inspect
 import os
 import re
 import sys
+import tempfile
 import textwrap
 import time
 import uuid
@@ -1184,3 +1185,25 @@ def user_cache_dir() -> Path:
     else:
         base = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache'))
     return base / 'pydantic-ai'
+
+
+def atomic_write_bytes(path: Path, content: bytes) -> None:
+    """Write `content` to `path` atomically via a same-directory temporary file.
+
+    The temporary file lives in `path.parent` (on the same filesystem, so the rename is atomic)
+    and is unlinked on any failure — including a write failure or interruption — so a crashed
+    write can never leave the destination existing-but-incomplete or leak a temporary file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file = tempfile.NamedTemporaryFile(dir=path.parent, prefix=f'.{path.name}.', delete=False)
+    tmp_path = Path(tmp_file.name)
+    try:
+        # Close the handle before the rename: Windows refuses to replace a file that still has an
+        # open handle, which would break the atomic write there.
+        with tmp_file:
+            tmp_file.write(content)
+            tmp_file.flush()
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
-import tempfile
 import threading
 from collections.abc import Sequence
 from pathlib import Path
@@ -13,7 +11,7 @@ import anyio.to_thread
 import httpx2
 
 from pydantic_ai import Agent
-from pydantic_ai._utils import user_cache_dir
+from pydantic_ai._utils import atomic_write_bytes, user_cache_dir
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 
@@ -70,28 +68,13 @@ def _read_cached_file(cache_file: Path) -> bytes | None:
 
 
 def _write_cached_file(cache_file: Path, content: bytes) -> None:
-    """Write `content` to `cache_file` atomically via a same-directory temp file + `os.replace`.
-
-    The temp file lives in `cache_file.parent` (same filesystem, so the rename is atomic) and is
-    unlinked on any failure — including a write failure or interruption — so a crashed write can
-    never leave the destination existing-but-incomplete nor leak a temp file.
+    """Write `content` to `cache_file` atomically, serialized with cache reads.
 
     Kept sync and offloaded via `to_thread` as a whole: `anyio.NamedTemporaryFile` needs anyio 4.9,
     above our floor.
     """
     with _CACHE_FILE_LOCK:
-        tmp_file = tempfile.NamedTemporaryFile(dir=cache_file.parent, prefix=f'.{cache_file.name}.', delete=False)
-        tmp_path = Path(tmp_file.name)
-        try:
-            # Close the handle before the rename: Windows refuses to replace a file that still has an
-            # open handle, which would break the atomic write there.
-            with tmp_file:
-                tmp_file.write(content)
-                tmp_file.flush()
-            os.replace(tmp_path, cache_file)
-        except BaseException:
-            tmp_path.unlink(missing_ok=True)
-            raise
+        atomic_write_bytes(cache_file, content)
 
 
 async def _get_ui_html(html_source: str | Path | None = None) -> bytes:

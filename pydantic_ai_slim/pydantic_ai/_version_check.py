@@ -7,17 +7,15 @@ import json
 import os
 import platform
 import re
-import tempfile
 import threading
 import time
 from importlib import metadata
 from pathlib import Path
-from typing import cast
 
 import httpx2
 from typing_extensions import TypedDict
 
-from ._utils import user_cache_dir
+from ._utils import atomic_write_bytes, is_str_dict, user_cache_dir
 
 VERSION_CHECK_URL = 'https://info.pydantic.info/versions.json'
 """Reports the latest release of every package Pydantic publishes, keyed by registry and then by name.
@@ -104,8 +102,8 @@ def _cache_file() -> Path:
 
 def _read_cache() -> _VersionCache | None:
     try:
-        data = _json_object(json.loads(_cache_file().read_bytes()))
-        if data is None:
+        data = json.loads(_cache_file().read_bytes())
+        if not is_str_dict(data):
             return None
         checked_at = data.get('checked_at')
         if not isinstance(checked_at, (int, float)) or isinstance(checked_at, bool):
@@ -119,42 +117,19 @@ def _read_cache() -> _VersionCache | None:
 
 
 def _write_cache(cache: _VersionCache) -> None:
-    tmp_path: Path | None = None
     try:
-        cache_file = _cache_file()
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        tmp_file = tempfile.NamedTemporaryFile(
-            mode='w', encoding='utf-8', dir=cache_file.parent, prefix=f'.{cache_file.name}.', delete=False
-        )
-        tmp_path = Path(tmp_file.name)
-        with tmp_file:
-            json.dump(cache, tmp_file, separators=(',', ':'))
-            tmp_file.flush()
-        os.replace(tmp_path, cache_file)
+        atomic_write_bytes(_cache_file(), json.dumps(cache, separators=(',', ':')).encode())
     except Exception:
-        if tmp_path is not None:
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-
-def _json_object(value: object) -> dict[str, object] | None:
-    """`value` as a JSON object, or `None` when it's anything else."""
-    if not isinstance(value, dict):
-        return None
-    # A decoded JSON object's keys are always strings, which `isinstance` can't tell the type checker.
-    return cast('dict[str, object]', value)
+        pass
 
 
 def _validated_latest(value: object) -> dict[str, str] | None:
-    data = _json_object(value)
-    if data is None:
+    if not is_str_dict(value):
         return None
 
     latest: dict[str, str] = {}
     for distribution in _DISTRIBUTIONS:
-        version = data.get(distribution)
+        version = value.get(distribution)
         if isinstance(version, str) and _VERSION_PATTERN.fullmatch(version):
             latest[distribution] = version
     return latest
@@ -162,14 +137,10 @@ def _validated_latest(value: object) -> dict[str, str] | None:
 
 def _latest_from_response(value: object) -> dict[str, str] | None:
     """Flatten the endpoint's `registry -> package -> {'latest': version}` into what the cache keeps."""
-    if (data := _json_object(value)) is None or (packages := _json_object(data.get('pypi'))) is None:
+    if not is_str_dict(value) or not is_str_dict(packages := value.get('pypi')):
         return None
     return _validated_latest(
-        {
-            name: fields.get('latest')
-            for name, package in packages.items()
-            if (fields := _json_object(package)) is not None
-        }
+        {name: package.get('latest') for name, package in packages.items() if is_str_dict(package)}
     )
 
 
