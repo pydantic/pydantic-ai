@@ -31,6 +31,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from ._inline_snapshot import snapshot
 from .conftest import try_import
 from .continuation_utils import ScriptedContinuationModel, scripted_response
+from .version_check_utils import install_transport
 
 with try_import() as imports_successful:
     # What it takes to build a terminal of a known width, which only a POSIX platform has.
@@ -521,6 +522,8 @@ async def test_async_agent_run_shows_cached_update_and_starts_due_check(
 ):
     monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK')
     monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
+    # Where the cache lives on Windows, so that no platform's run reaches the real one.
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
     monkeypatch.setattr(sys, 'stderr', stderr)
     cache_file = tmp_path / 'pydantic-ai' / 'version-check.json'
     cache_file.parent.mkdir()
@@ -528,17 +531,7 @@ async def test_async_agent_run_shows_cached_update_and_starts_due_check(
         json.dumps({'checked_at': 0, 'latest': {'pydantic-ai': '999.0.0'}}),
         encoding='utf-8',
     )
-    requests: list[httpx2.Request] = []
-
-    def record(request: httpx2.Request) -> httpx2.Response:
-        requests.append(request)
-        return httpx2.Response(200, json={'pypi': {}})
-
-    def get(url: str, **kwargs: Any) -> httpx2.Response:
-        with httpx2.Client(transport=httpx2.MockTransport(record)) as client:
-            return client.get(url, **kwargs)
-
-    monkeypatch.setattr(_version_check.httpx2, 'get', get)
+    requests = install_transport(monkeypatch, lambda request: httpx2.Response(200, json={'pypi': {}}))
     cache_reads = 0
     read_cache = _version_check.read_cache
 

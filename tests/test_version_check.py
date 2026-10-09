@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
-from collections.abc import Callable
 from importlib import metadata
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +18,7 @@ import pydantic_ai._version_check as _version_check
 import pydantic_ai.models as models
 
 from ._inline_snapshot import snapshot
+from .version_check_utils import install_transport
 
 _NOW = 2_000_000_000.0
 _CACHE_AGE = 24 * 60 * 60
@@ -61,23 +61,6 @@ def cache_file(tmp_path: Path) -> Path:
 def write_cache(cache_file: Path, *, checked_at: float, latest: dict[str, object]) -> None:
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(json.dumps({'checked_at': checked_at, 'latest': latest}), encoding='utf-8')
-
-
-def install_transport(
-    monkeypatch: pytest.MonkeyPatch, handler: Callable[[httpx2.Request], httpx2.Response]
-) -> list[httpx2.Request]:
-    requests: list[httpx2.Request] = []
-
-    def record(request: httpx2.Request) -> httpx2.Response:
-        requests.append(request)
-        return handler(request)
-
-    def get(url: str, **kwargs: Any) -> httpx2.Response:
-        with httpx2.Client(transport=httpx2.MockTransport(record)) as client:
-            return client.get(url, **kwargs)
-
-    monkeypatch.setattr(_version_check.httpx2, 'get', get)
-    return requests
 
 
 def run_check() -> None:
