@@ -58,6 +58,8 @@ from pydantic_ai.models.decision import (
     ScoreQuestion,
     UnfillableRoute,
 )
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles.decision import DecisionModelProfile
 from pydantic_ai.tools import ObjectJsonSchema, ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -1846,6 +1848,97 @@ async def test_overfull_speculation_picks_then_fills_under_question_limit(allow_
     assert [question['name'] for question in request_bodies[0]['questions']] == ['route']
     assert [question['name'] for question in request_bodies[1]['questions']] == ['approved']
     assert request_bodies[0]['input'] == request_bodies[1]['input']
+
+
+@pytest.mark.parametrize('selected_route', ['Big', 'Small'])
+async def test_selected_route_over_question_limit_hands_off_to_fallback(
+    allow_model_requests: None, selected_route: Literal['Big', 'Small']
+):
+    """An unfillable picked route hands off to the fallback, while a feasible route is filled by Decisions."""
+    big_field_names: list[str] = [f'field_{index}' for index in range(201)]
+    big_properties: dict[str, JsonSchemaValue] = {
+        name: {'type': 'boolean', 'description': 'Does this apply?'} for name in big_field_names
+    }
+    big_schema: ObjectJsonSchema = {'type': 'object', 'properties': big_properties, 'required': big_field_names}
+    small_schema: ObjectJsonSchema = {
+        'type': 'object',
+        'properties': {'ready': {'type': 'boolean', 'description': 'Is the small route ready?'}},
+        'required': ['ready'],
+    }
+    output_tools: list[ToolDefinition] = [
+        ToolDefinition(
+            name='Big', description='Return the large result.', kind='output', parameters_json_schema=big_schema
+        ),
+        ToolDefinition(
+            name='Small', description='Return the small result.', kind='output', parameters_json_schema=small_schema
+        ),
+    ]
+    question_names_by_request: list[list[str]] = []
+
+    def route_and_fill(request: httpx2.Request) -> httpx2.Response:
+        request_body: JsonValue = json.loads(request.content)
+        assert isinstance(request_body, dict)
+        questions = request_body['questions']
+        assert isinstance(questions, list)
+        question_names: list[str] = []
+        for question in questions:
+            assert isinstance(question, dict)
+            name = question['name']
+            assert isinstance(name, str)
+            question_names.append(name)
+        question_names_by_request.append(question_names)
+
+        route_question = next(
+            (question for question in questions if isinstance(question, dict) and question.get('name') == 'route'), None
+        )
+        if route_question is None:
+            return boolean_answers(request)
+
+        assert isinstance(route_question, dict)
+        route_labels: list[str] = []
+        choices = route_question['choices']
+        assert isinstance(choices, list)
+        for choice in choices:
+            assert isinstance(choice, dict)
+            label = choice['value']
+            assert isinstance(label, str)
+            route_labels.append(label)
+        assert selected_route in route_labels
+        return decisions(
+            {
+                'type': 'choice',
+                'name': 'route',
+                'choice': selected_route,
+                'probabilities': [
+                    {'value': label, 'probability': 1.0 if label == selected_route else 0.0} for label in route_labels
+                ],
+                'confidence': 1.0,
+            }
+        )
+
+    captured = Captured(route_and_fill)
+    primary = mock_model(captured)
+    fallback = TestModel()
+    model = FallbackModel(primary, fallback)
+
+    with patch.object(OpenAIDecisionsModel, 'max_questions', 200):
+        response = await model.request(
+            [ModelRequest.user_text_prompt('Classify this request.')],
+            None,
+            ModelRequestParameters(output_tools=output_tools, output_mode='tool', allow_text_output=False),
+        )
+
+    assert len(response.parts) == 1
+    output_call = response.parts[0]
+    assert isinstance(output_call, ToolCallPart)
+    assert output_call.tool_name == selected_route
+    if selected_route == 'Big':
+        assert fallback.last_model_request_parameters is not None
+        assert question_names_by_request == [['route']]
+    else:
+        assert fallback.last_model_request_parameters is None
+        assert question_names_by_request == [['route'], ['ready']]
+    assert len(captured.requests) == len(question_names_by_request)
 
 
 @pytest.mark.parametrize(

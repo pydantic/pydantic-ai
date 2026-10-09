@@ -1970,13 +1970,17 @@ class _Ask:
     def to_fill(cls, tool: ToolDefinition, instructions: str | None, limits: _Limits, *, label: str) -> _Ask | None:
         """The questions a picked route's fields become in the request that fills them, or `None` to hand it off.
 
-        `None` means the model cannot express one of the fields, so the route is raised as
-        [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute] before anything is sent to fill it.
+        `None` means the model cannot express one of the fields or their questions exceed the request cap,
+        so the route is raised as [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute]
+        before anything is sent to fill it.
         """
         try:
-            return cls.about(tool, instructions, limits, label=label)
+            ask = cls.about(tool, instructions, limits, label=label)
         except UserError:
             return None
+        if limits.questions is not None and len(ask.questions) > limits.questions:
+            return None
+        return ask
 
     def answers(
         self, response: DecisionResponse, boolean_threshold: float
