@@ -383,10 +383,11 @@ _ERROR_TYPE_STATUS_CODES = {
 
 def _with_max_retries(client: AsyncAnthropicClient, model_settings: ModelSettings) -> AsyncAnthropicClient:
     """The client to send one request with, carrying `ModelSettings['max_retries']` when it's set."""
+    if model_settings.get('max_retries') is None or not isinstance(client, AsyncAnthropicBedrock):
+        return with_max_retries(client, model_settings)
     # `AsyncAnthropicBedrock.with_options()` doesn't copy `aws_profile`, so its copy would sign requests with
     # the default AWS credential chain instead of the profile the client was built with.
-    carry_over = {'aws_profile': client.aws_profile} if isinstance(client, AsyncAnthropicBedrock) else None
-    return with_max_retries(client, model_settings, carry_over=carry_over)
+    return with_max_retries(client, model_settings, carry_over={'aws_profile': client.aws_profile})
 
 
 def _error_status_code(error: APIStatusError) -> int:
