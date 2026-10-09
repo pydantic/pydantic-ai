@@ -6,10 +6,33 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
 
+from pydantic import JsonValue
+
 from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
+
+
+def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
+    """The schema object a local JSON-pointer `$ref` (RFC 6901) like `#/properties/from` points at, if any.
+
+    Not every producer collects shared subschemas into `$defs`: `zod-to-json-schema`, which the MCP
+    TypeScript SDK uses, points a reused subschema at its first occurrence instead.
+    """
+    if ref != '#' and not ref.startswith('#/'):
+        return None
+    node: JsonValue = schema
+    for token in ref.split('/')[1:]:
+        token = token.replace('~1', '/').replace('~0', '~')
+        if isinstance(node, dict):
+            node = node.get(token)
+        elif isinstance(node, list) and token in map(str, range(len(node))):
+            # An RFC 6901 array index is written in canonical decimal: ASCII digits, no leading zero.
+            node = node[int(token)]
+        else:
+            node = None
+    return node if isinstance(node, dict) else None
 
 
 class UseEnumMemberDocstrings:
@@ -114,6 +137,9 @@ class JsonSchemaTransformer(ABC):
         if self.prefer_inlined_defs and (ref := schema.get('$ref')):
             key = re.sub(r'^#/\$defs/', '', ref)
             if key in self.refs_stack:
+                if key not in self.defs:
+                    # Only a `$defs` name can stay a `$ref` once the schema around it is inlined.
+                    raise UserError(f'Recursive JSON pointer `$ref` {key!r} is not supported when inlining definitions')
                 # A recursive ref can't be unpacked; `walk()` emits the definition and the `$ref` stays put.
                 self.recursive_refs.add(key)
             elif key not in self.recursive_refs:
@@ -130,7 +156,7 @@ class JsonSchemaTransformer(ABC):
         # exactly `'object'` or `'array'` respectively, not when it's absent or a list like `['object', 'null']`:
         # walking them there would reshape subtrees that otherwise pass through unchanged, collapsing their
         # single-member unions and running `transform()` on them, and an inlining transformer would raise `UserError`
-        # on a `$ref` that doesn't resolve into `$defs`.
+        # on a `$ref` it can't resolve.
         type_ = schema.get('type')
         if type_ == 'object':
             schema = self._handle_object(schema)
@@ -161,9 +187,14 @@ class JsonSchemaTransformer(ABC):
         return walked
 
     def _walk_def(self, key: str, siblings: JsonSchema) -> JsonSchema:
-        """Walk the definition `key` refers to, with `$ref` sibling keywords merged over it."""
+        """Walk the definition `key` refers to, with `$ref` sibling keywords merged over it.
+
+        `key` is a `$defs` name, or else a local JSON pointer (RFC 6901) into the original schema.
+        """
         def_schema = self.defs.get(key)
-        if def_schema is None:  # pragma: no cover
+        if def_schema is None:
+            def_schema = resolve_json_pointer(self.schema, key)
+        if def_schema is None:
             raise UserError(f'Could not find $ref definition for {key}')
 
         self.refs_stack.append(key)
@@ -251,7 +282,7 @@ class JsonSchemaTransformer(ABC):
 
 
 class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
-    """Transforms the JSON Schema to inline `$defs`.
+    """Transforms the JSON Schema to inline `$defs`, and `$ref`s that point elsewhere in the schema like `#/properties/from`.
 
     Object keywords (`properties`, `additionalProperties`, `patternProperties`) are only walked when `type` is
     `'object'`, and array keywords (`items`, `prefixItems`) only when it is `'array'`. On a schema with no `type`, or

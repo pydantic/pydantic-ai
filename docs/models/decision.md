@@ -48,7 +48,7 @@ Most agents ask more than one thing. Give the agent an output type and each fiel
 - A `bool` field's question is usually all it needs. Where the line between yes and no is subtle, as it is for "urgent", [`BoolCriteria`][pydantic_ai.output.BoolCriteria] says what a yes and a no mean. It is `Annotated` metadata, so the field stays a plain `bool` to every type checker and at runtime.
 
 ```python
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict
@@ -56,7 +56,7 @@ from pydantic import BaseModel, ConfigDict
 from pydantic_ai import Agent, BoolCriteria, UseEnumMemberDocstrings
 
 
-class Area(UseEnumMemberDocstrings, str, Enum):
+class Area(UseEnumMemberDocstrings, StrEnum):
     billing = 'billing'
     """Charges, invoices, plans and payment methods."""
 
@@ -115,7 +115,7 @@ A model can also cap how many options a pick-one or how many levels a rubric may
 The pieces combine into an agent that does real work. This one runs a support desk: it triages problems for the team that owns them, refunds charges the customer did not owe, checks the status page when a service might be down, and leaves anything that has to be written to a language model:
 
 ```python {title="support_desk.py"}
-from enum import Enum, IntEnum
+from enum import IntEnum, StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -124,7 +124,7 @@ from pydantic_ai import Agent, BoolCriteria, UseEnumMemberDocstrings
 from pydantic_ai.models.fallback import FallbackModel
 
 
-class Area(UseEnumMemberDocstrings, str, Enum):
+class Area(UseEnumMemberDocstrings, StrEnum):
     billing = 'billing'
     """Charges, invoices, plans and payment methods."""
 
@@ -927,14 +927,14 @@ Each of these is a [capability](../capabilities/overview.md) hook, and none of t
 The simplest shape is one run. An [output function](../output.md#output-functions) makes the decision a signature rather than a string to map afterwards — and because the function *runs* on the model's pick, it can do the work it routed to, so the router's result is the answer:
 
 ```python {title="route_to_a_model.py"}
-from enum import Enum
+from enum import StrEnum
 
 from pydantic_ai import Agent, RunContext, UseEnumMemberDocstrings
 
 assistant = Agent(instructions='You are a helpful engineering assistant.')
 
 
-class Tier(UseEnumMemberDocstrings, str, Enum):
+class Tier(UseEnumMemberDocstrings, StrEnum):
     fast = 'fast'
     """A lookup, an extraction, or a change confined to one place."""
 
@@ -970,7 +970,7 @@ The argument's `Enum` becomes the pick-one question: its `Args:` entry is the qu
 A run is not one decision. [`SelectModel`][pydantic_ai.capabilities.SelectModel] is evaluated before each step, so the same question can be asked of the conversation as it stands rather than once up front — a conversation that starts simple and turns hard moves up when it turns:
 
 ```python {title="select_the_model_per_step.py"}
-from enum import Enum
+from enum import StrEnum
 
 from pydantic_ai import Agent, ModelSelectionContext, UseEnumMemberDocstrings
 from pydantic_ai.capabilities import SelectModel
@@ -980,7 +980,7 @@ fast = infer_model('openai:gpt-5.6-luna')
 capable = infer_model('openai:gpt-5.6-sol')
 
 
-class Tier(UseEnumMemberDocstrings, str, Enum):
+class Tier(UseEnumMemberDocstrings, StrEnum):
     fast = 'fast'
     """A lookup, or a change confined to one place."""
 
@@ -1269,7 +1269,7 @@ A probability of 0.5 lands exactly on the default threshold, so `urgent` comes b
 
 What `decide` receives and owes:
 
-- `request.state` is the text to judge as a `str`, or a dict with the conversation under `history`, the latest prompt under `text`, and what was done since under `done`, as [above](#judging-a-conversation). Each question's `instructions` is likewise a `str` when there is one thing to say, or a dict of labelled parts: `field`; `premise`, the route a field belongs to, when there is more than one [route](#routes-which-thing-to-do); `context`, a list of what a nested field sits in; `question`; `goal`, the output type's docstring when it is the only route; `background`, the agent's instructions; and `option` on each yes/no a `list` or `dict` of options fans out to.
+- `request.state` is the text to judge as a `str`, or a dict with the conversation under `history`, the latest prompt under `text`, and what was done since under `done`, as [above](#judging-a-conversation). Each question's `instructions` is likewise a `str` when there is one thing to say, or a dict of labelled parts: `field`; `premise`, the route a field belongs to, when there is more than one [route](#routes-which-thing-to-do); `context`, a list of what a nested field sits in; `question`; `goal`, the output type's docstring when it is the only route; `background`, the agent's instructions; and `option` on each yes/no a `list` or `dict` of options fans out to. A pick-one, a rubric, or a yes/no with described answers that has none of these, such as a bare `Literal` output with no agent `instructions`, has no `instructions` at all, and asks through its options alone.
 - A question's name is for reading its answer back, and is not something to send to the model. The fields asked beside the route question are named `'<route>.<field>'`, and the route question is named `route`.
 - Every question in `request.questions` needs an answer of the matching kind under the same name: a [`NoulAnswer`][pydantic_ai.models.decision.NoulAnswer] with the probability of yes, a [`ChoiceAnswer`][pydantic_ai.models.decision.ChoiceAnswer] with a probability for every option in `criteria`, or a [`ScoreAnswer`][pydantic_ai.models.decision.ScoreAnswer] with a position along the levels. A missing or mismatched answer is an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
 - Probabilities are read as probabilities, and the [thresholds](#confidence-and-thresholds) and reported confidence assume they are calibrated. A backend whose scores are not should calibrate them before returning them, or document that its bars need tuning of their own.
@@ -1277,5 +1277,7 @@ What `decide` receives and owes:
 - Raise [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] or [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] when the backend fails, so a [`FallbackModel`](overview.md#fallback-model) can take over, and [`UserError`][pydantic_ai.exceptions.UserError] when a request cannot be sent as given. Forward `timeout`, `extra_headers` and `extra_body` from `model_settings` where the backend supports them.
 
 Set [`max_choice_options`][pydantic_ai.models.decision.DecisionModel.max_choice_options] and [`max_score_levels`][pydantic_ai.models.decision.DecisionModel.max_score_levels] to the backend's limits, so an agent over them is refused before a request is sent rather than by the backend after it. Leave them `None` when the backend has none. Where the limits differ between the models behind one backend, have its provider set `decision_max_choice_options` and `decision_max_score_levels` per model name in a [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile] instead; the profile takes precedence over the class.
+
+Likewise, set [`requires_instructions`][pydantic_ai.models.decision.DecisionModel.requires_instructions] to `True` if the backend refuses a question without `instructions`. Such a question is then sent with the generic `'Which of these applies?'`, and its options carry the meaning as before. [`SystemOneModel`](system-one.md) sets it, as the System One API requires `instructions` on every question. Where only some of the models behind one backend require them, have its provider set `decision_requires_instructions` per model name instead; the profile takes precedence over the class here too.
 
 What a question costs is the backend's business, and it is not the same everywhere. `decide` is called once per request with every question at once, but a backend that evaluates each option of a pick-one separately pays per option, where one that answers a whole request together pays once. Keep that in mind when you choose the limits, and document it for your users, since the same output type can be cheap on one backend and expensive on another.

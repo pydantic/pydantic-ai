@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import sys
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -212,16 +210,6 @@ class TestDiskLoading:
         assert listing is not None and '- valid' in listing and 'broken' not in listing
 
 
-async def test_toml_on_python310_warns_and_keeps_markdown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _write_agent(tmp_path, 'worker.toml', 'name = "worker"')
-    _write_agent(tmp_path, 'valid.md', 'Work.')
-    monkeypatch.setattr('pydantic_ai_harness.subagents._disk.sys', SimpleNamespace(version_info=(3, 10)))
-    with pytest.warns(UserWarning, match=r'TOML disk agents require Python 3.11\+'):
-        listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
-    assert listing is not None and '- valid' in listing and 'worker' not in listing
-
-
-@pytest.mark.skipif(sys.version_info < (3, 11), reason='stdlib tomllib requires Python 3.11+')
 class TestCodexDiskLoading:
     async def test_standalone_toml_instructions_and_tools(self, tmp_path: Path) -> None:
         _write_agent(

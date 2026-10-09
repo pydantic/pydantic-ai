@@ -4,15 +4,15 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from copy import copy
 from dataclasses import dataclass, field, replace
+from datetime import timedelta
 from decimal import Decimal
 from functools import cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
+from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, assert_never
 
 import anyio
 from opentelemetry.trace import get_current_span
 from opentelemetry.util.types import AttributeValue
-from typing_extensions import assert_never
 
 from pydantic_ai._instrumentation import (
     model_attributes,
@@ -445,6 +445,14 @@ class FallbackModel(Model):
     @cached_property
     def profile(self) -> ModelProfile:
         raise NotImplementedError('FallbackModel does not have its own model profile.')
+
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """A fallback model can't know which model will serve the request, so no retention is claimed."""
+        return None
+
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
+        # Which model serves the request isn't known here, so nothing is claimed about its caching either.
+        return False
 
     @property
     def context_window(self) -> int | None:

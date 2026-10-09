@@ -6,6 +6,8 @@ on:
       - main
     tags:
       - "**"
+      # Moved by `clai2-bleeding.yml` for every CLAI change on `main`; not a release to build or publish.
+      - "!clai2-bleeding"
   pull_request: {}
 
 env:
@@ -115,7 +117,7 @@ jobs:
               return 0
             fi
             case "$1" in
-              .agents/*.md|.claude/*.md|agent_docs/*.md|*/AGENTS.md|*/CLAUDE.md) return 0 ;;
+              .agents/*.md|.agents/*.tsv|.claude/*.md|agent_docs/*.md|*/AGENTS.md|*/CLAUDE.md) return 0 ;;
               *.md) [[ "$1" != */* ]] ;;
               *) return 1 ;;
             esac
@@ -502,15 +504,18 @@ jobs:
         # `REPORT_ROW_LIMIT` in `.github/scripts/ci_duration.py` must stay above, or the duration
         # report truncates. That constant's comment enumerates all four.
         # `all-extras` is the slowest install shape -- it runs sharded in `test-all-extras` instead.
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
         install:
           - name: pydantic-ai-slim
             command: "--package pydantic-ai-slim"
           - name: pydantic-evals
             command: "--package pydantic-evals"
-          # The extras its suite always ran with; every other extra is covered by `all-extras`.
+          # Install CLAI 2 alongside the harness to exercise the gh-aw launcher.
           - name: pydantic-ai-harness
-            command: "--package pydantic-ai-harness --extra code-mode --extra coder --extra logfire"
+            command: "--no-sync"
+            sync_command: >-
+              --inexact --package pydantic-ai-harness --package pydantic-clai2
+              --extra code-mode --extra coder --extra logfire
             # Its own suite: the rest of `tests/` is covered by the other cells.
             paths: tests/harness
           - name: pydantic-clai2
@@ -535,8 +540,8 @@ jobs:
       # Coverage adds roughly 50% to test execution before Python 3.14. Collect every install shape
       # on 3.14, where coverage uses the faster sys.monitoring core; the other versions still run
       # every applicable test without duplicate coverage. A `pydantic-clai2`-only change also
-      # collects it on 3.10: `tests/clai2` has 3.10-only branches that `all-extras` covers otherwise.
-      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.clai2_only == 'true' && matrix.python-version == '3.10' }}
+      # collects it on 3.11: `tests/clai2` has pre-3.14 lines and branches that `all-extras` covers otherwise.
+      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.clai2_only == 'true' && matrix.python-version == '3.11' }}
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
       CLAI2_EXTRA: ${{ matrix.clai2_only == 'true' && 'typesafe' || '' }}
     steps:
@@ -567,6 +572,10 @@ jobs:
           "
 
       - run: uv sync --only-dev
+
+      - name: install harness and CLAI 2 test dependencies
+        if: matrix.install.name == 'pydantic-ai-harness'
+        run: uv sync ${{ matrix.install.sync_command }}
 
       # `-n logical`, not `-n auto`: when `psutil` is importable, xdist's `auto` counts
       # *physical* cores while `logical` counts every vCPU, which is what hyperthreaded
@@ -624,7 +633,7 @@ jobs:
   # optional dependency -- so it gets its own job, split into shards, instead of sharing the
   # `test` job's timeout budget with the three much lighter install shapes.
   test-all-extras:
-    name: test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/${{ matrix.python-version == '3.10' && 3 || 2 }})
+    name: test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/${{ matrix.python-version == '3.11' && 3 || 2 }})
     needs: classify
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
@@ -632,31 +641,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
         shard: [1, 2]
         include:
-          # The third 3.10 shard `SPLITS` accounts for; `shard: 3` matches no base combination,
-          # so this adds a cell rather than overriding one.
-          - python-version: "3.10"
+          - python-version: "3.11"
             shard: 3
     env:
       CI: true
-      # Collect every shard on 3.14, where coverage uses the faster sys.monitoring core, plus
-      # every shard on 3.10 for version-specific branches -- both are combined across shards
-      # and install shapes in the `coverage` job. The other versions run without duplicate
-      # coverage.
-      # 3.10 also covers the extras that do not install on 3.14 -- `voyageai` for one, which
-      # nothing else imports -- so it cannot hand this back to 3.14 (#9288 tried, and
-      # `coverage` came to 99.97%), and coverage's cheap `sys.monitoring` core does not measure
-      # branches before 3.14, so no pre-3.14 cell can avoid the legacy tracer.
-      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.python-version == '3.10' }}
-      # That tracer more than doubles what these cells run and the gap grows with the suite: on
-      # run 36695601609 the 3.10 shards took 1047s and 1098s where their two-way siblings took
-      # 359-503s and the same shard without coverage (3.10 lowest-versions) took 484s. It cannot
-      # be removed, so divide it. Three ways lands each 3.10 shard around 730s, which is where
-      # this stops: `test-lowest-versions` shard 2 runs ~660s, so a fourth shard (measured at
-      # 561s on run 36709751517) only trades a whole job for the ~60s between them.
-      SPLITS: ${{ matrix.python-version == '3.10' && 3 || 2 }}
+      # Collect 3.14 for fast coverage and 3.11 for branches and extras unavailable on 3.14.
+      # The 3.11 legacy tracer needs a third shard to stay within the job timeout.
+      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.python-version == '3.11' }}
+      SPLITS: ${{ matrix.python-version == '3.11' && 3 || 2 }}
       # Rebenchmark after https://github.com/cbornet/blockbuster/pull/61 is released in a
       # compatible version; re-enable if a shard then stays comfortably within its timeout.
       BLOCKBUSTER_ENABLED: false
@@ -745,9 +740,7 @@ jobs:
       # so this, the slowest install shape, keeps pace with the rest of the matrix. The split is
       # by test count, not measured duration -- no `.test_durations` file is committed -- so
       # rebalance with `--store-durations` if `ci_duration.py`'s report shows the shards
-      # drifting apart. `pytest-split` repartitions when `--splits` changes, so 3.10's three
-      # shards hold a different partition than the other versions' two; every test still runs
-      # exactly once per version, but a shard is only comparable to the same version's.
+      # drifting apart. The 3.11 cells use three shards; every test runs once per version.
       # Everything under `tests/durable_exec` and every test marked `temporal` runs in
       # `test-durable-exec` instead: those tests pin xdist groups around real local servers, so
       # the chains they form would otherwise be this job's critical-path floor.
@@ -814,15 +807,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
         resolution: [locked, lowest]
     env:
       CI: true
-      # Python 3.10 and 3.14 cover version endpoints; both 3.12 resolutions cover Temporal dependency branches.
+      # Python 3.11 and 3.14 cover version endpoints; both 3.12 resolutions cover Temporal dependency branches.
       COLLECT_COVERAGE: >-
         ${{
           matrix.python-version == '3.12'
-          || ((matrix.python-version == '3.10' || matrix.python-version == '3.14') && matrix.resolution == 'locked')
+          || ((matrix.python-version == '3.11' || matrix.python-version == '3.14') && matrix.resolution == 'locked')
         }}
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs.
       BLOCKBUSTER_ENABLED: false
@@ -915,7 +908,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
         shard: [1, 2]
     env:
       CI: true
@@ -1016,7 +1009,7 @@ jobs:
           include-hidden-files: true
 
   test-temporal-latest:
-    name: test Temporal latest on Python 3.10
+    name: test Temporal latest on Python 3.11
     needs: classify
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
@@ -1028,7 +1021,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
-          python-version: "3.10"
+          python-version: "3.11"
           enable-cache: true
           cache-suffix: temporal-latest
 

@@ -19,16 +19,15 @@ import json
 import os
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from dataclasses import KW_ONLY, dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Protocol
+from typing import TYPE_CHECKING, Annotated, Any, Protocol, Self
 from urllib.parse import urlencode
 
 import anyio
 import httpx2
 from pydantic import Field, StrictFloat, StrictInt, TypeAdapter, ValidationError
-from typing_extensions import Self
 
 from pydantic_ai._http import create_async_httpx2_client
 from pydantic_ai.exceptions import ModelAPIError, UserError
@@ -222,7 +221,7 @@ def _jwt_expires_at(token: str) -> datetime | None:
     if payload is None or payload.exp is None:
         return None
     try:
-        return datetime.fromtimestamp(payload.exp, tz=timezone.utc)
+        return datetime.fromtimestamp(payload.exp, tz=UTC)
     except (OverflowError, OSError, ValueError):
         return None
 
@@ -684,4 +683,4 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
         # The unverified JWT `exp` claim is a refresh hint, not an authority; refresh proactively
         # once the token is within the pre-expiry buffer.
         expires_at = _jwt_expires_at(self.credentials.access_token)
-        return expires_at is not None and datetime.now(timezone.utc) >= expires_at - _TOKEN_EXPIRY_BUFFER
+        return expires_at is not None and datetime.now(UTC) >= expires_at - _TOKEN_EXPIRY_BUFFER

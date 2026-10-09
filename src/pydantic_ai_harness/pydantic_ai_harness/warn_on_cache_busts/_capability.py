@@ -142,6 +142,20 @@ class CacheBustWarning(UserWarning):
         return rebuild, self.args
 
 
+class CacheNotEnabledWarning(UserWarning):
+    """Warned when a request long enough to cache went to a model whose prompt caching wasn't configured.
+
+    Emitted by `WarnOnCacheBusts` once per conversation and model, when the model caches nothing unless the
+    request configures it (Anthropic, Bedrock Claude and Nova, and OpenRouter's Anthropic routes; OpenAI and
+    OpenRouter's Gemini routes cache implicitly, so they're never reported), but neither the unified `cache`
+    setting nor a provider-specific cache setting was set, the history has no `CachePoint`, and the provider
+    reported no cache usage. Setting `cache=False` (or a provider-specific cache setting) says caching was
+    considered, so it doesn't warn.
+
+    Silence or escalate it with the stdlib `warnings` filters, like `CacheBustWarning`.
+    """
+
+
 @dataclass
 class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     """Warn when a conversation's prompt cache hit collapses between requests.
@@ -203,9 +217,11 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     await agent.run('...', message_history=result.all_messages())
     ```
 
-    The monitor is silent when caching is off or unreported (`cache_read_tokens` stays 0), so
-    it never fires spuriously in tests that don't exercise caching. Silencing and dev/CI
-    escalation both go through the stdlib `warnings` filters -- see `CacheBustWarning`.
+    The collapse warning is silent when caching is off or unreported (`cache_read_tokens` stays 0),
+    so it never fires spuriously in tests that don't exercise caching. Separately, when a model that needs
+    prompt caching configured on the request has none configured, a request long enough to cache emits a
+    `CacheNotEnabledWarning`, once per conversation and model.
+    Silencing and dev/CI escalation both go through the stdlib `warnings` filters -- see `CacheBustWarning`.
     """
 
     # The deprecated arguments keep their original positions, so positional calls keep their meaning.
@@ -331,9 +347,19 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
         state = self._state
         state.step += 1
         health = state.detector.observe(request_context, response)
-        if health is not None and (collapse := health.collapse) is not None and collapse.alert:
+        if health is not None and health.not_enabled:
+            warnings.warn(_not_enabled_warning(response, step=state.step), stacklevel=2)
+        elif health is not None and (collapse := health.collapse) is not None and collapse.alert:
             warnings.warn(_bust_warning(collapse, step=state.step, run_id=state.detector.run_id), stacklevel=2)
         return response
+
+
+def _not_enabled_warning(response: ModelResponse, *, step: int) -> CacheNotEnabledWarning:
+    return CacheNotEnabledWarning(
+        f'Prompt caching is not enabled at model request {step}: {response.usage.input_tokens} input tokens were sent '
+        f'to {response.model_name!r} uncached. Enable it with `model_settings={{"cache": True}}` or the `Caching()` '
+        'capability, or set `cache=False` to leave it off on purpose.'
+    )
 
 
 def _bust_warning(collapse: CacheCollapse, *, step: int, run_id: str | None) -> CacheBustWarning:

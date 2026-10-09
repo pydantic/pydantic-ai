@@ -17,7 +17,7 @@ from dataclasses import replace as dc_replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, Never, TypeVar
 from unittest.mock import MagicMock
 from uuid import UUID
 
@@ -26,7 +26,7 @@ import pytest
 from pydantic import BaseModel
 from pydantic_core import SchemaValidator, core_schema
 from pydantic_monty import NOT_HANDLED, AsyncMonty, MountDir, OSAccess, OsFunction
-from typing_extensions import Never, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     AbstractToolset,

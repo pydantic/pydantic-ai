@@ -76,8 +76,7 @@ before writing cleanup.
   `Task.uncancel()`; `_utils.raise_if_cancelling()` re-asserts a cancel a
   completed step swallowed). Harness code must not call `uncancel()` or swallow
   `CancelledError`; if a capability needs to survive a cancel it shields the
-  specific cleanup and re-raises. `Task.cancelling()`/`uncancel()` are 3.11+
-  and this package supports 3.10, so never build on them here.
+  specific cleanup and re-raises.
 - One owner per deadline. Core's `FunctionToolset.call_tool` enforces exactly
   one scope for the per-tool timeout, so a longer per-tool value replaces the
   agent default instead of being capped by it. A harness toolset that owns a
@@ -98,9 +97,8 @@ before writing cleanup.
   checks this at scope exit, not at the yield (core: `_sync_stream.py`'s module
   docstring names the exact error).
 - Unwrap only an accidental single-child `BaseExceptionGroup` before a public
-  API; preserve a genuine multi-failure group. On 3.10 the name comes from the
-  `exceptiongroup` backport, and `except*` is 3.11+ syntax the backport cannot
-  provide: match on `BaseExceptionGroup` and use `.split()`/`.subgroup()`.
+  API; preserve a genuine multi-failure group. Match on `BaseExceptionGroup`
+  and use `.split()`/`.subgroup()`.
 - Decide which exceptions a containment boundary must never absorb, and name
   them once. `SubAgentToolset.delegate_task` re-raises core's control-flow
   exceptions (`CallDeferred`, `ApprovalRequired`, `SkipModelRequest`, ...)

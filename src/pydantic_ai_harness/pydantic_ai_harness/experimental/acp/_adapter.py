@@ -564,8 +564,8 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             except asyncio.CancelledError:
                 # `turn.done()` cannot fully prove the cancellation came from the turn: in the one
                 # tick between the turn completing and this coroutine resuming, a teardown cancel
-                # aimed at *this* handler is indistinguishable on 3.10 (3.11's `Task.cancelling()`
-                # would settle it). Accepted residual; every wider window is covered below.
+                # aimed at this handler is indistinguishable using `turn.done()`.
+                # Accepted residual; every wider window is covered below.
                 if turn.done() and state.cancel_requested:
                     return schema.PromptResponse(stop_reason='cancelled')
                 if state.cancel_requested:
@@ -621,7 +621,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             except (asyncio.CancelledError, _TurnCancelled):
                 # As in `prompt`, `turn.done()` is a heuristic with a one-tick residual: a
                 # teardown cancel landing between the turn completing and this resuming is
-                # swallowed here on 3.10. Accepted.
+                # swallowed here. Accepted.
                 if not turn.done():
                     raise
 
