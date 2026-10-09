@@ -272,3 +272,21 @@ async def test_headless_resume_precedes_plugins(tmp_path: Path, monkeypatch: pyt
         == 0
     )
     assert Recorder.seen == [('start', saved.conversation_id, 'earlier work')]
+
+
+@pytest.mark.parametrize('failure', ['error', 'cancel'])
+async def test_a_failed_title_publication_still_finalizes_the_turn(tmp_path: Path, failure: str) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    session = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
+
+    async def fail(event: ConversationChanged) -> None:
+        if failure == 'error':
+            raise RuntimeError('observer failed')
+        raise anyio.get_cancelled_exc_class()()
+
+    session.on_change = fail
+    with pytest.raises((RuntimeError, anyio.get_cancelled_exc_class())):
+        await session.prompt('first')
+    # Not left `running` under this process, which a later resume would take for a busy session.
+    saved = await store.get(conversation_id=session.conversation_id)
+    assert (saved.summary.outcome, saved.summary.owner_pid) == ('failed' if failure == 'error' else 'cancelled', None)
