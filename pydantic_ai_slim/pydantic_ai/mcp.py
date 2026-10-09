@@ -34,8 +34,8 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
 # Which HTTPX the HTTP kwargs below belong to is the installed fastmcp's to decide: fastmcp 3 is
 # built on legacy `httpx`, fastmcp 4 — like the MCP SDK v2 under it — on `httpx2`, and the `[mcp]`
-# extra admits both. We never inspect an `auth` or `http_client`, only hand it to fastmcp, so these
-# unions type them without importing a family that the other generation's installs don't ship.
+# extra admits both. We only use their shared interfaces, so these unions type them without
+# importing a family that the other generation's installs don't ship.
 from ._http import AsyncHTTPClient, HTTPAuth, HTTPTimeout
 from .direct import model_request
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -964,13 +964,16 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             roots: Filesystem roots advertised to the server.
             auth: HTTP authentication for HTTP transports — an `httpx2.Auth` (a legacy `httpx.Auth`
                 when the installed fastmcp is 3), the literal string `'oauth'` to enable FastMCP's
-                OAuth flow, or a bearer-token string.
+                OAuth flow, or a bearer-token string. When `http_client` is provided, authentication
+                is applied to requests made through that client.
             verify: SSL verification mode for HTTP transports — an `ssl.SSLContext`, a CA bundle
                 path string, or a bool.
             headers: Extra HTTP headers for HTTP transports. Mutually exclusive with `http_client`.
             http_client: A pre-configured `httpx2.AsyncClient` (a legacy `httpx.AsyncClient` when
                 the installed fastmcp is 3) to use for HTTP transports — useful for self-signed
                 certificates or custom connection pooling. Mutually exclusive with `headers`.
+                The toolset never closes a user-supplied client: the caller owns its lifecycle,
+                and the toolset can reconnect with it across runs.
 
         Raises:
             ValueError: If a pre-built `fastmcp.Client` is passed alongside any of the kwargs that
@@ -1728,8 +1731,8 @@ def _build_transport(
 
 def _make_httpx_client_factory(
     http_client: AsyncHTTPClient,
-) -> Callable[..., AsyncHTTPClient]:
-    """Return an `httpx_client_factory` that always returns the user-supplied `http_client`."""
+) -> Callable[..., _BorrowedHTTPClient]:
+    """Return an `httpx_client_factory` that borrows the user-supplied `http_client`."""
 
     def factory(
         headers: dict[str, str] | None = None,
@@ -1738,10 +1741,37 @@ def _make_httpx_client_factory(
         # FastMCP's StreamableHttpTransport calls the factory with `follow_redirects`,
         # which the mcp SDK's `McpHttpClientFactory` protocol doesn't declare.
         follow_redirects: bool = True,
-    ) -> AsyncHTTPClient:
-        return http_client
+    ) -> _BorrowedHTTPClient:
+        # The user's client configuration remains authoritative for headers, timeouts, and redirects.
+        return _BorrowedHTTPClient(http_client, auth)
 
     return factory
+
+
+class _BorrowedHTTPClient:
+    """A non-closing proxy for a user-owned HTTP client."""
+
+    # HTTP request methods that accept an `auth=` keyword argument.
+    _AUTH_METHODS = frozenset({'stream', 'request', 'send', 'get', 'post', 'put', 'patch', 'delete', 'head', 'options'})
+
+    def __init__(self, client: AsyncHTTPClient, auth: HTTPAuth | None) -> None:
+        self._client = client
+        self._auth = auth
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        pass
+
+    async def aclose(self) -> None:
+        pass
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._client, name)
+        if self._auth is not None and name in self._AUTH_METHODS:
+            return functools.partial(attr, auth=self._auth)
+        return attr
 
 
 def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any, Any]:
