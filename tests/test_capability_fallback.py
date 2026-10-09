@@ -65,7 +65,6 @@ def reject_nope(response: ModelResponse) -> bool:
     return isinstance(response.parts[0], TextPart) and response.parts[0].content == 'nope'
 
 
-@pytest.mark.anyio
 async def test_agent_model_then_capability_model():
     agent = Agent(FunctionModel(failure), capabilities=[Fallback(FunctionModel(success))])
     result = await agent.run('x')
@@ -73,14 +72,12 @@ async def test_agent_model_then_capability_model():
     assert result.usage.requests == 1
 
 
-@pytest.mark.anyio
 async def test_no_agent_model_uses_first_candidate():
     agent = Agent(capabilities=[Fallback(FunctionModel(failure), FunctionModel(success))])
     result = await agent.run('x')
     assert result.output == 'hello'
 
 
-@pytest.mark.anyio
 async def test_chain_exhausted():
     agent = Agent(FunctionModel(failure), capabilities=[Fallback(FunctionModel(failure))])
     with pytest.raises(FallbackExceptionGroup) as exc_info:
@@ -88,7 +85,6 @@ async def test_chain_exhausted():
     assert len(exc_info.value.exceptions) == 2
 
 
-@pytest.mark.anyio
 async def test_response_rejection():
     agent = Agent(
         FunctionModel(rejected),
@@ -98,7 +94,6 @@ async def test_response_rejection():
     assert result.output == 'hello'
 
 
-@pytest.mark.anyio
 async def test_duplicate_model_skipped():
     m = FunctionModel(failure)
     ok = FunctionModel(success)
@@ -116,7 +111,6 @@ async def success_stream(messages: list[ModelMessage], info: AgentInfo) -> Async
     yield 'hello'
 
 
-@pytest.mark.anyio
 async def test_streaming_open_failure_falls_back():
     agent = Agent(
         FunctionModel(stream_function=failure_stream),
@@ -143,7 +137,6 @@ def _ends_suspended(messages: list[ModelMessage]) -> bool:
     return isinstance(messages[-1], ModelResponse) and messages[-1].state == 'suspended'
 
 
-@pytest.mark.anyio
 async def test_resumed_continuation_goes_to_the_pinned_model():
     """Resuming a suspended response continues it on the candidate that started it, not the chain's first model."""
 
@@ -163,7 +156,6 @@ async def test_resumed_continuation_goes_to_the_pinned_model():
     assert result.usage.requests == 1
 
 
-@pytest.mark.anyio
 async def test_failed_pinned_continuation_rewinds_to_the_step_model():
     """A pinned continuation that fails is dropped, and the turn is generated afresh from the chain's start."""
     step_saw: list[bool] = []
@@ -180,7 +172,6 @@ async def test_failed_pinned_continuation_rewinds_to_the_step_model():
     assert not any(isinstance(m, ModelResponse) and m.state == 'suspended' for m in result.all_messages())
 
 
-@pytest.mark.anyio
 async def test_streamed_resumed_continuation_goes_to_the_pinned_model():
     async def step_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         raise AssertionError('the continuation must not go to the step model')  # pragma: no cover
@@ -199,7 +190,6 @@ async def test_streamed_resumed_continuation_goes_to_the_pinned_model():
     assert continued == [True]
 
 
-@pytest.mark.anyio
 async def test_streamed_failed_pinned_continuation_rewinds_to_the_step_model():
     step_saw: list[bool] = []
 
@@ -214,7 +204,6 @@ async def test_streamed_failed_pinned_continuation_rewinds_to_the_step_model():
     assert step_saw == [False]
 
 
-@pytest.mark.anyio
 async def test_suspended_response_is_pinned_to_the_model_that_served_it():
     fallback = Fallback[None](TestModel())
     served = FunctionModel(success, model_name='served')
@@ -232,7 +221,6 @@ async def test_suspended_response_is_pinned_to_the_model_that_served_it():
     assert continuation_pin(complete, key=FALLBACK_CAPABILITY_PIN_KEY) is None
 
 
-@pytest.mark.anyio
 async def test_select_model_outranks_the_fallback_default():
     """With no agent model, `Fallback`'s first candidate only stands in when nothing else selects a model."""
     selected = FunctionModel(success, model_name='selected')
@@ -245,7 +233,6 @@ async def test_select_model_outranks_the_fallback_default():
     assert (await agent.run('x')).output == 'hello'
 
 
-@pytest.mark.anyio
 async def test_a_model_another_capability_retried_is_not_picked_again():
     calls: list[str] = []
 
@@ -280,7 +267,6 @@ async def test_a_model_another_capability_retried_is_not_picked_again():
     assert calls == ['step', 'retried']
 
 
-@pytest.mark.anyio
 async def test_fallback_candidates_are_entered_once_and_exited_with_the_run():
     """A candidate is entered when first attempted, once however many steps attempt it, and exited when the run ends."""
     events: list[str] = []
@@ -298,14 +284,12 @@ async def test_fallback_candidates_are_entered_once_and_exited_with_the_run():
     assert events.count('request') == len([m for m in result.all_messages() if isinstance(m, ModelResponse)])
 
 
-@pytest.mark.anyio
 async def test_a_pin_to_an_unknown_model_is_refused():
     agent = Agent(FunctionModel(success, model_name='step'), capabilities=[Fallback(FunctionModel(success))])
     with pytest.raises(UserError, match="started by 'function:gone'"):
         await agent.run(message_history=_suspended_history('function:gone'))
 
 
-@pytest.mark.anyio
 async def test_a_fallback_model_candidate_keeps_its_own_pin():
     """`Fallback`'s pin sits beside `FallbackModel`'s, so a `FallbackModel` candidate still resumes on its inner model."""
     fallback = Fallback[None](TestModel())
@@ -332,7 +316,6 @@ def test_fallback_is_not_spec_serializable():
     assert Fallback.get_serialization_name() is None
 
 
-@pytest.mark.anyio
 async def test_an_error_fallback_on_does_not_match_propagates():
     later: list[str] = []
 
@@ -349,7 +332,6 @@ async def test_an_error_fallback_on_does_not_match_propagates():
     assert later == []
 
 
-@pytest.mark.anyio
 async def test_async_predicates():
     async def on_exception(exc: Exception) -> bool:
         return isinstance(exc, ModelAPIError)
@@ -366,7 +348,6 @@ async def test_async_predicates():
     assert (await agent.run('x')).output == 'hello'
 
 
-@pytest.mark.anyio
 async def test_exhausted_chain_reports_every_failure_and_rejection():
     agent = Agent(
         FunctionModel(failure),
@@ -377,7 +358,6 @@ async def test_exhausted_chain_reports_every_failure_and_rejection():
     assert [type(e).__name__ for e in exc_info.value.exceptions] == ['ModelAPIError', 'ResponseRejected']
 
 
-@pytest.mark.anyio
 async def test_a_wrapped_step_model_counts_as_attempted():
     """A candidate that the step's model wraps was already attempted, so it isn't tried again."""
     calls: list[str] = []
@@ -392,7 +372,6 @@ async def test_a_wrapped_step_model_counts_as_attempted():
     assert calls == ['inner']
 
 
-@pytest.mark.anyio
 async def test_an_unpinned_suspended_response_resumes_on_the_step_model():
     continued: list[bool] = []
 
@@ -409,7 +388,6 @@ async def test_an_unpinned_suspended_response_resumes_on_the_step_model():
     assert continued == [True]
 
 
-@pytest.mark.anyio
 async def test_a_failed_pinned_continuation_cancels_its_job():
     cancelled: list[str | None] = []
 
@@ -423,7 +401,6 @@ async def test_a_failed_pinned_continuation_cancels_its_job():
     assert cancelled == ['job-1']
 
 
-@pytest.mark.anyio
 async def test_every_candidate_prepares_its_own_messages():
     """Each attempt runs the candidate's own `prepare_messages`, on history not prepared for another model."""
     prepared_by: list[tuple[str, int]] = []
@@ -448,7 +425,6 @@ async def test_every_candidate_prepares_its_own_messages():
     assert prepared_by == [('first', 0), ('second', 0)]
 
 
-@pytest.mark.anyio
 async def test_outer_capabilities_only_see_the_accepted_response():
     inner_seen: list[str] = []
     outer_seen: list[str] = []
@@ -493,7 +469,6 @@ def _success_with_usage(messages: list[ModelMessage], info: AgentInfo) -> ModelR
     return ModelResponse(parts=[TextPart('hello')], usage=RequestUsage(input_tokens=1, output_tokens=1))
 
 
-@pytest.mark.anyio
 async def test_usage_counts_one_request_and_every_attempts_tokens():
     agent = Agent(
         FunctionModel(_rejected_with_usage),
@@ -506,7 +481,6 @@ async def test_usage_counts_one_request_and_every_attempts_tokens():
     assert (result.usage.requests, result.usage.input_tokens, result.usage.output_tokens) == (1, 21, 7)
 
 
-@pytest.mark.anyio
 async def test_token_limits_apply_to_rejected_attempts():
     agent = Agent(
         FunctionModel(_rejected_with_usage),
@@ -518,7 +492,6 @@ async def test_token_limits_apply_to_rejected_attempts():
         await agent.run('x', usage_limits=UsageLimits(input_tokens_limit=15))
 
 
-@pytest.mark.anyio
 async def test_tokens_are_counted_for_each_candidate():
     counted: list[str] = []
 
@@ -541,7 +514,6 @@ async def test_tokens_are_counted_for_each_candidate():
     assert counted == ['first', 'second']
 
 
-@pytest.mark.anyio
 async def test_a_model_retry_after_a_rejected_attempt_keeps_only_the_retried_response():
     retried: list[bool] = []
     second_responses = iter(['retry me', 'hello'])
@@ -577,7 +549,6 @@ async def test_a_model_retry_after_a_rejected_attempt_keeps_only_the_retried_res
     assert texts == ['retry me', 'hello']
 
 
-@pytest.mark.anyio
 async def test_a_run_model_is_attempted_before_the_chain():
     calls: list[str] = []
 
@@ -593,7 +564,6 @@ async def test_a_run_model_is_attempted_before_the_chain():
     assert calls == ['explicit', 'first']
 
 
-@pytest.mark.anyio
 async def test_a_run_level_model_selection_outranks_the_fallback_default():
     selected = FunctionModel(success, model_name='selected')
     agent = Agent(capabilities=[Fallback(FunctionModel(rejected, model_name='default'))])
@@ -601,7 +571,6 @@ async def test_a_run_level_model_selection_outranks_the_fallback_default():
     assert result.output == 'hello'
 
 
-@pytest.mark.anyio
 async def test_a_streamed_resume_waits_out_the_continuation_delay_before_opening():
     events: list[str] = []
 
@@ -628,7 +597,6 @@ async def test_a_streamed_resume_waits_out_the_continuation_delay_before_opening
     assert events == ['sleep 0.001', 'open, continuing=True']
 
 
-@pytest.mark.anyio
 async def test_a_wrapped_fallback_default_is_still_outranked():
     selected = FunctionModel(success, model_name='selected')
     agent = Agent(
@@ -640,7 +608,6 @@ async def test_a_wrapped_fallback_default_is_still_outranked():
     assert (await agent.run('x')).output == 'hello'
 
 
-@pytest.mark.anyio
 async def test_response_handlers_are_not_consulted_for_a_streamed_response():
     async def nope_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         yield 'nope'
@@ -695,7 +662,6 @@ def _described(attempts: list[ModelRequestAttempt] | Any) -> list[tuple[Any, ...
     return [(a.model_name, a.provider_name, a.outcome, a.error, a.usage) for a in attempts]
 
 
-@pytest.mark.anyio
 async def test_usage_and_attempts_match_fallback_model():
     """A rejected response is counted in `RunUsage` and recorded as an attempt exactly as under `FallbackModel`.
 
@@ -734,7 +700,6 @@ async def test_usage_and_attempts_match_fallback_model():
     )
 
 
-@pytest.mark.anyio
 async def test_exhausted_chain_lists_its_attempts_like_fallback_model():
     chain = (failure, _billed_rejection, _billed_rejection)
     groups: list[FallbackExceptionGroup] = []
@@ -772,7 +737,6 @@ async def test_exhausted_chain_lists_its_attempts_like_fallback_model():
     )
 
 
-@pytest.mark.anyio
 async def test_exhausted_chain_raises_the_limit_its_attempts_exceeded():
     """As under `FallbackModel`, the limit the rejected responses exceeded is raised, caused by the group."""
     agent = _capability_agent(_billed_rejection, _billed_rejection)
@@ -781,7 +745,6 @@ async def test_exhausted_chain_raises_the_limit_its_attempts_exceeded():
     assert isinstance(exc_info.value.__cause__, FallbackExceptionGroup)
 
 
-@pytest.mark.anyio
 async def test_a_fallback_model_candidates_own_group_keeps_its_attempts():
     """A `FallbackModel` candidate's group the capability doesn't fall back on lists only the attempts it made."""
     inner = FallbackModel(*_chain(failure, failure))
@@ -796,7 +759,6 @@ async def test_a_fallback_model_candidates_own_group_keeps_its_attempts():
     )
 
 
-@pytest.mark.anyio
 async def test_a_rejected_recovery_is_recorded_as_the_error_it_recovered():
     """A response an error hook made up was never billed, so rejecting it records the attempt's error."""
 
@@ -818,7 +780,6 @@ async def test_a_rejected_recovery_is_recorded_as_the_error_it_recovered():
     assert result.usage == snapshot(RunUsage(input_tokens=20, output_tokens=2, cost=Decimal('0.002'), requests=1))
 
 
-@pytest.mark.anyio
 async def test_a_stream_records_the_attempts_that_failed_to_open():
     first = FunctionModel(stream_function=failure_stream, model_name='failure')
     agent = Agent(first, capabilities=[Fallback(FunctionModel(stream_function=success_stream))])
@@ -861,7 +822,6 @@ def _model_spans(capfire: CaptureLogfire) -> list[dict[str, Any]]:
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
-@pytest.mark.anyio
 async def test_spans_match_fallback_model(capfire: CaptureLogfire):
     """Each failed attempt gets an ERROR span under `chat`, which is named after and reports the model that answered."""
     chain = (failure, _billed_rejection, _billed_answer)
@@ -911,7 +871,6 @@ async def test_spans_match_fallback_model(capfire: CaptureLogfire):
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
-@pytest.mark.anyio
 async def test_exhausted_chain_spans_match_fallback_model(capfire: CaptureLogfire):
     """When every attempt fails, the `chat` span reports the error and no response; each attempt has its own span."""
     chain = (failure, _billed_rejection)
@@ -993,7 +952,6 @@ async def test_exhausted_chain_spans_match_fallback_model(capfire: CaptureLogfir
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
-@pytest.mark.anyio
 async def test_stream_spans_match_fallback_model(capfire: CaptureLogfire):
     first = FunctionModel(stream_function=failure_stream, model_name='failure')
     answer = FunctionModel(stream_function=success_stream, model_name='answer')
@@ -1035,3 +993,36 @@ async def test_stream_spans_match_fallback_model(capfire: CaptureLogfire):
             ]
         )
     )
+
+
+async def test_the_step_model_another_capability_already_retried_is_not_attempted_again():
+    """When a pinned continuation is routed away from the step's model, the chain only starts over from it if no
+    other capability has attempted it since."""
+    step_calls = 0
+
+    def step_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal step_calls
+        step_calls += 1
+        raise ModelAPIError(model_name='step', message='boom')
+
+    step = FunctionModel(step_model, model_name='step')
+    pinned = FunctionModel(success, model_name='pinned')
+
+    @dataclass
+    class RedirectPinnedOnce(AbstractCapability[Any]):
+        """Sends the first attempt at the pinned model back to the step's model, before it's sent."""
+
+        redirected: bool = False
+
+        async def prepare_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if request_context.model is pinned and not self.redirected:
+                self.redirected = True
+                raise RetryModelRequest(step)
+            return request_context
+
+    agent = Agent(step, capabilities=[RedirectPinnedOnce(), Fallback(pinned)])
+    result = await agent.run(message_history=_suspended_history(pinned.model_id))
+    assert result.output == 'hello'
+    assert step_calls == 1

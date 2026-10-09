@@ -264,7 +264,7 @@ class Fallback(AbstractCapability[AgentDepsT]):
             # The step's own model was passed over for a pinned continuation that then failed: it
             # comes first when the chain starts over.
             self._unpinned_model = None
-            if not self._already_attempted(unpinned):  # pragma: no branch
+            if not self._already_attempted(unpinned):
                 return RetryModelRequest(unpinned)
         while self._cursor < len(self.models):
             candidate = self.models[self._cursor]

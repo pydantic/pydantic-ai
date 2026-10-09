@@ -1436,7 +1436,7 @@ async def model_request_stream(
     *,
     request_context: ModelRequestContext,
     run_context: RunContext[Any],
-) -> AsyncGenerator[models.StreamedResponse]:
+) -> AsyncGenerator[_ContinuationStreamedResponse]:
     """Open the innermost streaming model request, stitching any continuation chain.
 
     Under the bundled durable-execution capabilities (Temporal/DBOS/Prefect) this runs in
@@ -1497,7 +1497,7 @@ async def model_request_stream(
 class _StreamOffer:
     """An attempt's stream, offered by the attempt loop to the consuming task to be primed."""
 
-    stream: models.StreamedResponse
+    stream: _ContinuationStreamedResponse
     outcome: asyncio.Future[Exception | None]
     """Resolved with the error priming raised, or `None` once the stream is open."""
 
@@ -1552,8 +1552,7 @@ async def _serve_stream_offers(
         offer = offer_getter.result()
         error: Exception | None = None
         try:
-            if isinstance(offer.stream, _ContinuationStreamedResponse):  # pragma: no branch
-                await offer.stream.prime()
+            await offer.stream.prime()
         except Exception as e:
             error = e
         if not offer.outcome.done():  # pragma: no branch
@@ -2557,11 +2556,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return model, None
 
         agent = ctx.deps.agent
-        if agent is None:  # pragma: no cover
-            # No agent to run the resolution chain against (a bare graph run); fall back to the
-            # default inference the agent would otherwise delegate to.
-            return models.infer_model(model), model
-
+        assert agent is not None
         selection_ctx = models.ModelSelectionContext(
             agent=agent,
             deps=ctx.deps.user_deps,

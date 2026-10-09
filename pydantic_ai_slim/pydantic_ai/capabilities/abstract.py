@@ -189,8 +189,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
     which is always called per-run during toolset assembly. On each model request,
     [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request]
-    encloses the complete dynamic lifecycle: `before_model_request`, the model call with
-    `on_model_request_error` recovery, and `after_model_request`.
+    encloses the complete dynamic lifecycle: `before_model_request` once, then each attempt at the
+    request, which runs `prepare_model_request`, the model call with `on_model_request_error`
+    recovery, and `after_model_request`. A request usually makes one attempt, and another each time a
+    hook raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest].
 
     See the [capabilities documentation](../capabilities/overview.md) for built-in capabilities.
 
