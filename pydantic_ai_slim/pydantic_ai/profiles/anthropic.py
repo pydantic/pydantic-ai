@@ -85,7 +85,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_supports_xhigh_effort: bool
     """Whether the model supports the `xhigh` effort value in `output_config`. Default: `False`.
 
-    Claude Opus 4.7, 4.8, 5, and Haiku 5.5 accept `xhigh`; older Anthropic models should use `max` instead.
+    Claude Opus 4.7, 4.8, and 5, Sonnet 5, Fable 5, Mythos 5, and Haiku 5.5 accept `xhigh`;
+    other Anthropic models use `max` instead.
     """
 
     anthropic_disallows_budget_thinking: bool
@@ -243,7 +244,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         )
     )
 
-    # Opus 4.5+ and Sonnet 4.6+ support the effort parameter in output_config
     supports_effort = model_name.startswith(
         (
             'claude-fable-5',
