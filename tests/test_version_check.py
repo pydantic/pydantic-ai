@@ -15,6 +15,7 @@ import httpx2
 import pytest
 
 import pydantic_ai._display as _display
+import pydantic_ai._utils as _utils
 import pydantic_ai._version_check as _version_check
 import pydantic_ai.models as models
 
@@ -306,6 +307,24 @@ def test_cached_updates_compare_release_tuples(
     assert _version_check.cached_updates() == expected
 
 
+@pytest.mark.parametrize(
+    ('latest', 'installed', 'newer'),
+    [
+        ('2.47.0', '2.47.0b1', True),
+        ('2.47.0', '2.47.0rc2', True),
+        ('2.47.0', '2.47.0.dev3', True),
+        ('2.47.0', '2.47.0', False),
+        ('2.47', '2.47.0', False),
+        ('2.47.0', '2.47.0.post1', False),
+        ('2.47.0', '2.47.0+local', False),
+        ('2.47.0', '2.47.1.dev2', False),
+        ('2.48.0', '2.47.0', True),
+    ],
+)
+def test_pre_releases_come_before_their_release(latest: str, installed: str, newer: bool):
+    assert _version_check._is_newer(latest, installed) is newer  # pyright: ignore[reportPrivateUsage]
+
+
 def test_release_tuple_compares_numeric_components_and_drops_trailing_zeros():
     assert _version_check._release_tuple('2.46') == _version_check._release_tuple(  # pyright: ignore[reportPrivateUsage]
         '2.46.0'
@@ -444,13 +463,13 @@ def test_wrong_cache_types_are_a_miss(contents: str, cache_file: Path):
 def test_cache_paths_follow_the_platform(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.delenv('XDG_CACHE_HOME')
     monkeypatch.setattr(Path, 'home', lambda: tmp_path / 'home')
-    monkeypatch.setattr(_version_check, 'os', SimpleNamespace(name='posix', environ=os.environ))
+    monkeypatch.setattr(_utils, 'os', SimpleNamespace(name='posix', environ=os.environ))
     assert _version_check._cache_file() == (  # pyright: ignore[reportPrivateUsage]
         tmp_path / 'home' / '.cache' / 'pydantic-ai' / 'version-check.json'
     )
 
     monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'local'))
-    monkeypatch.setattr(_version_check, 'os', SimpleNamespace(name='nt', environ=os.environ))
+    monkeypatch.setattr(_utils, 'os', SimpleNamespace(name='nt', environ=os.environ))
     assert _version_check._cache_file() == (  # pyright: ignore[reportPrivateUsage]
         tmp_path / 'local' / 'pydantic-ai' / 'version-check.json'
     )

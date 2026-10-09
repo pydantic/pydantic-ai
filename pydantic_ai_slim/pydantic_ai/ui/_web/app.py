@@ -13,6 +13,7 @@ import anyio.to_thread
 import httpx2
 
 from pydantic_ai import Agent
+from pydantic_ai._utils import user_cache_dir
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 
@@ -48,16 +49,8 @@ _CACHE_FILE_LOCK = threading.Lock()
 
 
 async def _get_cache_dir() -> Path:
-    """Get the cache directory for storing UI HTML files.
-
-    Uses XDG_CACHE_HOME on Unix, LOCALAPPDATA on Windows, or falls back to ~/.cache.
-    """
-    if os.name == 'nt':  # pragma: no cover
-        base = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
-    else:
-        base = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache'))
-
-    cache_dir = base / 'pydantic-ai' / 'web-ui'
+    """Get the cache directory for storing UI HTML files, creating it if needed."""
+    cache_dir = user_cache_dir() / 'web-ui'
     await anyio.Path(cache_dir).mkdir(parents=True, exist_ok=True)
     return cache_dir
 

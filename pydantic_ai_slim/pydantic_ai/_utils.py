@@ -5,6 +5,7 @@ import asyncio
 import copy
 import functools
 import inspect
+import os
 import re
 import sys
 import textwrap
@@ -27,6 +28,7 @@ from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
 from enum import Enum
+from pathlib import Path
 from types import GenericAlias
 from typing import (
     TYPE_CHECKING,
@@ -1169,3 +1171,16 @@ def enum_member_docstrings(cls: type[Enum]) -> dict[str, str]:
         for name in [target.id for target in targets if isinstance(target, ast.Name) and target.id in cls.__members__]:
             docstrings[name] = inspect.cleandoc(node.value.value)
     return docstrings
+
+
+def user_cache_dir() -> Path:
+    """Where Pydantic AI keeps what it caches for the user: `pydantic-ai` under the platform's user cache directory.
+
+    `LOCALAPPDATA` on Windows, `XDG_CACHE_HOME` or `~/.cache` elsewhere. Shared by every cache, so the
+    places the docs describe as one location can't drift apart. Doesn't create the directory.
+    """
+    if os.name == 'nt':
+        base = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+    else:
+        base = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache'))
+    return base / 'pydantic-ai'

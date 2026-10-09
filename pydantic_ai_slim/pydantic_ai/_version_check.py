@@ -17,6 +17,8 @@ from typing import cast
 import httpx2
 from typing_extensions import TypedDict
 
+from ._utils import user_cache_dir
+
 VERSION_CHECK_URL = 'https://info.pydantic.info/versions.json'
 """Reports the latest release of every package Pydantic publishes, keyed by registry and then by name.
 
@@ -27,6 +29,7 @@ anything this doesn't recognise is ignored rather than treated as a malformed re
 _CHECK_INTERVAL = 24 * 60 * 60
 _VERSION_PATTERN = re.compile(r'^\d+(?:\.\d+){0,3}$')
 _RELEASE_PATTERN = re.compile(r'^\d+(?:\.\d+)*')
+_PRE_RELEASE_PATTERN = re.compile(r'^\d+(?:\.\d+)*[.-]?(?:a|b|c|rc|alpha|beta|pre|preview|dev)', re.IGNORECASE)
 _DISTRIBUTIONS = ('pydantic-ai', 'pydantic-ai-harness')
 
 
@@ -54,7 +57,7 @@ def cached_updates() -> list[tuple[str, str]]:
         for distribution in _DISTRIBUTIONS
         if (latest := cache['latest'].get(distribution)) is not None
         and (installed_version := installed.get(distribution)) is not None
-        and _release_tuple(latest) > _release_tuple(installed_version)
+        and _is_newer(latest, installed_version)
     ]
 
 
@@ -96,11 +99,7 @@ def _check_for_updates(now: float, cache: _VersionCache | None) -> None:
 
 
 def _cache_file() -> Path:
-    if os.name == 'nt':
-        base = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
-    else:
-        base = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache'))
-    return base / 'pydantic-ai' / 'version-check.json'
+    return user_cache_dir() / 'version-check.json'
 
 
 def _read_cache() -> _VersionCache | None:
@@ -220,6 +219,15 @@ def _user_agent() -> str:
     if agent := _display.known_coding_agent():
         user_agent += f' agent/{agent}'
     return user_agent
+
+
+def _is_newer(latest: str, installed: str) -> bool:
+    """Whether the plain release `latest` comes after `installed`, which may carry any suffix."""
+    if (latest_release := _release_tuple(latest)) != (installed_release := _release_tuple(installed)):
+        return latest_release > installed_release
+    # A pre-release or development build comes before the release it leads up to, so someone on
+    # `2.47.0b1` hears when `2.47.0` is out. A post-release or local build of it does not.
+    return _PRE_RELEASE_PATTERN.match(installed) is not None
 
 
 def _release_tuple(version: str) -> tuple[int, ...]:
