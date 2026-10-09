@@ -559,6 +559,106 @@ async def test_durability_run_context_in_durable_context(client: Client):
     assert result.output == 'workflow: False, activity: False'
 
 
+# --- Default `run_id` and `conversation_id` ---
+
+
+def _stable_ids_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    returns = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+    if returns < 2:
+        return ModelResponse(parts=[ToolCallPart(tool_name='record_ids', args='{}', tool_call_id=f'call-{returns}')])
+    return ModelResponse(parts=[TextPart(content='done')])
+
+
+_stable_ids_seen: list[tuple[str | None, str | None]] = []
+
+
+async def record_ids(ctx: RunContext[object]) -> str:
+    _stable_ids_seen.append((ctx.run_id, ctx.conversation_id))
+    return 'ok'
+
+
+_stable_ids_agent = Agent(
+    FunctionModel(_stable_ids_model_fn),
+    name='durability_stable_ids',
+    toolsets=[FunctionToolset(tools=[record_ids], id='stable_ids')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+_stable_ids_later_draws: list[str] = []
+
+
+@workflow.defn
+class StableIdsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[str]:
+        result = await _stable_ids_agent.run(prompt)
+        # What the workflow's own code draws next depends on how many draws the agent run made.
+        _stable_ids_later_draws.append(str(workflow.uuid4()))
+        return [result.run_id, result.conversation_id]
+
+
+async def test_durability_default_ids_survive_replay(client: Client):
+    """Without `run_id=` or `conversation_id=`, every replay of the workflow resolves the same IDs.
+
+    With workflow caching off, the worker replays the workflow from history for each activity result,
+    so before the IDs were replay-stable, each tool activity saw a different `run_id`.
+    """
+    _stable_ids_seen.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StableIdsWorkflow],
+        plugins=[AgentPlugin(_stable_ids_agent)],
+        max_cached_workflows=0,
+    ):
+        handle = await client.start_workflow(
+            StableIdsWorkflow.run, args=['Hello'], id=f'stable-ids-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+        run_id, conversation_id = await handle.result()
+    assert _stable_ids_seen == [(run_id, conversation_id)] * 2
+    assert run_id.startswith(f'{handle.result_run_id}:')
+    assert conversation_id != run_id
+
+
+async def test_durability_replays_history_recorded_before_stable_default_ids(
+    client: Client, monkeypatch: pytest.MonkeyPatch
+):
+    """A history recorded before every run drew a default `run_id` replays without drawing one.
+
+    Unsandboxed, so the module-level list sees the workflow's draws in both the original run and the replay.
+    """
+    _stable_ids_later_draws.clear()
+
+    # Without the patch marker, the workflow runs the way it did before: no draw from the workflow's
+    # random sequence, and a random `run_id`.
+    def unpatched(patch_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(workflow, 'patched', unpatched)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StableIdsWorkflow],
+        plugins=[AgentPlugin(_stable_ids_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            StableIdsWorkflow.run, args=['Hello'], id=f'legacy-ids-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+        run_id, _ = await handle.result()
+    assert ':' not in run_id
+    monkeypatch.undo()
+
+    history = await handle.fetch_history()
+    replay = await Replayer(
+        workflows=[StableIdsWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
+    ).replay_workflow(history)
+    assert replay.replay_failure is None
+    # The replay drew nothing for the run's ID, so the workflow's next draw matches the recorded one.
+    assert len(_stable_ids_later_draws) == 2 and _stable_ids_later_draws[0] == _stable_ids_later_draws[1]
+
+
 # --- A capability operation called from the capability's own tool ---
 
 
@@ -1522,7 +1622,11 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
         capabilities=[base_factory, WrapperCapability(wrapped=TemporalDurability())],
     )
 
-    with patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True):
+    # Only `in_workflow` is faked, so keep the default-ID hook off the real workflow APIs.
+    with (
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.patched', return_value=False),
+    ):
         result = await agent.run('hello', capabilities=[Instrumentation(InstrumentationSettings())])
         assert result.output == 'skipped'
 

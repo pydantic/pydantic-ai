@@ -350,6 +350,15 @@ such as explicit OTLP exporters, still applies. The SDKs' own log messages, such
 failed or retried exports, never print to the terminal; a logging handler that a
 plugin configures still receives them.
 
+Export problems, such as a request to Logfire timing out, are logged as
+warnings and errors by the `logfire` and `opentelemetry` loggers. Logfire retries
+failed span exports from disk; OpenTelemetry drops a metrics batch it could not
+send. In the interactive shell these records go to `telemetry.log` next to
+`config.db` (owner-only, rotated at 1 MB, one previous file kept) instead of over the editor,
+and CLAI names that file on exit when the session wrote to it. A logger your own
+application already handles, when embedding `chat()`, is left alone. Headless
+`clai2 -p` still writes them to stderr, separate from the answer on stdout.
+
 Previously named `logfire`, this plugin keeps existing enabled/disabled choices,
 settings, and saved token references. No reconfiguration is needed. Old commands
 and project or drop-in declarations using `logfire` refer to the same plugin,

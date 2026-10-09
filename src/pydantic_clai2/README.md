@@ -2206,6 +2206,9 @@ cannot choose the telemetry destination. Relative `XDG_CONFIG_HOME` values fall
 back to `~/.config`. Export uses `send_to_logfire='if-token-present'`: no credentials
 means no Logfire export and no interactive project setup. Logfire's
 terminal console output is disabled so it does not interfere with the editor.
+Warnings and errors Logfire and OpenTelemetry log about failed exports go to
+`telemetry.log` next to `config.db` instead of over the editor; CLAI names the
+file on exit when a session wrote to it. Headless `clai2 -p` keeps them on stderr.
 Standard SDK configuration, including explicitly configured OTLP exporters, still
 applies; disable the plugin to stop its instrumentation altogether.
 

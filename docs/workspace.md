@@ -369,7 +369,7 @@ activities.
   tool uses it; retries, replays and recovery reattach to that same environment. Plain runs stay
   lazy. If a worker dies after creating the environment but before that is recorded, the retry can
   create a second one.
-- Without an explicit `run_id`, a run of an agent with a workspace capability inside a workflow or flow gets an ID derived from the Temporal
+- Without an explicit `run_id`, a run inside a workflow or flow gets an ID derived from the Temporal
   execution run ID, the DBOS workflow ID or the Prefect flow run ID, so its workspace state stays
   addressable after a worker restart or flow retry.
 - On DBOS, a run with a workspace runs its tool calls one at a time: DBOS numbers steps as they
