@@ -907,6 +907,8 @@ Third-party toolsets can also be wrapped as [capabilities](capabilities/overview
 
 Pydantic AI provides [`MCPToolset`][pydantic_ai.mcp.MCPToolset] for connecting to and calling tools on local and remote MCP servers, with the [`MCP` capability](capabilities/mcp.md) as the recommended higher-level entry point. See the [MCP overview](./mcp/overview.md) and [MCP client](./mcp/client.md) documentation for details.
 
+* [Remnant example](https://github.com/Dedale-Project/remnant-connect/blob/main/examples/pydantic-remnant/README.md) - Downloadable MCP toolset for anonymous search and evidence inspection of published agent experience, using `search_memories` and `inspect_memory`.
+
 ### Agent Skills
 
 [Agent Skills](https://agentskills.io) are loaded as [on-demand capabilities](capabilities/on-demand.md) rather than as toolsets, so each skill can stay collapsed to a catalog entry until the model needs it. See [Agent Skills](capabilities/third-party.md#agent-skills) on the third-party capabilities page.
