@@ -5,9 +5,9 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
-from typing import Annotated, Any, Concatenate, Generic, Literal, Self, TypeAlias, Union, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Concatenate, Generic, Literal, Self, TypeAlias, Union, cast, overload
 
-from pydantic import AliasChoices, Field, GetCoreSchemaHandler
+from pydantic import AliasChoices, Field
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, TypeVar
@@ -603,33 +603,24 @@ def _tool_kind_of(value: ToolKindLike | None) -> ToolPartKind | None:
     return kind
 
 
-class _ToolKindField:
-    """The `ToolDefinition.tool_kind` field: set as a kind or a typed tool part class, read as the kind.
+if TYPE_CHECKING:
 
-    A data descriptor, so that the constructor (and `dataclasses.replace`) accepts the class while every
-    reader sees `ToolPartKind | None`. The value lives in the instance `__dict__` under the field's own
-    name, which is also where Pydantic puts it when it loads a stored definition.
-    """
+    class _ToolKindField:
+        """How type checkers see `ToolDefinition.tool_kind`: set as a `ToolKindLike`, read as the kind.
 
-    def __set_name__(self, owner: type[Any], name: str) -> None:
-        self._name = name
+        At runtime the field is a plain `ToolPartKind | None`, which `ToolDefinition.__post_init__`
+        normalizes, so reading it costs nothing.
+        """
 
-    @overload
-    def __get__(self, obj: None, owner: type[Any]) -> None: ...
+        @overload
+        def __get__(self, obj: None, owner: type[Any]) -> None: ...
 
-    @overload
-    def __get__(self, obj: object, owner: type[Any]) -> ToolPartKind | None: ...
+        @overload
+        def __get__(self, obj: object, owner: type[Any]) -> ToolPartKind | None: ...
 
-    def __get__(self, obj: object | None, owner: type[Any]) -> ToolPartKind | None:
-        # On the class, this is the field's default.
-        return None if obj is None else obj.__dict__.get(self._name)
+        def __get__(self, obj: object | None, owner: type[Any]) -> ToolPartKind | None: ...
 
-    def __set__(self, obj: object, value: ToolKindLike | None) -> None:
-        obj.__dict__[self._name] = _tool_kind_of(value)
-
-    @classmethod
-    def __get_pydantic_core_schema__(cls, source: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
-        return core_schema.nullable_schema(core_schema.str_schema())
+        def __set__(self, obj: object, value: ToolKindLike | None) -> None: ...
 
 
 @dataclass(repr=False, kw_only=True)
@@ -747,7 +738,10 @@ class ToolDefinition:
     the wire; that's `defer_loading`'s question.
     """
 
-    tool_kind: _ToolKindField = _ToolKindField()
+    if TYPE_CHECKING:
+        tool_kind: _ToolKindField = _ToolKindField()
+    else:
+        tool_kind: ToolPartKind | None = None
     """What this tool is, independent of its name (e.g. `'tool-search'`), for tools with typed parts.
 
     Set it to the kind, or to a typed tool part class that registers it (`tool_kind=LookupCallPart`);
@@ -825,6 +819,10 @@ class ToolDefinition:
         supplies `name` and `description` from this tool definition.
         """
         return self.function_signature.render(body, name=self.name, description=self.description, **kwargs)
+
+    def __post_init__(self) -> None:
+        if self.tool_kind is not None and self.tool_kind.__class__ is not str:
+            self.tool_kind = _tool_kind_of(self.tool_kind)
 
     @property
     def defer(self) -> bool:
