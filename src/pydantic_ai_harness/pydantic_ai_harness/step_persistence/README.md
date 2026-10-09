@@ -365,10 +365,23 @@ configured retention can delete older snapshots.
   `AUTOINCREMENT seq` to mirror `FileStepStore._next_snapshot_seq`.
   Databases created before the snapshot `state` column existed gain it
   automatically on open (existing rows read as `complete`).
-  Pass `connection=` instead of `database=` to share a `sqlite3.Connection`
-  with the rest of your application; the connection must be opened with
-  `check_same_thread=False` because hook calls are dispatched onto a
-  worker thread.
+  Pass `connection=` instead of `database=` to use a dedicated caller-owned
+  connection. The store serializes access, but the caller controls transactions:
+  configure autocommit or commit writes in the application. The connection must
+  be idle for the first operation while the store creates its schema. A stdlib
+  `sqlite3` connection must be opened with `check_same_thread=False`, because
+  hook calls are dispatched onto worker threads. The connection must speak
+  SQLite and provide connection-level `execute`, `executescript`, `commit`, and
+  `rollback` methods plus an `in_transaction` property;
+  [Turso](https://turso.tech) provides
+  this surface, so it needs no separate backend. Use
+  `turso.connect('runs.db', isolation_level=None)` locally, or
+  `turso.sync.connect('runs.db', remote_url=..., isolation_level=None)` for an
+  autocommit embedded replica. Embedded replicas require the application to call `pull()` for
+  remote changes and `push()` after local writes. Those commits are
+  transactional within one local replica; Turso Sync does not turn separate
+  replicas into one shared transactional store. Install `pyturso` in your
+  application; the harness does not depend on it.
 - `MongoStepStore(client= or db_url=, database=...)` -- MongoDB collections
   `runs`, `events`, `snapshots`, `snapshot_idempotency_keys`, `tool_effects`,
   and `counters` (atomic `$inc` for monotonic `seq`). Run registration uses an

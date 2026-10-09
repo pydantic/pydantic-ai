@@ -268,6 +268,8 @@ dev = [
     "azure-identity>=1.25.3",
     # Storage backends `pydantic-ai-harness` supports, faked or run against a live server.
     "mongomock-motor>=0.0.36",
+    # pyturso 0.7.2 contains syntax that Python 3.14 rejects at import time.
+    "pyturso>=0.7.2 ; python_full_version < '3.14'",
     "redis>=8.1.0",
     # Records and replays provider traffic: its pytest plugin owns `@pytest.mark.vcr` and the `vcr` fixture.
     "cassetter>=0.13.0",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import json as _json
 import os
@@ -164,6 +165,9 @@ class TestDiskMediaStore:
 
 
 class TestSqliteMediaStore:
+    def test_internal_thread_lock_is_not_in_public_signature(self) -> None:
+        assert '_thread_lock' not in inspect.signature(SqliteMediaStore).parameters
+
     async def test_put_get_round_trip(self, tmp_path: Path) -> None:
         store = SqliteMediaStore(database=tmp_path / 'media.db')
         uri = await store.put(b'hello bytes', context=MediaContext(media_type='image/png'))
