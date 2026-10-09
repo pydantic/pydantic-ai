@@ -690,10 +690,10 @@ class OpenAILiveConnection(RealtimeConnection):
         self._pending_reasoning: dict[str | None, list[ResponseReasoningItem]] = {}
         # Which response, user turn, and input each frame is about (see `_tagged_frames()`). Live always
         # transcribes, and closes the user's turn as the model's reply starts.
-        self._lifecycle = InferredLifecycle(transcribes=True)
+        self._lifecycle = InferredLifecycle(transcribes=True, audio_starts_response=False)
         # Every `send()` call is numbered (see `InputRejected.input_index`).
         self._inputs_sent = 0
-        # Whether the frame just mapped had the model take the turn without saying anything (delegating work).
+        # Whether the frame just mapped had the model take the turn (see `_open_response()`).
         self._took_turn = False
 
     @property
@@ -734,7 +734,12 @@ class OpenAILiveConnection(RealtimeConnection):
         self._inputs_sent += 1
         self._lifecycle.input_sent(input_index, content)
         try:
-            await self._send_input(content)
+            if isinstance(content, ToolResult):
+                if not await self._send_tool_result(content):
+                    # Its backend gave up on the call: nothing will reply to the result.
+                    self._lifecycle.input_unanswerable(input_index)
+            else:
+                await self._send_input(content)
         except BaseException:
             self._lifecycle.input_failed(input_index)
             raise
@@ -751,9 +756,6 @@ class OpenAILiveConnection(RealtimeConnection):
             # choose to mention it.
             await _check_context_length(content.text)
             await self._send_event({'type': 'session.thinking.append', 'delegation_id': None, 'content': content.text})
-            return
-        if isinstance(content, ToolResult):
-            await self._send_tool_result(content)
             return
         if isinstance(content, CreateResponse):
             # Reaches the connection only right after an image: the profile's
@@ -839,8 +841,8 @@ class OpenAILiveConnection(RealtimeConnection):
     def _idle_frame_due(self) -> float:
         return max(self._next_idle_frame, self._input_audio_end + _IDLE_AUDIO_GAP)
 
-    async def _send_tool_result(self, result: ToolResult) -> None:
-        """Return a tool result to the delegated Responses backend and let it continue."""
+    async def _send_tool_result(self, result: ToolResult) -> bool:
+        """Return a tool result to the delegated Responses backend and let it continue; `False` if it goes nowhere."""
         # Mapped first: downloading media can wait, and the backend can give up on the call meanwhile,
         # which only the checks below, made after it, can see.
         follow_up = await _tool_result_follow_up(result, provider_name=self._provider_name)
@@ -850,7 +852,7 @@ class OpenAILiveConnection(RealtimeConnection):
             # The backend that asked for this call gave up before it was answered. Sending the output
             # would attach it to nothing, and `response.create` would start a turn nobody asked for.
             self._abandoned_calls.discard(result.tool_call_id)
-            return
+            return False
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
         if delegation is not None:
             delegation.pending_tool_calls.discard(result.tool_call_id)
@@ -865,15 +867,15 @@ class OpenAILiveConnection(RealtimeConnection):
         if delegation is None:
             # A call we can't correlate to a delegation has no response we can wait on, so continue now.
             await self._send_event({'type': 'response.create'})
-            return
-        if delegation.pending_tool_calls:
+        elif delegation.pending_tool_calls:
             # With `parallel_tool_calls` the backend resumes from all of its calls' outputs together.
-            return
-        if delegation.response_in_flight:
+            pass
+        elif delegation.response_in_flight:
             # The response that asked for these calls may still ask for more: continue at its terminal.
             delegation.continuation_due = True
-            return
-        await self._continue(delegation)
+        else:
+            await self._continue(delegation)
+        return True
 
     async def _send_due_continuations(self) -> None:
         """Continue each delegation whose asking response just ended with every result already in."""
@@ -1164,6 +1166,9 @@ class OpenAILiveConnection(RealtimeConnection):
         self._heard_voice()
         events = self._close_input_turn()
         self._response_open = True
+        # Its reply starts here, even with nothing of it to report: work it delegated, or speech a WebRTC
+        # sideband doesn't forward.
+        self._took_turn = True
         return events
 
     def _map_frame(self, raw: str | bytes) -> list[RealtimeCodecEvent]:
@@ -1381,8 +1386,6 @@ class OpenAILiveConnection(RealtimeConnection):
                 )
             ]
         self._delegations[delegation.id] = _Delegation(id=delegation.id)
-        # The model takes the turn to delegate, before it says anything.
-        self._took_turn = True
         return self._open_response()
 
     def _map_response_event(self, nested: dict[str, Any], *, delegation_id: str | None) -> list[RealtimeCodecEvent]:

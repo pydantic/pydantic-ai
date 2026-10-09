@@ -49,7 +49,7 @@ from pydantic_ai.realtime._core import (
     ToolReturned,
     TranscriptOverdue,
 )
-from pydantic_ai.realtime._google_lifecycle import GeminiLifecycle
+from pydantic_ai.realtime._inferred_lifecycle import InferredLifecycle
 from pydantic_ai.realtime._lifecycle import (
     InputAdded,
     InputLost,
@@ -72,6 +72,7 @@ from pydantic_ai.realtime.codec import (
     SessionUsage,
     ToolCall,
     ToolCallCancelled,
+    ToolResult,
 )
 from pydantic_ai.usage import RequestUsage
 
@@ -1132,7 +1133,7 @@ def test_a_turn_recorded_after_the_reply_to_it_is_evicted_before_that_reply() ->
 
 def test_a_held_filler_keeps_the_wait_through_a_transcript_until_the_model_carries_on() -> None:
     """Gemini's extended-thinking model holds its filler open (`IN_PROGRESS`): the user's words then don't end the wait."""
-    tracker = GeminiLifecycle(transcribes=True)
+    tracker = InferredLifecycle(transcribes=True, transcripts_lag_replies=True)
     session_core = core()
 
     def message(*codec: Any) -> None:
@@ -1159,3 +1160,12 @@ def test_a_held_filler_keeps_the_wait_through_a_transcript_until_the_model_carri
             'None [assistant:Still checking.] complete stop',
         ]
     )
+
+
+def test_a_reply_the_provider_will_never_give_is_lost_once() -> None:
+    """GPT-Live drops a tool result whose backend gave up: its reply is lost, unless a response already took it."""
+    tracker = InferredLifecycle(transcribes=True)
+    tracker.input_sent(0, ToolResult('call_1', output='sunny'))
+    tracker.input_unanswerable(0)
+    tracker.input_unanswerable(0)
+    assert tracker.take_pending() == snapshot([InputAdded(input_id=0), InputLost(input_ids=(0,))])

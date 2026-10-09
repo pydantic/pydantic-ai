@@ -67,7 +67,9 @@ class _Turn:
 class InferredLifecycle:
     """Turns a connection's sends and messages into lifecycle events, for a protocol that identifies nothing."""
 
-    def __init__(self, *, transcribes: bool, transcripts_lag_replies: bool = False) -> None:
+    def __init__(
+        self, *, transcribes: bool, transcripts_lag_replies: bool = False, audio_starts_response: bool = True
+    ) -> None:
         """Track a connection's lifecycle.
 
         Args:
@@ -75,7 +77,11 @@ class InferredLifecycle:
             transcripts_lag_replies: Whether the provider can transcribe the user's words after the model started
                 answering them (Gemini does): a transcript that starts while a reply nobody asked for is under way
                 is then the speech that reply answers, rather than speech over it.
+            audio_starts_response: Whether output audio is the model speaking. GPT-Live's output is a continuous
+                track, silent between replies: its connection says where the model takes the turn instead
+                (`message(takes_turn=True)`), and audio outside a reply is no response.
         """
+        self._audio_starts_response = audio_starts_response
         self._transcribes = transcribes
         self._transcripts_lag_replies = transcripts_lag_replies
         self._pending: list[LifecycleEvent] = []
@@ -126,6 +132,12 @@ class InferredLifecycle:
         self._held = [held for held in self._held if held != input_id]
         self._pending = [event for event in self._pending if event != InputAdded(input_id=input_id)]
 
+    def input_unanswerable(self, input_id: InputId) -> None:
+        """An input went (or was meant to go) out, but the provider will never reply to it."""
+        if input_id in self._unanswered:
+            self._unanswered.remove(input_id)
+            self._pending.append(InputLost(input_ids=(input_id,)))
+
     def take_pending(self) -> list[LifecycleEvent]:
         pending, self._pending = self._pending, []
         return pending
@@ -157,8 +169,10 @@ class InferredLifecycle:
     def _event(self, event: RealtimeCodecEvent) -> tuple[list[LifecycleEvent], list[LifecycleEvent]]:
         before: list[LifecycleEvent] = []
         after: list[LifecycleEvent] = []
-        output = isinstance(event, (AudioDelta, PartStartEvent, ToolCall)) or (
-            isinstance(event, OutputTranscript) and bool(event.text)
+        output = (
+            isinstance(event, (PartStartEvent, ToolCall))
+            or (isinstance(event, AudioDelta) and self._audio_starts_response)
+            or (isinstance(event, OutputTranscript) and bool(event.text))
         )
         if self._deferred is not None:
             if isinstance(event, (ToolCall, ResponseDone)):
@@ -179,7 +193,7 @@ class InferredLifecycle:
                 self._calls_awaiting_usage = True
         elif isinstance(event, SessionUsage):
             # Usage reported between responses doesn't start one: it is the next response's (see `_response_done`).
-            if self._calls_awaiting_usage:
+            if event.response_scoped and self._calls_awaiting_usage:
                 # A tool-call frame's report: the calls' response is over, and the answer comes once every result
                 # is in.
                 self._end(after, status='completed', finish_reason='tool_call')
