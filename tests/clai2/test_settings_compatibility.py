@@ -792,10 +792,11 @@ async def test_saved_skill_folders_load_in_builds_with_and_without_the_feature(
 
     await loader.load_all()
 
+    # Through the host: an earlier `loader.reload('coder')` in this process may have replaced the module's class.
     folders = {
-        entry.name: entry.loaded.plugin.settings.skill_folders
+        entry.name: entry.loaded.plugin.host.settings(CoderSettings).skill_folders
         for entry in loader.entries()
-        if entry.loaded is not None and isinstance(entry.loaded.plugin.settings, CoderSettings)
+        if entry.loaded is not None and entry.name in {'coder', 'older'}
     }
     assert folders == {
         'coder': ['team-skills'] if supported else list(DEFAULT_SKILL_FOLDERS),
