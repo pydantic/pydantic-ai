@@ -169,6 +169,15 @@ def tmp_path_cwd(tmp_path: Path):
         sys.path.remove(str(tmp_path))
 
 
+def _patch_sentence_transformers(mocker: MockerFixture, example: CodeExample) -> None:
+    """Stub the model download, only for examples that use it: patching imports `sentence_transformers` and `torch`."""
+    if re.search(r'sentence[-_]transformers', example.source, re.IGNORECASE):
+        try:
+            mocker.patch('sentence_transformers.SentenceTransformer')
+        except ModuleNotFoundError:
+            pass
+
+
 def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
     """Patch MCP-related symbols only if the underlying modules are importable in this env."""
     try:
@@ -488,10 +497,7 @@ def test_docs_examples(
 
     _patch_optional_mcp_modules(mocker)
     _patch_realtime_models(mocker)
-    try:
-        mocker.patch('sentence_transformers.SentenceTransformer')
-    except ModuleNotFoundError:
-        pass
+    _patch_sentence_transformers(mocker, example)
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
