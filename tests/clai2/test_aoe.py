@@ -1,6 +1,7 @@
 """The AoE plugin reports through AoE's hook files, with tmux, `ps`, and `aoe` faked at the process boundary."""
 
 import asyncio
+import importlib.util
 import io
 import os
 import stat
@@ -645,3 +646,12 @@ async def test_a_failed_mapping_write_is_tried_again(
     await env.write('session_id', session.conversation_id + '\n')
     assert (env.state / INSTANCE).read_text() == session.conversation_id + '\n'
     await loaded.dispatch(SessionEnd(reason='exit'))
+
+
+def test_the_module_imports_without_posix_open_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Windows has neither, and the plugin must load there to stay inert.
+    monkeypatch.delattr(os, 'O_NOFOLLOW')
+    monkeypatch.delattr(os, 'O_DIRECTORY')
+    spec = importlib.util.spec_from_file_location('aoe_without_posix_flags', aoe.__file__)
+    assert spec is not None and spec.loader is not None
+    spec.loader.exec_module(importlib.util.module_from_spec(spec))

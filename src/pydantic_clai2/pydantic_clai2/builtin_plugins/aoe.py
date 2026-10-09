@@ -56,8 +56,6 @@ _LOOKUP_ATTEMPTS = 20
 _LOOKUP_INTERVAL = 0.25
 """AoE sets the instance ID on the tmux session just after starting the pane, so allow it five seconds."""
 _COMMAND_TIMEOUT = 10.0
-_FILE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
-_DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
 def hooks_base() -> Path:
@@ -146,6 +144,16 @@ def _is_clai2(args: str) -> bool:
     return any(Path(token).name in _CLAI2 for token in tokens[:2]) or tokens[1:3] == ['-m', 'pydantic_clai2']
 
 
+def _file_flags() -> int:
+    """Flags for a new hook file; a function, as Windows lacks `O_NOFOLLOW` and the module must import there."""
+    return os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+
+
+def _directory_flags() -> int:
+    """Flags for a hook directory; a function, as Windows lacks `O_DIRECTORY` and `O_NOFOLLOW`."""
+    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+
 def _open_directory(name: str | os.PathLike[str], *, parent: int | None = None, create: bool) -> int | None:
     """Open a directory as AoE's `dir_guard` does: no symlink, owned by this user, no group or other access."""
     if create:
@@ -154,7 +162,7 @@ def _open_directory(name: str | os.PathLike[str], *, parent: int | None = None, 
         except FileExistsError:
             pass
     try:
-        descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=parent)
+        descriptor = os.open(name, _directory_flags(), dir_fd=parent)
     except FileNotFoundError:
         return None
     info = os.fstat(descriptor)
@@ -167,7 +175,7 @@ def _open_directory(name: str | os.PathLike[str], *, parent: int | None = None, 
 def _write_at(directory: int, name: str, content: str, *, mode: int = 0o600) -> None:
     """Replace `name` atomically: write a fresh temporary file beside it, then rename it over."""
     temporary = f'.{name}.{secrets.token_hex(8)}.tmp'
-    descriptor = os.open(temporary, _FILE_FLAGS, mode, dir_fd=directory)
+    descriptor = os.open(temporary, _file_flags(), mode, dir_fd=directory)
     try:
         with os.fdopen(descriptor, 'w', encoding='utf-8') as file:
             file.write(content)
@@ -234,7 +242,7 @@ class Mappings:
     def write(self, instance_id: str, conversation_id: str) -> None:
         """Record `conversation_id` for `instance_id`."""
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        descriptor = os.open(self.directory, _DIRECTORY_FLAGS)
+        descriptor = os.open(self.directory, _directory_flags())
         try:
             _write_at(descriptor, instance_id, conversation_id + '\n')
         finally:
