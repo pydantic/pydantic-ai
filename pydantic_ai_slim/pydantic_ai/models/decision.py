@@ -237,7 +237,7 @@ def _wire(value: DecisionQuestion | DecisionAnswer) -> dict[str, Any]:
     return wire
 
 
-def _probability_bounds(probabilities: Collection[float]) -> tuple[list[Decimal], list[Decimal]]:
+def _probability_bounds(probabilities: Collection[float]) -> tuple[list[Decimal], list[Decimal]]:  # pyright: ignore[reportUnusedFunction]
     """The bounded rounding intervals of the displayed probabilities, using at least two decimal places."""
     values: list[Decimal] = [Decimal(str(probability)) for probability in probabilities]
     half_units: list[Decimal] = [Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2 for value in values]
@@ -246,7 +246,7 @@ def _probability_bounds(probabilities: Collection[float]) -> tuple[list[Decimal]
     return lower, upper
 
 
-def _score_fits(lower: Sequence[Decimal], upper: Sequence[Decimal], score: float) -> bool:
+def _score_fits(lower: Sequence[Decimal], upper: Sequence[Decimal], score: float) -> bool:  # pyright: ignore[reportUnusedFunction]
     """Whether rounded probabilities can sum to one and produce the displayed score."""
     remaining = Decimal(1) - sum(lower, Decimal(0))
     valid = 0 <= remaining <= sum((high - low for low, high in zip(lower, upper)), Decimal(0))
@@ -553,47 +553,6 @@ class DecisionModel(Model[InterfaceClient]):
         supports them.
         """
         raise NotImplementedError()
-
-    @staticmethod
-    def _answer_fits(question: DecisionQuestion, answer: DecisionAnswer) -> bool:
-        """Whether an answer is one its question allows: of its kind, picking an offered option, and in range.
-
-        A pick-one or a score gives a probability for exactly the options or levels offered, every probability and
-        confidence is from 0 to 1, the probabilities sum to one within rounding, and a score is within the rubric and
-        one its rounded probabilities can produce. A backend that checks its API's answers calls this, and adds the
-        checks its own API calls for.
-        """
-        # Each range check is a chained comparison, which is false for NaN.
-        if isinstance(question, NoulQuestion):
-            return isinstance(answer, NoulAnswer) and 0 <= answer.noul <= 1
-        elif isinstance(question, ChoiceQuestion):
-            if not (
-                isinstance(answer, ChoiceAnswer)
-                and answer.choice in question.criteria
-                and answer.probabilities.keys() == question.criteria.keys()
-                and all(0 <= p <= 1 for p in (answer.confidence, *answer.probabilities.values()))
-                and sum(answer.probabilities.values()) > 0
-            ):
-                return False
-            lower, upper = _probability_bounds(answer.probabilities.values())
-            # A small tolerance accommodates floating-point normalization.
-            return sum(lower, Decimal(0)) <= Decimal('1.000001') and sum(upper, Decimal(0)) >= Decimal('0.999999')
-        elif isinstance(question, ScoreQuestion):
-            if not (
-                isinstance(answer, ScoreAnswer)
-                and answer.probabilities.keys() == set(range(len(question.criteria)))
-                and 0 <= answer.score <= len(question.criteria) - 1
-                and all(0 <= p <= 1 for p in (answer.confidence, *answer.probabilities.values()))
-                and sum(answer.probabilities.values()) > 0
-            ):
-                return False
-            # A displayed score and its probabilities may each be rounded. Check whether any distribution
-            # within their rounding intervals could produce that score, using at least two decimals.
-            probabilities: list[float] = [answer.probabilities[level] for level in range(len(question.criteria))]
-            lower, upper = _probability_bounds(probabilities)
-            return _score_fits(lower, upper, answer.score)
-        else:
-            assert_never(question)
 
     @asynccontextmanager
     async def _decide(

@@ -8,7 +8,8 @@ recording.
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Literal
@@ -1626,122 +1627,181 @@ async def test_image_url_with_non_image_content_is_rejected_before_a_decisions_r
     assert captured.requests == []
 
 
+@dataclass(frozen=True)
+class PreflightCase:
+    run: Callable[[Captured], Awaitable[object]]
+    error_type: type[Exception]
+    match: str | None
+    expected_route: str | None = None
+
+
+def inspect_ticket() -> None:
+    """Inspect the ticket."""
+
+
+class FreeTextOutput(BaseModel):
+    free_text: str = Field(description='A free-form explanation.')
+
+
 @pytest.mark.parametrize(
-    ('model_settings', 'threshold_name'),
+    'case',
     [
         pytest.param(
-            OpenAIDecisionsModelSettings(decision_boolean_threshold=2.0),
-            'decision_boolean_threshold',
+            PreflightCase(
+                run=lambda captured: Agent(
+                    mock_model(captured),
+                    output_type=bool,
+                    instructions='Does the input contain an image?',
+                    model_settings=OpenAIDecisionsModelSettings(decision_boolean_threshold=2.0),
+                ).run([ImageUrl('https://example.com/missing.png')]),
+                error_type=UserError,
+                match=r'`decision_boolean_threshold` must be between 0 and 1',
+            ),
             id='boolean-threshold',
         ),
         pytest.param(
-            OpenAIDecisionsModelSettings(decision_route_threshold=2.0),
-            'decision_route_threshold',
+            PreflightCase(
+                run=lambda captured: Agent(
+                    mock_model(captured),
+                    output_type=bool,
+                    instructions='Does the input contain an image?',
+                    model_settings=OpenAIDecisionsModelSettings(decision_route_threshold=2.0),
+                ).run([ImageUrl('https://example.com/missing.png')]),
+                error_type=UserError,
+                match=r'`decision_route_threshold` must be between 0 and 1',
+            ),
             id='route-threshold',
+        ),
+        pytest.param(
+            PreflightCase(
+                run=lambda captured: Agent(mock_model(captured), output_type=FreeTextOutput).run(
+                    [ImageUrl('https://example.com/missing.png')]
+                ),
+                error_type=UserError,
+                match="Output field 'free_text' is not supported by this model",
+            ),
+            id='unfillable-output',
+        ),
+        pytest.param(
+            PreflightCase(
+                run=lambda captured: Agent(
+                    mock_model(captured), output_type=bool, instructions='Are these images receipts?'
+                ).run(
+                    ['Review these images.', *(ImageUrl(f'https://example.com/{index}.png') for index in range(129))]
+                ),
+                error_type=ModelAPIError,
+                match='accepts at most 128 images; got 129',
+            ),
+            id='image-limit',
+        ),
+        pytest.param(
+            PreflightCase(
+                run=lambda captured: Agent(
+                    OpenAIDecisionsModel(
+                        'gpt-6-luna',
+                        provider=OpenAIDecisionsProvider(
+                            openai_client=AsyncOpenAI(
+                                api_key='test',
+                                max_retries=0,
+                                http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(captured)),
+                            )
+                        ),
+                        profile=DecisionModelProfile(decision_max_choice_options=1),
+                    ),
+                    output_type=bool,
+                    tools=[inspect_ticket],
+                    instructions='Is this safe?',
+                ).run([ImageUrl('https://example.com/missing.png')]),
+                error_type=UserError,
+                match='being offered 2 routes',
+            ),
+            id='route-limit',
+        ),
+        pytest.param(
+            PreflightCase(
+                run=lambda captured: mock_model(captured).request(
+                    [
+                        ModelRequest(
+                            parts=[UserPromptPart(['Review the ticket.', ImageUrl('https://example.com/ticket.png')])]
+                        )
+                    ],
+                    None,
+                    ModelRequestParameters(
+                        output_tools=[
+                            ToolDefinition(
+                                name='final_result',
+                                description='Answer the questions.',
+                                kind='output',
+                                parameters_json_schema={
+                                    'type': 'object',
+                                    'properties': {
+                                        f'q{index}': {
+                                            'type': 'boolean',
+                                            'description': 'Does this apply?',
+                                        }
+                                        for index in range(201)
+                                    },
+                                    'required': [f'q{index}' for index in range(201)],
+                                },
+                            )
+                        ],
+                        output_mode='tool',
+                        allow_text_output=False,
+                    ),
+                ),
+                error_type=ModelAPIError,
+                match='accepts at most 200 questions; got 201',
+            ),
+            id='question-limit',
+        ),
+        pytest.param(
+            PreflightCase(
+                run=lambda captured: mock_model(captured).request(
+                    [
+                        ModelRequest(parts=[UserPromptPart(content=[ImageUrl('https://example.com/missing.png')])]),
+                        ModelResponse(parts=[ToolCallPart('inspect_ticket', {}, 'call_1')]),
+                        ModelRequest(parts=[ToolReturnPart('inspect_ticket', 'Inspected.', 'call_1')]),
+                    ],
+                    None,
+                    ModelRequestParameters(
+                        function_tools=[
+                            ToolDefinition(name='inspect_ticket', description='Inspect the ticket.'),
+                            ToolDefinition(
+                                name='write_note',
+                                description='Write a note.',
+                                parameters_json_schema={
+                                    'type': 'object',
+                                    'properties': {'note': {'type': 'string', 'description': 'A note to write.'}},
+                                    'required': ['note'],
+                                },
+                            ),
+                        ],
+                        allow_text_output=False,
+                    ),
+                ),
+                error_type=UnfillableRoute,
+                match=None,
+                expected_route='write_note',
+            ),
+            id='unfillable-forced-tool',
         ),
     ],
 )
-async def test_invalid_threshold_prevents_image_download(
-    allow_model_requests: None,
-    model_settings: OpenAIDecisionsModelSettings,
-    threshold_name: str,
-):
-    """Invalid decision thresholds are rejected before downloading an image prompt."""
-    captured = Captured(boolean_answers)
-    agent = Agent(
-        mock_model(captured),
-        output_type=bool,
-        instructions='Does the input contain an image?',
-        model_settings=model_settings,
-    )
-
-    with (
-        patch(
-            'pydantic_ai.models.decision.download_item',
-            new_callable=AsyncMock,
-            side_effect=httpx2.ConnectError('image download failed'),
-        ) as download,
-        pytest.raises(UserError, match=f'`{threshold_name}` must be between 0 and 1'),
-    ):
-        await agent.run([ImageUrl('https://example.com/missing.png')])
+async def test_preflight_errors_prevent_image_download(case: PreflightCase, allow_model_requests: None):
+    captured: Captured = Captured(boolean_answers)
+    with patch(
+        'pydantic_ai.models.decision.download_item',
+        new_callable=AsyncMock,
+        side_effect=AssertionError('image download should not start'),
+    ) as download:
+        with pytest.raises(case.error_type, match=case.match) as exc_info:
+            await case.run(captured)
 
     download.assert_not_awaited()
     assert captured.requests == []
-
-
-async def test_unfillable_output_prevents_image_download(allow_model_requests: None):
-    """An unsupported output field is rejected before downloading an image prompt."""
-
-    class FreeTextOutput(BaseModel):
-        free_text: str = Field(description='A free-form explanation.')
-
-    captured = Captured(boolean_answers)
-    agent = Agent(mock_model(captured), output_type=FreeTextOutput)
-
-    with (
-        patch(
-            'pydantic_ai.models.decision.download_item',
-            new_callable=AsyncMock,
-            side_effect=httpx2.ConnectError('image download failed'),
-        ) as download,
-        pytest.raises(UserError, match="Output field 'free_text' is not supported by this model"),
-    ):
-        await agent.run([ImageUrl('https://example.com/missing.png')])
-
-    download.assert_not_awaited()
-    assert captured.requests == []
-
-
-async def test_image_limit_prevents_url_download(allow_model_requests: None):
-    """The provider's image limit is checked before resolving evidence URLs or sending a request."""
-    captured = Captured(boolean_answers)
-    image_urls: list[str | ImageUrl] = ['Review these images.']
-    image_urls.extend(ImageUrl(f'https://example.com/{index}.png') for index in range(129))
-    agent = Agent(mock_model(captured), output_type=bool, instructions='Are these images receipts?')
-
-    with (
-        patch(
-            'pydantic_ai.models.decision.download_item',
-            new_callable=AsyncMock,
-            side_effect=httpx2.ConnectError('image download should not start'),
-        ) as download,
-        pytest.raises(ModelAPIError, match='accepts at most 128 images; got 129'),
-    ):
-        await agent.run(image_urls)
-
-    download.assert_not_awaited()
-    assert captured.requests == []
-
-
-async def test_route_limit_prevents_image_download(allow_model_requests: None):
-    """An overfull route question is rejected before downloading an image prompt."""
-
-    def inspect_ticket() -> None:
-        """Inspect the ticket."""
-
-    captured = Captured(boolean_answers)
-    client = AsyncOpenAI(
-        api_key='test', max_retries=0, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(captured))
-    )
-    model = OpenAIDecisionsModel(
-        'gpt-6-luna',
-        provider=OpenAIDecisionsProvider(openai_client=client),
-        profile=DecisionModelProfile(decision_max_choice_options=1),
-    )
-    agent = Agent(model, output_type=bool, tools=[inspect_ticket], instructions='Is this safe?')
-
-    with (
-        patch(
-            'pydantic_ai.models.decision.download_item',
-            new_callable=AsyncMock,
-            side_effect=httpx2.ConnectError('image download failed'),
-        ) as download,
-        pytest.raises(UserError, match='being offered 2 routes'),
-    ):
-        await agent.run([ImageUrl('https://example.com/missing.png')])
-
-    download.assert_not_awaited()
-    assert captured.requests == []
+    if case.expected_route is not None:
+        assert isinstance(exc_info.value, UnfillableRoute)
+        assert exc_info.value.route == case.expected_route
 
 
 async def test_overfull_speculation_picks_then_fills_under_question_limit(allow_model_requests: None):
@@ -2053,93 +2113,8 @@ async def test_exact_question_limit_route_then_fill_stays_under_cap(
     ]
 
 
-async def test_201_questions_prevent_image_download(allow_model_requests: None):
-    """A single-output request with 201 fields is rejected before resolving image URLs or sending it."""
-    captured = Captured(boolean_answers)
-    model = mock_model(captured)
-    properties: dict[str, JsonSchemaValue] = {
-        f'q{index}': {'type': 'boolean', 'description': 'Does this apply?'} for index in range(201)
-    }
-    required: list[str] = list(properties)
-    output_schema: ObjectJsonSchema = {'type': 'object', 'properties': properties, 'required': required}
-    output_tool = ToolDefinition(
-        name='final_result',
-        description='Answer the questions.',
-        kind='output',
-        parameters_json_schema=output_schema,
-    )
-    image_url = ImageUrl('https://example.com/ticket.png')
-
-    with (
-        patch(
-            'pydantic_ai.models.decision.download_item',
-            new_callable=AsyncMock,
-            side_effect=httpx2.ConnectError('image download should not start'),
-        ) as download,
-        pytest.raises(ModelAPIError, match='accepts at most 200 questions; got 201'),
-    ):
-        await model.request(
-            [ModelRequest(parts=[UserPromptPart(['Review the ticket.', image_url])])],
-            None,
-            ModelRequestParameters(output_tools=[output_tool], output_mode='tool', allow_text_output=False),
-        )
-
-    download.assert_not_awaited()
-    assert captured.requests == []
-
-
-async def test_unfillable_forced_tool_prevents_image_download(allow_model_requests: None):
-    """A forced tool with an unsupported argument is handed off before downloading a history image."""
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content=[ImageUrl('https://example.com/missing.png')])]),
-        ModelResponse(parts=[ToolCallPart('inspect_ticket', {}, 'call_1')]),
-        ModelRequest(parts=[ToolReturnPart('inspect_ticket', 'Inspected.', 'call_1')]),
-    ]
-    function_tools: list[ToolDefinition] = [
-        ToolDefinition(name='inspect_ticket', description='Inspect the ticket.'),
-        ToolDefinition(
-            name='write_note',
-            description='Write a note.',
-            parameters_json_schema={
-                'type': 'object',
-                'properties': {'note': {'type': 'string', 'description': 'A note to write.'}},
-                'required': ['note'],
-            },
-        ),
-    ]
-    captured = Captured(boolean_answers)
-    model = mock_model(captured)
-
-    with (
-        patch(
-            'pydantic_ai.models.decision.download_item',
-            new_callable=AsyncMock,
-            side_effect=httpx2.ConnectError('image download failed'),
-        ) as download,
-        pytest.raises(UnfillableRoute) as exc_info,
-    ):
-        await model.request(
-            history,
-            None,
-            ModelRequestParameters(function_tools=function_tools, allow_text_output=False),
-        )
-
-    assert exc_info.value.route == 'write_note'
-    download.assert_not_awaited()
-    assert captured.requests == []
-
-
-@pytest.mark.parametrize(
-    'model_settings',
-    [
-        pytest.param(None, id='without-settings'),
-        pytest.param(OpenAIDecisionsModelSettings(extra_body=['ignored']), id='ignored-extra-body'),
-    ],
-)
-async def test_forced_argumentless_tool_skips_image_preparation(
-    allow_model_requests: None, model_settings: OpenAIDecisionsModelSettings | None
-):
-    """A sole argumentless route skips image preparation even with irrelevant request settings."""
+async def test_forced_argumentless_tool_skips_image_preparation(allow_model_requests: None):
+    """A sole argumentless route skips image preparation and sends no Decisions request."""
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content=[ImageUrl('https://example.com/missing.png')])]),
         ModelResponse(parts=[ToolCallPart('inspect_ticket', {}, 'call_1')]),
@@ -2159,7 +2134,7 @@ async def test_forced_argumentless_tool_skips_image_preparation(
     ) as download:
         response = await model.request(
             history,
-            model_settings,
+            None,
             ModelRequestParameters(function_tools=function_tools, allow_text_output=False),
         )
 
