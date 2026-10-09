@@ -8,6 +8,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
+import html
 import json
 import time
 import warnings
@@ -208,6 +209,21 @@ class ModelRequestParameters:
     for and stays set after a reveal, so this answers the separate question of what the model can
     see *now*. History can name tools that no longer exist in the current run's definitions; those
     are dropped where this is derived, so it is a subset of `function_tools`' names by construction.
+    """
+
+    introduced_tool_names: set[str] = field(default_factory=set[str], repr=False)
+    """Immediately-available function tools that joined the run's tool population after its first request.
+
+    `tools` is the first cache section, so a tool that appears mid-run (added to a `FunctionToolset`
+    from inside a tool, returned by a dynamic toolset, listed by an MCP server after
+    `tools/list_changed`, let through by `prepare_tools`) is not added to it. It travels like a
+    revealed deferred tool instead: the run records a
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] naming it, and visibility
+    resolution puts it on the provider's tool-addition channel once that delta is in the outgoing
+    history. Without the delta it stays an ordinary visible `tools` entry, because it is callable either way.
+
+    This changes only how the definition reaches the model. `ToolDefinition.defer_loading` stays as
+    authored, and whether the tool can be called is decided exactly as before.
     """
 
     deferred_capability_ids: set[str] = field(default_factory=set[str], repr=False)
@@ -932,9 +948,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # tool has to get here on its own account: one gated by an on-demand capability belongs to no
         # native tool's corpus, so a run whose deferred tools are all capability-gated reaches this
         # point with neither a native tool nor a `with_native` between them.
-        if params.native_tools or any(
-            t.unless_native or t.with_native or t.defer_loading for t in params.function_tools
-        ):
+        if _needs_tool_resolution(params):
             params = self._resolve_request_tools(params)
         else:
             # Nothing native and nothing deferred: every function tool is plainly visible. Stamped
@@ -1006,9 +1020,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # only names matching a currently-served *authored-deferred* function tool render —
             # a forged-but-well-shaped name must not reach system voice, and an always-visible
             # tool named by a delta has no "now available" news and no exchange to fabricate:
-            # the delta is a no-op for it on this channel just as on the native ones.
+            # the delta is a no-op for it on this channel just as on the native ones. A mid-run
+            # newcomer is the exception: it wasn't in `tools` before, so its arrival is news.
             deferred_tool_names = (
-                {tool.name for tool in model_request_parameters.function_tools if tool.defer_loading}
+                {
+                    tool.name
+                    for tool in model_request_parameters.function_tools
+                    if tool.defer_loading or tool.name in model_request_parameters.introduced_tool_names
+                }
                 if model_request_parameters is not None
                 else None
             )
@@ -1082,10 +1101,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             return self.tool_deferral_mode == 'standalone'
         # Mirrors `prepare_request`'s guard so this can't raise where that wouldn't: with nothing
         # native and nothing deferred there is no schema to withhold anyway.
-        if not (
-            params.native_tools
-            or any(t.unless_native or t.with_native or t.defer_loading for t in params.function_tools)
-        ):
+        if not _needs_tool_resolution(params):
             return False
         # TODO(#7196): reorder the stages so message projection always receives resolved
         # parameters, at which point this on-demand resolution can be removed.
@@ -2131,6 +2147,15 @@ def _customize_output_object(
     )
 
 
+def _needs_tool_resolution(params: ModelRequestParameters) -> bool:
+    """Whether any tool's wire representation depends on the model; when not, every function tool is plainly visible."""
+    return bool(
+        params.native_tools
+        or params.introduced_tool_names
+        or any(t.unless_native or t.with_native or t.defer_loading for t in params.function_tools)
+    )
+
+
 def resolve_request_tools(
     params: ModelRequestParameters,
     supported_types: frozenset[type[AbstractNativeTool]],
@@ -2218,7 +2243,11 @@ def resolve_request_tools(
         # Rule 2: a corpus member whose native tool is unsupported can't be paired with it here.
         if t.with_native and t.with_native not in supported_ids:
             t = replace(t, with_native=None)
-        if not t.defer_loading:
+        # A mid-run newcomer resolves like a revealed deferred tool, but only once its delta is on the
+        # outgoing history: it is callable from the moment it exists, so without the delta it stays in
+        # `tools`.
+        revealed_newcomer = t.name in params.introduced_tool_names and t.name in params.revealed_tool_names
+        if not (t.defer_loading or revealed_newcomer):
             visibility = 'visible'
         else:
             revealed = t.name in params.revealed_tool_names
@@ -2574,6 +2603,18 @@ for, on a turn the user didn't write.
 """
 
 
+def _escape_announced_tool_name(name: str) -> str:
+    """Escape markup in a tool name so it can't end the statement announcing it.
+
+    The announcement is spoken in the system voice, and on a model without mid-conversation system
+    messages it is wrapped in `<system>` tags inside a user turn. Tool names are not always the
+    operator's text: an MCP server chooses its own, so a name carrying `</system>` would otherwise close
+    that statement and have whatever follows read as outside it. Ordinary names contain none of these
+    characters and render unchanged. See https://github.com/pydantic/pydantic-ai/issues/7891.
+    """
+    return html.escape(name, quote=False)
+
+
 def _legacy_fabricated_tool_search_reveals(
     messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
 ) -> dict[str, list[str]]:
@@ -2750,7 +2791,9 @@ def _announce_tool_availability_delta_messages(
             if added:
                 replacement_parts.append(
                     SystemPromptPart(
-                        content=TOOL_AVAILABILITY_ANNOUNCEMENT.format(names=', '.join(f'`{name}`' for name in added))
+                        content=TOOL_AVAILABILITY_ANNOUNCEMENT.format(
+                            names=', '.join(f'`{_escape_announced_tool_name(name)}`' for name in added)
+                        )
                     )
                 )
         # A request whose only part was an empty delta would otherwise reach the adapter with no
