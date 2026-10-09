@@ -26,7 +26,7 @@ The layers don't share budgets, but they stack: a retry at one layer wraps the a
 
 - `N` — model requests per logical call: the initial attempt, one follow-up per tool call (even a successful tool call queues another request), and any retry prompts the [tool](#tool-retries) and [output](#output-retries) budgets add
 - `F` — models per model request: the number of models in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], or `1` without one
-- `M` — attempts per model request inside the provider SDK client. The SDK determines this budget; for example, an OpenAI client configured with `max_retries=N` allows `1 + N` attempts. See [provider SDK retries](#provider-sdk-retries) for the provider-specific settings.
+- `M` — attempts per model request inside the provider SDK client. The SDK determines this budget; for example, an OpenAI client configured with `max_retries=N` allows `1 + N` attempts, and [`ModelSettings['max_retries']`](#setting-the-sdk-retry-count-per-request) overrides it per request. See [provider SDK retries](#provider-sdk-retries) for the provider-specific settings.
 - `K` — attempts per request on the wire: the transport's stop strategy, so `stop_after_attempt(N)` allows `N` total attempts (`K = N`), not one plus retries — see [transport retries](#transport-retries)
 
 Every wire request pays its own latency — and bills tokens once the request reaches the model — so the worst case, not the happy path, is what your budgets must absorb. [`UsageLimits`][pydantic_ai.usage.UsageLimits] bounds only `N`: its `request_limit` (default `50`) counts the model responses the agent acts on per run, and never sees the fallback attempts, SDK client retries and transport retries beneath them. Their tokens and cost do count towards its token and cost limits whenever the provider reports them, as it does for a response a fallback model rejected, but usually not for a request that failed. [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] applies per attempt — a retrying SDK client re-arms it for every retry — and only on the [model classes that forward it](timeouts.md#bounding-how-long-a-step-takes). See [Timeouts](timeouts.md#bounding-how-long-a-step-takes) for the time side.
@@ -419,6 +419,54 @@ See [Bedrock: Configuring Retries](models/bedrock.md#configuring-retries) for co
 Between the transport and the model sits one more layer the agent never sees: the provider SDK's own client, which re-issues failed requests before your code hears about them. Its defaults, retryable errors, and configuration differ by provider, so size `M` from the client you use. A [retrying transport](#transport-retries) sits *below* this client, so the two stack rather than replacing each other: configuring one never disables the other.
 
 See the provider-specific settings for [OpenAI](models/openai.md#custom-openai-client), [Anthropic](models/anthropic.md#custom-http-client), [Google](models/google.md#http-retries), [Groq](models/groq.md#sdk-retries), [Cohere](models/cohere.md#sdk-retries), [TypeSafe](models/typesafe.md#sdk-retries), [xAI](models/xai.md#sdk-retries), and [AWS Bedrock](models/bedrock.md#configuring-retries).
+
+### Setting the SDK retry count per request {#setting-the-sdk-retry-count-per-request}
+
+[`ModelSettings['max_retries']`][pydantic_ai.settings.ModelSettings.max_retries] sets how many times the SDK client retries one request, without building the client yourself. `0` makes a single attempt. The SDK still decides which failures it retries and how long it waits between attempts. Like any model setting, it applies per model, per agent, or per run:
+
+```python {title="sdk_max_retries.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2', model_settings={'max_retries': 0})
+```
+
+Set it to `0` when another layer owns retrying, so the attempt budget is the one you configured there rather than that budget multiplied by the SDK's:
+
+- a [retrying transport](#transport-retries) on the HTTP client;
+- a [durable execution](durable_execution/overview.md) engine's retry policy;
+- a [fallback model](#model-fallback-is-not-a-retry) that should move to its next model as soon as one fails.
+
+On a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], `max_retries` set on the agent or run applies to every candidate, and takes precedence over each candidate's own settings. To keep SDK retries on the last candidate, the one with nothing to fall back to, set it on the other candidates instead:
+
+```python {title="fallback_max_retries.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.openai import OpenAIChatModel
+
+fallback = FallbackModel(
+    OpenAIChatModel('gpt-5.2', settings={'max_retries': 0}),
+    AnthropicModel('claude-sonnet-4-5'),
+)
+agent = Agent(fallback)
+```
+
+Not every SDK can take the setting per request:
+
+| Model | Supported | Notes |
+|---|---|---|
+| OpenAI, and the model classes built on it | ✅ | Full feature support, including an `AsyncAzureOpenAI` client |
+| Anthropic | ✅ | Full feature support, including `AsyncAnthropicBedrock`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients |
+| Groq | ✅ | Full feature support |
+| Cohere | ✅ | Full feature support |
+| Google | ✅ | Limited parameter support: keeps the delays and status codes of the provider's `retry_options`, which retry nothing unless set |
+| Mistral | ✅ | Limited parameter support: `0` only. The SDK bounds retries by elapsed time, not count, so `0` turns off a `retry_config` set on the client and other values are ignored |
+| TypeSafe | ✅ | Limited parameter support: the request's other `RetryPolicy` options are the SDK defaults, not the client's |
+| AWS Bedrock | ❌ | boto3 retries per client; see [Configuring Retries](models/bedrock.md#configuring-retries) |
+| xAI | ❌ | gRPC retries per channel; see [SDK retries](models/xai.md#sdk-retries) |
+| Hugging Face | ❌ | The client makes no retries |
+
+The model classes that honor it are listed under [`ModelSettings.max_retries`][pydantic_ai.settings.ModelSettings.max_retries]; the others accept it and don't change their retries.
 
 ## Model fallback is not a retry
 

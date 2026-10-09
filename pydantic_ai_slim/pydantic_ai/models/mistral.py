@@ -309,6 +309,7 @@ class MistralModel(Model[Mistral]):
                 temperature=model_settings.get('temperature', UNSET),
                 top_p=model_settings.get('top_p', 1),
                 timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+                retries=self._get_retries(model_settings),
                 random_seed=model_settings.get('seed', UNSET),
                 presence_penalty=model_settings.get('presence_penalty'),
                 frequency_penalty=model_settings.get('frequency_penalty'),
@@ -360,6 +361,7 @@ class MistralModel(Model[Mistral]):
             top_p=model_settings.get('top_p', 1 if tools or model_request_parameters.output_tools else None),
             max_tokens=model_settings.get('max_tokens', UNSET),
             timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+            retries=self._get_retries(model_settings),
             random_seed=model_settings.get('seed', UNSET),
             presence_penalty=model_settings.get('presence_penalty'),
             frequency_penalty=model_settings.get('frequency_penalty'),
@@ -591,6 +593,15 @@ class MistralModel(Model[Mistral]):
         if isinstance(timeout, (int, float)):
             return int(1000 * timeout)
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
+
+    @staticmethod
+    def _get_retries(model_settings: MistralModelSettings) -> None | MistralUnset:
+        """Map `max_retries` onto the SDK's per-request `retries`.
+
+        Mistral's retry config bounds retries by elapsed time rather than by count, so only `0` can be expressed:
+        `None` turns retries off for the request, and `UNSET` keeps the client's `retry_config`.
+        """
+        return None if model_settings.get('max_retries') == 0 else UNSET
 
     def _translate_thinking(
         self,
