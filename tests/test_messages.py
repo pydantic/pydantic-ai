@@ -14,8 +14,8 @@ from types import FrameType
 from typing import Annotated, Any, Literal, cast, get_args, get_origin, overload
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
-from pydantic_core import to_json, to_jsonable_python
+from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
 
 from pydantic_ai import (
     Agent,
@@ -430,9 +430,33 @@ def test_from_data_uri_base64():
     assert bc.media_type == 'image/png'
 
 
+def test_from_data_uri_parameterized_media_type_round_trip():
+    bc = BinaryContent.from_data_uri('data:application/json;charset=utf-8;base64,eyJhIjogMX0=')
+    # The media type is stored verbatim, parameters included.
+    assert bc.media_type == 'application/json;charset=utf-8'
+    assert bc.data == b'{"a": 1}'
+    assert bc.data_uri == 'data:application/json;charset=utf-8;base64,eyJhIjogMX0='
+
+
 def test_from_data_uri_non_base64():
     with pytest.raises(ValueError, match='must be base64-encoded'):
         BinaryContent.from_data_uri('data:text/plain,Hello%20World')
+
+
+def test_from_data_uri_percent_encoded_base64():
+    raw = BinaryContent.from_data_uri('data:image/png;base64,/w==')
+    assert raw.data == b'\xff'
+
+    assert BinaryContent.from_data_uri('data:image/png;base64,%2Fw==').data == raw.data
+    assert BinaryContent.from_data_uri('data:image/png;base64,/w%3D%3D').data == raw.data
+
+
+def test_from_data_uri_escaped_plus_and_alnum():
+    content = BinaryContent.from_data_uri('data:application/octet-stream;base64,AB+C')
+    assert content.data == b'\x00\x1f\x82'
+
+    escaped = BinaryContent.from_data_uri('data:application/octet-stream;base64,A%42%2BC')
+    assert escaped.data == content.data
 
 
 @pytest.mark.xdist_group(name='url_formats')
@@ -1632,6 +1656,36 @@ def test_tool_return_content_nested_multimodal():
             id='empty-media-type',
         ),
         pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/report', 'media_type': None},
+            snapshot(ImageUrl(url='https://example.com/report')),
+            snapshot(
+                {
+                    'url': 'https://example.com/report',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': None,
+                    'identifier': '43ecae',
+                }
+            ),
+            id='null-media-type',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/report.png', 'media_type': None},
+            snapshot(ImageUrl(url='https://example.com/report.png')),
+            snapshot(
+                {
+                    'url': 'https://example.com/report.png',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': 'image/png',
+                    'identifier': '768606',
+                }
+            ),
+            id='null-media-type-inferable-url',
+        ),
+        pytest.param(
             {'kind': 'uploaded-file', 'file_id': 'file-1', 'provider_name': 'openai'},
             snapshot(UploadedFile(file_id='file-1', provider_name='openai')),
             snapshot(
@@ -1666,17 +1720,18 @@ def test_tool_return_content_nested_multimodal():
 def test_tool_return_url_items_rehydrate_only_with_media_type(
     content: dict[str, Any], expected: Any, expected_dump: Any
 ):
-    """A tool return reconstructs a URL item only from a mapping naming a media type, and it always dumps.
+    """A tool return reconstructs a URL item only from a mapping carrying `media_type`, and it always dumps.
 
-    `FileUrl` infers its media type from the URL when it was given none, and a URL with no usable
-    extension raises `Could not infer media type` on the *dump*, long after the load that built the
-    object ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)) — so the dump is
-    asserted for every case, because that is the leg the requirement buys. An empty `media_type` is
-    not one: `FileUrl` infers whenever it is falsy.
+    A default dump of ours writes `media_type` for a URL item: a non-empty string, or `null` for a URL whose
+    media type can't be inferred ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
+    A mapping without the key, or with an empty one, is what a tool built, and stays that mapping
+    ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)). A tool-built mapping with `null`
+    can't be told apart from one of ours, so it rehydrates too, with the media type inferred where the URL
+    allows. The dump is asserted for every case, so a reconstructed item is proven to dump again.
 
     The requirement stops at the URL kinds. `UploadedFile` falls back to `application/octet-stream`
-    instead of raising and `BinaryContent.media_type` is a required field, so both keep rehydrating
-    from the fields they declare.
+    and `BinaryContent.media_type` is a required field, so both keep rehydrating from the fields they
+    declare.
     """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
@@ -1687,6 +1742,164 @@ def test_tool_return_url_items_rehydrate_only_with_media_type(
     assert message_part(loaded, ToolReturnPart).content == expected
     assert json.loads(ModelMessagesTypeAdapter.dump_json(loaded))[0]['parts'][0]['content'] == expected_dump
     assert ModelMessagesTypeAdapter.dump_python(loaded)[0]['parts'][0]['content'] == expected_dump
+
+
+@pytest.mark.parametrize('url_type', [ImageUrl, AudioUrl, VideoUrl, DocumentUrl])
+def test_extensionless_url_media_type_serializes_null_and_round_trips(
+    url_type: type[ImageUrl | AudioUrl | VideoUrl | DocumentUrl],
+) -> None:
+    """A URL whose media type can't be inferred serializes `media_type: null` and round-trips.
+
+    A provider that forwards an image URL as it is, as OpenAI Chat and Responses do, never reads its media
+    type, so a history that ran there has to dump, and dump to something that loads back into the same
+    part, in a user prompt as in a tool return ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
+    """
+    item = url_type(url='https://example.com/file')
+    with pytest.raises(ValueError, match='Could not infer media type'):
+        _ = item.media_type  # Reading it where a provider would still raises.
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=[item]),
+                ToolReturnPart(tool_name='t', content={'files': [item]}, tool_call_id='c'),
+            ]
+        )
+    ]
+    dumped = json.loads(ModelMessagesTypeAdapter.dump_json(messages))
+    assert dumped[0]['parts'][0]['content'][0]['media_type'] is None
+    assert dumped[0]['parts'][1]['content']['files'][0]['media_type'] is None
+
+    reloaded = ModelMessagesTypeAdapter.validate_python(dumped)
+    assert reloaded == messages  # A URL part compares unequal to the mapping it would have stayed.
+    assert json.loads(ModelMessagesTypeAdapter.dump_json(reloaded)) == dumped
+
+
+@pytest.mark.parametrize(
+    'kwargs,expected_inferable,expected_uninferable',
+    [
+        pytest.param(
+            {},
+            snapshot(
+                '{"url":"https://example.com/image.png","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/png","identifier":"01a7df"}'
+            ),
+            snapshot(
+                '{"url":"https://example.com/image","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":null,"identifier":"abab9a"}'
+            ),
+            id='default',
+        ),
+        pytest.param(
+            {'by_alias': False},
+            snapshot(
+                '{"url":"https://example.com/image.png","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/png","identifier":"01a7df"}'
+            ),
+            snapshot(
+                '{"url":"https://example.com/image","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":null,"identifier":"abab9a"}'
+            ),
+            id='by-alias-false',
+        ),
+        pytest.param(
+            {'round_trip': True},
+            snapshot(
+                '{"url":"https://example.com/image.png","force_download":false,"vendor_metadata":null,"kind":"image-url"}'
+            ),
+            snapshot(
+                '{"url":"https://example.com/image","force_download":false,"vendor_metadata":null,"kind":"image-url"}'
+            ),
+            id='round-trip',
+        ),
+        pytest.param(
+            {'exclude_computed_fields': True},
+            snapshot(
+                '{"url":"https://example.com/image.png","force_download":false,"vendor_metadata":null,"kind":"image-url"}'
+            ),
+            snapshot(
+                '{"url":"https://example.com/image","force_download":false,"vendor_metadata":null,"kind":"image-url"}'
+            ),
+            id='exclude-computed-fields',
+        ),
+        pytest.param(
+            {'exclude_none': True},
+            snapshot(
+                '{"url":"https://example.com/image.png","force_download":false,"kind":"image-url","media_type":"image/png","identifier":"01a7df"}'
+            ),
+            snapshot(
+                '{"url":"https://example.com/image","force_download":false,"kind":"image-url","identifier":"abab9a"}'
+            ),
+            id='exclude-none',
+        ),
+        pytest.param(
+            {'include': {'url', 'media_type'}},
+            snapshot('{"url":"https://example.com/image.png","media_type":"image/png"}'),
+            snapshot('{"url":"https://example.com/image","media_type":null}'),
+            id='include',
+        ),
+        pytest.param(
+            {'exclude': {'media_type'}},
+            snapshot(
+                '{"url":"https://example.com/image.png","force_download":false,"vendor_metadata":null,"kind":"image-url","identifier":"01a7df"}'
+            ),
+            snapshot(
+                '{"url":"https://example.com/image","force_download":false,"vendor_metadata":null,"kind":"image-url","identifier":"abab9a"}'
+            ),
+            id='exclude',
+        ),
+    ],
+)
+def test_url_media_type_under_dump_arguments(
+    kwargs: dict[str, Any], expected_inferable: str, expected_uninferable: str
+) -> None:
+    """A URL with a media type dumps exactly as it always has, and one without writes `null` in its place.
+
+    The `null` takes the key's usual position and follows `exclude_none`, `include` and `exclude` like
+    any other value ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
+    """
+    ta = TypeAdapter(ImageUrl)
+    assert ta.dump_json(ImageUrl(url='https://example.com/image.png'), **kwargs).decode() == expected_inferable
+    assert ta.dump_json(ImageUrl(url='https://example.com/image'), **kwargs).decode() == expected_uninferable
+
+
+def test_url_media_type_under_nested_include_and_exclude() -> None:
+    """`include` and `exclude` nested down to a URL item treat an uninferable `media_type` like any other."""
+
+    # An `include` nested through a history's part union makes pydantic-core 2.41, the lowest supported, warn.
+    class Stored(BaseModel):
+        files: list[ImageUrl]
+
+    stored = Stored(files=[ImageUrl(url='https://example.com/image.png'), ImageUrl(url='https://example.com/image')])
+    assert stored.model_dump_json(include={'files': {'__all__': {'media_type'}}}) == snapshot(
+        '{"files":[{"media_type":"image/png"},{"media_type":null}]}'
+    )
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=stored.files)])]
+    media_types = {0: {'parts': {0: {'content': {'__all__': {'media_type'}}}}}}
+    dumped = json.loads(ModelMessagesTypeAdapter.dump_json(messages, exclude=media_types))
+    assert dumped[0]['parts'][0]['content'] == snapshot(
+        [
+            {
+                'url': 'https://example.com/image.png',
+                'force_download': False,
+                'vendor_metadata': None,
+                'kind': 'image-url',
+                'identifier': '01a7df',
+            },
+            {
+                'url': 'https://example.com/image',
+                'force_download': False,
+                'vendor_metadata': None,
+                'kind': 'image-url',
+                'identifier': 'abab9a',
+            },
+        ]
+    )
+
+
+@pytest.mark.parametrize('url', ['https://example.com/image.png', 'https://example.com/image'])
+def test_url_serialization_error_unrelated_to_media_type_still_raises(url: str) -> None:
+    """Only a missing media type is dumped as `null`: any other serialization error still raises."""
+    item = ImageUrl(url=url, vendor_metadata={'unserializable': object()})
+    with pytest.raises(PydanticSerializationError, match='Unable to serialize unknown type'):
+        TypeAdapter(ImageUrl).dump_json(item)
 
 
 def test_tool_return_mapping_spelling_out_a_multimodal_item_becomes_one():
