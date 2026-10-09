@@ -79,7 +79,11 @@ def test_saved_anthropic_cache_settings_still_apply(tmp_path: Path, provider: st
     context, _ = make_context(tmp_path)
     model = f'{provider}:claude-sonnet-4-6'
     assert context.model_settings(model) == {'cache': True}
-    native = {'anthropic_cache': False, 'anthropic_cache_instructions': '1h', 'anthropic_cache_tool_definitions': '1h'}
+    native: dict[str, JsonValue] = {
+        'anthropic_cache': False,
+        'anthropic_cache_instructions': '1h',
+        'anthropic_cache_tool_definitions': '1h',
+    }
     source = ModelSettingsSource(context.store, model)
     menu = FieldMenu(source, searchable=False)
     for key in native:
