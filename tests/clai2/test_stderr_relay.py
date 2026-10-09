@@ -34,6 +34,12 @@ def test_drop_fork_notices(data: bytes, expected: bytes) -> None:
     assert drop_fork_notices(data) == expected
 
 
+def test_a_line_left_open_is_not_a_notice() -> None:
+    """Text completing a line an earlier write started is kept, even when it reads like a notice."""
+    assert drop_fork_notices(_NOTICE + _NOTICE, at_line_start=False) == _NOTICE
+    assert drop_fork_notices(b'\r' + _NOTICE, at_line_start=False) == b'\r'
+
+
 @contextmanager
 def _stderr_to(fd: int) -> Generator[None]:
     """Point file descriptor 2 at `fd` for the block.

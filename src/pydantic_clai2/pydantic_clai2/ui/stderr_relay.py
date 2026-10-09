@@ -29,9 +29,16 @@ _DRAIN_TIMEOUT = 1.0
 _terminal: int | None = None
 
 
-def drop_fork_notices(data: bytes) -> bytes:
-    """`data` without the complete `MallocStackLogging` fork notice lines in it."""
-    return b''.join(line for line in data.splitlines(keepends=True) if not _NOTICE.fullmatch(line))
+def drop_fork_notices(data: bytes, *, at_line_start: bool = True) -> bytes:
+    """`data` without the whole `MallocStackLogging` fork notice lines in it.
+
+    `at_line_start` is whether `data` starts a line, rather than continuing one an earlier write left open; only
+    whole lines are notices.
+    """
+    lines = data.splitlines(keepends=True)
+    return b''.join(
+        line for index, line in enumerate(lines) if (index == 0 and not at_line_start) or not _NOTICE.fullmatch(line)
+    )
 
 
 def terminal_stderr() -> int | None:
@@ -44,9 +51,11 @@ def terminal_stderr() -> int | None:
 
 
 def _copy(source: int, terminal: int) -> None:
+    at_line_start = True
     try:
         while data := os.read(source, _CHUNK):
-            view = memoryview(drop_fork_notices(data))
+            view = memoryview(drop_fork_notices(data, at_line_start=at_line_start))
+            at_line_start = data.endswith((b'\n', b'\r'))
             while view:
                 view = view[os.write(terminal, view) :]
     finally:
