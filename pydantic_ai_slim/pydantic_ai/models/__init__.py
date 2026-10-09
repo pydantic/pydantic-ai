@@ -614,6 +614,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Whether these (merged) settings include a provider-specific cache setting, which takes precedence."""
         return False
 
+    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
+        """Start the `request_timeout` deadline of a request to this model made now, if it's set here or on the model.
+
+        A model that makes its requests through other models, each under a deadline of its own, overrides this to
+        return `None`, as [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does.
+        """
+        return RequestDeadline.start(self.model_name, merge_model_settings(self.settings, model_settings))
+
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         """Whether a model that needs prompt caching configured on the request got no caching configuration at all.
 
@@ -1387,6 +1395,11 @@ class StreamedResponse(ABC):
                 events = self._request_deadline.iterate(events)
             self._event_iterator = iterator_with_cancel_guard(iterator_with_part_end(iterator_with_final_event(events)))
         return self._event_iterator
+
+    def _enforce_request_deadline(self, deadline: RequestDeadline) -> None:
+        """Pull each event under `deadline`, the `request_timeout` deadline this stream was opened under."""
+        assert self._event_iterator is None, 'The request deadline must be set before the stream is iterated'
+        self._request_deadline = deadline
 
     async def cancel(self) -> None:
         """Cancel local stream consumption and request provider shutdown.

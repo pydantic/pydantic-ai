@@ -21,7 +21,7 @@ from . import agent, messages, models, settings
 from ._sync_stream import SyncStreamBridge
 from ._utils import run_until_complete as _run_until_complete
 from .models import StreamedResponse, instrumented as instrumented_models
-from .models.fallback import open_request_stream, start_request_deadline
+from .models._request_timeout import open_request_stream, start_request_deadline
 
 __all__ = (
     'model_request',

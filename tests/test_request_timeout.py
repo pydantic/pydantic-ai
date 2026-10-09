@@ -55,7 +55,7 @@ with try_import() as openai_available:
 SHORT_TIMEOUT = 0.05
 """For a request that never finishes: how soon it times out only affects how long the test takes."""
 
-GENEROUS_TIMEOUT = 0.5
+GENEROUS_TIMEOUT = 0.25
 """For a test in which something must get done before the deadline, e.g. a first chunk reaching the consumer, on a
 loaded runner."""
 
@@ -206,7 +206,7 @@ async def test_deadline_ends_with_the_last_chunk():
 
     async with agent.run_stream('hello') as result:
         output = await result.get_output()
-        await anyio.sleep(GENEROUS_TIMEOUT * 2)
+        await anyio.sleep(GENEROUS_TIMEOUT + SHORT_TIMEOUT)
 
     assert output == 'answer'
 
@@ -233,14 +233,15 @@ async def test_fallback_gives_each_model_a_fresh_deadline(wrapped: bool):
 
     That holds behind a wrapper model too, as durable execution puts one around the agent's model.
     """
-    timeout = 1.0
+    timeout = 0.2
+    time_left: list[float] = []
 
-    async def slower_than_what_is_left(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        await anyio.sleep(timeout / 2)
+    async def record_time_left(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        time_left.append(anyio.current_effective_deadline() - anyio.current_time())
         return ModelResponse(parts=[TextPart('fallback answer')])
 
     model: Model = FallbackModel(
-        FunctionModel(hang, model_name='primary'), FunctionModel(slower_than_what_is_left, model_name='fallback')
+        FunctionModel(hang, model_name='primary'), FunctionModel(record_time_left, model_name='fallback')
     )
     if wrapped:
         model = WrapperModel(model)
@@ -249,11 +250,13 @@ async def test_fallback_gives_each_model_a_fresh_deadline(wrapped: bool):
     result = await agent.run('hello')
 
     assert result.output == 'fallback answer'
+    # The primary used up a whole `request_timeout` of its own, and the fallback started with a fresh one.
+    assert time_left[0] > timeout / 2
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert response.failed_attempts is not None
     assert [(attempt.model_name, attempt.outcome, attempt.error) for attempt in response.failed_attempts] == snapshot(
-        [('primary', 'error', "ModelRequestTimeout: Request to model 'primary' timed out after 1 seconds")]
+        [('primary', 'error', "ModelRequestTimeout: Request to model 'primary' timed out after 0.2 seconds")]
     )
 
 
@@ -287,10 +290,10 @@ async def test_fallback_falls_back_when_opening_a_stream_times_out():
         yield 'unreachable'  # pragma: no cover
 
     model = FallbackModel(
-        FunctionModel(stream_function=never_opens, model_name='primary'),
+        FunctionModel(stream_function=never_opens, model_name='primary', settings={'request_timeout': SHORT_TIMEOUT}),
         FunctionModel(stream_function=stream_answer, model_name='fallback'),
     )
-    agent = Agent(model, model_settings={'request_timeout': GENEROUS_TIMEOUT})
+    agent = Agent(model)
 
     async with agent.run_stream('hello') as result:
         output = await result.get_output()
@@ -325,7 +328,7 @@ class PollsForever(Model):
     Once a poll has been cancelled, it is unavailable, so that the fallback that follows moves on to the next model.
     """
 
-    poll_time = GENEROUS_TIMEOUT / 5
+    poll_time = SHORT_TIMEOUT / 5
 
     def __init__(self) -> None:
         super().__init__()
@@ -384,7 +387,7 @@ async def test_fallback_keeps_the_picked_models_deadline_across_continuations(st
     """Each poll of a background job is a fresh call to the `FallbackModel`, but the same request to the model it
     picked: its deadline carries over, so a job that keeps running times out and falls back."""
     model = FallbackModel(PollsForever(), FunctionModel(answer, stream_function=stream_answer, model_name='fallback'))
-    agent = Agent(model, model_settings={'request_timeout': GENEROUS_TIMEOUT})
+    agent = Agent(model, model_settings={'request_timeout': SHORT_TIMEOUT})
 
     if stream:
         async with agent.run_stream('hello') as result:
@@ -405,17 +408,21 @@ async def test_fallback_keeps_the_picked_models_deadline_across_continuations(st
 
 
 async def test_nested_fallback_gives_each_inner_model_a_deadline():
-    inner = FallbackModel(FunctionModel(hang, model_name='inner-primary'), FunctionModel(answer, model_name='inner'))
+    inner = FallbackModel(
+        FunctionModel(hang, model_name='inner-primary', settings={'request_timeout': SHORT_TIMEOUT}),
+        FunctionModel(answer, model_name='inner'),
+    )
     model = FallbackModel(inner, FunctionModel(answer, model_name='outer'))
 
-    result = await Agent(model, model_settings={'request_timeout': GENEROUS_TIMEOUT}).run('hello')
+    result = await Agent(model).run('hello')
 
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert response.model_name == 'inner'
 
 
-async def test_no_tasks_leak_after_timeout():
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_no_tasks_leak_after_timeout(anyio_backend: str):
     stream = StreamThatHangs()
     agent = Agent(FunctionModel(hang, stream_function=stream), model_settings={'request_timeout': SHORT_TIMEOUT})
     tasks_before = asyncio.all_tasks()
@@ -464,7 +471,7 @@ async def test_request_timeout_covers_sdk_retries(allow_model_requests: None, st
     async def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal attempts
         attempts += 1
-        await anyio.sleep(0.05)
+        await anyio.sleep(0.01)
         # `retry-after-ms` keeps the SDK's backoff between attempts short.
         return httpx2.Response(503, json={'error': {'message': 'overloaded'}}, headers={'retry-after-ms': '1'})
 
@@ -475,7 +482,7 @@ async def test_request_timeout_covers_sdk_retries(allow_model_requests: None, st
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     ) as openai_client:
         model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
-        agent = Agent(model, model_settings={'request_timeout': 0.5, 'timeout': 10})
+        agent = Agent(model, model_settings={'request_timeout': 0.2, 'timeout': 10})
 
         with pytest.raises(ModelRequestTimeout):
             if stream:

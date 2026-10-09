@@ -19,16 +19,21 @@ for example after a long wait between polls, times out at once, and the `Fallbac
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Generator
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Generator
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import anyio
 
 from ..exceptions import ModelRequestTimeout
 from ..settings import ModelSettings
+
+if TYPE_CHECKING:
+    from .._run_context import RunContext
+    from ..messages import ModelMessage
+    from . import Model, ModelRequestParameters, StreamedResponse
 
 _T = TypeVar('_T')
 
@@ -92,3 +97,45 @@ def use_continuation_chain(chain: ContinuationChain) -> Generator[None]:
 def current_continuation_chain() -> ContinuationChain | None:
     """The continuation chain of the request being made, if the agent graph is resolving one."""
     return _current_chain.get()
+
+
+def start_request_deadline(model: Model, model_settings: ModelSettings | None) -> RequestDeadline | None:
+    """Start the `request_timeout` deadline of a request to `model` made now, if it's set there or on the model.
+
+    `None` for a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], also behind a wrapper: it starts a
+    fresh one for each model it tries.
+    """
+    return model._start_request_deadline(model_settings)  # pyright: ignore[reportPrivateUsage]
+
+
+@asynccontextmanager
+async def open_request_stream(
+    model: Model,
+    messages: list[ModelMessage],
+    model_settings: ModelSettings | None,
+    model_request_parameters: ModelRequestParameters,
+    run_context: RunContext[Any] | None = None,
+) -> AsyncGenerator[StreamedResponse]:
+    """Open a streamed request to `model` under its `request_timeout` deadline, if it's set.
+
+    The deadline covers opening the stream and each pull of its next event.
+    """
+    stream = model.request_stream(messages, model_settings, model_request_parameters, run_context)
+    async with stream_under_deadline(start_request_deadline(model, model_settings), stream) as streamed_response:
+        yield streamed_response
+
+
+@asynccontextmanager
+async def stream_under_deadline(
+    deadline: RequestDeadline | None, stream: AbstractAsyncContextManager[StreamedResponse]
+) -> AsyncGenerator[StreamedResponse]:
+    """Open `stream` and pull each of its events under `deadline`, if there is one."""
+    if deadline is None:
+        async with stream as streamed_response:
+            yield streamed_response
+        return
+    async with AsyncExitStack() as stack:
+        with deadline.enforce():
+            streamed_response = await stack.enter_async_context(stream)
+        streamed_response._enforce_request_deadline(deadline)  # pyright: ignore[reportPrivateUsage]
+        yield streamed_response

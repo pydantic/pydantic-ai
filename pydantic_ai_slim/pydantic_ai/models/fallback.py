@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import (
-    AbstractAsyncContextManager,
     AbstractContextManager,
     AsyncExitStack,
     asynccontextmanager,
@@ -32,7 +31,6 @@ from pydantic_ai._utils import await_maybe, get_first_param_type
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelRequestAttempt, ModelResponse
 from ..profiles import ModelProfile
-from ..settings import merge_model_settings
 from . import (
     KnownModelName,
     Model,
@@ -40,8 +38,13 @@ from . import (
     StreamedResponse,
     infer_model,
 )
-from ._request_timeout import ContinuationChain, RequestDeadline, current_continuation_chain
-from .wrapper import WrapperModel
+from ._request_timeout import (
+    ContinuationChain,
+    RequestDeadline,
+    current_continuation_chain,
+    start_request_deadline,
+    stream_under_deadline,
+)
 
 if TYPE_CHECKING:
     from ..messages import ModelMessage
@@ -285,13 +288,15 @@ class FallbackModel(Model):
                     await pinned.cancel_suspended_response(suspended_response)
                 messages = _rewind_messages(messages)
                 rewound = True
+                # The model the chain was pinned to is abandoned, and with it its deadline.
+                _unpin_request_deadline(chain)
                 exceptions.append(exc)
                 self._record_failed_attempt(pinned, attempts, exc, start=start, duration=duration)
                 # Fall through to normal chain below
             else:
                 if response.state == 'suspended':
                     _stamp_continuation(response, pinned)
-                    _pin_request_deadline(chain, pinned, deadline)
+                    _pin_request_deadline(chain, deadline)
                 self._set_span_attributes(pinned, prepared_parameters)
                 return response
 
@@ -329,7 +334,7 @@ class FallbackModel(Model):
                 _stamp_replace_previous(response)
             if response.state == 'suspended':
                 _stamp_continuation(response, model)
-                _pin_request_deadline(chain, model, deadline)
+                _pin_request_deadline(chain, deadline)
             self._set_span_attributes(model, prepared_parameters)
             return response
 
@@ -368,7 +373,7 @@ class FallbackModel(Model):
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
-                        _stream_under_deadline(
+                        stream_under_deadline(
                             deadline,
                             pinned.request_stream(
                                 prepared_messages, model_settings, model_request_parameters, run_context
@@ -387,6 +392,7 @@ class FallbackModel(Model):
                         await pinned.cancel_suspended_response(suspended_response)
                     messages = _rewind_messages(messages)
                     rewound = True
+                    _unpin_request_deadline(chain)
                     exceptions.append(exc)
                     self._record_failed_attempt(pinned, attempts, exc, start=start, duration=duration)
                     # Fall through to normal chain below
@@ -398,7 +404,7 @@ class FallbackModel(Model):
                     # stream. Callers must therefore call `get()` after the `async with` exits.
                     if streamed_response.state == 'suspended':
                         _stamp_continuation(streamed_response, pinned)
-                        _pin_request_deadline(chain, pinned, deadline)
+                        _pin_request_deadline(chain, deadline)
                     return
 
         for model in self.models:
@@ -410,7 +416,7 @@ class FallbackModel(Model):
                     prepared_messages = model.prepare_messages(messages, model_request_parameters)
                     deadline = start_request_deadline(model, model_settings)
                     streamed_response = await stack.enter_async_context(
-                        _stream_under_deadline(
+                        stream_under_deadline(
                             deadline,
                             model.request_stream(
                                 prepared_messages, model_settings, model_request_parameters, run_context
@@ -442,7 +448,7 @@ class FallbackModel(Model):
                 # caller has consumed the stream, so callers must call `get()` after the context exits.
                 if streamed_response.state == 'suspended':
                     _stamp_continuation(streamed_response, model)
-                    _pin_request_deadline(chain, model, deadline)
+                    _pin_request_deadline(chain, deadline)
                 return
 
         _raise_fallback_exception_group(exceptions, [], attempts)
@@ -483,6 +489,10 @@ class FallbackModel(Model):
     @cached_property
     def profile(self) -> ModelProfile:
         raise NotImplementedError('FallbackModel does not have its own model profile.')
+
+    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
+        # Each model it tries gets a fresh deadline of its own instead.
+        return None
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """A fallback model can't know which model will serve the request, so no retention is claimed."""
@@ -592,23 +602,6 @@ class FallbackModel(Model):
             )
 
 
-def start_request_deadline(model: Model, model_settings: ModelSettings | None) -> RequestDeadline | None:
-    """Start the `request_timeout` deadline of a request to `model` made now, if it's set there or on the model.
-
-    A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], also behind a wrapper, gets none of its own:
-    it starts a fresh one for each model it tries.
-    """
-    if _starts_own_request_deadlines(model):
-        return None
-    return RequestDeadline.start(model.model_name, merge_model_settings(model.settings, model_settings))
-
-
-def _starts_own_request_deadlines(model: Model) -> bool:
-    while isinstance(model, WrapperModel):
-        model = model.wrapped
-    return isinstance(model, FallbackModel)
-
-
 def _enforce(deadline: RequestDeadline | None) -> AbstractContextManager[None]:
     return deadline.enforce() if deadline is not None else nullcontext()
 
@@ -619,52 +612,27 @@ def _pinned_request_deadline(
     """The deadline of a continuation segment for the model the chain is pinned to.
 
     The deadline that model got when it was picked carries over, so the continuation stays one request to it. A
-    chain resumed from message history has none, so the model gets a fresh one.
+    chain resumed from message history has none, so the model gets a fresh one. A nested `FallbackModel` gets none,
+    as it carries over the deadline of the model it picked itself.
     """
-    if chain is not None and chain.pinned is not None:
+    deadline = start_request_deadline(model, model_settings)
+    if deadline is not None and chain is not None and chain.pinned is not None:
         return chain.pinned
-    return start_request_deadline(model, model_settings)
+    return deadline
 
 
-def _pin_request_deadline(chain: ContinuationChain | None, model: Model, deadline: RequestDeadline | None) -> None:
+def _pin_request_deadline(chain: ContinuationChain | None, deadline: RequestDeadline | None) -> None:
     """Carry the deadline of the model a response suspended on over to the chain's next segment.
 
-    A nested `FallbackModel` already pinned the deadline of the model it picked.
+    A nested `FallbackModel` has no deadline of its own, and already pinned the one of the model it picked.
     """
-    if chain is not None and not _starts_own_request_deadlines(model):
+    if chain is not None and deadline is not None:
         chain.pinned = deadline
 
 
-@asynccontextmanager
-async def open_request_stream(
-    model: Model,
-    messages: list[ModelMessage],
-    model_settings: ModelSettings | None,
-    model_request_parameters: ModelRequestParameters,
-    run_context: RunContext[Any] | None = None,
-) -> AsyncGenerator[StreamedResponse]:
-    """Open a streamed request to `model` under its `request_timeout` deadline, if it's set.
-
-    The deadline covers opening the stream and each pull of its next event.
-    """
-    stream = model.request_stream(messages, model_settings, model_request_parameters, run_context)
-    async with _stream_under_deadline(start_request_deadline(model, model_settings), stream) as streamed_response:
-        yield streamed_response
-
-
-@asynccontextmanager
-async def _stream_under_deadline(
-    deadline: RequestDeadline | None, stream: AbstractAsyncContextManager[StreamedResponse]
-) -> AsyncGenerator[StreamedResponse]:
-    if deadline is None:
-        async with stream as streamed_response:
-            yield streamed_response
-        return
-    async with AsyncExitStack() as stack:
-        with deadline.enforce():
-            streamed_response = await stack.enter_async_context(stream)
-        streamed_response._request_deadline = deadline  # pyright: ignore[reportPrivateUsage]
-        yield streamed_response
+def _unpin_request_deadline(chain: ContinuationChain | None) -> None:
+    if chain is not None:
+        chain.pinned = None
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:

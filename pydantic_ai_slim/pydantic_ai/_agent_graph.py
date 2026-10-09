@@ -93,8 +93,7 @@ from .models._continuation import (
     merge_responses,
     report_continuation_segment,
 )
-from .models._request_timeout import ContinuationChain, use_continuation_chain
-from .models.fallback import start_request_deadline
+from .models._request_timeout import ContinuationChain, start_request_deadline, use_continuation_chain
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (

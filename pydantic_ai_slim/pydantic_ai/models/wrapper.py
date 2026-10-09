@@ -23,6 +23,7 @@ from . import (
     StreamedResponse,
     infer_model,
 )
+from ._request_timeout import RequestDeadline
 
 __all__ = ['WrapperModel']
 
@@ -153,6 +154,9 @@ class WrapperModel(Model):
         # `Model.resolve_cache_retention` is defined on the base class, so without this override normal
         # attribute lookup succeeds and `__getattr__` never forwards.
         return self.wrapped.resolve_cache_retention(model_settings)
+
+    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
+        return self.wrapped._start_request_deadline(model_settings)
 
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         # Defined on the base class too, so it must forward explicitly, like `resolve_cache_retention`.

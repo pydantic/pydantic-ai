@@ -465,7 +465,7 @@ def _request_timeout_agent(name: str, model: FunctionModel, *, streamed: bool = 
         name=name,
         deps_type=type(None),
         capabilities=capabilities,
-        model_settings={'request_timeout': 1},
+        model_settings={'request_timeout': 0.2},
     )
 
 
@@ -513,7 +513,7 @@ async def test_durability_request_timeout_cancels_the_model_activity(client: Cli
         output = await handle.result()
         history = await handle.fetch_history()
 
-    assert output == 'ModelRequestTimeout hanging 1'
+    assert output == 'ModelRequestTimeout hanging 0.2'
     event_types = {event.WhichOneof('attributes') for event in history.events}
     assert {'timer_started_event_attributes', 'activity_task_cancel_requested_event_attributes'} <= event_types
 
