@@ -5450,15 +5450,14 @@ async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_th
             super().__init__()
             self.sending = asyncio.Event()
             self.fail = asyncio.Event()
-            self.audio_sends = 0
+            self.sends = 0
 
         async def send(self, data: str) -> None:
-            if json.loads(data)['type'] == 'input_audio_buffer.append':
-                self.audio_sends += 1
-                if self.audio_sends == 2:
-                    self.sending.set()
-                    await self.fail.wait()
-                    raise OSError('gone')
+            self.sends += 1
+            if self.sends == 2:  # (the audio is all this session sends)
+                self.sending.set()
+                await self.fail.wait()
+                raise OSError('gone')
             await super().send(data)
 
     ws = _SecondAudioFails()
