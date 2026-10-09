@@ -54,6 +54,39 @@ Supported effort values:
 - `'high'`
 - `'xhigh'`
 
+## Configure Prompt Caching Across Providers
+
+Add `Caching()` to every agent you build unless its requests are one-offs that are never repeated. Some models cache nothing unless the request asks them to: Anthropic (incl. Bedrock, Vertex and Foundry clients), Bedrock Claude and Nova, and OpenRouter's Anthropic routes. Without it, those agents pay full price for their instructions, tools and conversation on every request. OpenAI GPT-5.6+ and OpenRouter's Gemini 2.5+ routes cache implicitly and take explicit breakpoints (and on GPT-5.6, cache options) on top. Caching isn't on by default only because it changes cost. Use the `Caching` capability (or the unified `cache` model setting) rather than provider-specific settings like `anthropic_cache` or `bedrock_cache_*`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
+
+agent = Agent('anthropic:claude-opus-5-5', name='cached_agent', capabilities=[Caching()])
+```
+
+Accepted values (the same for `model_settings={'cache': ...}`):
+
+- `True` (the capability's default): cache the tool definitions, static instructions and conversation with the provider's default retention, using its automatic caching mode where one exists and placing breakpoints elsewhere
+- `False`: disable library-managed caching (the same as unset, but overrides a model-level default); explicit `CachePoint`s and provider-specific settings still apply, and implicitly caching providers still cache
+- `'5m'`, `'30m'`, `'1h'`: cache with a specific retention, snapped to the nearest tier the provider supports (down where a shorter tier exists). Start with the default; Anthropic's `'1h'` only pays off when a conversation commonly continues after more than five minutes, since its 2x writes need two reads to break even
+- `Caching(messages=False)` / `{'retention': ..., 'messages': False}`: cache only the stable prefix (tool definitions and static instructions), not the conversation, for many one-off conversations sharing long instructions or tools
+
+Cache writes cost more than uncached input (1.25x; 2x for Anthropic's 1-hour cache) while reads cost about 0.1x, so a 1.25x write breaks even after one read and Anthropic's 2x 1-hour write after two; one-shot requests only pay the premium.
+
+Provider-specific cache settings (`anthropic_cache*`, `bedrock_cache_*`, `openrouter_cache_*`, `openai_prompt_cache_options`, `openai_cache_instructions`) take precedence: if any is set, even to `False`, the unified value is ignored entirely. Providers that cache implicitly (OpenAI before GPT-5.6, Gemini, DeepSeek, xAI) ignore the setting. Explicit `CachePoint` markers in the message history still work alongside it, except on providers that ignore them (Google, and OpenAI before GPT-5.6).
+
+To debug a low cache hit rate:
+
+1. Check that caching is enabled for the model and that no provider-specific cache setting overrides `Caching()`.
+2. Check that the shared prefix is above the provider's minimum cacheable length (about 1,024 to 4,096 tokens, depending on the model).
+3. Compare each response's `result.response.usage.cache_write_tokens` and `cache_read_tokens` (`result.usage` sums the whole run): writes without later reads mean the prefix changed or expired.
+4. Keep the prefix stable: continue conversations with the full `message_history`, keep tools and their order fixed, keep timestamps and other per-request values out of instructions, and don't rewrite history that was already sent.
+5. Check the gap between requests against the provider's retention, and that one conversation's requests reach the same cache (OpenRouter provider routing, xAI sticky routing, `openai_prompt_cache_key`).
+6. Ask the provider: `anthropic_cache_diagnostics` and OpenAI's prompt cache diagnostics (in `provider_details`) report why a request missed. Instrumented runs record `pydantic_ai.cache.*` span attributes, and the harness `WarnOnCacheBusts` capability warns on unexpected misses.
+
+See [Caching](https://pydantic.dev/docs/ai/capabilities/caching/) for the per-provider mapping.
+
 ## Intercept Agent Lifecycle with Hooks
 
 Use `Hooks` for decorator-based lifecycle interception.

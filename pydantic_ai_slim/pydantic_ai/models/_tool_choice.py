@@ -1,7 +1,5 @@
 import warnings
-from typing import Literal
-
-from typing_extensions import assert_never
+from typing import Literal, assert_never
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters

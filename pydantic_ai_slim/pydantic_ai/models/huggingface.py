@@ -3,10 +3,8 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Literal, cast, overload
-
-from typing_extensions import assert_never
+from datetime import UTC, datetime
+from typing import Any, Literal, assert_never, cast, overload
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
@@ -314,7 +312,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         raw_finish_reason = choice.finish_reason
         provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
         if response.created:  # pragma: no branch
-            provider_details['timestamp'] = datetime.fromtimestamp(response.created, tz=timezone.utc)
+            provider_details['timestamp'] = datetime.fromtimestamp(response.created, tz=UTC)
         finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
 
         return ModelResponse(
@@ -352,7 +350,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
-            _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
+            _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=UTC),
         )
 
     @staticmethod

@@ -1161,6 +1161,14 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             ) as run:
                 yield run
 
+    def _check_realtime_signaling(self) -> None:
+        if FlowRunContext.get() is not None:
+            raise UserError(
+                '`agent.realtime(...).answer_webrtc_offer()`, `.create_client_secret()` and `.hang_up()` cannot '
+                'be used inside a Prefect flow, as they issue non-deterministic provider requests. Use them '
+                'outside a flow instead.'
+            )
+
     @asynccontextmanager
     async def _resolve_realtime_session(
         self,
@@ -1186,12 +1194,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         inside a Prefect flow; calling them there raises a `UserError`. Outside a flow they delegate
         to the wrapped agent unchanged.
         """
-        if FlowRunContext.get() is not None:
-            raise UserError(
-                '`agent.realtime(...).answer_webrtc_offer()` and `.create_client_secret()` cannot be used '
-                'inside a Prefect flow, as they issue non-deterministic provider requests. Use them '
-                'outside a flow instead.'
-            )
+        self._check_realtime_signaling()
         async with super()._resolve_realtime_session(
             model,
             deps=deps,
@@ -1229,6 +1232,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         handle_barge_in: bool = False,
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
+        retain_audio_max_seconds: float | None = 1800,
         provider_session: RealtimeProviderSession | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session; see [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] for the parameters.
@@ -1259,6 +1263,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             handle_barge_in=handle_barge_in,
             retain_images_every_n=retain_images_every_n,
             retain_images_max=retain_images_max,
+            retain_audio_max_seconds=retain_audio_max_seconds,
             provider_session=provider_session,
         ) as session:
             yield session

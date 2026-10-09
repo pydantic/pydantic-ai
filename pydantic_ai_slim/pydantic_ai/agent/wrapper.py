@@ -343,6 +343,9 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         ) as run:
             yield run
 
+    def _check_realtime_signaling(self) -> None:
+        self.wrapped._check_realtime_signaling()
+
     @asynccontextmanager
     async def _resolve_realtime_session(
         self,
@@ -406,6 +409,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         handle_barge_in: bool = False,
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
+        retain_audio_max_seconds: float | None = 1800,
         provider_session: RealtimeProviderSession | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime session on the wrapped agent. See [`Agent.realtime`][pydantic_ai.agent.Agent.realtime].
@@ -431,6 +435,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             handle_barge_in=handle_barge_in,
             retain_images_every_n=retain_images_every_n,
             retain_images_max=retain_images_max,
+            retain_audio_max_seconds=retain_audio_max_seconds,
             provider_session=provider_session,
         ) as session:
             yield session

@@ -5,15 +5,14 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from functools import cached_property
-from typing import Any, Literal, TypeAlias, TypeGuard, cast, overload
+from typing import Any, Literal, TypeAlias, TypeGuard, assert_never, cast, overload
 
 import httpx2
 import pydantic_core
 from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
-from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._http import to_httpx2_timeout
@@ -81,8 +80,9 @@ from ..profiles.anthropic import (
     resolve_anthropic_effort,
 )
 from ..providers import Provider, infer_provider
+from ..providers._bedrock_model_names import bedrock_claude_cache_retentions
 from ..providers.anthropic import AsyncAnthropicClient
-from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import CacheConfig, CacheRetention, CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from ..toolsets._tool_search import discovered_tool_names_in_order
 from . import (
@@ -100,6 +100,7 @@ from . import (
 )
 from ._anthropic_containers import is_tool_result_only as _is_tool_result_only
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
+from ._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
 from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 from ._transport_errors import transport_error_message
 
@@ -290,6 +291,13 @@ except ImportError as _import_error:
 # legacy `AsyncAnthropicBedrock` InvokeModel API), so it's not in `_NON_AUTOMATIC_CACHING_CLIENTS`. Fast
 # mode is not available on any Bedrock transport, so it goes in `_FAST_MODE_UNSUPPORTED_CLIENTS`.
 _NON_AUTOMATIC_CACHING_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
+
+_CACHE_SETTINGS_KEYS = (
+    'anthropic_cache',
+    'anthropic_cache_instructions',
+    'anthropic_cache_tool_definitions',
+    'anthropic_cache_messages',
+)
 _FAST_MODE_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicBedrock,
     AsyncAnthropicBedrockMantle,
@@ -476,7 +484,7 @@ AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 class AnthropicStaleThinkingBlockWarning(Warning):
     """Warning raised when Anthropic rejected a replayed thinking block and Pydantic AI retried without it.
 
-    Claude Fable 5.1, Claude Opus 5.5, and Claude Sonnet 5.5 bind each thinking block to the
+    Claude Fable 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Haiku 5.5 bind each thinking block to the
     conversation prefix that produced it and reject a replay once that prefix changes — which a dynamic
     [instructions][pydantic_ai.Agent.instructions] function and a
     [filtered toolset](../toolsets.md#filtering-tools) both do by design. Anthropic enforces the
@@ -812,7 +820,7 @@ def _drop_stale_thinking_blocks(thinking: dict[str, object] | Omit) -> dict[str,
 
     A binding model emits thinking blocks whether or not the request configured thinking, so the
     retry usually has no `thinking` object for the binding to ride in, and an `extra_body` one may
-    carry no `type`. Claude Sonnet 5.5 rejects a `thinking` object without a `type`, and every binding
+    carry no `type`. Claude Sonnet 5.5 and Haiku 5.5 reject a `thinking` object without a `type`, and every binding
     model thinks adaptively when none is given, so `'adaptive'` fills the gap without changing what
     the caller asked for. The retry sends the whole object through `extra_body`, since the SDK's
     discriminated union has no typed home for `block_binding` on every config shape.
@@ -1016,15 +1024,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """The model name."""
         return self._model_name
 
-    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve the longest retention requested by active Anthropic cache settings."""
-        settings = merge_model_settings(self.settings, model_settings) or {}
-        return self._max_cache_retention(
-            settings.get('anthropic_cache'),
-            settings.get('anthropic_cache_instructions'),
-            settings.get('anthropic_cache_tool_definitions'),
-            settings.get('anthropic_cache_messages'),
-        )
+    def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
+        return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
+
+    def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
+        # Mirrors `prepare_request` precedence: when any explicit `anthropic_cache*` setting is present, the
+        # unified value contributes nothing, since it also adds nothing to the request.
+        if self._has_provider_cache_settings(merged_settings):
+            settings = cast(AnthropicModelSettings, merged_settings)
+            return (
+                settings.get('anthropic_cache'),
+                settings.get('anthropic_cache_instructions'),
+                settings.get('anthropic_cache_tool_definitions'),
+                settings.get('anthropic_cache_messages'),
+            )
+        return super()._effective_cache_settings(merged_settings)
 
     @property
     def system(self) -> str:
@@ -1067,8 +1081,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS),
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
+                # The Bedrock and Vertex SDK clients don't support the top-level automatic caching parameter,
+                # so the unified `cache` setting places breakpoints there instead.
+                supports_auto_cache=_profile.get('supports_auto_cache', False)
+                and not isinstance(client, _NON_AUTOMATIC_CACHING_CLIENTS),
             ),
         )
+        if isinstance(client, AsyncAnthropicBedrock):
+            # AWS grants the 1-hour cache TTL to only a subset of Claude models, matching `BedrockConverseModel`.
+            _profile = merge_profile(
+                _profile,
+                AnthropicModelProfile(supported_cache_retentions=bedrock_claude_cache_retentions(self._model_name)),
+            )
         return cast(AnthropicModelProfile, _profile)
 
     @property
@@ -1203,6 +1227,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
             prepared_settings = filtered or None
+        # Explicit `anthropic_cache*` settings take precedence over the unified `cache` setting.
+        if (cache := model_request_parameters.cache) and not any(
+            key in (prepared_settings or {}) for key in _CACHE_SETTINGS_KEYS
+        ):
+            prepared_settings = self._translate_cache(cast(AnthropicModelSettings, prepared_settings or {}), cache)
         return prepared_settings, model_request_parameters
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
@@ -1295,6 +1324,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
         self._apply_explicit_message_caching(model_settings, anthropic_messages)
+        # The API rejects automatic caching when the last block's explicit breakpoint has a different TTL, and
+        # ignores it when the TTL is the same, since both mark the same breakpoint. The explicit one wins.
+        auto_cache_control = None if _last_cacheable_block_has_cache_control(anthropic_messages) else auto_cache_control
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
@@ -1675,6 +1707,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
         self._apply_explicit_message_caching(model_settings, anthropic_messages)
+        # The API rejects automatic caching when the last block's explicit breakpoint has a different TTL, and
+        # ignores it when the TTL is the same, since both mark the same breakpoint. The explicit one wins.
+        auto_cache_control = None if _last_cacheable_block_has_cache_control(anthropic_messages) else auto_cache_control
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
@@ -2778,69 +2813,39 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> None:
         """Limit the number of cache points in the request to Anthropic's maximum.
 
-        Anthropic enforces a maximum of 4 cache points per request. This method ensures
-        compliance by counting existing cache points and removing excess ones from messages.
-
-        When automatic_caching is enabled, the server-applied breakpoint uses 1 of the 4
-        available slots, so the budget for explicit breakpoints is reduced to 3.
-
-        Strategy:
-        1. Count cache points in system_prompt (can be multiple if list of blocks)
-        2. Count cache points in tools (can be in any position, not just last)
-        3. Raise UserError if system + tools already exceed the budget
-        4. Calculate remaining budget for message cache points
-        5. Traverse messages from newest to oldest, keeping the most recent cache points
-           within the remaining budget
-        6. Remove excess cache points from older messages to stay within limit
-
-        Cache point priority (always preserved):
-        - System prompt cache points
-        - Tool definition cache points
-        - Message cache points (newest first, oldest removed if needed)
+        System prompt and tool definition cache points always take priority; excess message
+        cache points are removed oldest-first. When automatic caching is enabled, the
+        server-applied breakpoint uses 1 of the available slots, reducing the budget for
+        explicit breakpoints by one.
 
         Raises:
             UserError: If system_prompt and tools combined already exceed the budget.
                       This indicates a configuration error that cannot be auto-fixed.
         """
-        MAX_CACHE_POINTS = 3 if automatic_caching else 4
-
-        # Count existing cache points in system prompt
-        used_cache_points = (
+        # Anthropic enforces a maximum of 4 cache points per request.
+        max_points = 4 - (1 if automatic_caching else 0)
+        reserved = (
             sum(1 for block in system_prompt if 'cache_control' in cast(dict[str, Any], block))
             if isinstance(system_prompt, list)
             else 0
         )
+        # cache_control can be in the middle of the tools list if builtin tools are added after.
+        reserved += sum(1 for tool in tools if 'cache_control' in tool)
 
-        # Count existing cache points in tools (any tool may have cache_control)
-        # Note: cache_control can be in the middle of tools list if builtin tools are added after
-        for tool in tools:
-            if 'cache_control' in tool:
-                used_cache_points += 1
-
-        # Calculate remaining cache points budget for messages
-        remaining_budget = MAX_CACHE_POINTS - used_cache_points
-        if remaining_budget < 0:  # pragma: no cover
-            raise UserError(
-                f'Too many cache points for Anthropic request. '
-                f'System prompt and tool definitions already use {used_cache_points} cache points, '
-                f'which exceeds the maximum of {MAX_CACHE_POINTS}.'
-            )
-        # Remove excess cache points from messages (newest to oldest)
-        for message in reversed(anthropic_messages):
-            content = message['content']
-            if isinstance(content, str):  # pragma: no cover
-                continue
-
-            # Process content blocks in reverse order (newest first)
-            for block in reversed(cast(list[BetaContentBlockParam], content)):
-                block_dict = cast(dict[str, Any], block)
-
-                if 'cache_control' in block_dict:
-                    if remaining_budget > 0:
-                        remaining_budget -= 1
-                    else:
-                        # Exceeded limit, remove this cache point
-                        del block_dict['cache_control']
+        message_blocks = (
+            cast('dict[str, Any]', block)
+            for message in reversed(anthropic_messages)
+            if not isinstance(message['content'], str)
+            for block in reversed(cast('list[BetaContentBlockParam]', message['content']))
+        )
+        for block_dict in excess_cache_points(
+            message_blocks,
+            max_points=max_points,
+            reserved=reserved,
+            is_cache_point=lambda block: 'cache_control' in block,
+            description='Anthropic request',
+        ):
+            del block_dict['cache_control']
 
     def _build_cache_control(self, ttl: Literal['5m', '1h'] = '5m') -> BetaCacheControlEphemeralParam:
         """Build a cache control dict with the given TTL.
@@ -2852,6 +2857,30 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             A cache control dict with the specified TTL.
         """
         return BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
+
+    def _translate_cache(
+        self, model_settings: AnthropicModelSettings, cache: Literal[True] | CacheRetention | CacheConfig
+    ) -> AnthropicModelSettings:
+        """Map the unified `cache` setting onto Anthropic cache settings.
+
+        Only called when no explicit `anthropic_cache*` setting is present (those take
+        precedence in `prepare_request`). Uses automatic caching where the client supports it;
+        on Bedrock and Vertex the library places breakpoints at the end of the static
+        instructions, the tool definitions and the conversation instead. Automatic caching
+        breakpoints the end of the conversation, so caching only the stable prefix
+        (`messages=False`) uses the instruction and tool definition breakpoints everywhere.
+        """
+        retention, messages = split_cache_setting(cache)
+        ttl: Literal['5m', '1h'] = retention if retention in ('5m', '1h') else '5m'
+        translated = model_settings.copy()
+        if messages and self.profile.get('supports_auto_cache', False):
+            translated['anthropic_cache'] = ttl
+        else:
+            translated['anthropic_cache_instructions'] = ttl
+            translated['anthropic_cache_tool_definitions'] = ttl
+            if messages:
+                translated['anthropic_cache_messages'] = ttl
+        return translated
 
     def _build_automatic_cache_control(
         self, model_settings: AnthropicModelSettings
@@ -2923,14 +2952,32 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Apply per-block `cache_control` to the last content block of the last message.
 
         If the last block already has `cache_control` (e.g. from an explicit `CachePoint`),
-        it is left unchanged to preserve the user's chosen TTL.
+        it is left unchanged to preserve the user's chosen TTL. On Bedrock, when the previous
+        request's breakpoint is further back than the lookback reaches (a wide fan-out of parallel
+        tool calls), the end of that request gets a breakpoint too. The Claude API collapses runs
+        of tool blocks into one position, so it doesn't need one.
 
         Assumes `anthropic_messages` is non-empty.
         """
-        last_message = anthropic_messages[-1]
-        content = last_message['content']
+        if isinstance(self.client, AsyncAnthropicBedrock):
+            previous_tail = previous_tail_needing_breakpoint(
+                [message['role'] for message in anthropic_messages],
+                [
+                    1
+                    if isinstance(content := message['content'], str)
+                    else len(cast(list[BetaContentBlockParam], content))
+                    for message in anthropic_messages
+                ],
+            )
+            if previous_tail is not None:
+                self._add_message_cache_control(anthropic_messages[previous_tail], ttl)
+        self._add_message_cache_control(anthropic_messages[-1], ttl)
+
+    def _add_message_cache_control(self, message: BetaMessageParam, ttl: Literal['5m', '1h']) -> None:
+        """Add `cache_control` to the last cacheable content block of `message`, unless it already has one."""
+        content = message['content']
         if isinstance(content, str):  # pragma: no cover
-            last_message['content'] = [
+            message['content'] = [
                 BetaTextBlockParam(
                     type='text',
                     text=content,
@@ -3137,7 +3184,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> None:
         """Reject `xhigh`/`max` effort combined with explicitly disabled thinking.
 
-        Claude Opus 5 caps effort at `high` once thinking is disabled, while Claude Opus 4.8 accepts
+        Claude Opus 5 and Haiku 5.5 cap effort at `high` once thinking is disabled, while Claude Opus 4.8 accepts
         every effort level in that combination. Fail fast with a helpful message rather than letting
         the API return an opaque 400.
         """
@@ -4386,3 +4433,22 @@ def _support_tool_forcing(
         unavailable_reason,
         disables_thinking=thinking_type == 'adaptive' and profile.get('forced_tool_choice_disables_thinking', False),
     )
+
+
+def _last_cacheable_block_has_cache_control(anthropic_messages: list[BetaMessageParam]) -> bool:
+    """Whether the block automatic caching would put its breakpoint on already carries an explicit `cache_control`.
+
+    That's the last cacheable block of the last message, the same one `anthropic_cache_messages` targets.
+    https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+    """
+    content = anthropic_messages[-1]['content'] if anthropic_messages else ''
+    blocks = [] if isinstance(content, str) else cast(list[dict[str, Any]], content)
+    last = next(
+        (
+            block
+            for block in reversed(blocks)
+            if 'cache_control' in block or block['type'] in _ANTHROPIC_CACHEABLE_PARAM_TYPES
+        ),
+        None,
+    )
+    return last is not None and 'cache_control' in last

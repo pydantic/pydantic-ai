@@ -20,9 +20,9 @@ AWS [recommends the `bedrock-runtime` endpoint for new applications](https://doc
 
 ## OpenAI model routes {#bedrock-openai-model-routes}
 
-GPT-OSS, GPT-5.6 Sol/Luna/Terra, and GPT-6 Sol/Luna/Astra are available through both routes. GPT-5.4, GPT-5.5, and GPT-5.6 Cyber are available only through Mantle.
+GPT-OSS, GPT-5.6 Sol/Luna/Terra, GPT-6 Sol/Luna/Astra, and GPT-6.1 Sol are available through both routes. GPT-5.4, GPT-5.5, and GPT-5.6 Cyber are available only through Mantle.
 
-On Converse, GPT-5.6 requires a cross-region inference-profile model ID. Sol supports `us.openai.gpt-5.6-sol` and `global.openai.gpt-5.6-sol`. Luna and Terra support `us.`, `in.`, and `global.` IDs. GPT-6 Sol, Luna, and Astra support `us.` and `global.` IDs, such as `global.openai.gpt-6-sol`. See the AWS model cards for [GPT-5.6 Sol](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html), [GPT-5.6 Luna](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-luna.html), [GPT-5.6 Terra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-terra.html), and [GPT-6 Astra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html) for current endpoint and regional availability.
+On Converse, GPT-5.6 requires a cross-region inference-profile model ID. Sol supports `us.openai.gpt-5.6-sol` and `global.openai.gpt-5.6-sol`. Luna and Terra support `us.`, `in.`, and `global.` IDs. GPT-6 Sol, Luna, Astra, and GPT-6.1 Sol support `us.` and `global.` IDs, such as `global.openai.gpt-6-sol`. See the AWS model cards for [GPT-5.6 Sol](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html), [GPT-5.6 Luna](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-luna.html), [GPT-5.6 Terra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-terra.html), [GPT-6 Astra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html), and [GPT-6.1 Sol](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-sol.html) for current endpoint and regional availability.
 
 ## Bedrock Converse
 
@@ -109,7 +109,7 @@ When `trace` is set to `'enabled'` in the guardrail configuration (as in the exa
 Claude answers a forced tool choice without thinking, and manual extended thinking
 (`bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', ...}}`) rejects one outright. So while a
 Claude request thinks, whether because of a thinking setting or because the model thinks by default (Claude Opus 5 and
-later, Claude Sonnet 5, Claude Fable 5), Pydantic AI doesn't force the output tool:
+later, Claude Sonnet 5, Claude Haiku 5.5, Claude Fable 5), Pydantic AI doesn't force the output tool:
 
 - A bare structured `output_type` uses [`NativeOutput`][pydantic_ai.output.NativeOutput] where Bedrock supports it for
   the model. Otherwise it keeps tool output, with the output tool offered under `toolChoice={'auto': {}}` and a text
@@ -157,7 +157,11 @@ To request Bedrock's `'reserved'` tier (which requires a pre-purchased capacity 
 
 ### Prompt Caching
 
-Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) on Anthropic models so you can reuse expensive context across requests. Pydantic AI provides four ways to use prompt caching:
+Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) on Anthropic models so you can reuse expensive context across requests.
+
+The provider-agnostic way to enable it is the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting (or the [`Caching`][pydantic_ai.capabilities.Caching] capability): on supporting Bedrock models, `cache=True` places cache points at the end of the tool definitions, the static instructions and the conversation, equivalent to `bedrock_cache_instructions`, `bedrock_cache_tool_definitions` and `bedrock_cache_messages` below. After a turn that adds more than about 20 content blocks, such as a dozen parallel tool calls and their results, the end of the previous request gets a cache point too, since Bedrock only looks back about 20 blocks for the previous request's cache entry. A requested `'1h'` retention is forwarded on the Claude models AWS grants the 1-hour TTL to, and snaps to the default 5 minutes on the others. See [Caching](../capabilities/caching.md) for the cost trade-off. The provider-specific `bedrock_cache_*` settings take precedence when any is set.
+
+Beyond that, Pydantic AI provides four provider-specific ways to use prompt caching:
 
 1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker to cache everything before it in the current user message. A `CachePoint` at the start of a user prompt part has nothing before it in that message, so it caches everything up to the end of the previous user message instead. Pass `CachePoint(ttl='1h')` to opt into the extended cache duration.
 2. **Cache System Instructions**: Set [`BedrockModelSettings.bedrock_cache_instructions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly. When you have both static and dynamic [instructions](../agent.md#instructions), the cache point is placed after the last static instruction, so dynamic instructions can change without invalidating the static cache.
@@ -175,21 +179,24 @@ Use `bedrock_cache_messages` to automatically cache the last user message:
 from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockModelSettings
 
+handbook = '...'  # a long document, above the model's minimum cacheable length
+
 agent = Agent(
     'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-    instructions='You are a helpful assistant.',
     model_settings=BedrockModelSettings(
         bedrock_cache_messages=True,  # Automatically caches the last message
     ),
 )
 
-# The last message is automatically cached - no need for manual CachePoint
-result1 = agent.run_sync('What is the capital of France?')
+# The last message, including the handbook, is cached - no need for a manual CachePoint
+result1 = agent.run_sync(
+    f'Here is our employee handbook:\n\n{handbook}\n\nHow many vacation days do new employees get?'
+)
 
-# Subsequent calls with similar conversation benefit from cache
-result2 = agent.run_sync('What is the capital of Germany?')
-print(f'Cache write: {result1.usage.cache_write_tokens}')
-print(f'Cache read: {result2.usage.cache_read_tokens}')
+# The follow-up continues the conversation, so it starts with the cached prefix
+result2 = agent.run_sync('And after five years?', message_history=result1.all_messages())
+print(f'Cache write: {result1.response.usage.cache_write_tokens}')
+print(f'Cache read: {result2.response.usage.cache_read_tokens}')
 ```
 
 #### Example 2: Comprehensive Caching Strategy
@@ -278,7 +285,7 @@ Cache points can be placed in three locations:
 2. **Tool Definitions**: Via `bedrock_cache_tool_definitions` setting (adds cache point to last tool definition)
 3. **Messages**: Via `CachePoint` markers or `bedrock_cache_messages` setting (adds cache points to message content)
 
-Each setting uses **at most 1 cache point**, but you can combine them.
+Each setting uses **at most 1 cache point**, but you can combine them. The exception is `bedrock_cache_messages`: after a turn that adds more than about 20 content blocks, it also marks the end of the previous request, since Bedrock only looks back about 20 blocks for the previous request's cache entry.
 
 ##### Automatic Cache Point Limiting
 
