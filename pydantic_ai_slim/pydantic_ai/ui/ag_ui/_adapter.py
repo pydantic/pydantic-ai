@@ -29,6 +29,7 @@ from ...messages import (
     FilePart,
     ForceDownloadMode,
     ImageUrl,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -745,6 +746,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         ),
                     )
                 )
+            elif isinstance(part, InstructionDeltaPart):
+                pass  # Operator instruction state stays in trusted server-side history.
             elif isinstance(part, ToolAvailabilityDeltaPart):
                 flush_user_content()
                 result.append(

@@ -12,7 +12,7 @@ import json
 import time
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -51,6 +51,7 @@ from ..messages import (
     FileUrl,
     FinalResultEvent,
     FinishReason,
+    InstructionDeltaPart,
     InstructionPart,
     ModelMessage,
     ModelRequest,
@@ -77,6 +78,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
+    _render_instruction_baseline,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
@@ -908,6 +910,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 prompted_output_template=self.profile.get('prompted_output_template', DEFAULT_PROMPTED_OUTPUT_TEMPLATE),
             )
 
+        params = _render_append_blocks(params, inline_system=self.profile.get('supports_inline_system_prompts', False))
+
         # Append prompted_output_instructions to instruction_parts so models that use structured
         # instruction parts (for per-part system messages or cache placement) also get them.
         # Done here (after customize_request_parameters) so it uses the final resolved template.
@@ -962,6 +966,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `ModelResponse(call) + ModelRequest(return)` so the adapter can render the
         provider-agnostic exchange.
 
+        Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
+        `SystemPromptPart`s for this model's delivery path, dropping deltas from before the latest
+        instruction baseline or compaction.
+
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`, and converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
@@ -981,6 +989,43 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
+        if _has_instruction_deltas(messages):
+            # Compaction starts a fresh instruction window, as in `update_instruction_history`: deltas
+            # from before it are superseded even when no request since has recorded a new baseline.
+            baseline_index = max(
+                (
+                    index
+                    for index, message in enumerate(messages)
+                    if (isinstance(message, ModelRequest) and message.instruction_baseline is not None)
+                    or (
+                        isinstance(message, ModelResponse)
+                        and any(isinstance(part, CompactionPart) for part in message.parts)
+                    )
+                ),
+                default=0,
+            )
+            # The same path choice as the prefix statement in `prepare_request`; on the fallback path
+            # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
+            inline_system = self.profile.get('supports_inline_system_prompts', False)
+            messages = [
+                replace(
+                    message,
+                    parts=[
+                        SystemPromptPart(
+                            content=part.render(inline_system=inline_system),
+                            timestamp=message.timestamp or _utils.now_utc(),
+                        )
+                        if isinstance(part, InstructionDeltaPart)
+                        else part
+                        for part in message.parts
+                        if not isinstance(part, InstructionDeltaPart) or index >= baseline_index
+                    ],
+                )
+                if isinstance(message, ModelRequest)
+                else message
+                for index, message in enumerate(messages)
+            ]
+
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
         # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
         # history was authored with, and an announcement opening the first request is not part of it.
@@ -2517,6 +2562,48 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
             new_messages.append(msg)
 
     return new_messages if changed else messages
+
+
+def _render_append_blocks(params: ModelRequestParameters, *, inline_system: bool) -> ModelRequestParameters:
+    """Render the prefix statement of each append-mode block for the model's delivery path.
+
+    History holds only the blocks' content, so each model renders its own path here, the same one its
+    later updates take in `prepare_messages`. A part without an id has nothing to tag and goes out as
+    written: agent history never holds one (it is downgraded to `'rewrite'` with a warning), but a
+    `before_model_request` hook or a direct caller can still supply one.
+    """
+    if not (parts := params.instruction_parts):
+        return params
+    rendered = _render_append_parts(parts, inline_system=inline_system)
+    return replace(params, instruction_parts=rendered) if rendered != parts else params
+
+
+def _render_append_parts(parts: list[InstructionPart], *, inline_system: bool) -> list[InstructionPart]:
+    """Render each addressable append-mode part's prefix statement, leaving other parts as written."""
+    return [
+        _render_instruction_baseline(part, inline_system=inline_system)
+        if part.on_change == 'append' and part.id is not None
+        else part
+        for part in parts
+    ]
+
+
+def _has_instruction_deltas(messages: Iterable[ModelMessage]) -> bool:
+    """Whether any request in `messages` carries an unprojected `InstructionDeltaPart`."""
+    return any(
+        isinstance(part, InstructionDeltaPart)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+
+
+def _unprojected_instruction_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
+    """Explain how direct model callers can project canonical instruction changes."""
+    return UserError(
+        '`InstructionDeltaPart` must be projected before calling this model. '
+        'Call `model.prepare_messages(messages)` first and pass the result. `Agent` does this for you.'
+    )
 
 
 def _unsynthesized_tool_availability_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]

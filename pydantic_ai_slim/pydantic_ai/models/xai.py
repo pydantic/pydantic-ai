@@ -22,6 +22,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -49,6 +50,7 @@ from ..models import (
     ModelRequestParameters,
     StreamedResponse,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -411,6 +413,8 @@ class XaiModel(Model[AsyncClient]):
                     xai_messages.append(user(part.model_response()))
                 else:
                     tool_results.append(part)
+            elif isinstance(part, InstructionDeltaPart):
+                raise _unprojected_instruction_delta_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
             elif isinstance(part, SpeechPart):  # pragma: no cover

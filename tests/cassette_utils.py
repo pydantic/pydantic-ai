@@ -255,8 +255,8 @@ def recorded_request_body(request: dict[str, Any]) -> Any:
     return body
 
 
-def _yaml_cassette_requests(cassette_path: Path) -> Iterator[tuple[Any, Any, Any]]:
-    """Yield `(method, uri, body)` for each request in a cassette file on disk."""
+def _yaml_cassette_requests(cassette_path: Path) -> Iterator[tuple[Any, Any, Any, Any]]:
+    """Yield `(method, uri, body, response_body)` for each request in a cassette file on disk."""
     cassette = yaml.load(cassette_path.read_text(encoding='utf-8'), Loader=SafeLoader)
     if not is_str_dict(cassette):
         return
@@ -265,15 +265,24 @@ def _yaml_cassette_requests(cassette_path: Path) -> Iterator[tuple[Any, Any, Any
         return
     for interaction in raw_interactions:
         if is_str_dict(interaction) and is_str_dict(request := interaction.get('request')):
-            yield request.get('method'), request.get('uri'), recorded_request_body(request)
+            response = interaction.get('response')
+            # Responses share the request body layout of both cassette formats.
+            response_body = recorded_request_body(response) if is_str_dict(response) else None
+            yield request.get('method'), request.get('uri'), recorded_request_body(request), response_body
 
 
-def _loaded_cassette_requests(cassette: Cassette) -> Iterator[tuple[Any, Any, Any]]:
-    """Yield `(method, uri, body)` for each request cassetter already parsed, so the file is not read again."""
+def _loaded_cassette_requests(cassette: Cassette) -> Iterator[tuple[Any, Any, Any, Any]]:
+    """Yield `(method, uri, body, response_body)` for each request cassetter already parsed, so the file is not read again."""
     for interaction in cassette.interactions:
         request = interaction.request
         body = request.body.content if request.body.body_type == 'json' else None
-        yield request.method, request.uri, body
+        response_body = interaction.response.body
+        yield (
+            request.method,
+            request.uri,
+            body,
+            response_body.content if response_body.body_type in ('json', 'text') else None,
+        )
 
 
 def iter_cassette_prefix_violations(cassette: Path | Cassette) -> Iterator[CassettePrefixViolation]:
@@ -288,18 +297,43 @@ def iter_cassette_prefix_violations(cassette: Path | Cassette) -> Iterator[Casse
     # model or deployment carried in the path, or any other sibling endpoint on the same host would be
     # pooled with generation requests and compared as if consecutive -- a spurious divergence.
     requests_by_endpoint: dict[tuple[str, str, str], list[tuple[list[PrefixBlock], list[str]]]] = defaultdict(list)
+    response_inputs: dict[tuple[str, str], list[PrefixBlock]] = {}
 
-    for method, uri, body in requests:
-        if not isinstance(method, str) or method.upper() != 'POST':
-            continue
-        if not is_str_dict(body):
-            continue
-        if not isinstance(uri, str):
-            continue
-        canonical = canonical_prefix_blocks(body, uri)
-        if canonical is None:
+    for method, uri, body, response_body in requests:
+        if not (
+            isinstance(method, str)
+            and method.upper() == 'POST'
+            and is_str_dict(body)
+            and isinstance(uri, str)
+            and (canonical := canonical_prefix_blocks(body, uri)) is not None
+        ):
             continue
         shape, blocks = canonical
+        if shape == 'openai-responses':
+            # Continuations append to server-stored input. Compare the reconstructed input prefix,
+            # while still checking the tools/instructions resent on this request. Server-generated
+            # output is immutable under its response id, so only the input blocks need reconstruction.
+            previous_id = body.get('previous_response_id')
+            if isinstance(previous_id, str) and (uri, previous_id) in response_inputs:
+                blocks = (
+                    [block for block in blocks if block[0] != 'messages']
+                    + response_inputs[(uri, previous_id)]
+                    + [block for block in blocks if block[0] == 'messages']
+                )
+            if is_str_dict(response_body) and isinstance(raw_stream := response_body.get('string'), str):
+                response_body = raw_stream
+            if isinstance(response_body, str):
+                events = [json.loads(line[6:]) for line in response_body.splitlines() if line.startswith('data: {')]
+                response_body = next(
+                    (
+                        event.get('response')
+                        for event in events
+                        if is_str_dict(event) and event.get('type') == 'response.completed'
+                    ),
+                    None,
+                )
+            if is_str_dict(response_body) and isinstance(response_id := response_body.get('id'), str):
+                response_inputs[(uri, response_id)] = [block for block in blocks if block[0] == 'messages']
         deferred_tools = anthropic_deferred_tool_blocks(body) if shape == 'anthropic' else []
         parsed_uri = urlparse(uri)
         requests_by_endpoint[(parsed_uri.hostname or '', parsed_uri.path, shape)].append((blocks, deferred_tools))

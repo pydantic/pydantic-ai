@@ -15,7 +15,7 @@ from pydantic_ai._instructions import (
 )
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityDescription
-from pydantic_ai.messages import CapabilityInstructionSource, InstructionId
+from pydantic_ai.messages import CapabilityInstructionSource, InstructionChangePolicy, InstructionId
 from pydantic_ai.tools import (
     ArgsValidatorFunc,
     DocstringFormat,
@@ -328,7 +328,7 @@ class Capability(AbstractCapability[AgentDepsT]):
 
     @overload
     def instructions(
-        self, /, *, name: str | None = None
+        self, /, *, name: str | None = None, on_change: InstructionChangePolicy = 'rewrite'
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def instructions(
@@ -337,6 +337,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         /,
         *,
         name: str | None = None,
+        on_change: InstructionChangePolicy = 'rewrite',
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register an instructions function on this capability.
 
@@ -366,6 +367,9 @@ class Capability(AbstractCapability[AgentDepsT]):
                 [`id`][pydantic_ai.capabilities.AbstractCapability.id] — without one there is no source
                 key to qualify the name against, so the part stays unaddressable. See
                 [instruction parts](../agent.md#instruction-parts).
+            on_change: Whether to rewrite the instruction prefix (the default) or append full
+                replacements when this block changes. Appending requires an addressable instruction
+                identity; otherwise it warns and rewrites. The function still runs on every request.
         """
         if name is not None:
             validate_instruction_name(name)
@@ -380,6 +384,7 @@ class Capability(AbstractCapability[AgentDepsT]):
                     name=name,
                     id=InstructionId(source, name=name) if source is not None else None,
                     dynamic=True,
+                    on_change=on_change,
                 )
             )
             return func_

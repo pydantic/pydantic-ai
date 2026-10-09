@@ -28,6 +28,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -59,6 +60,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -623,6 +625,8 @@ class MistralModel(Model[Mistral]):
                         tool_call_id=part.tool_call_id,
                         content=part.model_response(),
                     )
+            elif isinstance(part, InstructionDeltaPart):
+                raise _unprojected_instruction_delta_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
             elif isinstance(part, SpeechPart):  # pragma: no cover

@@ -18,6 +18,7 @@ from ..messages import (
     CompactionPart,
     FilePart,
     FinishReason,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -43,6 +44,7 @@ from . import (
     Model,
     ModelRequestParameters,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
@@ -398,6 +400,8 @@ class CohereModel(Model[AsyncClientV2]):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+            elif isinstance(part, InstructionDeltaPart):
+                raise _unprojected_instruction_delta_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
             elif isinstance(part, SpeechPart):  # pragma: no cover
