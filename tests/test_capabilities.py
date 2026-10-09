@@ -1383,6 +1383,24 @@ class TestHooksCapability:
         assert exc_info.value.hook_name == 'before_model_request'
         assert exc_info.value.func_name == 'slow_sync_hook'
 
+    @pytest.mark.parametrize('sync_hook', [False, True])
+    async def test_timeout_preserves_hook_timeout_error(self, sync_hook: bool):
+        """A hook's own timeout is not the deadline configured on its registration."""
+        hooks = Hooks()
+        error = TimeoutError('Database connection timed out')
+
+        def failing_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            raise error
+
+        async def failing_async_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            raise error
+
+        hooks.on.before_model_request(timeout=60)(failing_hook if sync_hook else failing_async_hook)
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        with pytest.raises(TimeoutError) as exc_info:
+            await agent.run('hello')
+        assert exc_info.value is error
+
     async def test_has_wrap_node_run(self):
         hooks = Hooks()
         with pytest.warns(PydanticAIDeprecationWarning, match=r'`has_wrap_node_run`.*`wrap_node_run`'):
