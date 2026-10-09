@@ -37,7 +37,7 @@ class Fallback(AbstractCapability[AgentDepsT]):
     composes with an agent-level model and with
     [`SelectModel`][pydantic_ai.capabilities.SelectModel] rather than replacing them:
 
-    ```python {test="skip"}
+    ```python
     from pydantic_ai import Agent
     from pydantic_ai.capabilities import Fallback
 

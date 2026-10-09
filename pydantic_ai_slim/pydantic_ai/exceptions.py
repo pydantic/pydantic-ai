@@ -213,7 +213,7 @@ class RetryModelRequest(Exception):
 
     Pass `model` to attempt a different model, or omit it to attempt the same one again:
 
-    ```python {test="skip"}
+    ```python
     from pydantic_ai import ModelResponse, RetryModelRequest, RunContext
     from pydantic_ai.capabilities import AbstractCapability
     from pydantic_ai.exceptions import ModelHTTPError
