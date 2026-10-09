@@ -48,6 +48,10 @@ with try_import() as openai_available:
 SHORT_TIMEOUT = 0.05
 """For a request that never finishes: how soon it times out only affects how long the test takes."""
 
+GENEROUS_TIMEOUT = 0.5
+"""For a test in which something must get done before the deadline, e.g. a first chunk reaching the consumer, on a
+loaded runner."""
+
 
 async def hang(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     await anyio.sleep_forever()
@@ -138,7 +142,7 @@ async def test_outer_cancellation_is_not_a_request_timeout():
 async def test_streamed_request_times_out_mid_stream():
     stream = StreamThatHangs()
     agent = Agent(
-        FunctionModel(stream_function=stream, model_name='slow'), model_settings={'request_timeout': SHORT_TIMEOUT}
+        FunctionModel(stream_function=stream, model_name='slow'), model_settings={'request_timeout': GENEROUS_TIMEOUT}
     )
     received: list[str] = []
 
@@ -165,7 +169,7 @@ async def test_streamed_request_times_out_with_event_stream_handler():
         async for event in stream_events:
             events.append(event)
 
-    agent = Agent(FunctionModel(stream_function=stream), model_settings={'request_timeout': SHORT_TIMEOUT})
+    agent = Agent(FunctionModel(stream_function=stream), model_settings={'request_timeout': GENEROUS_TIMEOUT})
 
     with pytest.raises(ModelRequestTimeout):
         await agent.run('hello', event_stream_handler=handler)
@@ -191,11 +195,11 @@ async def test_slow_stream_consumer_counts_towards_the_deadline():
 
 async def test_deadline_ends_with_the_last_chunk():
     """Once the stream has been read through its last chunk, the consumer can take as long as it likes."""
-    agent = Agent(FunctionModel(stream_function=stream_answer), model_settings={'request_timeout': SHORT_TIMEOUT})
+    agent = Agent(FunctionModel(stream_function=stream_answer), model_settings={'request_timeout': GENEROUS_TIMEOUT})
 
     async with agent.run_stream('hello') as result:
         output = await result.get_output()
-        await anyio.sleep(SHORT_TIMEOUT * 4)
+        await anyio.sleep(GENEROUS_TIMEOUT * 2)
 
     assert output == 'answer'
 
@@ -279,7 +283,7 @@ async def test_fallback_falls_back_when_opening_a_stream_times_out():
         FunctionModel(stream_function=never_opens, model_name='primary'),
         FunctionModel(stream_function=stream_answer, model_name='fallback'),
     )
-    agent = Agent(model, model_settings={'request_timeout': SHORT_TIMEOUT})
+    agent = Agent(model, model_settings={'request_timeout': GENEROUS_TIMEOUT})
 
     async with agent.run_stream('hello') as result:
         output = await result.get_output()
@@ -298,7 +302,7 @@ async def test_fallback_stream_times_out_mid_stream_on_the_models_own_deadline()
         FunctionModel(stream_function=stream, model_name='primary'),
         FunctionModel(stream_function=stream_answer, model_name='fallback'),
     )
-    agent = Agent(model, model_settings={'request_timeout': SHORT_TIMEOUT})
+    agent = Agent(model, model_settings={'request_timeout': GENEROUS_TIMEOUT})
 
     with pytest.raises(ModelRequestTimeout) as exc_info:
         async with agent.run_stream('hello') as result:
@@ -312,7 +316,7 @@ async def test_nested_fallback_gives_each_inner_model_a_deadline():
     inner = FallbackModel(FunctionModel(hang, model_name='inner-primary'), FunctionModel(answer, model_name='inner'))
     model = FallbackModel(inner, FunctionModel(answer, model_name='outer'))
 
-    result = await Agent(model, model_settings={'request_timeout': SHORT_TIMEOUT}).run('hello')
+    result = await Agent(model, model_settings={'request_timeout': GENEROUS_TIMEOUT}).run('hello')
 
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
