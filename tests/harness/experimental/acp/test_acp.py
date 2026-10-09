@@ -2215,7 +2215,8 @@ class TestEntryPoints:
         async def slow() -> str:
             started.set()
             await asyncio.sleep(30)
-            return 'done'  # pragma: no cover - cancelled before it returns
+            # Cancelled before it returns.
+            return 'done'  # pragma: no cover
 
         async with wire_agent(PydanticAIACPAgent(agent)) as (conn, _client):
             await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)

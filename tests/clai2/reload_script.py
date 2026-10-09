@@ -1,18 +1,8 @@
-"""Exercise real module reloads in a process isolated from pytest's imported class identities.
-
-Run as a server: it imports the stack once, then forks a child per `ROOT\tMODE` request line on stdin, so each
-reload starts from the same pristine modules without paying interpreter startup and imports again. It answers
-each request with the child's exit code; the child's output goes to `ROOT/output.log`.
-"""
+"""Exercise real module reloads in a process isolated from pytest's imported class identities."""
 
 import asyncio
 import io
-import json
-import multiprocessing
-import os
 import sys
-import threading
-import warnings
 from dataclasses import replace
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -244,8 +234,7 @@ async def transcript_reload(root: Path) -> None:
     transcript.write('before\n')
 
     def render(*, source: str, width: int) -> str:
-        # Called only when a frame repaints the block at a new width or theme, which this scenario does not assert.
-        return source + '\n'  # pragma: lax no cover
+        return source + '\n'
 
     block = transcript.markdown(render=render, width=80, changed=lambda: None)
     block.extend('markdown')
@@ -283,30 +272,6 @@ async def transcript_reload(root: Path) -> None:
         assert Text.from_ansi('\n'.join(frame.rows)).plain.splitlines()[-2:] == ['notice', 'after']
 
 
-def run_mode(root: Path, mode: str, environment: dict[str, str]) -> None:
-    """Run one reload scenario in a forked child, with the requesting test's environment and directory."""
-    log = (root / 'output.log').open('w')
-    os.dup2(log.fileno(), sys.stdout.fileno())
-    os.dup2(log.fileno(), sys.stderr.fileno())
-    os.environ.clear()
-    os.environ.update(environment)
-    os.chdir(root)
-    asyncio.run(transcript_reload(root) if mode == 'transcript' else main(root, mode))
-
-
-def serve() -> None:
-    # Forked from this single-threaded server, each child starts from the same imported modules.
-    # Forking a threaded process can deadlock the child, so a thread started by an import fails loudly.
-    warnings.filterwarnings('error', message=r'.*use of fork\(\) may lead to deadlocks', category=DeprecationWarning)
-    context = multiprocessing.get_context('fork')
-    for line in sys.stdin:
-        request = json.loads(line)
-        assert threading.active_count() == 1, threading.enumerate()
-        child = context.Process(target=run_mode, args=(Path(request['root']), request['mode'], request['environment']))
-        child.start()
-        child.join()
-        print(child.exitcode, flush=True)
-
-
-if __name__ == '__main__':
-    serve()
+asyncio.run(
+    transcript_reload(Path(sys.argv[1])) if sys.argv[2] == 'transcript' else main(Path(sys.argv[1]), sys.argv[2])
+)

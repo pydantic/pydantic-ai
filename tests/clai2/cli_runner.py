@@ -47,8 +47,8 @@ class CliRunner:
             except SystemExit as exit:
                 assert isinstance(exit.code, int)
                 returncode = exit.code
-            except KeyboardInterrupt:  # pragma: no cover -- only when the CLI regresses
-                # Escaping, it would end the whole pytest session instead of failing this test.
+            # Only when the CLI regresses: escaping, it would end the whole pytest session instead of failing this test.
+            except KeyboardInterrupt:  # pragma: no cover
                 pytest.fail('KeyboardInterrupt escaped the CLI')
         captured = self.capsys.readouterr()
         return CliResult(returncode=returncode, stdout=captured.out, stderr=captured.err)

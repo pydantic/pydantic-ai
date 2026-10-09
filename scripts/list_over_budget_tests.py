@@ -4,7 +4,7 @@
 that sets it. Run this against a CI run to see which tests that leg would fail, before turning the budget on or
 lowering it, and mark the ones whose cost is inherent with `@pytest.mark.slow(reason=...)`:
 
-    uv run scripts/list_over_budget_tests.py <run-id> [--budget 5] [--jobs 'all-extras']
+    uv run scripts/list_over_budget_tests.py <run-id> [--budget 8] [--jobs 'all-extras']
 
 It reads the jobs' logs with the `gh` CLI. The durations pytest reports include setup of fixtures shared beyond one
 test, which the guard does not count, so a test listed here only for its setup may be within budget; and pytest
@@ -53,7 +53,9 @@ def main() -> None:
     """Print each test over the budget, slowest first."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('run_id', help='a GitHub Actions run of the CI workflow')
-    parser.add_argument('--budget', type=float, default=5.0, help='seconds of setup and call per test (default: 5)')
+    parser.add_argument(
+        '--budget', type=float, default=8.0, help='seconds of setup and call per test (default: 8, as CI sets)'
+    )
     parser.add_argument('--jobs', default=r'3\.13 \(all-extras', help='regex for the job names to read')
     args = parser.parse_args()
 

@@ -307,9 +307,8 @@ def _over_budget_message(item: pytest.Item, spent: float, budget: float, state: 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> Generator[None, Any, Any]:
     report: pytest.TestReport = yield
-    state = item.stash.get(_STATE_KEY, None)
-    if state is None:  # pragma: no cover - `pytest_runtest_protocol` always runs first
-        return report
+    # `pytest_runtest_protocol` stashes the state before any report is made.
+    state = item.stash[_STATE_KEY]
 
     spawns, state.pending_spawns = state.pending_spawns, []
     if spawns:
@@ -525,7 +524,8 @@ def pytest_terminal_summary(terminalreporter: Any, config: pytest.Config) -> Non
                 f'{location}: no test covered by its `@pytest.mark.subprocess` launched a Python interpreter; '
                 'remove the stale marker'
             )
-    if not aggregate.collection_end:  # pragma: lax no cover - `pytest-xdist` workers that died before collecting
+    # Not set when every `pytest-xdist` worker died before collecting.
+    if not aggregate.collection_end:  # pragma: lax no cover
         return
     seconds = aggregate.collection_end - aggregate.session_start
     if aggregate.slowest_worker_collection:
