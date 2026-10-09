@@ -380,6 +380,10 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[BaseEvent]:
         tool_call_id = delta.tool_call_id
         assert tool_call_id, '`ToolCallPartDelta.tool_call_id` must be set'
+        if delta.args_delta is None:
+            # ID-only update: nothing to append to the argument text, so no argument event is
+            # emitted. Identity check, not truthiness: a genuine `'null'` fragment must pass through.
+            return
         if tool_call_id in self._builtin_tool_call_ids:
             tool_call_id = self._builtin_tool_call_ids[tool_call_id]
         yield ToolCallArgsEvent(

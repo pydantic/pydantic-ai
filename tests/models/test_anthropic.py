@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import json
 import os
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -268,9 +268,10 @@ async def test_anthropic_read_error_is_raised_when_not_cancelled():
         _enabled_server_tool_names=frozenset(),
     )
 
-    with pytest.raises(httpx2.ReadError):
+    with pytest.raises(ModelAPIError) as exc_info:
         async for _event in response:
             pass
+    assert isinstance(exc_info.value.__cause__, httpx2.ReadError)
 
 
 @dataclass
@@ -2029,19 +2030,57 @@ async def test_anthropic_cache(allow_model_requests: None, setting: bool | Liter
 async def test_unified_cache_uses_automatic_caching(
     allow_model_requests: None, setting: bool | Literal['5m', '30m', '1h'], expected_ttl: str
 ):
-    """The unified `cache` setting reaches the wire as top-level automatic caching."""
+    """The unified `cache` setting reaches the wire as top-level automatic caching for the conversation, plus
+    breakpoints on the instructions and tool definitions so a new conversation can read back the prefix it shares
+    with earlier ones. A `CachePoint` in the conversation still fits in the remaining slot."""
     c = completion_message(
         [BetaTextBlock(text='Response', type='text')],
         usage=BetaUsage(input_tokens=10, output_tokens=5),
     )
     mock_client = MockAnthropic.create_mock(c)
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(model, model_settings=ModelSettings(cache=setting))
+    agent = Agent(model, instructions='System instructions.', model_settings=ModelSettings(cache=setting))
 
-    await agent.run('User message')
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    await agent.run(['Some context', CachePoint(), 'User message'])
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
+    cache_control = {'type': 'ephemeral', 'ttl': expected_ttl}
+    assert completion_kwargs['cache_control'] == cache_control
+    assert completion_kwargs['system'][-1]['cache_control'] == cache_control
+    assert completion_kwargs['tools'][-1]['cache_control'] == cache_control
+    assert [block.get('cache_control') for block in completion_kwargs['messages'][-1]['content']] == [
+        {'type': 'ephemeral', 'ttl': '5m'},
+        None,
+    ]
+
+
+async def test_unified_cache_trims_oldest_cache_point(allow_model_requests: None):
+    """With the instruction, tool definition and automatic breakpoints taking 3 of Anthropic's 4 slots, only the
+    newest `CachePoint` in the conversation is kept."""
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, instructions='System instructions.', model_settings=ModelSettings(cache=True))
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    await agent.run(['Context 1', CachePoint(), 'Context 2', CachePoint(), 'Question'])
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+    assert completion_kwargs['system'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+    assert completion_kwargs['tools'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+    assert [block.get('cache_control') for block in completion_kwargs['messages'][-1]['content']] == [
+        None,
+        {'type': 'ephemeral', 'ttl': '5m'},
+        None,
+    ]
 
 
 async def test_anthropic_cache_with_explicit_breakpoints(allow_model_requests: None):
@@ -3189,6 +3228,50 @@ def test_model_connection_error(allow_model_requests: None) -> None:
         agent.run_sync('hello')
     assert exc_info.value.model_name == 'claude-sonnet-4-5'
     assert 'Connection to https://api.anthropic.com timed out' in str(exc_info.value.message)
+
+
+async def test_stream_transport_error_mid_stream(allow_model_requests: None) -> None:
+    """A connection that breaks off mid-stream surfaces as `ModelAPIError`, not the raw `httpx2` error.
+
+    The SDK wraps transport failures in `APIConnectionError` only until the response starts, and a cassette can't
+    replay a broken-off connection, so a mock transport raises it.
+    """
+    events: list[dict[str, Any]] = [
+        {
+            'type': 'message_start',
+            'message': {
+                'id': 'msg_1',
+                'type': 'message',
+                'role': 'assistant',
+                'model': 'claude-sonnet-4-5',
+                'content': [],
+                'stop_reason': None,
+                'stop_sequence': None,
+                'usage': {'input_tokens': 1, 'output_tokens': 1},
+            },
+        },
+        {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+        {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'Hello'}},
+    ]
+
+    class StreamBreakingOff(httpx2.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield ''.join(f'event: {e["type"]}\ndata: {json.dumps(e)}\n\n' for e in events).encode()
+            raise httpx2.ReadError('connection reset')
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, stream=StreamBreakingOff())
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        client = AsyncAnthropic(api_key='test-key', base_url='http://localhost', http_client=http_client)
+        agent = Agent(AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client)))
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == 'connection reset'
+    assert isinstance(exc_info.value.__cause__, httpx2.ReadError)
 
 
 async def test_count_tokens_connection_error(allow_model_requests: None) -> None:
@@ -13872,7 +13955,8 @@ async def test_unified_cache_writes_then_reads_real_api(
     expected_ttl: str,
     expected_usage: tuple[RunUsage, RunUsage],
 ):
-    """The unified `cache` setting turns on Anthropic's automatic caching, with the requested TTL.
+    """The unified `cache` setting turns on Anthropic's automatic caching and breakpoints the instructions, with the
+    requested TTL.
 
     The same prompt is sent twice: the first run writes the prefix to the cache and the second reads it back.
     """
@@ -13889,11 +13973,69 @@ async def test_unified_cache_writes_then_reads_real_api(
     first = await agent.run(prompt)
     second = await agent.run(prompt)
 
-    # A single top-level `cache_control` and no per-block breakpoints: the API places the breakpoint itself.
+    # A top-level `cache_control`, with which the API breakpoints the conversation itself, plus one on the instructions.
     assert [cache_breakpoints(body) for body in request_capture.bodies('/v1/messages')] == [
-        ({'type': 'ephemeral', 'ttl': expected_ttl}, [])
+        ({'type': 'ephemeral', 'ttl': expected_ttl}, ['system[0]'])
     ] * 2
     assert (first.usage, second.usage) == expected_usage
+
+
+@pytest.mark.vcr()
+async def test_unified_cache_shares_prefix_across_conversations_real_api(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory
+):
+    """With `cache=True`, a new conversation reads back the instructions and tool definitions an earlier one wrote.
+
+    Automatic caching alone only writes at the end of the conversation, and Anthropic only reads cache entries written
+    at a breakpoint, so the second conversation's first request could not reuse the shared prefix without the
+    instruction and tool definition breakpoints.
+    """
+    agent = Agent(
+        anthropic_model('claude-opus-5-5'),
+        instructions='You are a concise Python assistant. ' + 'Answer questions about Python concisely. ' * 650,
+        model_settings=ModelSettings(cache=True),
+    )
+
+    @agent.tool_plain
+    def get_python_version() -> str:  # pragma: no cover
+        """Get the latest stable Python version."""
+        return '3.14'
+
+    first = await agent.run('Name one Python web framework, in one word.')
+    second = await agent.run('Name one Python testing library, in one word.')
+
+    # One request per conversation, so each run's usage is its first request's.
+    assert (first.usage, second.usage) == snapshot(
+        (
+            RunUsage(
+                details={
+                    'input_tokens': 4,
+                    'output_tokens': 4,
+                    'cache_creation_input_tokens': 8180,
+                    'cache_read_input_tokens': 0,
+                },
+                input_tokens=8184,
+                cache_write_tokens=8180,
+                output_tokens=4,
+                cost=Decimal('0.040996'),
+                requests=1,
+            ),
+            RunUsage(
+                details={
+                    'input_tokens': 4,
+                    'output_tokens': 5,
+                    'cache_creation_input_tokens': 85,
+                    'cache_read_input_tokens': 8095,
+                },
+                input_tokens=8184,
+                cache_write_tokens=85,
+                cache_read_tokens=8095,
+                output_tokens=5,
+                cost=Decimal('0.002160'),
+                requests=1,
+            ),
+        )
+    )
 
 
 @pytest.mark.vcr()

@@ -1,9 +1,10 @@
 import dataclasses
+import functools
 import json
 from typing import Annotated, Any, Optional
 
 import pytest
-from pydantic import AfterValidator, BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field, create_model
 from typing_extensions import TypeAliasType
 
 from pydantic_ai import (
@@ -35,6 +36,14 @@ class Foo(BaseModel):
     b: int
 
 
+def _split_to_words(sep: str, text: str) -> 'WordList':
+    return WordList(words=text.split(sep))  # pragma: no cover
+
+
+class WordList(BaseModel):
+    words: list[str]
+
+
 async def test_text_output_json_schema():
     agent = Agent('test')
     assert agent.output_json_schema() == snapshot({'type': 'string'})
@@ -44,6 +53,46 @@ async def test_text_output_json_schema():
 
     agent = Agent('test', output_type=TextOutput(func))
     assert agent.output_json_schema() == snapshot({'type': 'string'})
+
+
+async def test_text_output_function_json_schema_list_str_return():
+    def func(x: str) -> list[str]:
+        return []  # pragma: no cover
+
+    agent = Agent('test', output_type=TextOutput(func))
+    assert agent.output_json_schema() == snapshot({'items': {'type': 'string'}, 'type': 'array'})
+
+
+async def test_text_output_function_json_schema_annotated_scalar_return():
+    def func(x: str) -> int:
+        return 1  # pragma: no cover
+
+    agent = Agent('test', output_type=TextOutput(func))
+    assert agent.output_json_schema() == snapshot({'type': 'integer'})
+
+
+async def test_text_output_function_json_schema_no_return_hint():
+    def func(x: str):
+        return x  # pragma: no cover
+
+    agent = Agent('test', output_type=TextOutput(func))
+    assert agent.output_json_schema() == snapshot({'type': 'string'})
+
+
+async def test_text_output_function_json_schema_partial_forward_ref():
+    output_function = functools.partial(_split_to_words, ' ')
+    # `function_schema` reads `__name__`, which a bare `partial` lacks.
+    output_function.__name__ = _split_to_words.__name__  # pyright: ignore[reportAttributeAccessIssue]
+    output_function.__qualname__ = _split_to_words.__qualname__  # pyright: ignore[reportAttributeAccessIssue]
+    agent = Agent('test', output_type=TextOutput(output_function))
+    assert agent.output_json_schema() == snapshot(
+        {
+            'properties': {'words': {'items': {'type': 'string'}, 'title': 'Words', 'type': 'array'}},
+            'required': ['words'],
+            'title': 'WordList',
+            'type': 'object',
+        }
+    )
 
 
 async def test_function_output_json_schema():
@@ -96,6 +145,124 @@ async def test_auto_output_json_schema():
             },
         }
     )
+
+
+@pytest.mark.parametrize(
+    ('names', 'expected'),
+    [
+        pytest.param(
+            ('AOuter', 'Middle', 'ZLeaf'),
+            snapshot(
+                {
+                    'anyOf': [
+                        {
+                            'properties': {'middle': {'$ref': '#/$defs/Middle'}},
+                            'required': ['middle'],
+                            'title': 'AOuter',
+                            'type': 'object',
+                        },
+                        {
+                            'properties': {'middle': {'$ref': '#/$defs/AOuter_Middle_1'}},
+                            'required': ['middle'],
+                            'title': 'AOuter',
+                            'type': 'object',
+                        },
+                    ],
+                    '$defs': {
+                        'Middle': {
+                            'properties': {'leaf': {'$ref': '#/$defs/ZLeaf'}},
+                            'required': ['leaf'],
+                            'title': 'Middle',
+                            'type': 'object',
+                        },
+                        'ZLeaf': {
+                            'properties': {'value': {'title': 'Value', 'type': 'string'}},
+                            'required': ['value'],
+                            'title': 'ZLeaf',
+                            'type': 'object',
+                        },
+                        'AOuter_ZLeaf_1': {
+                            'properties': {'value': {'title': 'Value', 'type': 'integer'}},
+                            'required': ['value'],
+                            'title': 'ZLeaf',
+                            'type': 'object',
+                        },
+                        'AOuter_Middle_1': {
+                            'properties': {'leaf': {'$ref': '#/$defs/AOuter_ZLeaf_1'}},
+                            'required': ['leaf'],
+                            'title': 'Middle',
+                            'type': 'object',
+                        },
+                    },
+                }
+            ),
+            id='sorted-chain',
+        ),
+        pytest.param(
+            ('A', 'C', 'B'),
+            snapshot(
+                {
+                    'anyOf': [
+                        {
+                            'properties': {'middle': {'$ref': '#/$defs/C'}},
+                            'required': ['middle'],
+                            'title': 'A',
+                            'type': 'object',
+                        },
+                        {
+                            'properties': {'middle': {'$ref': '#/$defs/A_C_1'}},
+                            'required': ['middle'],
+                            'title': 'A',
+                            'type': 'object',
+                        },
+                    ],
+                    '$defs': {
+                        'B': {
+                            'properties': {'value': {'title': 'Value', 'type': 'string'}},
+                            'required': ['value'],
+                            'title': 'B',
+                            'type': 'object',
+                        },
+                        'C': {
+                            'properties': {'leaf': {'$ref': '#/$defs/B'}},
+                            'required': ['leaf'],
+                            'title': 'C',
+                            'type': 'object',
+                        },
+                        'A_B_1': {
+                            'properties': {'value': {'title': 'Value', 'type': 'integer'}},
+                            'required': ['value'],
+                            'title': 'B',
+                            'type': 'object',
+                        },
+                        'A_C_1': {
+                            'properties': {'leaf': {'$ref': '#/$defs/A_B_1'}},
+                            'required': ['leaf'],
+                            'title': 'C',
+                            'type': 'object',
+                        },
+                    },
+                }
+            ),
+            id='out-of-order-chain',
+        ),
+    ],
+)
+def test_output_json_schema_transitive_collision_preserves_branches(
+    names: tuple[str, str, str], expected: dict[str, Any]
+):
+    """Same-named nested defs with different bodies keep per-branch fidelity."""
+    outer_name, middle_name, leaf_name = names
+    first_leaf = create_model(leaf_name, value=(str, ...))
+    first_middle = create_model(middle_name, leaf=(first_leaf, ...))
+    first = create_model(outer_name, middle=(first_middle, ...))
+    second_leaf = create_model(leaf_name, value=(int, ...))
+    second_middle = create_model(middle_name, leaf=(second_leaf, ...))
+    second = create_model(outer_name, middle=(second_middle, ...))
+
+    schema = Agent(TestModel(), output_type=[first, second]).output_json_schema()
+
+    assert schema == expected
 
 
 async def test_tool_output_json_schema():

@@ -2191,6 +2191,13 @@ Logfire instance, including their exception and traceback, even when `ui_events`
 reported after loading finishes, including those that happened before observability
 loaded. Disabling the plugin leaves these failures as terminal messages only.
 
+Other errors CLAI shows you and recovers from are sent the same way: a failed turn
+(for example, a model provider you have not logged in to), a slash command that
+fails unexpectedly (for example, `/update` hitting a GitHub rate limit), and a plugin
+handler that fails. Usage errors, such as a mistyped command, are not sent. An error
+inside the agent run is already on the run's span, so it is not sent twice. With
+`include_content` off, these records and load failures keep only the exception's type.
+
 This plugin was previously named `logfire`. Existing enabled/disabled choices,
 settings, and saved token references carry over without reconfiguration. Existing
 commands and project or drop-in declarations using `logfire` still target this
@@ -2206,6 +2213,9 @@ cannot choose the telemetry destination. Relative `XDG_CONFIG_HOME` values fall
 back to `~/.config`. Export uses `send_to_logfire='if-token-present'`: no credentials
 means no Logfire export and no interactive project setup. Logfire's
 terminal console output is disabled so it does not interfere with the editor.
+Warnings and errors Logfire and OpenTelemetry log about failed exports go to
+`telemetry.log` next to `config.db` instead of over the editor; CLAI names the
+file on exit when a session wrote to it. Headless `clai2 -p` keeps them on stderr.
 Standard SDK configuration, including explicitly configured OTLP exporters, still
 applies; disable the plugin to stop its instrumentation altogether.
 

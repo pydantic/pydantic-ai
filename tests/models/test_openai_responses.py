@@ -1668,54 +1668,69 @@ async def test_openai_responses_stream_function_call_done_appends_missing_suffix
     assert response.parts[0].args == full_args
 
 
-async def test_openai_responses_stream_function_call_done_replaces_disagreeing_args(allow_model_requests: None):
-    """Defensive: deltas that disagree with the done snapshot are replaced by it.
+async def test_openai_responses_stream_function_call_done_keeps_disagreeing_streamed_args(allow_model_requests: None):
+    """Defensive: deltas that disagree with the done snapshot are kept.
 
     Mocked: no live API sends this reliably.
     """
     item = _function_call_item('fc_1', '', name='lookup_weather', namespace='weather')
-    events, response = await _collect_function_call_stream(
-        [
-            resp.ResponseOutputItemAddedEvent(
-                item=item, output_index=0, type='response.output_item.added', sequence_number=0
-            ),
-            resp.ResponseFunctionCallArgumentsDeltaEvent(
-                delta='{"city":"Londo',
-                item_id='fc_1',
-                output_index=0,
-                type='response.function_call_arguments.delta',
-                sequence_number=0,
-            ),
-            resp.ResponseFunctionCallArgumentsDoneEvent(
-                arguments='{"city":"Paris"}',
-                item_id='fc_1',
-                output_index=0,
-                type='response.function_call_arguments.done',
-                sequence_number=0,
-            ),
-        ]
+    warning = (
+        'The provider sent a `function_call_arguments.done`/`output_item.done` snapshot whose arguments differ '
+        "from the streamed argument deltas for function call item 'fc_1' (tool 'lookup_weather'); the streamed "
+        'arguments were kept. Please open an issue at https://github.com/pydantic/pydantic-ai/issues.'
     )
+    with pytest.warns(UserWarning, match=re.escape(warning)):
+        events, response = await _collect_function_call_stream(
+            [
+                resp.ResponseOutputItemAddedEvent(
+                    item=item, output_index=0, type='response.output_item.added', sequence_number=0
+                ),
+                resp.ResponseFunctionCallArgumentsDeltaEvent(
+                    delta='{"city":"Londo',
+                    item_id='fc_1',
+                    output_index=0,
+                    type='response.function_call_arguments.delta',
+                    sequence_number=0,
+                ),
+                resp.ResponseFunctionCallArgumentsDoneEvent(
+                    arguments='{"city":"Paris"}',
+                    item_id='fc_1',
+                    output_index=0,
+                    type='response.function_call_arguments.done',
+                    sequence_number=0,
+                ),
+            ]
+        )
 
     starts = [event for event in events if isinstance(event, PartStartEvent)]
-    assert starts[-1] == snapshot(
-        PartStartEvent(
-            index=0,
-            part=ToolCallPart(
-                tool_name='lookup_weather',
-                args='{"city":"Paris"}',
-                tool_call_id='call_fc_1',
-                id='fc_1',
-                provider_name='openai',
-                provider_details={'namespace': 'weather'},
-            ),
-            previous_part_kind='tool-call',
-        )
+    assert starts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='lookup_weather',
+                    args='',
+                    tool_call_id='call_fc_1',
+                    id='fc_1',
+                    provider_name='openai',
+                    provider_details={'namespace': 'weather'},
+                ),
+            )
+        ]
+    )
+    assert [event for event in events if isinstance(event, PartDeltaEvent)] == snapshot(
+        [
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta='{"city":"Londo', tool_call_id='call_fc_1'),
+            )
+        ]
     )
     assert response.parts == snapshot(
         [
             ToolCallPart(
                 tool_name='lookup_weather',
-                args='{"city":"Paris"}',
+                args='{"city":"Londo',
                 tool_call_id='call_fc_1',
                 id='fc_1',
                 provider_name='openai',

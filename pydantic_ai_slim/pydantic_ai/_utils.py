@@ -933,25 +933,25 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
             new_name = name_mapping.get(original_name, original_name)
             s['$ref'] = f'#/$defs/{new_name}'
 
-    # Recursively update refs in properties
-    if 'properties' in s:
-        props: dict[str, dict[str, Any]] = s['properties']
-        for prop in props.values():
-            _update_mapped_json_schema_refs(prop, name_mapping)
+    # Recursively update refs in properties and patternProperties
+    for keyword in ['properties', 'patternProperties']:
+        if keyword in s:
+            props: dict[str, dict[str, Any]] = s[keyword]
+            for prop in props.values():
+                if isinstance(prop, dict):
+                    _update_mapped_json_schema_refs(prop, name_mapping)
 
-    # Handle arrays
-    if 'items' in s and isinstance(s['items'], dict):
-        items: dict[str, Any] = s['items']  # pyright: ignore[reportUnknownVariableType]
-        _update_mapped_json_schema_refs(items, name_mapping)
+    # Handle single-subschema keywords: arrays, additionalProperties, propertyNames and negation
+    for keyword in ['items', 'additionalProperties', 'propertyNames', 'not']:
+        subschema = s.get(keyword)
+        if isinstance(subschema, dict):
+            _update_mapped_json_schema_refs(subschema, name_mapping)  # pyright: ignore[reportUnknownArgumentType]
+
+    # Handle prefixItems
     if 'prefixItems' in s:
         prefix_items: list[dict[str, Any]] = s['prefixItems']
         for item in prefix_items:
             _update_mapped_json_schema_refs(item, name_mapping)
-
-    # Handle additionalProperties
-    if 'additionalProperties' in s and isinstance(s['additionalProperties'], dict):
-        additional_props: dict[str, Any] = s['additionalProperties']  # pyright: ignore[reportUnknownVariableType]
-        _update_mapped_json_schema_refs(additional_props, name_mapping)
 
     # Handle unions and composition keywords
     for keyword in ['anyOf', 'oneOf', 'allOf']:
@@ -959,11 +959,6 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
             keyword_items: list[dict[str, Any]] = s[keyword]
             for item in keyword_items:
                 _update_mapped_json_schema_refs(item, name_mapping)
-
-    # Handle negation
-    if 'not' in s and isinstance(s['not'], dict):
-        not_schema: dict[str, Any] = s['not']  # pyright: ignore[reportUnknownVariableType]
-        _update_mapped_json_schema_refs(not_schema, name_mapping)
 
 
 def _unique_def_name(name: str, schema: dict[str, Any], all_defs: dict[str, dict[str, Any]]) -> str:
@@ -994,48 +989,45 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
             rewritten_schemas.append(schema)
             continue
 
-        schema = schema.copy()
-        defs = schema.pop('$defs', None)
-        schema_name_mapping: dict[str, str] = {}
+        schema = copy.deepcopy(schema)
+        defs = schema.pop('$defs')
+        renames: dict[str, str] = {}
+        new_names: list[str] = []
 
-        # Process definitions and build mapping
+        # New names are kept; same-named defs with a different body get a unique name. Both point
+        # `all_defs` at this schema's own copy of the def, whose refs are rewritten in place below.
         for name, def_schema in defs.items():
             if name not in all_defs:
                 all_defs[name] = def_schema
-                schema_name_mapping[name] = name
+                new_names.append(name)
             elif def_schema != all_defs[name]:
-                # Different def with same name — assign a unique name
-                schema_name_mapping[name] = _unique_def_name(name, schema, all_defs)
-                all_defs[schema_name_mapping[name]] = def_schema
-            # else: structurally equal — handled below
+                renames[name] = _unique_def_name(name, schema, all_defs)
+                all_defs[renames[name]] = def_schema
 
-        # Defs that are structurally equal (same dict) may still be semantically
-        # different if they contain $refs that point to defs that were renamed in
-        # this schema. E.g. both schemas have Wrapper={$ref Inner}, but their
-        # Inner defs differ, so Schema B's Inner was renamed to Inner_1. The shared
-        # Wrapper is not actually equal — Schema B needs its own copy with updated refs.
-        # Loop until stable, since creating a copy can trigger further copies
-        # in defs that reference it (transitive chains).
+        # A def equal to an earlier schema's def ("shared") can reuse it only if none of the defs it
+        # transitively references were renamed; otherwise its `$ref`s resolve differently and it needs
+        # its own copy. Iterate to a fixpoint before keeping any shared def, so the result does not
+        # depend on the order of `$defs`.
+        shared = [name for name in defs if name not in renames and name not in new_names]
         changed = True
         while changed:
             changed = False
-            for name, def_schema in defs.items():
-                if name not in schema_name_mapping:
-                    updated = copy.deepcopy(def_schema)
-                    _update_mapped_json_schema_refs(updated, schema_name_mapping)
-                    if updated != def_schema:
-                        schema_name_mapping[name] = _unique_def_name(name, schema, all_defs)
-                        all_defs[schema_name_mapping[name]] = updated
-                        changed = True
-                    else:
-                        schema_name_mapping[name] = name
+            for name in shared:
+                if name in renames:
+                    continue
+                updated = copy.deepcopy(defs[name])
+                _update_mapped_json_schema_refs(updated, renames)
+                if updated != defs[name]:
+                    renames[name] = _unique_def_name(name, schema, all_defs)
+                    all_defs[renames[name]] = defs[name]
+                    changed = True
 
-        # Update refs inside definitions so internal cross-references
-        # (e.g. Outer referencing Inner which was renamed to Inner_1) are corrected.
-        for new_name in schema_name_mapping.values():
-            _update_mapped_json_schema_refs(all_defs[new_name], schema_name_mapping)
+        # Rewrite the refs of every def this schema contributes. Shared defs left under their
+        # name only reference unrenamed defs, so the earlier schema's copy is already correct.
+        for name in [*new_names, *renames]:
+            _update_mapped_json_schema_refs(defs[name], renames)
 
-        _update_mapped_json_schema_refs(schema, schema_name_mapping)
+        _update_mapped_json_schema_refs(schema, renames)
         rewritten_schemas.append(schema)
 
     return rewritten_schemas, all_defs

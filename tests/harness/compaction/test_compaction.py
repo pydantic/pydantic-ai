@@ -2699,6 +2699,19 @@ class TestHelperBranchCoverage:
         assert estimate_token_count(msgs) == 0
         assert _format_messages(msgs) == ''
 
+    def test_a_file_in_a_tool_return_counts_as_its_reference(self):
+        """A tool return's file is measured and summarized as the reference the model gets, not its `repr`."""
+        image = BinaryContent(data=b'\x00' * 4_000, media_type='image/png')
+        reference = f'See file {image.identifier}.'
+        bare = ToolReturnPart(tool_name='screenshot', content=image, tool_call_id='c1')
+        mixed = ToolReturnPart(tool_name='screenshot', content=['taken', image], tool_call_id='c2')
+
+        assert estimate_token_count([ModelRequest(parts=[bare])]) == len(reference) // 4
+        assert estimate_token_count([ModelRequest(parts=[mixed])]) == len(f'taken {reference}') // 4
+        assert _format_messages([ModelRequest(parts=[bare, mixed])], tool_return_max_chars=None) == (
+            f'Tool [screenshot]: {reference}\nTool [screenshot]: taken {reference}'
+        )
+
     def test_user_prompt_text_skips_non_text_content(self):
 
         part = UserPromptPart(content=[ImageUrl(url='https://example.com/y.png'), 'hello'])
@@ -3424,7 +3437,7 @@ class TestSlidingWindowCompactionReceipts:
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True)
         messages: list[ModelMessage] = [_user('original task'), _assistant('a'), _user('later'), _assistant('b')]
         result = await sw.compact(messages, _make_ctx())
-        assert _receipt_parts(result)[0].startswith('[History before this point (3 messages,')
+        assert _receipt_parts(result)[0].startswith('[History before this point (2 messages,')
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -4020,6 +4033,51 @@ class TestStructuralFeaturesThroughAgent:
         # `preserve_first_user_message` defaults on, so the real opening turn -- not the
         # receipt that now sits ahead of it -- is what gets carried forward.
         assert 'FIRST' in _user_texts(seen[1])
+
+    @pytest.mark.parametrize('preserve_first_user_message', [False, True])
+    async def test_receipt_does_not_take_the_only_kept_slot(self, preserve_first_user_message: bool):
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(
+            _recording_model(seen),
+            capabilities=[
+                SlidingWindowCompaction(
+                    max_messages=3,
+                    keep_messages=1,
+                    receipts=True,
+                    preserve_first_user_message=preserve_first_user_message,
+                )
+            ],
+        )
+        history: list[ModelMessage] = [_user('first'), _assistant('b'), _user('c'), _assistant('d')]
+        prompts = ['one', 'two', 'three']
+        for prompt in prompts:
+            history = (await agent.run(prompt, message_history=history)).all_messages()
+
+        for request, prompt in zip(seen, prompts, strict=True):
+            assert _user_texts(request)[-1] == prompt
+            assert ('first' in _user_texts(request)) is preserve_first_user_message
+            assert _receipt_parts(request[:1])
+
+    async def test_receipt_token_reservation_keeps_the_current_request(self):
+        # The token trigger reserves room for the receipt out of `keep_tokens`; the newest
+        # message must still survive even when that reservation exhausts the budget.
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(
+            _recording_model(seen),
+            capabilities=[
+                SlidingWindowCompaction(
+                    max_tokens=10, keep_tokens=5, receipts=True, preserve_first_user_message=False, tokenizer=len
+                )
+            ],
+        )
+        history: list[ModelMessage] = [_user('a' * 20), _assistant('b' * 20), _user('c' * 20)]
+        prompts = ['one', 'two', 'three']
+        for prompt in prompts:
+            history = (await agent.run(prompt, message_history=history)).all_messages()
+
+        for request, prompt in zip(seen, prompts, strict=True):
+            assert _user_texts(request)[-1] == prompt
+            assert _receipt_parts(request[:1])
 
     async def test_pin_survives_compaction_in_a_run(self):
         seen: list[list[ModelMessage]] = []
