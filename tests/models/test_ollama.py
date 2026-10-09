@@ -93,6 +93,32 @@ def test_local_ollama_cloud_suffix_disables_json_schema_output(ollama_api_key: s
     assert model.profile.get('supports_json_object_output', False) is True
 
 
+def test_local_ollama_colon_cloud_tag_disables_json_schema_output(ollama_api_key: str) -> None:
+    """Bare `:cloud` tagged models (e.g. ``glm-5.3:cloud``, ``kimi-k3:cloud``) used with a
+    local Ollama daemon are forwarded to Ollama Cloud, which does not enforce ``json_schema``
+    (see https://github.com/pydantic/pydantic-ai/issues/10032).  The capability downgrade
+    that applies to ``-cloud`` suffixed names must also apply to bare ``:cloud`` tags."""
+    provider = OllamaProvider(base_url=OLLAMA_LOCAL_BASE_URL, api_key=ollama_api_key)
+    for model_name in ('glm-5.3:cloud', 'kimi-k3:cloud'):
+        model = OllamaModel(model_name, provider=provider)
+        assert model.profile.get('supports_json_schema_output', False) is False, model_name
+        assert model.profile.get('supports_json_object_output', False) is True, model_name
+
+
+async def test_ollama_local_colon_cloud_tag_native_output_raises(
+    allow_model_requests: None, ollama_api_key: str
+) -> None:
+    """`NativeOutput` with a bare `:cloud` tagged model must raise `UserError`, just as it
+    does for `-cloud` suffixed models (https://github.com/pydantic/pydantic-ai/issues/10032).
+    Previously the check was missed and the request was silently sent unenforced."""
+    provider = OllamaProvider(base_url=OLLAMA_LOCAL_BASE_URL, api_key=ollama_api_key)
+    model = OllamaModel('glm-5.3:cloud', provider=provider)
+    agent = Agent(model, output_type=NativeOutput(CityLocation))
+
+    with pytest.raises(UserError, match='Native structured output is not supported'):
+        await agent.run('What is the capital of France?')
+
+
 def test_ollama_explicit_profile_overrides_cloud_detection(ollama_api_key: str) -> None:
     """Passing an explicit `profile` must win: an advanced user who knows their Cloud
     path actually enforces schemas can opt back in."""

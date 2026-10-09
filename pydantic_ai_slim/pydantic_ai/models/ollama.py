@@ -40,7 +40,7 @@ def _routes_to_ollama_cloud(provider: Provider[AsyncOpenAI], model_name: str) ->
     [ollama/ollama#12362](https://github.com/ollama/ollama/issues/12362).
     """
     hostname = urlparse(provider.base_url).hostname or ''
-    return hostname == 'ollama.com' or hostname.endswith('.ollama.com') or model_name.endswith('-cloud')
+    return hostname == 'ollama.com' or hostname.endswith('.ollama.com') or model_name.endswith(('-cloud', ':cloud'))
 
 
 @dataclass(init=False)
