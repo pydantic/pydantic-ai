@@ -9,7 +9,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -1707,7 +1707,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1766,7 +1766,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                         timestamp=IsDatetime(),
                     ),
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1858,7 +1858,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1917,7 +1917,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                         timestamp=IsDatetime(),
                     ),
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1985,7 +1985,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2032,7 +2032,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2079,7 +2079,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import pytest
@@ -62,6 +62,27 @@ def test_openai_resolve_cache_retention(
 
 
 @pytest.mark.parametrize('api', ['chat', 'responses'])
+def test_openai_resolve_cache_retention_unified_cache(api: Literal['chat', 'responses']) -> None:
+    """On GPT-5.6 the unified `cache` setting requests OpenAI's only TTL, 30 minutes; earlier models cache
+    implicitly with nothing to configure, so it requests no retention there."""
+    model_type = OpenAIChatModel if api == 'chat' else OpenAIResponsesModel
+    model = model_type('gpt-5.6', provider=OpenAIProvider(api_key='test-key'))
+
+    assert model.resolve_cache_retention(OpenAIChatModelSettings(cache='1h')) == timedelta(minutes=30)
+    assert model.resolve_cache_retention(OpenAIChatModelSettings(cache=False)) is None
+    assert (
+        model_type('gpt-5.2', provider=OpenAIProvider(api_key='test-key')).resolve_cache_retention(
+            OpenAIChatModelSettings(cache='1h')
+        )
+        is None
+    )
+    # `openai_prompt_cache_retention` doesn't widen the window on GPT-5.6 and later.
+    assert model.resolve_cache_retention(
+        OpenAIChatModelSettings(cache='5m', openai_prompt_cache_retention='24h')
+    ) == timedelta(minutes=30)
+
+
+@pytest.mark.parametrize('api', ['chat', 'responses'])
 def test_openai_prompt_cache_retention_does_not_widen_gpt_5_6_window(
     mocker: MockerFixture, api: Literal['chat', 'responses']
 ) -> None:
@@ -76,7 +97,7 @@ def test_openai_prompt_cache_retention_does_not_widen_gpt_5_6_window(
         model=model, messages=[], model_settings=settings, model_request_parameters=ModelRequestParameters()
     )
     detector = CacheHealthDetector(ConversationCacheMarkStore(), 'conversation', 'run', alert_on={'unexpected'})
-    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
     mocker.patch('pydantic_ai._utils.now_utc', side_effect=[t0, t0 + timedelta(minutes=45)])
 
     def response(*, read: int = 0, write: int = 0) -> ModelResponse:
@@ -127,6 +148,7 @@ def test_anthropic_resolve_cache_retention_biases_high() -> None:
 
     assert model.resolve_cache_retention(settings) == timedelta(hours=1)
     assert model.resolve_cache_retention(None) is None
+    assert model.resolve_cache_retention(AnthropicModelSettings(cache=True)) == timedelta(minutes=5)
 
 
 @pytest.mark.parametrize(
@@ -158,6 +180,7 @@ def test_anthropic_resolve_cache_retention_biases_high() -> None:
             None,
         ),
         (None, {'bedrock_supports_prompt_caching': True, 'bedrock_supports_tool_caching': True}, None),
+        ({'cache': True}, {'bedrock_supports_prompt_caching': True}, timedelta(minutes=5)),
     ],
 )
 def test_bedrock_resolve_cache_retention(
@@ -212,6 +235,7 @@ def test_openrouter_resolve_cache_retention() -> None:
         hours=1
     )
     assert model.resolve_cache_retention(None) is None
+    assert model.resolve_cache_retention(OpenRouterModelSettings(cache=True)) == timedelta(minutes=5)
 
 
 def test_openrouter_resolve_cache_retention_biases_high() -> None:
