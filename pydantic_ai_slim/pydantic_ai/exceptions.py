@@ -643,12 +643,14 @@ class FallbackExceptionGroup(ExceptionGroup[Any]):
     """A group of exceptions that can be raised when all fallback models fail."""
 
     attempts: Sequence[ModelRequestAttempt] = ()
-    """Every attempt the [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] made, in order.
+    """Every attempt the [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
+    [`Fallback`][pydantic_ai.capabilities.Fallback] capability made, in order.
 
     Unlike the grouped exceptions, this includes the usage of any response that was rejected by a
     `fallback_on` response handler, which the agent also adds to the run's
-    [`RunUsage`][pydantic_ai.usage.RunUsage]. Only set on the group a `FallbackModel` raised itself: it
-    doesn't survive a durable execution boundary, such as a Temporal activity.
+    [`RunUsage`][pydantic_ai.usage.RunUsage]. Only set on a group a `FallbackModel` or the agent raised
+    itself: it doesn't survive a durable execution boundary, such as a `FallbackModel`'s group leaving a
+    Temporal activity.
     """
 
 

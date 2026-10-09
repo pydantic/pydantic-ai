@@ -82,7 +82,7 @@ _model_request_span_captures: ContextVar[
     tuple[tuple[ModelRequestContext, Callable[[ModelRequestContext], ModelRequestContext]], ...]
 ] = ContextVar('model_request_span_captures', default=())
 _model_response_span_captures: ContextVar[
-    tuple[tuple[ModelRequestContext, Callable[[ModelResponse, float | None], None]], ...]
+    tuple[tuple[ModelRequestContext, Callable[[ModelResponse | None, float | None], None]], ...]
 ] = ContextVar('model_response_span_captures', default=())
 
 
@@ -175,10 +175,14 @@ def capture_model_request_span_context(request_context: ModelRequestContext) -> 
 
 def capture_model_response_span_context(
     request_context: ModelRequestContext,
-    response: ModelResponse,
+    response: ModelResponse | None,
     time_to_first_chunk: float | None = None,
 ) -> None:
-    """Capture a response before an after hook can reject it when instrumentation is active."""
+    """Capture a response before an after hook can reject it when instrumentation is active.
+
+    `None` releases the captured response once a hook has moved the request on to another attempt
+    with `RetryModelRequest`: that response is recorded as a failed attempt with its own span.
+    """
     for owner, capture in _model_response_span_captures.get():
         if owner is request_context:
             capture(response, time_to_first_chunk)
@@ -186,7 +190,7 @@ def capture_model_response_span_context(
 
 @contextmanager
 def model_response_span_capture(
-    request_context: ModelRequestContext, capture: Callable[[ModelResponse, float | None], None]
+    request_context: ModelRequestContext, capture: Callable[[ModelResponse | None, float | None], None]
 ) -> Generator[None]:
     """Scope response capture to the active instrumentation wrapper."""
     token = _model_response_span_captures.set((*_model_response_span_captures.get(), (request_context, capture)))
@@ -785,9 +789,9 @@ def open_model_request_span(
                 nonlocal prepared_request_context
                 prepared, request_attributes = _prepare_model_request_span_context(settings, context)
 
-                # Preserve attributes set while the request ran, notably the concrete model selected
-                # by `FallbackModel`, while filling all request fields from the final context.
-                request_attributes.update(getattr(span, 'attributes', {}))
+                # Keep attributes set on the span since it opened, but describe the model this request
+                # is now made to: a hook can move it on to another model for a later attempt (#7018).
+                attributes.update(getattr(span, 'attributes', {}))
                 attributes.update(request_attributes)
                 span.set_attributes(request_attributes)
                 span.update_name(f'{operation} {attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]}')

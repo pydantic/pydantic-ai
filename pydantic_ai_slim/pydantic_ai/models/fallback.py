@@ -18,7 +18,7 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
     span_include_content,
 )
-from pydantic_ai._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
+from pydantic_ai._model_request_attempts import AttemptStart, record_failed_attempt
 from pydantic_ai._run_context import RunContext
 
 from .._fallback import (
@@ -32,7 +32,7 @@ from .._fallback import (
     raise_fallback_exception_group,
     stamp_continuation_pin,
 )
-from ..exceptions import FallbackExceptionGroup, ModelAPIError
+from ..exceptions import ModelAPIError
 from ..messages import ModelRequestAttempt, ModelResponse
 from ..profiles import ModelProfile
 from . import (
@@ -469,18 +469,18 @@ class FallbackModel(Model):
         duration: timedelta,
     ) -> None:
         """Append the attempt this request is falling back from to `attempts`, and record it as a span under `chat`."""
-        # A nested `FallbackModel` recorded the attempts it made itself, and their usage was billed too.
-        if isinstance(failure, ModelResponse):
-            attempts.extend(failure.failed_attempts or [])
-        elif isinstance(failure, FallbackExceptionGroup):
-            attempts.extend(failure.attempts)
-        attempt = failed_attempt(model, failure, start=start, duration=duration)
-        attempts.append(attempt)
         # Only under the `chat` span instrumentation opened for this request, and on its tracer provider.
-        if (span := self._fallback_span()) and (policy := open_request_policy()):
-            record_attempt_span(
-                attempt, failure, model=model, index=len(attempts) - 1, parent=span, tracer=policy.tracer
-            )
+        span = self._fallback_span()
+        policy = open_request_policy() if span else None
+        record_failed_attempt(
+            attempts,
+            model,
+            failure,
+            start=start,
+            duration=duration,
+            parent=span,
+            tracer=policy.tracer if policy else None,
+        )
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:

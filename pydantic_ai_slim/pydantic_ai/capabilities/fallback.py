@@ -220,7 +220,8 @@ class Fallback(AbstractCapability[AgentDepsT]):
                 )
             return response
         # The core records a rejected response's tokens and cost before the next attempt, so a
-        # rejected generation is still paid for in `RunUsage` even though it never enters history.
+        # rejected generation is still paid for in `RunUsage` even though it never enters history,
+        # and records the attempt on the response that answers, as `FallbackModel` does.
         self._rejected_responses.append(response)
         raise self._advance()
 
@@ -270,6 +271,8 @@ class Fallback(AbstractCapability[AgentDepsT]):
             self._cursor += 1
             if not self._already_attempted(candidate):
                 return RetryModelRequest(candidate)
+        # The attempts are the agent's to list, as it made them: it records each failed one, and
+        # lists them on this group once it ends the request.
         raise_fallback_exception_group(self._exceptions, self._rejected_responses, [], owner='Fallback')
 
     def _already_attempted(self, candidate: Model | KnownModelName | str) -> bool:

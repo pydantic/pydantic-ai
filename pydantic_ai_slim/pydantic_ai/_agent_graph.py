@@ -26,7 +26,9 @@ from pydantic_ai._instrumentation import (
     capture_model_response_span_context,
     get_instructions as _get_history_instructions,
     get_instructions_source as _get_history_instructions_source,
+    open_request_policy,
 )
+from pydantic_ai._model_request_attempts import AttemptStart, record_failed_attempt
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
 from pydantic_ai._uuid import uuid7
@@ -457,6 +459,69 @@ class _HandlerState:
         self.usage_recorded = True
         ModelRequestNode._record_response_usage(ctx, response, request_context=request_context)  # pyright: ignore[reportPrivateUsage]
         self.accounted_responses.append(response)
+
+
+@dataclasses.dataclass
+class _FailedAttempts:
+    """The attempts at a request step that a hook moved on from, recorded the way `FallbackModel` records its own.
+
+    An attempt fails when its error or response leads a hook to raise
+    [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest], or a `FallbackExceptionGroup` that ends
+    the step. Each failed attempt is a [`ModelRequestAttempt`][pydantic_ai.messages.ModelRequestAttempt] on
+    the response the step is answered with, or on that group, and an ERROR child span of the request's
+    `chat` span when the request is instrumented.
+
+    The records only describe usage committed elsewhere: a rejected response's usage was committed at the
+    provider boundary when it arrived, before any hook judged it, so they are attached after that and
+    never counted again.
+    """
+
+    attempts: list[_messages.ModelRequestAttempt] = dataclasses.field(
+        default_factory=list[_messages.ModelRequestAttempt]
+    )
+
+    def record(
+        self,
+        request_context: ModelRequestContext,
+        failure: Exception | _messages.ModelResponse,
+        start: AttemptStart,
+    ) -> None:
+        """Record that the attempt started at `start` failed with `failure`, an error or a rejected response."""
+        policy = open_request_policy()
+        record_failed_attempt(
+            self.attempts,
+            request_context.model,
+            failure,
+            start=start,
+            duration=start.elapsed(),
+            parent=policy.span if policy else None,
+            tracer=policy.tracer if policy else None,
+        )
+        if isinstance(failure, _messages.ModelResponse):
+            # The rejected response now has its own span, which reports its usage, so the `chat` span
+            # describes only the response that answers, as it does under `FallbackModel`.
+            request_context._usage_response_ledger.rejected.append(failure)  # pyright: ignore[reportPrivateUsage]
+        capture_model_response_span_context(request_context, None)
+
+    def record_exhausted(
+        self,
+        request_context: ModelRequestContext,
+        failure: Exception | _messages.ModelResponse,
+        start: AttemptStart,
+        group: exceptions.FallbackExceptionGroup,
+    ) -> None:
+        """Record the last attempt of a chain a hook gave up on by raising `group`, and list every attempt on it."""
+        if group is failure or group.attempts:
+            # The model's own group, such as a `FallbackModel`'s, already lists the attempts it made.
+            return
+        self.record(request_context, failure, start)
+        group.attempts = list(self.attempts)
+
+    def attach(self, response: _messages.ModelResponse) -> _messages.ModelResponse:
+        """`response`, carrying the attempts that failed before it."""
+        if not self.attempts:
+            return response
+        return replace(response, failed_attempts=[*self.attempts, *(response.failed_attempts or [])])
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -1931,6 +1996,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         committed at the provider boundary, stays counted.
         """
         baseline = _AttemptBaseline.capture(request_context)
+        failed = _FailedAttempts()
         while True:
             baseline.restore(request_context)
             state.response = None
@@ -1943,7 +2009,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 continue
             capture_model_request_span_context(request_context)
             try:
-                return await self._request_attempt(ctx, run_context, request_context, state)
+                return await self._request_attempt(ctx, run_context, request_context, state, failed)
             except exceptions.RetryModelRequest as retry:
                 baseline.rewind_suspended()
                 await self._start_next_attempt(ctx, request_context, retry)
@@ -1954,6 +2020,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         run_context: RunContext[DepsT],
         request_context: ModelRequestContext,
         state: _HandlerState,
+        failed: _FailedAttempts,
     ) -> _messages.ModelResponse:
         """Make one attempt: call the model, then run the error or after hooks on the outcome."""
 
@@ -1965,22 +2032,37 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         def on_progress(response: _messages.ModelResponse) -> None:
             state.response = response
 
+        start = AttemptStart()
+        # What this attempt failed with, should a hook reject its outcome: the billed response, or
+        # the error a hook recovered from (a recovered response was never billed).
+        failure: Exception | _messages.ModelResponse
         try:
-            response = await model_request(
+            failure = await model_request(
                 request_context.model, request_context=request_context, run_context=run_context, on_progress=on_progress
             )
-            state.record(ctx, response, request_context)
+            # Committed before the earlier attempts are attached, so their usage isn't counted twice.
+            state.record(ctx, failure, request_context)
+            response = failed.attach(failure)
         except (exceptions.ModelRetry, exceptions.RetryModelRequest):
             raise
         except Exception as e:
             if state.response is not None:
                 state.record(ctx, state.response, request_context)
-            response = await self._recover_model_request_error(ctx, run_context, request_context, e)
+            failure = e
+            response = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
         state.response = response
         capture_model_response_span_context(request_context, response)
-        return await ctx.deps.root_capability.after_model_request(
-            run_context, request_context=request_context, response=response
-        )
+        try:
+            return await ctx.deps.root_capability.after_model_request(
+                run_context, request_context=request_context, response=response
+            )
+        except exceptions.RetryModelRequest:
+            failed.record(request_context, failure, start)
+            raise
+        except exceptions.FallbackExceptionGroup as unrecovered:
+            failed.record_exhausted(request_context, failure, start, unrecovered)
+            self._raise_usage_limit_exceeded(ctx, unrecovered)
+            raise
 
     async def _prepare_request(
         self,
@@ -2370,6 +2452,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         propagates (tracked separately by #4140). Returns the open stream, the context of the attempt
         that produced it, and the instant the request was issued.
         """
+        failed = _FailedAttempts()
         while True:
             baseline.restore(request_context)
             try:
@@ -2386,6 +2469,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # `gen_ai.client.operation.time_to_first_chunk` (TTFT). `StreamedResponse` records
             # the first-chunk instant; the delta is the client-side time to first token.
             request_start = time.perf_counter()
+            start = AttemptStart()
             attempt_stack = AsyncExitStack()
             try:
                 # `model_request_stream` stitches the (possibly suspended → complete) segments
@@ -2409,7 +2493,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 if not isinstance(e, Exception) or isinstance(e, (exceptions.ModelRetry, exceptions.RetryModelRequest)):
                     raise
                 try:
-                    recovered = await self._recover_model_request_error(ctx, run_context, request_context, e)
+                    recovered = await self._recover_model_request_error(
+                        ctx, run_context, request_context, e, failed, start
+                    )
                 except exceptions.RetryModelRequest as retry:
                     baseline.rewind_suspended()
                     await self._start_next_attempt(ctx, request_context, retry)
@@ -2429,6 +2515,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     request_start,
                 )
             stream_stack.push_async_exit(attempt_stack)
+            # Stream-opening failures carry no usage, so the response these end up on records none twice.
+            sr.failed_attempts = failed.attempts or None
             return sr, request_context, request_start
 
     async def _start_next_attempt(
@@ -2506,6 +2594,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         run_context: RunContext[DepsT],
         request_context: ModelRequestContext,
         error: Exception,
+        failed: _FailedAttempts,
+        start: AttemptStart,
     ) -> _messages.ModelResponse:
         if isinstance(error, exceptions.FallbackExceptionGroup):
             # No response reaches history, but a response a `FallbackModel` rejected was still billed,
@@ -2518,14 +2608,27 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return await root_capability.on_model_request_error(
                 run_context, request_context=request_context, error=error
             )
-        except exceptions.FallbackExceptionGroup as unrecovered:
-            # A limit the rejected responses exceeded is what stopped the run, so that's raised, with the
-            # group as its cause.
-            try:
-                ModelRequestNode._enforce_usage_limits(ctx, [])
-            except exceptions.UsageLimitExceeded as limit_exceeded:
-                raise limit_exceeded from unrecovered
+        except exceptions.RetryModelRequest:
+            failed.record(request_context, error, start)
             raise
+        except exceptions.FallbackExceptionGroup as unrecovered:
+            failed.record_exhausted(request_context, error, start, unrecovered)
+            ModelRequestNode._raise_usage_limit_exceeded(ctx, unrecovered)
+            raise
+
+    @staticmethod
+    def _raise_usage_limit_exceeded(
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+        unrecovered: exceptions.FallbackExceptionGroup,
+    ) -> None:
+        """Raise the usage limit that a fallback chain's billed attempts exceeded, if any, caused by its group.
+
+        A limit the rejected responses exceeded is what stopped the run, so that's raised instead of the group.
+        """
+        try:
+            ModelRequestNode._enforce_usage_limits(ctx, [])
+        except exceptions.UsageLimitExceeded as limit_exceeded:
+            raise limit_exceeded from unrecovered
 
     @staticmethod
     def _append_response(

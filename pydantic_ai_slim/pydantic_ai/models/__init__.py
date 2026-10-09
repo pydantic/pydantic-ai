@@ -321,6 +321,8 @@ class ModelRequestParameters:
 @dataclass
 class _ModelRequestUsageLedger:
     responses: list[ModelResponse] = field(default_factory=list[ModelResponse])
+    rejected: list[ModelResponse] = field(default_factory=list[ModelResponse])
+    """The responses in `responses` that a hook rejected to make another attempt."""
 
 
 @dataclass(kw_only=True)
@@ -432,6 +434,22 @@ class ModelRequestContext:
         `SpendLimits`, which pins this package's exact version.
         """
         return tuple(self._usage_response_ledger.responses)
+
+    @property
+    def _unrejected_usage_responses(self) -> tuple[ModelResponse, ...]:
+        """The responses of `_usage_responses` that no hook rejected to make another attempt.
+
+        A response a hook rejected with [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest]
+        is recorded as a failed [`ModelRequestAttempt`][pydantic_ai.messages.ModelRequestAttempt] with
+        its own span instead, the way a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]
+        records the responses it rejected, so the request's `chat` span doesn't report its usage again.
+
+        Private for now: read by the `Instrumentation` capability.
+        """
+        ledger = self._usage_response_ledger
+        return tuple(
+            response for response in ledger.responses if not any(response is rejected for rejected in ledger.rejected)
+        )
 
 
 @dataclass(frozen=True, kw_only=True)

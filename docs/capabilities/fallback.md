@@ -50,6 +50,12 @@ Each model attempted is an *attempt* within the same request step, not a new ste
 - `after_model_request` hooks of capabilities outside `Fallback` only ever see the response that was accepted. `Fallback` is positioned innermost, so it judges a response before them.
 - `usage.requests` counts the step once, so [`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit] bounds how many steps the agent takes rather than how many models it tried. The tokens and cost of every attempt that produced a response, including rejected ones, are counted in the run's usage and checked against token and cost limits before the next attempt.
 
+## Failed attempts and telemetry
+
+Failed attempts are recorded the same way [`FallbackModel` records them](../models/overview.md#failed-attempts-and-usage). The response that answers lists every attempt `Fallback` moved on from in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts], and when every model fails, the [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] lists them in `attempts`. A rejected response's tokens and cost are counted once, in the run's [`RunUsage`][pydantic_ai.usage.RunUsage], whichever of the two you use.
+
+When the agent is [instrumented](../logfire.md), the model request (`chat`) span is named after the model that answered and describes it. Each failed attempt gets its own `model request attempt <model name>` child span with an ERROR status. When every model fails, the `chat` span is named after the last model attempted.
+
 ## Streaming
 
 A streamed request falls back if the stream fails to open: `Fallback` makes the first request to the provider before any output reaches you, so a connection error or an error status can still be handled. Once output has been streamed, a failure is raised to you rather than retried.
