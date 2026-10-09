@@ -64,6 +64,11 @@ async def read(self, *args, **kwargs):
         assert name not in sys.modules, name
     assert requested == [warm_imports.FIRST_USE_MODULES]
     print('PROMPT_READY')
+    # Modules that only name provider settings types must not load the SDKs: test modules import them,
+    # and loading the Anthropic SDK used to add about half a second to every collecting worker.
+    import pydantic_clai2.models.model_options
+    import pydantic_clai2.runtime.speculative_mode
+    assert 'openai' not in sys.modules and 'anthropic' not in sys.modules
     start().join()
     for name in warmed:
         assert name in sys.modules, name
