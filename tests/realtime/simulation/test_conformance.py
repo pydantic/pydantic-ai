@@ -23,6 +23,7 @@ with try_import() as imports_successful:
         InputAdded,
         InputLost,
         LifecycleEvent,
+        OutputItemDetails,
         ResponseEnded,
         ResponseRequestRefused,
         ResponseStarted,
@@ -207,6 +208,10 @@ def test_lifecycle_contract_rules() -> None:
     ) == snapshot(['lifecycle.turn_end_without_start'])
     assert feed_lifecycle(turn, turn) == snapshot(['lifecycle.turn_started_twice', 'lifecycle.turn_unended_at_close'])
     assert feed_lifecycle(UserTurnEnded(turn_id='item_u2')) == snapshot(['lifecycle.turn_end_without_start'])
+    details = OutputItemDetails(response_id='resp_1', item_id='item_a1', provider_details={'phase': 'commentary'})
+    assert feed_lifecycle(start, details, end, details, inputs_sent=1) == snapshot(
+        ['lifecycle.content_outside_response']
+    )
 
 
 async def test_recorded_abnormal_close_is_replayed_as_one() -> None:
