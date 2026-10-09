@@ -2058,11 +2058,13 @@ def _attempt(
     output_tokens: int = 10,
     at: datetime = _EPOCH,
     duration: timedelta = timedelta(seconds=1),
+    error: str | None = None,
 ) -> ModelRequestAttempt:
     return ModelRequestAttempt(
         model_name=model_name,
         provider_name='openai',
         outcome='rejected',
+        error=error,
         timestamp=at,
         duration=duration,
         usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens),
@@ -2217,8 +2219,9 @@ class TestFallbackAttempts:
     async def test_a_replayed_attempt_is_charged_once(self):
         """An attempt's token comes from its response's, so a replay accrues neither twice.
 
-        The attempts' timestamps and durations are read from the local clock, so a re-executed
-        request records different ones; they are not part of the replay identity.
+        The attempts' timestamps and durations are read from the local clock, and their error text
+        can carry a provider request id, so a re-executed request records different ones; they are
+        not part of the replay identity.
         """
         guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
         answer = _response(provider_response_id='resp-1')
@@ -2227,7 +2230,11 @@ class TestFallbackAttempts:
             replayed = replace(
                 answer,
                 failed_attempts=[
-                    _attempt(at=_EPOCH + timedelta(minutes=offset), duration=timedelta(seconds=offset + 1)),
+                    _attempt(
+                        at=_EPOCH + timedelta(minutes=offset),
+                        duration=timedelta(seconds=offset + 1),
+                        error=f'rejected (request req-{offset})',
+                    ),
                     _attempt(at=_EPOCH + timedelta(minutes=offset), duration=timedelta(seconds=offset + 1)),
                 ],
             )
@@ -2252,7 +2259,7 @@ class TestFallbackAttempts:
         await fail(_run_ctx(), [_attempt(), _attempt('gpt-4o', at=_EPOCH + timedelta(minutes=1))])
         assert (await guard.status())[0].spent.requests == 2
 
-        await fail(_run_ctx(), [_attempt(duration=timedelta(seconds=9)), _attempt('gpt-4o')])
+        await fail(_run_ctx(), [_attempt(duration=timedelta(seconds=9), error='request req-2'), _attempt('gpt-4o')])
         assert (await guard.status())[0].spent.requests == 2
 
         await fail(_run_ctx(run_step=1), [_attempt(), _attempt('gpt-4o')])

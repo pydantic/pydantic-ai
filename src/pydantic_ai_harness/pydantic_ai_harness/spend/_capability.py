@@ -792,8 +792,16 @@ def _unanswered_token(ctx: RunContext[Any], attempts: Sequence[ModelRequestAttem
 
 
 def _stable_attempt(attempt: ModelRequestAttempt) -> ModelRequestAttempt:
-    """`attempt` without the local-clock readings that differ when the same request is made again."""
-    return replace(attempt, timestamp=datetime.min.replace(tzinfo=attempt.timestamp.tzinfo), duration=timedelta(0))
+    """`attempt` without what can differ when the same request is made again.
+
+    That is the local-clock readings, and the error text, which can carry a provider request id.
+    """
+    return replace(
+        attempt,
+        timestamp=datetime.min.replace(tzinfo=attempt.timestamp.tzinfo),
+        duration=timedelta(0),
+        error=None,
+    )
 
 
 def _status(budget: Budget[Any], key: str, spent: Spent) -> BudgetStatus:
