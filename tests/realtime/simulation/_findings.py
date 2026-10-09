@@ -207,9 +207,10 @@ LOST_UNSTARTED_REQUEST = Finding(
 
 def _receive_loop_send_failed(sim: Simulation, violation: InvariantViolation) -> bool:
     network = getattr(getattr(sim, 'server', None), 'network', None)
-    # On xAI push-to-talk, the audio held back behind a reply goes out from the receive loop too, once the
-    # `response.done` that ends the reply is handled (#9070).
-    sent = ('response.create', 'input_audio_buffer.append') if _xai_push_to_talk(sim) else ('response.create',)
+    # On xAI push-to-talk, the receive loop sends more once the `response.done` that ends a reply is handled (#9070):
+    # the audio held back behind the reply, and the clear a deferred request needs to be answered.
+    xai_frames = ('input_audio_buffer.append', 'input_audio_buffer.clear') if _xai_push_to_talk(sim) else ()
+    sent = ('response.create', *xai_frames)
     return network is not None and any(
         frame in sent and last_read in ('response.done', 'error') for frame, last_read, _ in network.failed_sends
     )
@@ -223,7 +224,8 @@ def _xai_push_to_talk(sim: Simulation) -> bool:
 RECEIVE_LOOP_SEND_FAILURE = Finding(
     id='SIM-4',
     title=(
-        'a deferred `response.create` (or, on xAI push-to-talk, audio held back behind the reply) that the connection '
+        'a deferred `response.create` (or, on xAI push-to-talk, audio held back behind the reply, or the clear the '
+        'request needs) that the connection '
         'sends while handling a `response.done` (or a refusal) fails on a dying socket, and the whole frame is dropped: '
         "that response's usage and terminal never reach the session, and the deferred request is neither re-asked nor "
         'released'

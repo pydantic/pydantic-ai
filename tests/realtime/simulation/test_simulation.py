@@ -557,6 +557,26 @@ def test_known_xai_held_audio_failing_before_a_deferred_request_loses_it() -> No
     )
 
 
+@known('SIM-4')
+def test_known_xai_clear_before_a_deferred_request_failing_loses_it() -> None:
+    """The clear xAI needs before a deferred request goes out from the receive loop, once the reply ends."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.clear_audio()
+        sim.create_response()
+        sim.fail_next_send()
+        sim.send_audio()
+        sim.clear_audio()
+        sim.settle()
+
+    reproduce(
+        'SIM-4',
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=False)),
+        scenario,
+    )
+
+
 @known('SIM-32')
 def test_known_barge_in_drops_a_request_vad_will_not_answer() -> None:
     def scenario(sim: OpenAISimulation) -> None:
