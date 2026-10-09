@@ -30,6 +30,20 @@ BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us', 'eu', 'apac', 'jp', 'au', 'ca', '
 _VERSION_SUFFIX_RE = re.compile(r'(.+)-v\d+(?::\d+)?$')
 
 
+def _bedrock_arn_resource(model_id: str) -> str:
+    """The resource segment of a Bedrock ARN, or the ID unchanged if it is not one.
+
+    An inference-profile or foundation-model ARN carries the model ID after the last `/`:
+    `arn:aws:bedrock:eu-central-1:<account>:inference-profile/eu.anthropic.claude-sonnet-5-5`.
+    A provisioned-model or application-inference-profile ARN instead ends in an opaque ID,
+    which has no `<provider>.` segment and so is left for the caller to reject.
+    """
+    if not model_id.startswith('arn:'):
+        return model_id
+    _, _, resource = model_id.rpartition('/')
+    return resource or model_id
+
+
 def remove_bedrock_geo_prefix(model_name: str) -> str:
     """Remove the cross-region inference geographic prefix from a model ID if present.
 
@@ -51,12 +65,19 @@ def split_bedrock_model_id(model_id: str) -> tuple[str | None, str]:
 
     Strips any cross-region inference geo prefix and `-v<n>(:<m>)?` version suffix.
 
+    Also accepts an inference-profile or foundation-model ARN, whose resource segment holds
+    the model ID. Without that, partitioning the ARN itself on `.` yields a provider of
+    `arn:aws:bedrock:<region>:<account>:inference-profile/eu`, which matches no provider, and
+    the caller falls back to default capabilities for a model whose real ones are known.
+
     Example:
         `us.anthropic.claude-haiku-4-5-20251001-v1:0` -> `('anthropic', 'claude-haiku-4-5-20251001')`
         `anthropic.claude-haiku-4-5` -> `('anthropic', 'claude-haiku-4-5')`
         `claude-haiku-4-5` -> `(None, 'claude-haiku-4-5')`
+        `arn:aws:bedrock:eu-central-1:1:inference-profile/eu.anthropic.claude-sonnet-5-5`
+            -> `('anthropic', 'claude-sonnet-5-5')`
     """
-    provider, _, name = remove_bedrock_geo_prefix(model_id).partition('.')
+    provider, _, name = remove_bedrock_geo_prefix(_bedrock_arn_resource(model_id)).partition('.')
     if not name:  # no `<provider>.` segment
         return None, model_id
     if version_match := _VERSION_SUFFIX_RE.match(name):

@@ -387,6 +387,21 @@ def test_remove_inference_geo_prefix(model_name: str, expected: str):
         ('eu.amazon.nova-micro-v1:0', ('amazon', 'nova-micro')),
         ('cohere.command-r-v1:0', ('cohere', 'command-r')),
         ('meta.llama3-8b-instruct-v14', ('meta', 'llama3-8b-instruct')),
+        # Inference-profile and foundation-model ARNs carry the model ID in the resource segment.
+        (
+            'arn:aws:bedrock:eu-central-1:123456789012:inference-profile/eu.anthropic.claude-sonnet-5-5',
+            ('anthropic', 'claude-sonnet-5-5'),
+        ),
+        (
+            'arn:aws:bedrock:us-east-1:123456789012:foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0',
+            ('anthropic', 'claude-haiku-4-5-20251001'),
+        ),
+        # A provisioned-model ARN's resource is an opaque ID with no `<provider>.` segment, so it
+        # stays unresolved rather than being guessed at.
+        (
+            'arn:aws:bedrock:us-east-1:123456789012:provisioned-model/abc123xyz',
+            (None, 'arn:aws:bedrock:us-east-1:123456789012:provisioned-model/abc123xyz'),
+        ),
         # Not a `<provider>.<name>` shape — returned unchanged.
         ('claude-haiku-4-5', (None, 'claude-haiku-4-5')),
         ('claude-haiku-4-5@20251001', (None, 'claude-haiku-4-5@20251001')),

@@ -70,6 +70,8 @@ def test_anthropic_provider_with_env_base_url(monkeypatch: pytest.MonkeyPatch) -
         'anthropic.claude-haiku-4-5-20251001-v1:0',
         'us.anthropic.claude-haiku-4-5-20251001-v1:0',
         'global.anthropic.claude-haiku-4-5',
+        # Amazon Bedrock inference-profile ARN, as `AsyncAnthropicBedrock` accepts it
+        'arn:aws:bedrock:eu-central-1:123456789012:inference-profile/eu.anthropic.claude-haiku-4-5',
         # Anthropic on Vertex AI: `@`-delimited version
         'claude-haiku-4-5@20251001',
     ],
@@ -81,6 +83,29 @@ def test_anthropic_provider_model_profile_normalizes_transport_specific_ids(mode
     assert isinstance(profile, dict)
     assert profile.get('supports_json_schema_output', False) is True
     assert ToolSearchTool in profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+
+
+def test_anthropic_provider_model_profile_arn_resolves_forced_tool_choice():
+    """An ARN must resolve the same forcing flag as the bare name it points at.
+
+    Reported as #9987: with the full inference-profile ARN as the model name, nothing matched
+    `anthropic_model_profile`'s `claude-...` prefix checks, so `supports_forced_tool_choice` took
+    its default of `True` and a forced `tool_choice` went to a model that answers
+    `tool_choice: type "tool" and "any" are not supported for this model` with a 400. Sonnet 5.0
+    does accept forcing, which is why the reporter saw this break only on the move to 5.5.
+    """
+    arn = 'arn:aws:bedrock:eu-central-1:123456789012:inference-profile/eu.anthropic.claude-sonnet-5-5'
+    bare = AnthropicProvider.model_profile('claude-sonnet-5-5')
+    via_arn = AnthropicProvider.model_profile(arn)
+    assert isinstance(bare, dict) and isinstance(via_arn, dict)
+    assert bare.get('supports_forced_tool_choice', True) is False
+    assert via_arn.get('supports_forced_tool_choice', True) is False
+
+    # Not blanket-disabled: Sonnet 5.0 accepts forcing, through an ARN as much as bare.
+    sonnet_5_arn = 'arn:aws:bedrock:eu-central-1:123456789012:inference-profile/eu.anthropic.claude-sonnet-5'
+    via_arn_5 = AnthropicProvider.model_profile(sonnet_5_arn)
+    assert isinstance(via_arn_5, dict)
+    assert via_arn_5.get('supports_forced_tool_choice', False) is True
 
 
 def test_anthropic_provider_model_profile_older_model_still_resolves():
