@@ -1195,6 +1195,15 @@ def test_what_the_user_says_as_they_cut_in_is_a_turn_of_its_own() -> None:
             'None [assistant:Sure.] complete stop',
         ]
     )
+    # Likewise over a reply the model started on its own, before any transcript of what it answers came.
+    message(OutputTranscript('By the way...'))
+    message(InputTranscript('Stop'), RealtimeResponseInterruptedEvent())
+    message(SessionUsage(RequestUsage(input_tokens=4)), ResponseDone(interrupted=True))
+    message(OutputTranscript('Okay.'))
+    message(SessionUsage(RequestUsage(input_tokens=5)), ResponseDone())
+    assert summary(session_core.all_messages()[4:]) == snapshot(
+        ['None [assistant:By the way...] interrupted None', '{user:Stop}', 'None [assistant:Okay.] complete stop']
+    )
 
 
 def test_a_reply_taken_with_audio_starts_ahead_of_it() -> None:

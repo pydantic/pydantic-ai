@@ -161,6 +161,7 @@ class InferredLifecycle:
             # The user cut in, and the message reports what they said ahead of the cut: that is new speech, not
             # more of the turn being answered, whose transcript is over.
             closed: list[LifecycleEvent] = []
+            self._unprompted_reply = None
             self._close_turn(closed)
             tagged.extend((event, False) for event in closed)
         for event in codec:
