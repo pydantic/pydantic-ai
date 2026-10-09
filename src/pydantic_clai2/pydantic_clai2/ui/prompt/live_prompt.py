@@ -20,13 +20,14 @@ from termflow.tui.layout import truncate
 from pydantic_clai2.cli.shell_passthrough import shell_command
 from pydantic_clai2.commands import Commands, expand_bare_command, is_command_input
 from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.prompt.image_input import ImageInput, clipboard_images, pasted_paths, read_images
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys
 from pydantic_clai2.ui.prompt.prompt_resize import resize_notifications
-from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import TRANSCRIPT_KEYS, PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
@@ -180,6 +181,12 @@ class LivePrompt:
 
     def feed(self, key: str, data: str = '') -> None:
         """Route editing, completion and interrupts without rendering a widget tree."""
+        if key in TRANSCRIPT_KEYS:
+            # Leave the draft alone, and the notice unless a drag copied text.
+            if self.output.transcript_key(key, data):
+                self.notice = 'Copied the selection to the clipboard.'
+                self.paint()
+            return
         self.notice = ''
         if key != 'escape':
             self._last_escape = None
@@ -198,6 +205,9 @@ class LivePrompt:
                 self.buffer.edit('delete')
             else:
                 self.submit(EOFError())
+        elif key == 'ctrl-l':
+            # As in Claude Code: a clean screen; the conversation, draft, and queue stay.
+            self.output.clear(keep_current=self.interrupts.active)
         elif key in ('paste', 'ctrl-v', 'alt-v'):
             self.paste(data if key == 'paste' else None)
         elif key == 'ctrl-r' or self.buffer.search is not None:
@@ -289,10 +299,14 @@ class LivePrompt:
         return False
 
     def accept(self) -> None:
-        """Accept a completion or queue the nonempty draft."""
+        """Accept a completion that changes the draft, or else queue the nonempty draft."""
         if self._selection >= 0:
-            self.accept_completion()
-            return
+            item = self._completions[self._selection]
+            if self.buffer.text[self._completion_start(item) : self.buffer.cursor] != item.text:
+                self.accept_completion()
+                return
+            # The highlighted command is already typed in full, so Enter runs it.
+            self.dismiss_completions()
         text = self.buffer.text.strip()
         target, self._editing = self._editing, None
         if target is not None and target not in self._submissions:
@@ -310,6 +324,7 @@ class LivePrompt:
         command = expand_bare_command(text)
         if target is not None and command == target.text:
             return
+        self.output.view.follow()
         self.history.append_string(text)
         self.buffer.history.append(text)
         if self.run_now is not None and self.run_now(command):
@@ -362,6 +377,8 @@ class LivePrompt:
             self.accept()
             return
         target, self._editing = self._editing, None
+        # Steered text joins the running turn, so show its response, as submitting does.
+        self.output.view.follow()
         self.history.append_string(text)
         self.buffer.history.append(text)
         self.buffer.history_index = None
@@ -379,6 +396,7 @@ class LivePrompt:
         if not isinstance(head, _Queued) or not self._steered(head.text):
             telemetry.record('prompt steer', steered=False, source='queue')
             return
+        self.output.view.follow()
         self._discard(head)
         telemetry.record('prompt steer', steered=True, source='queue')
 
@@ -407,9 +425,12 @@ class LivePrompt:
             source='command' if is_command_input(self.buffer.text) else 'path',
             candidates=len(self._completions),
         )
-        start = max(0, self.buffer.cursor + item.start_position)
-        self.buffer.replace_range(start, self.buffer.cursor, item.text)
+        self.buffer.replace_range(self._completion_start(item), self.buffer.cursor, item.text)
         self.dismiss_completions()
+
+    def _completion_start(self, item: Completion) -> int:
+        """Where the fragment `item` replaces begins in the draft."""
+        return max(0, self.buffer.cursor + item.start_position)
 
     def dismiss_completions(self) -> None:
         """Close the popup and invalidate any in-flight lookup."""
@@ -466,7 +487,19 @@ class LivePrompt:
                 self._completion_pending = False
                 self._completion_error = error
                 self._completions = items
+                self._selection = 0 if items and self._highlights_best_match(text[:cursor]) else -1
                 self.paint()
+
+    def _highlights_best_match(self, typed: str) -> bool:
+        """Whether the first suggestion starts highlighted, as if Tab had picked it.
+
+        Only while a command name is typed, where the registry ranks the best match first.
+        Argument candidates keep their provider's order, so Enter still submits a typed
+        argument, and a history walk keeps the arrows (see `_arrows_cycle_completions`).
+        """
+        return (
+            self.buffer.history_index is None and is_command_input(typed) and not any(char.isspace() for char in typed)
+        )
 
     def frame(self) -> tuple[str, ...]:
         """Build the reserved rows; transcript contents are deliberately absent."""
@@ -571,7 +604,10 @@ class LivePrompt:
 
         async def refresh() -> None:
             while True:
-                self.paint()
+                if self._suspended:
+                    self.output.refresh()
+                else:
+                    self.paint()
                 # A spinner faster than the status poll gets a repaint per frame, but only while it shows.
                 await anyio.sleep(min(0.1, self.spinner().interval) if self.interrupts.active else 0.1)
 
@@ -585,7 +621,7 @@ class LivePrompt:
         self._opened = True
         self.console.file = self.output
         try:
-            with resize_notifications(resized):
+            with resize_notifications(resized), holding_output(self.output.held):
                 self.paint()
                 self.keys.start()
                 async with anyio.create_task_group() as tasks:
@@ -601,7 +637,7 @@ class LivePrompt:
             self.keys.stop()
             self._completion_worker.close()
             self.console.file = original
-            self.output.release()
+            self.output.restore()
 
 
 def _capped(rows: list[str], *, limit: int, room: int, more: str) -> list[str]:

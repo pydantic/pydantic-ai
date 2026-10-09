@@ -9,7 +9,8 @@ import pytest
 
 
 @pytest.mark.parametrize(
-    'mode', ['unchanged', 'success', 'custom', 'new_imports', 'stock', 'syntax', 'import', 'build', 'harness']
+    'mode',
+    ['unchanged', 'success', 'custom', 'new_imports', 'stock', 'syntax', 'import', 'build', 'harness', 'transcript'],
 )
 def test_reload_running_shell(tmp_path: Path, mode: str) -> None:
     run_script(tmp_path, 'reload_script.py', mode)

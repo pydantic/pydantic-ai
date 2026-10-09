@@ -3,14 +3,17 @@
 import base64
 import io
 import json
+import warnings
 from collections.abc import Generator
 from pathlib import Path
 from typing import Literal
 
 import anyio
+import httpx
 import logfire
 import pytest
 from opentelemetry import metrics, propagate, trace
+from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor, HTTPXClientInstrumentor
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -58,6 +61,7 @@ class Recorder:
         send_to_logfire: Literal[False, 'if-token-present'],
         service_name: str,
         console: Literal[False],
+        inspect_arguments: bool,
         config_dir: Path,
         data_dir: Path,
         token: str | None,
@@ -71,6 +75,7 @@ class Recorder:
                 'send_to_logfire': send_to_logfire,
                 'service_name': service_name,
                 'console': console,
+                'inspect_arguments': inspect_arguments,
                 'config_dir': config_dir,
                 'data_dir': data_dir,
                 'base_url': advanced.base_url if advanced else None,
@@ -82,6 +87,7 @@ class Recorder:
             send_to_logfire=False,
             service_name=service_name,
             console=console,
+            inspect_arguments=inspect_arguments,
             config_dir=config_dir,
             data_dir=data_dir,
             token=token,
@@ -130,6 +136,8 @@ async def test_default_content_images_tools_and_usage_are_traced(recorder: Recor
     propagator = propagate.get_global_textmap()
     host = make_host()
     plugin = load_logfire(host)
+    assert not HTTPXClientInstrumentor().is_instrumented_by_opentelemetry
+    assert not HTTPX2ClientInstrumentor().is_instrumented_by_opentelemetry
     agent = Agent(TestModel(custom_output_text='The image shows a button'), deps_type=type(None), name='clai_test')
 
     @agent.tool_plain
@@ -162,6 +170,7 @@ async def test_default_content_images_tools_and_usage_are_traced(recorder: Recor
             'send_to_logfire': 'if-token-present',
             'service_name': 'pydantic-clai2',
             'console': False,
+            'inspect_arguments': False,
             'config_dir': tmp_path / 'config/pydantic-clai2/logfire',
             'data_dir': tmp_path / 'config/pydantic-clai2/logfire',
             'base_url': None,
@@ -194,6 +203,68 @@ async def test_content_settings(recorder: Recorder, content: bool) -> None:
     assert base64.b64encode(b'image bytes').decode() not in serialized
     assert spans[0].resource.attributes['service.name'] == 'custom-clai'
     assert recorder.options[0]['send_to_logfire'] is False
+
+
+@pytest.mark.parametrize('content', [False, True])
+async def test_httpx_opt_in_traces_requests_and_unloads(
+    recorder: Recorder, monkeypatch: pytest.MonkeyPatch, content: bool
+) -> None:
+    def respond(transport: httpx.HTTPTransport, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text='ordinary response body', request=request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, 'handle_request', respond)
+    plugin = load_logfire(make_host(httpx=True, include_content=content, ui_events=False))
+    await plugin.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
+    assert HTTPXClientInstrumentor().is_instrumented_by_opentelemetry
+    assert HTTPX2ClientInstrumentor().is_instrumented_by_opentelemetry
+    try:
+        with httpx.Client() as client:
+            with recorder.instances[-1].span('parent'):
+                client.post('https://example.com/test', content='ordinary request body')
+    finally:
+        await close(plugin)
+    assert not HTTPXClientInstrumentor().is_instrumented_by_opentelemetry
+    assert not HTTPX2ClientInstrumentor().is_instrumented_by_opentelemetry
+    serialized = json.dumps([dict(span.attributes or {}) for span in recorder.spans()])
+    assert '"http.method": "POST"' in serialized
+    assert ('ordinary request body' in serialized) is content
+
+
+async def test_httpx_moves_to_remaining_plugin_on_unload(recorder: Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
+    def respond(transport: httpx.HTTPTransport, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, 'handle_request', respond)
+    first = load_logfire(make_host(httpx=True, ui_events=False))
+    second = load_logfire(make_host(httpx=True, ui_events=False))
+    try:
+        start = SessionStart(agent=Agent(TestModel()), settings=Settings())
+        await first.dispatch(start)
+        await second.dispatch(start)
+        await close(first)
+        with httpx.Client() as client:
+            client.get('https://example.com/remaining')
+        assert HTTPXClientInstrumentor().is_instrumented_by_opentelemetry
+    finally:
+        await close(second)
+    assert not HTTPXClientInstrumentor().is_instrumented_by_opentelemetry
+    assert any(
+        span.attributes and span.attributes.get('http.url') == 'https://example.com/remaining'
+        for span in recorder.exporters[1].get_finished_spans()
+    )
+
+
+async def test_httpx_does_not_uninstrument_an_existing_owner(recorder: Recorder) -> None:
+    existing = HTTPXClientInstrumentor()
+    existing.instrument()
+    plugin = load_logfire(make_host(httpx=True, ui_events=False))
+    try:
+        await plugin.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
+    finally:
+        await close(plugin)
+        assert existing.is_instrumented_by_opentelemetry
+        existing.uninstrument()
+    assert not HTTPX2ClientInstrumentor().is_instrumented_by_opentelemetry
 
 
 @pytest.mark.parametrize('explicit', [False, True])
@@ -303,6 +374,21 @@ async def test_no_credentials_needs_no_setup_or_console_output(capsys: pytest.Ca
         await close(plugin)
     captured = capsys.readouterr()
     assert captured.out == captured.err == ''
+
+
+async def test_logging_never_inspects_caller_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Source edited on disk mid-session made Logfire warn on stderr, through the live display."""
+    monkeypatch.setattr('executing.Source.executing', pytest.fail)
+    plugin = load_logfire(make_host(ui_events=True))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        try:
+            await plugin.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
+            await plugin.dispatch(TurnEnd(text='hello', outcome='completed'))
+            telemetry.record('setting {setting} changed', setting='display.theme')
+        finally:
+            await close(plugin)
+    assert [str(warning.message) for warning in caught] == []
 
 
 @pytest.mark.parametrize('cancelled', [False, True])
@@ -436,16 +522,23 @@ def messages(recorder: Recorder) -> list[object]:
     return [(span.attributes or {}).get('logfire.msg') for span in recorder.spans()]
 
 
-async def test_ui_events_are_off_by_default(recorder: Recorder) -> None:
-    plugin = load_logfire(make_host())
-    telemetry.record('setting {setting} changed', setting='display.theme', value='default')
-    await close(plugin)
-    assert messages(recorder) == []
+async def test_ui_events_can_be_explicitly_disabled(recorder: Recorder) -> None:
+    plugin = load_logfire(make_host(ui_events=False))
+    try:
+        await plugin.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
+        await plugin.dispatch(TurnEnd(text='a private prompt', outcome='cancelled'))
+        telemetry.record('setting {setting} changed', setting='display.theme', value='default')
+    finally:
+        await close(plugin)
+    assert messages(recorder) == ['CLAI session']
 
 
 @pytest.mark.parametrize('model', [Settings().model, None])
-async def test_ui_events_follow_the_plugin_and_keep_setting_names(recorder: Recorder, model: str | None) -> None:
-    plugin = load_logfire(make_host(ui_events=True))
+@pytest.mark.parametrize('settings', [{}, {'ui_events': True}])
+async def test_ui_events_follow_the_plugin_and_keep_setting_names(
+    recorder: Recorder, model: str | None, settings: dict[str, JsonValue]
+) -> None:
+    plugin = load_logfire(make_host(**settings))
     try:
         for event in (
             SessionStart(agent=Agent(TestModel()), settings=Settings(model=model)),
@@ -544,10 +637,11 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             pick('include_content'),
             pick('include_binary_content'),
             pick('user_tag'),
+            pick('httpx'),
             pick('ui_events'),
             MenuResult(cancelled=True),
         ],
-        choices=[pick('false'), pick('false'), pick('false'), pick('git-email'), pick('true')],
+        choices=[pick('false'), pick('false'), pick('false'), pick('git-email'), pick('true'), pick('false')],
         texts=[typed('my-clai')],
     )
     monkeypatch.setattr(logfire_plugin, 'RUNNERS', scripted.runners)
@@ -557,7 +651,7 @@ async def test_menu_saves_every_option_and_reloads_with_them(
         assert loader.configurable('observability')
         assert await loader.command(['configure', 'observability']) == (
             'Saved Send to Logfire.\nSaved Service name.\nSaved Message content.\nSaved Binary content.\n'
-            'Saved User tag.\nSaved UI events.'
+            'Saved User tag.\nSaved HTTP requests.\nSaved UI events.'
         )
         [declaration] = store.plugins()
         assert declaration.settings == {
@@ -569,7 +663,8 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             'account': None,
             'token': None,
             'base_url': None,
-            'ui_events': True,
+            'httpx': True,
+            'ui_events': False,
         }
         assert [options['service_name'] for options in recorder.options] == ['pydantic-clai2', 'my-clai']
         assert recorder.options[-1]['send_to_logfire'] is False
@@ -597,6 +692,14 @@ def test_menu_validates_resets_and_notes_credentials(monkeypatch: pytest.MonkeyP
     rows = {row.key: row for row in source.rows()}
     assert source.title == 'Observability (Logfire)'
     assert rows[PROJECT].note == 'no LOGFIRE_TOKEN or credentials file'
+    assert rows['httpx'].default == 'false'
+    assert source.current(rows['httpx']) == 'false'
+    assert rows['ui_events'].default == 'true'
+    assert source.current(rows['ui_events']) == 'true'
+    source.apply(rows['ui_events'], 'false')
+    assert source.current(rows['ui_events']) == 'false'
+    assert source.reset(rows['ui_events']) == 'Reset UI events.'
+    assert source.current(rows['ui_events']) == 'true'
     assert source.current(rows[PROJECT]) == 'LOGFIRE_TOKEN or credentials file'
     assert source.current(rows['send_to_logfire']) == 'if-token-present'
     assert source.current(rows['include_content']) == 'false'

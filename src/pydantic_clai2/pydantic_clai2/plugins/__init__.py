@@ -4,11 +4,12 @@ import re
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
-from typing import ClassVar, Generic, Literal, Protocol, TypeVar, cast, get_args, get_origin
+from datetime import datetime
+from typing import ClassVar, Generic, Literal, Never, Protocol, Self, TypeVar, cast, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 from rich.console import Console, RenderableType
-from typing_extensions import Never, Self, TypeVar as DefaultTypeVar, get_original_bases
+from typing_extensions import TypeVar as DefaultTypeVar, get_original_bases
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
@@ -157,6 +158,12 @@ class ModelProvider:
     """Names without the prefix, offered by `/model add` and `/set model`."""
     settings_from: SettingsProvider | None = None
     """The provider whose `/model settings` controls these models take; `None` offers the generic ones."""
+    resolve_profile: Callable[[str, str], Model] | None = None
+    """Build NAME for another account: called as `resolve_profile(NAME, PROFILE)` for `PREFIX@PROFILE:NAME`.
+
+    Called in a worker thread like `resolve`. `None` means the prefix has one account, and a model
+    naming a profile fails with a message saying so.
+    """
 
     def __post_init__(self) -> None:
         """Reject a malformed prefix, one CLAI already runs, or an unknown `settings_from`."""
@@ -172,6 +179,26 @@ class ModelProvider:
     def names(self) -> tuple[str, ...]:
         """`models` as CLAI shows and saves them, with the prefix."""
         return tuple(f'{self.prefix}:{name}' for name in self.models)
+
+
+@dataclass(frozen=True, kw_only=True)
+class UsageWindow:
+    """One limit on an account, such as a five-hour or weekly window, as `/accounts` shows it."""
+
+    label: str
+    """A short name for the window: `5h`, `7d`, or `premium`."""
+    used_percent: float
+    """How much of the limit is used, from 0 to 100."""
+    resets_at: datetime | None = None
+    """When the window resets, timezone-aware; `None` when the service does not say."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class AccountUsage:
+    """An account's current usage: its limits, most pressing first, and its plan when known."""
+
+    windows: tuple[UsageWindow, ...]
+    plan: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -192,6 +219,18 @@ class PluginLogin:
     """Sign in and return the message to show."""
     models: tuple[str, ...] = ()
     """Models, as `PREFIX:NAME`, added to the saved model list once the sign-in succeeds."""
+    profile_handler: Callable[[str], Awaitable[str]] | None = None
+    """Sign in to another account: called as `profile_handler(PROFILE)` for `/login NAME@PROFILE`.
+
+    On success `models` are saved with the profile, as `PREFIX@PROFILE:NAME`. `None` means the
+    sign-in has one account, and `/login NAME@PROFILE` says so.
+    """
+    usage: Callable[[str | None], Awaitable[AccountUsage]] | None = None
+    """The account's current usage, for `/accounts`: called as `usage(PROFILE)`, `None` for the default.
+
+    `/accounts` calls it in the background for each listed account while the menu is open, with a
+    short timeout. Raise `UserError` with a short reason when usage is unavailable.
+    """
 
     def __post_init__(self) -> None:
         """Reject a malformed name, or one CLAI already signs in to, before any plugin can offer it."""

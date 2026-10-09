@@ -18,7 +18,7 @@ import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -49,7 +49,7 @@ from pydantic_graph import End
 
 from .._inline_snapshot import snapshot
 
-_TIMESTAMP = datetime(2024, 1, 1, tzinfo=timezone.utc)
+_TIMESTAMP = datetime(2024, 1, 1, tzinfo=UTC)
 
 
 @dataclass
@@ -406,7 +406,7 @@ async def test_usage_summed_once_across_segments(stream: bool) -> None:
         [RequestUsage(input_tokens=100_000, output_tokens=n) for n in (3, 4, 5)],
         model_name='claude-opus-4-6',
         provider_name='anthropic',
-        timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
     )
     agent = Agent(model)
 

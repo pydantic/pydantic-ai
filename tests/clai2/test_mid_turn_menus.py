@@ -38,7 +38,8 @@ from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.menu_worker import holding_output, run_worker
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
-from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
+from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from tests.clai2.test_tasks import task
 
@@ -103,15 +104,24 @@ async def test_run_worker_holds_output_only_while_the_widget_runs() -> None:
     log: list[str] = []
 
     @contextmanager
-    def hold() -> Generator[None]:
-        log.append('hold')
+    def hold(*, leave_screen: bool) -> Generator[None]:
+        log.append(f'hold leave_screen={leave_screen}')
         yield
         log.append('replay')
 
     with holding_output(hold):
         assert await run_worker(lambda: log.append('menu') or 'done') == 'done'
+        await run_worker(lambda: log.append('inline'), inline=True)
     await run_worker(lambda: log.append('unheld'))
-    assert log == ['hold', 'menu', 'replay', 'unheld']
+    assert log == [
+        'hold leave_screen=True',
+        'menu',
+        'replay',
+        'hold leave_screen=False',
+        'inline',
+        'replay',
+        'unheld',
+    ]
 
 
 async def test_overlay_takes_turns_with_widgets_without_pausing_the_stream() -> None:
@@ -151,9 +161,10 @@ def test_session_changes_saved_during_a_turn_wait_for_it_to_end() -> None:
         applied('model', Settings(model='test:second'))
         applied('run.tool_retries', Settings(tool_retries=7))
         applied('model', Settings(model='test:third'))
+        applied('run.instructions', Settings(instructions='Be brief.'))
         applied('display.theme', Settings(theme='default'))
-        assert (session.model, session.tool_retries) == ('test:first', None)
-    assert (session.model, session.tool_retries) == ('test:third', 7)
+        assert (session.model, session.tool_retries, session.instructions) == ('test:first', None, '')
+    assert (session.model, session.tool_retries, session.instructions) == ('test:third', 7, 'Be brief.')
     applied('run.request_limit', Settings(request_limit=12))
     assert session.usage_limits is not None and session.usage_limits.request_limit == 12
 
@@ -163,14 +174,12 @@ async def test_model_settings_saved_mid_turn_reach_the_running_models_next_reque
 ) -> None:
     """An edit saved from a menu worker thread while a tool runs applies to the same turn's next request."""
     working, finish, streamed, done = anyio.Event(), anyio.Event(), anyio.Event(), anyio.Event()
-    written: list[str] = []
 
     class Surface(PromptSurface):
-        def write(self, text: str) -> int:
-            written.append(text)
-            if 'Finished work' in ''.join(written):
+        def changed(self) -> None:
+            super().changed()
+            if 'Finished work' in _plain(self.transcript):
                 streamed.set()
-            return super().write(text)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     store = SettingsStore(tmp_path / 'config.db')
@@ -250,14 +259,12 @@ def test_menu_opens_mid_turn_on_a_plain_asyncio_loop(tmp_path: Path, monkeypatch
 async def _open_menu_mid_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     working, finish, streamed, done = anyio.Event(), anyio.Event(), anyio.Event(), anyio.Event()
     opened, close = threading.Event(), threading.Event()
-    written: list[str] = []
 
     class Surface(PromptSurface):
-        def write(self, text: str) -> int:
-            written.append(text)
-            if 'Finished work' in ''.join(written):
+        def changed(self) -> None:
+            super().changed()
+            if 'Finished work' in _plain(self.transcript):
                 streamed.set()
-            return super().write(text)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
 
@@ -302,8 +309,80 @@ async def _open_menu_mid_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
             close.set()
             pipe.send_text('/exit\r')
             await done.wait()
-    text = output.getvalue()
+    text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
     assert text.index('> /menu') < text.index('Finished work') < text.index('menu closed') < text.index('Goodbye.')
+
+
+def test_only_opted_in_available_commands_run_live() -> None:
+    commands = Commands()
+    commands.register(Command(name='slow', description='Slow', handler=lambda args: 'done', live=True))
+    commands.register(
+        Command(name='hidden', description='Hidden', handler=lambda args: 'done', live=True, available=lambda: False)
+    )
+    commands.register(Command(name='menu', description='Menu', handler=lambda args: 'done'))
+    assert commands.runs_live('/slow focus words')
+    assert not commands.runs_live('/hidden')
+    assert not commands.runs_live('/menu')
+    assert not commands.runs_live('/missing')
+    assert not commands.runs_live('/')
+
+
+async def test_live_command_keeps_the_editor_working_and_cancellable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A slow command such as `/compact` keeps the prompt on screen with the spinner and stops on Ctrl-C.
+
+    The draft typed meanwhile shows while it runs and is still there once it stops.
+    """
+    started, working, drafted, kept, done = (anyio.Event() for _ in range(5))
+
+    class Surface(PromptSurface):
+        def paint(self, rows: tuple[str, ...]) -> None:
+            plain = [Text.from_ansi(row).plain.rstrip() for row in rows]
+            busy = any(row.startswith(' Working ') for row in plain)
+            if started.is_set() and busy:
+                working.set()
+                if 'keep me' in plain:
+                    drafted.set()
+            elif drafted.is_set() and 'keep me' in plain:
+                kept.set()
+            super().paint(rows)
+
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
+
+    async def slow(args: list[str]) -> str:
+        if args:
+            return f'finished {args[0]}'
+        started.set()
+        await anyio.sleep_forever()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    output = io.StringIO()
+
+    async def run() -> None:
+        await chat(
+            Agent(TestModel(), deps_type=type(None)),
+            deps=None,
+            plugins=[_MenuCommand(Command(name='slow', description='Slow', handler=slow, live=True))],
+            console=Console(file=output, force_terminal=True, width=80, height=24),
+            store=SettingsStore(tmp_path / 'config.db'),
+        )
+        done.set()
+
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            pipe.send_text('/slow quickly\r')
+            pipe.send_text('/slow\r')
+            await working.wait()
+            pipe.send_text('keep me')
+            await drafted.wait()
+            pipe.send_text('\x1b')
+            await kept.wait()
+            pipe.send_text('\x15/exit\r')
+            await done.wait()
+    text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
+    assert text.index('finished quickly') < text.index('Command cancelled.') < text.index('Goodbye.')
 
 
 async def test_overlay_commands_take_the_screen_without_waiting_for_themselves() -> None:
@@ -433,20 +512,23 @@ async def test_plugins_typed_mid_turn_apply_at_once_and_end_after_the_run(
         assert text.index(reply) < text.index('alpha ended') < text.index('> /exit')
 
 
+def _plain(transcript: TranscriptBuffer) -> str:
+    """Streamed Markdown lands in the transcript, not in `write`."""
+    return Text.from_ansi('\n'.join(transcript.frame(width=200, height=500).rows)).plain
+
+
 async def test_speculation_toggled_mid_turn_shows_at_once_and_binds_on_the_next_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`Ctrl+X Ctrl+S` saves the switch and repaints at once; the running turn keeps its tools."""
     working, finish, noticed, answered, done = (anyio.Event() for _ in range(5))
-    written: list[str] = []
     frames: list[str] = []
 
     class Surface(PromptSurface):
-        def write(self, text: str) -> int:
-            written.append(text)
-            if ''.join(written).count('Finished work') >= 2:
+        def changed(self) -> None:
+            super().changed()
+            if _plain(self.transcript).count('Finished work') >= 2:
                 answered.set()
-            return super().write(text)
 
         def paint(self, rows: tuple[str, ...]) -> None:
             frames.append('\n'.join(Text.from_ansi(row).plain for row in rows))

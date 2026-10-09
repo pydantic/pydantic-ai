@@ -167,6 +167,9 @@ CASES = [
         },
         effective=snapshot(
             {
+                'anthropic_cache': '5m',
+                'anthropic_cache_instructions': '5m',
+                'anthropic_cache_tool_definitions': '5m',
                 'anthropic_effort': 'high',
                 'anthropic_thinking': {'type': 'adaptive', 'display': 'updates'},
                 'extra_headers': {'anthropic-beta': 'thinking-display-updates-2026-08-18'},
@@ -340,13 +343,26 @@ async def test_outermost_capability_settings_beat_defaults(tmp_path: Path, stock
 async def test_capability_model_beats_default_model(tmp_path: Path) -> None:
     """A capability's model replaces CLAI's default and resolves through CLAI; the GPT defaults do not follow it.
 
+    The capability's Claude model gets its own family defaults, the prompt-caching TTLs, instead.
+
     `resolved_model()`, which `/compact` and session naming run on, still names the selected model,
     as `PLUGINS.md` documents.
     """
     recorder, session = await run_turn(
         tmp_path, settings=Settings(), plugins=(Published(model='anthropic:claude-sonnet-4-6'),)
     )
-    assert recorder.calls == snapshot([('anthropic:claude-sonnet-4-6', {})])
+    assert recorder.calls == snapshot(
+        [
+            (
+                'anthropic:claude-sonnet-4-6',
+                {
+                    'anthropic_cache': '5m',
+                    'anthropic_cache_instructions': '5m',
+                    'anthropic_cache_tool_definitions': '5m',
+                },
+            )
+        ]
+    )
     selected = await session.resolved_model()
     assert isinstance(selected, Model) and selected.model_name == 'openai-codex:gpt-6-astra'
 
@@ -367,7 +383,9 @@ async def test_saved_settings_stay_with_their_model(tmp_path: Path, stock: bool)
         agent=None if stock else Agent(recorder.resolve(name), deps_type=type(None), capabilities=[published]),
         recorder=recorder,
     )
-    assert recorder.calls == [(other, {})]
+    # Only the Claude model's own caching defaults; nothing saved for the GPT model.
+    cache = {'anthropic_cache': '5m', 'anthropic_cache_instructions': '5m', 'anthropic_cache_tool_definitions': '5m'}
+    assert recorder.calls == [(other, cache)]
 
 
 async def test_agent_capability_settings_beat_family_defaults(tmp_path: Path) -> None:

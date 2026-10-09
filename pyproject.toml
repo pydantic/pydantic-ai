@@ -31,7 +31,6 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -45,7 +44,7 @@ classifiers = [
     "Framework :: Pydantic",
     "Framework :: Pydantic :: 2",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
@@ -208,16 +207,16 @@ genai-prices = false
 pydantic-ai-harness = false
 logfire = false
 logfire-api = false
-# Admit termflow-md 0.11.0 for CLAI2's swappable agent-history primitives; later releases stay quarantined.
-# TODO: Remove after 2026-10-07 15:58 UTC.
-termflow-md = "2026-09-30T15:58:29Z"
+# Admit termflow-md 1.0.0 for CLAI2's live panel (`termflow.live`); later releases stay quarantined.
+# TODO: Remove after 2026-10-09 15:06 UTC.
+termflow-md = "2026-10-02T15:05:25Z"
 # Anthropic 1.9.0 is the first release listing `claude-sonnet-5-5` and the `between_tools` thinking type.
 # TODO(dsfaccini): Remove after 2026-10-05 18:04 UTC. https://github.com/pydantic/pydantic-ai/issues/8972
 # This admits only the reviewed 1.9.0 artifacts; later Anthropic artifacts remain quarantined.
 anthropic = "2026-09-28T18:04:04Z"
-# OpenAI 3.19.0 is the first release listing `gpt-rosalind-research`, and the `openai` floor.
-# TODO(adtyavrdhn): Remove after 2026-09-30 00:09 UTC.
-openai = "2026-09-23T00:08:49Z"
+# OpenAI 3.26.0 is the first release with `client.decisions`, and the `openai` floor.
+# TODO(dsfaccini): Remove after 2026-10-13 21:32 UTC.
+openai = "2026-10-06T21:31:20Z"
 # google-genai 2.25.0 is the `google-genai` floor: it sends Gemini blob fields as `mime_type`/`file_uri`.
 # TODO(adtyavrdhn): Remove after 2026-09-29 17:24 UTC.
 google-genai = "2026-09-22T17:23:02Z"
@@ -304,7 +303,7 @@ exclude = ["/tests"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 include = [
     "pydantic_ai_slim/**/*.py",
     "pydantic_evals/**/*.py",
@@ -379,7 +378,6 @@ convention = "google"
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
-"typing.assert_never".msg = "Use typing_extensions.assert_never instead."
 "asyncio.Lock".msg = "Use anyio.Lock instead."
 
 [tool.ruff.format]
@@ -410,7 +408,7 @@ quote-style = "single"
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]
 
 [tool.pyright]
-pythonVersion = "3.10"
+pythonVersion = "3.11"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false

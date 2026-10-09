@@ -6,14 +6,14 @@ import warnings
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, Required, cast
 from urllib.parse import urlencode, urlparse, urlunparse
 
 from anyio.to_thread import run_sync
 from openai import AsyncOpenAI
 from openai.types.realtime.realtime_audio_config_output import VoiceID
 from pydantic import BaseModel
-from typing_extensions import Required, TypedDict
+from typing_extensions import TypedDict
 
 from ..exceptions import UserError
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, openai_model_profile
@@ -587,6 +587,13 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             provider_name=self.system,
             model_name=self.model_name,
             sdp_offer=sdp_offer,
+        )
+
+    def _check_hang_up(self, session: RealtimeProviderSession) -> None:
+        # Azure OpenAI's calls can't be ended from the server yet: the call ends when the browser hangs up.
+        raise UserError(
+            'Hanging up an Azure OpenAI WebRTC call from the server is not supported yet, so `hang_up()` is '
+            'unavailable. The call ends when the browser hangs up.'
         )
 
     async def create_client_secret(
