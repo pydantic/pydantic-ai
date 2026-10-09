@@ -56,10 +56,11 @@ def copy_package(tmp_path: Path) -> None:
     shutil.copytree(PACKAGE, tmp_path / 'pydantic_clai2', ignore=shutil.ignore_patterns('__pycache__'))
 
 
-def run_script(tmp_path: Path, script: str, mode: str) -> None:
+def run_import_script_in_subprocess(tmp_path: Path, mode: str) -> None:
+    """`reload_import_script.py` in a fresh interpreter: it imports little, so startup stays cheap."""
     copy_package(tmp_path)
     result = subprocess.run(
-        [sys.executable, str(Path(__file__).with_name(script)), str(tmp_path), mode],
+        [sys.executable, str(Path(__file__).with_name('reload_import_script.py')), str(tmp_path), mode],
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -115,4 +116,4 @@ def run_script(tmp_path: Path, script: str, mode: str) -> None:
     ],
 )
 def test_reload_changed_import_graph(tmp_path: Path, mode: str) -> None:
-    run_script(tmp_path, 'reload_import_script.py', mode)
+    run_import_script_in_subprocess(tmp_path, mode)
