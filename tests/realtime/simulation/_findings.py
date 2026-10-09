@@ -19,7 +19,7 @@ they stay, and have no pinned scenario to retire.
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -421,16 +421,24 @@ CUT_OFF_TURN_COMPLETE = Finding(
 )
 
 
-def _continued_after_calling(sim: Simulation) -> bool:
-    """A response went on after its first tool call: it said more, or called another tool in a later message."""
+def _continued_after_calling(sim: Simulation, responses: Iterable[TruthResponse] | None = None) -> bool:
+    """A response went on after its first tool call: it said more, or called another tool in a later message.
+
+    Any response, unless `responses` narrows it to the ones a violation names.
+    """
     truth = sim.truth
     return any(
         any(truth.word_seq[word] > first for word in response.words)
         or any(truth.tool_calls[call_id].seq > first for call_id in response.tool_calls)
-        for response in truth.responses.values()
+        for response in (truth.responses.values() if responses is None else responses)
         if response.tool_calls
         for first in [truth.tool_calls[response.tool_calls[0]].seq]
     )
+
+
+def _reply_continued_across_a_round(sim: Simulation, violation: InvariantViolation) -> bool:
+    """A response the violation names continued after its first tool call."""
+    return _continued_after_calling(sim, _context_responses(sim, violation) or [])
 
 
 def _spoke_after_calling(sim: Simulation, violation: InvariantViolation) -> bool:
@@ -652,13 +660,14 @@ LIVE_REPLY_SPLIT_BY_TOOL_ROUND = Finding(
     id='SIM-18',
     title=(
         'on GPT-Live, a spoken reply that goes on across a delegated tool round is recorded in two pieces around '
-        "the tool's return (the GPT-Live counterpart of #8760)"
+        "the tool's return (the GPT-Live counterpart of #8760); when the model has started another reply by then, "
+        "the delegation's later tool call is recorded in that reply instead, with the words around it"
     ),
     tracked_by='per-response-id state, so a response the session already recorded can be continued; found by this simulator',
     evidence='recorded',
-    codes=frozenset({'response.duplicated'}),
+    codes=frozenset({'response.duplicated', 'response.mixed', 'response.truncated'}),
     providers=frozenset({'gpt-live'}),
-    matches=lambda sim, violation: _continued_after_calling(sim),
+    matches=_reply_continued_across_a_round,
 )
 
 EXTENDED_THINKING_PARALLEL_CALLS = Finding(
@@ -673,37 +682,6 @@ EXTENDED_THINKING_PARALLEL_CALLS = Finding(
     codes=frozenset({'wait.hang'}),
     providers=GEMINI,
     matches=lambda sim, violation: _gemini_behavior(sim, 'stalls_in_progress') and _parallel_calls(sim, violation),
-)
-
-
-def _refusal_around_a_reconnect(sim: Simulation) -> bool:
-    """A refusal the next connection loss followed with no response started in between: nothing released its request."""
-    truth = sim.truth
-
-    def unreleased(refused: int) -> bool:
-        loss = next((loss for loss in truth.connection_losses if loss > refused), None)
-        return loss is not None and not any(
-            refused < response.seq_start < loss for response in truth.responses.values()
-        )
-
-    return any(input_.refused_at is not None and unreleased(input_.refused_at) for input_ in truth.inputs)
-
-
-LOST_REFUSAL = Finding(
-    id='SIM-21',
-    title=(
-        'a request for a response the provider refuses around a reconnect (the refusal lost with the connection, or '
-        'read just before it drops) leaves a reservation neither re-asked nor released, so `wait_for_reply()` hangs: '
-        'xAI resumes the conversation, so the connection still expects the reply there'
-    ),
-    tracked_by=(
-        'a reconnect resolving the reply obligations its connection lost, also where the provider resumes the '
-        'conversation (fixed by the session core elsewhere); found by this simulator'
-    ),
-    evidence='simulated',
-    codes=frozenset({'wait.hang'}),
-    providers=frozenset({'xai'}),
-    matches=lambda sim, violation: _refusal_around_a_reconnect(sim),
 )
 
 
@@ -979,7 +957,6 @@ KNOWN_FINDINGS.extend(
         PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL,
         HAND_COMMIT_UNANSWERED_AT_THE_END,
         DEFERRED_REQUEST_DROPPED_AFTER_SPEECH,
-        LOST_REFUSAL,
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
         PARKED_ERROR_LEAVES_REQUEST_OWED,
         EXTENDED_THINKING_PARALLEL_CALLS,
