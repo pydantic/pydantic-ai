@@ -147,6 +147,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='grain', factory='pydantic_clai2.builtin_plugins.grain', enabled=False),
     PluginSettings(id='linear', factory='pydantic_clai2.builtin_plugins.linear', enabled=False),
     PluginSettings(id='herdr', factory='pydantic_clai2.builtin_plugins.herdr', enabled=False),
+    PluginSettings(id='computer_use', factory='pydantic_clai2.builtin_plugins.computer_use', enabled=False),
 )
 """Built-in declarations, each integrated with the shell. `remove` restores their defaults.
 

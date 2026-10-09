@@ -16,6 +16,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `SpritesSandbox()`; tool capabilities stay the same |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
+| Work only a GUI can do: click, type, and scroll on a screen and check screenshots | `ComputerUse()` (no workspace needed) |
 
 Workspace capabilities (`LocalWorkspace` and the sandboxes) register **no tools**. `allowed_commands`,
 `root_dir`, and patterns are guardrails against accidents, not isolation.
@@ -400,6 +401,55 @@ and `localstack_health`.
 `LOCALSTACK_AUTH_TOKEN` (forwarded automatically); concurrent managed runs need distinct ports. The AWS
 CLI can read and write host files (`file://`, `s3 cp`).
 
+## ComputerUse
+
+One tool, `computer`, runs a batch of actions (`click`, `move`, `drag`, `scroll`, `type`, `keypress`,
+`wait`, `screenshot`) in order and returns a screenshot of the result, so any vision model can drive a
+screen. It does not use the workspace: it drives the `Computer` it is given, by default `LocalComputer()`,
+the display of the machine running Python.
+
+```bash
+uv add "pydantic-ai-harness[computer-use]"
+```
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import HandleDeferredToolCalls
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, RunContext
+
+from pydantic_ai_harness.computer_use import ComputerUse, LocalComputer
+
+
+async def confirm(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    return requests.build_results(approve_all=True)  # replace with a real prompt
+
+
+agent = Agent(
+    'anthropic:claude-opus-5-5',
+    capabilities=[
+        ComputerUse(computer=LocalComputer(max_width=1280, max_height=800), require_approval=True),
+        HandleDeferredToolCalls(handler=confirm),
+    ],
+)
+```
+
+Fields: `computer=None` (`LocalComputer()`), `require_approval=False` (raise `ApprovalRequired` for any
+call that does more than `screenshot`/`wait`), `environment=None` (how the instructions describe the
+machine), `settle_seconds=0.5`, `keep_screenshots=3` (each request carries only the newest N
+screenshots; history keeps all). `LocalComputer` fields: `monitor=1`, `max_width=1280`,
+`max_height=800`; screenshots are scaled to fit and coordinates mapped back.
+
+Gotchas:
+
+- `require_approval=True` needs `HandleDeferredToolCalls` or `DeferredToolRequests` in the output types,
+  or the run fails on the first acting call.
+- macOS: the app running Python needs Screen Recording and Accessibility; `LocalComputer` raises
+  `UserError` with the steps. Linux needs X11 (no Wayland).
+- It drives the real pointer and keyboard. For unattended work, run it in a VM, or implement the
+  `Computer` protocol (async `screenshot`, `click`, `move`, `drag`, `scroll`, `type_text`,
+  `press_keys`) for a remote desktop. Raise `ComputerError` for failures the model can fix.
+- The tool name is fixed: one `ComputerUse` per agent, and do not rename it with `PrefixTools`.
+
 ## CLAI 2
 
 `pydantic-clai2` is a separate terminal client (`clai2`) whose default agent is
@@ -426,5 +476,6 @@ task's approval fails the run.
 - https://pydantic.dev/docs/ai/harness/repo-context/
 - https://pydantic.dev/docs/ai/harness/macroscope/
 - https://pydantic.dev/docs/ai/harness/localstack/
+- https://pydantic.dev/docs/ai/harness/computer-use/
 - https://pydantic.dev/docs/ai/harness/clai2/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/

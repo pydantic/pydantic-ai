@@ -256,6 +256,56 @@ belongs to the separate [`github` plugin](#github-tools-from-githubs-hosted-mcp-
 Core owns inference and its telemetry; CLAI adds no login-specific spans.
 Bare `/login` asks which sign-in to run.
 
+## Computer use
+
+The built-in `computer_use` plugin (`pydantic_clai2.builtin_plugins.computer_use`)
+starts disabled: it controls your real screen, mouse, and keyboard, and needs
+the `computer-use` extra. Install CLAI with it, then enable the plugin:
+
+```sh
+uv tool install 'pydantic-clai2[computer-use]'
+```
+
+```text
+/plugins enable computer_use
+```
+
+Without the extra, enabling fails with that install command. The plugin adds
+Harness [`ComputerUse`](https://pydantic.dev/docs/ai/harness/computer-use/): one
+`computer` tool that runs a batch of clicks, typing, scrolling, and key presses
+and returns a screenshot of the result.
+
+With `require_approval` (the default) every call that does more than take a
+screenshot or wait asks first, in the same inline picker as `ask_user`:
+**Allow**, **Allow for this session** (until CLAI restarts or the plugin
+reloads), or **Deny**. Typing your own answer denies the call and passes your
+text to the model. A request too long for one line is printed in full above
+the picker, one numbered action per line, so nothing you approve is cut short.
+Only `computer` approvals are answered here; other tools' approvals are left
+unresolved. Headless runs (`-p`) cannot lend the terminal, so computer actions
+are denied there without asking. Each call leaves one transcript line listing the actions that
+ran and the error, if one failed. The plugin emits no telemetry of its own;
+core's tool spans cover each call.
+
+On macOS, allow the terminal app running CLAI under System Settings > Privacy &
+Security > Screen Recording and Accessibility, then restart it; without them
+the first computer call fails with those steps. Linux needs an X11 session;
+Wayland is not supported. Actions land on the focused window, so leave the
+mouse alone while the model works.
+
+Screenshots are conversation content. The `observability` plugin exports
+binary images by default, and saved sessions store every screenshot, so check
+both before showing the model anything sensitive.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `require_approval` | `true` | Ask before every call that clicks, types, scrolls, or moves the pointer |
+| `monitor` | `1` | The display to drive; `1` is the primary display |
+
+```text
+/plugins add computer_use pydantic_clai2.builtin_plugins.computer_use '{"monitor": 2}'
+```
+
 ## Herdr integration
 
 The built-in `herdr` plugin (`pydantic_clai2.builtin_plugins.herdr`) starts disabled.
@@ -836,6 +886,7 @@ settings using the former import paths are redirected to the new modules.
 | `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_clai2.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `slack` (off until enabled) | `pydantic_clai2.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
+| `computer_use` (off until enabled) | `pydantic_clai2.builtin_plugins.computer_use` | `{}` | Harness `ComputerUse` on this machine's display, asking before each action; see [Computer use](#computer-use) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
 are built in too, but start disabled because they need your Day AI or Grain
