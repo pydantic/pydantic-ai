@@ -734,36 +734,37 @@ class OpenAILiveConnection(RealtimeConnection):
         self._inputs_sent += 1
         self._lifecycle.input_sent(input_index, content)
         try:
-            if isinstance(content, ToolResult):
-                if not await self._send_tool_result(content):
-                    # Its backend gave up on the call: nothing will reply to the result.
-                    self._lifecycle.input_unanswerable(input_index)
-            else:
-                await self._send_input(content)
+            delivered = await self._send_input(content)
         except BaseException:
             self._lifecycle.input_failed(input_index)
             raise
+        if not delivered:
+            # A tool result whose backend gave up on the call: nothing will reply to it.
+            self._lifecycle.input_unanswerable(input_index)
 
-    async def _send_input(self, content: RealtimeInput) -> None:
+    async def _send_input(self, content: RealtimeInput) -> bool:
+        """Send one input; `False` if it goes nowhere."""
         if isinstance(content, str):
             # A soliciting text turn. Live has no user-message event, so this goes in as speakable
             # context: the model relays or answers it rather than hearing it as the user's own words.
             await _check_context_length(content)
             await self._send_event({'type': 'session.commentary.append', 'delegation_id': None, 'content': content})
-            return
+            return True
         if isinstance(content, TextContext):
             # Context that `thinking` carries without prompting speech itself. The model may still
             # choose to mention it.
             await _check_context_length(content.text)
             await self._send_event({'type': 'session.thinking.append', 'delegation_id': None, 'content': content.text})
-            return
+            return True
+        if isinstance(content, ToolResult):
+            return await self._send_tool_result(content)
         if isinstance(content, CreateResponse):
             # Reaches the connection only right after an image: the profile's
             # `image_input_requires_response` is what lets the session send one, and `create_response()`
             # itself still needs manual turn control. Running the backend on the queued image is the
             # response: Live opens a delegation for it and speaks the result.
             await self._send_event({'type': 'response.create'})
-            return
+            return True
         if isinstance(content, (CommitAudio, ClearAudio, CancelResponse, TruncateOutput)):
             raise UserError(
                 'OpenAI GPT-Live drives turn-taking itself: manual turn control, cancellation, and '
@@ -781,7 +782,7 @@ class OpenAILiveConnection(RealtimeConnection):
                     },
                 }
             )
-            return
+            return True
         async with self._audio_send_lock:
             self._input_audio_sends += 1
             booked = self._input_audio_end, self._audio_end
@@ -794,6 +795,7 @@ class OpenAILiveConnection(RealtimeConnection):
                 # Audio that never went out doesn't hold the idle frames back.
                 self._input_audio_end, self._audio_end = booked
                 raise
+        return True
 
     def _start_idle_audio(self) -> None:
         """Stream silence whenever the application sends no audio, until the connection closes.
