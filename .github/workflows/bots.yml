@@ -395,7 +395,7 @@ jobs:
 
             Note that while another agent (Devin) is responsible for thoroughly reviewing the implementation for bugs, security issues, and edge cases,
             _you_ are responsible for catching every violation of the repository's standards and guidelines listed in the `AGENTS.md` and `agent_docs/*.md` files.
-            Do not focus exclusively on high-level concerns: by the time the author has addressed every comment you've left over multiple rounds of review, the PR should be ready to merge.
+            Do not focus exclusively on high-level concerns: by the time the author has addressed every blocking comment you've left over multiple rounds of review, the PR should be ready to merge.
 
             # Gathering context
 
@@ -450,9 +450,10 @@ jobs:
 
             # Final verdict
 
-            Complete the review before submitting a verdict. Treat findings that must be fixed before merge as blocking; record each actionable finding inline. Non-blocking suggestions do not prevent approval.
-            - Submit `REQUEST_CHANGES` when the review has one or more blocking findings, including a concrete blocker that prevents a complete review.
-            - Submit `APPROVE` when the review is complete and has no blocking findings, even when it has non-blocking suggestions.
+            Complete the review before submitting a verdict. Classify each finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking. Do not prefix comments about repository-rule violations with `Optional:`. Record each actionable finding inline.
+            Include unaddressed blocking findings from earlier rounds when choosing the verdict. Verify those findings against the current diff.
+            - Submit `REQUEST_CHANGES` when any blocking finding remains outstanding, including a concrete scope blocker that prevents a complete review.
+            - Submit `APPROVE` when the review is complete and no blocking findings remain outstanding, even when optional findings remain.
             - Submit no verdict when the review is incomplete for another reason or the reviewed head has changed.
 
             Immediately before submitting the verdict, repeat the `gh pr view` head check above. If the head changed, stop without a verdict. Otherwise submit one formal review through the already-allowed endpoint, with `commit_id` set to the reviewed head `${{ github.event.pull_request.head.sha }}`. For approval, run `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews --method POST -f event=APPROVE -f commit_id=${{ github.event.pull_request.head.sha }} -f body='No blocking findings.'`. For requested changes, use the same endpoint and `commit_id`, set `event=REQUEST_CHANGES`, and use the concise body `Blocking findings are recorded inline.` Inline comments carry finding details.

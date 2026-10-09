@@ -15,16 +15,22 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, T
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness._durable import RetryRequest
 from pydantic_ai_harness.memory._store import FileStore, InMemoryStore, MemoryFile, MemoryStore, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
     DEFAULT_AGENT_NAME,
     DEFAULT_MEMORY_ID,
     MAIN_FILENAME,
+    MemoryDeleteResult,
+    MemorySearchResponse,
+    MemoryToolOperations,
     MemoryToolset,
+    MemoryWriteResult,
     injection_listing_limit,
     list_subfiles,
     memory_toolset_id,
     render_memory_prompt,
+    run_as_operation,
 )
 
 _DEFAULT_GUIDANCE = (
@@ -172,9 +178,40 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Provide the memory toolset, identified by this instance's `agent_name` scope and shared with per-run copies."""
+        return self._memory_toolset
+
+    @property
+    def _memory_toolset(self) -> MemoryToolset[AgentDepsT]:
         if self._toolset is None:
-            self._toolset = MemoryToolset(self)
+            operations = MemoryToolOperations[AgentDepsT](
+                write_memory=self._write_memory,
+                read_memory=self._read_memory,
+                delete_memory=self._delete_memory,
+                search_memory=self._search_memory,
+            )
+            self._toolset = MemoryToolset(self, operations=operations)
         return self._toolset
+
+    # Each memory tool call is a durable operation, so durable execution records its result instead of
+    # repeating it on recovery. DBOS runs function tools in workflow code, where a forked workflow's new
+    # run id would otherwise give a repeated write a new idempotency key.
+    @durable_operation('write_memory')
+    async def _write_memory(
+        self, ctx: RunContext[AgentDepsT], content: str, file: str, old_text: str | None
+    ) -> MemoryWriteResult | RetryRequest:
+        return await run_as_operation(self._memory_toolset.write_memory(ctx, content, file, old_text))
+
+    @durable_operation('read_memory')
+    async def _read_memory(self, ctx: RunContext[AgentDepsT], file: str) -> str | RetryRequest:
+        return await run_as_operation(self._memory_toolset.read_memory(ctx, file))
+
+    @durable_operation('delete_memory')
+    async def _delete_memory(self, ctx: RunContext[AgentDepsT], file: str) -> MemoryDeleteResult | RetryRequest:
+        return await run_as_operation(self._memory_toolset.delete_memory(ctx, file))
+
+    @durable_operation('search_memory')
+    async def _search_memory(self, ctx: RunContext[AgentDepsT], query: str) -> MemorySearchResponse | RetryRequest:
+        return await run_as_operation(self._memory_toolset.search_memory(ctx, query))
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Provide trusted static guidance about using memory.
