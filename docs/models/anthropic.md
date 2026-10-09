@@ -255,22 +255,22 @@ The Anthropic-specific way to use automatic caching is [`AnthropicModelSettings.
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
+handbook = '...'  # a long document, above the model's minimum cacheable length
+
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
-    instructions='You are a helpful assistant.',
+    'anthropic:claude-opus-5-5',
+    instructions=f'Answer questions about this employee handbook:\n\n{handbook}',
     model_settings=AnthropicModelSettings(
         anthropic_cache=True,
     ),
 )
 
-result1 = agent.run_sync('What is the capital of France?')
+result1 = agent.run_sync('How many vacation days do new employees get?')
 
-result2 = agent.run_sync(
-    'What is the capital of Germany?', message_history=result1.all_messages()
-)
-print(f'Cache write: {result1.usage.cache_write_tokens}')
-print(f'Cache read: {result2.usage.cache_read_tokens}')
-print(f'Cache hit ratio: {result2.usage.cache_hit_ratio}')
+result2 = agent.run_sync('And after five years?', message_history=result1.all_messages())
+print(f'Cache write: {result1.response.usage.cache_write_tokens}')
+print(f'Cache read: {result2.response.usage.cache_read_tokens}')
+print(f'Cache hit ratio: {result2.response.usage.cache_hit_ratio}')
 ```
 
 This is ideal for multi-turn conversations where the cache breakpoint should move forward as the conversation grows. You can also specify a custom TTL with `anthropic_cache='1h'`.

@@ -179,21 +179,24 @@ Use `bedrock_cache_messages` to automatically cache the last user message:
 from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockModelSettings
 
+handbook = '...'  # a long document, above the model's minimum cacheable length
+
 agent = Agent(
     'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-    instructions='You are a helpful assistant.',
     model_settings=BedrockModelSettings(
         bedrock_cache_messages=True,  # Automatically caches the last message
     ),
 )
 
-# The last message is automatically cached - no need for manual CachePoint
-result1 = agent.run_sync('What is the capital of France?')
+# The last message, including the handbook, is cached - no need for a manual CachePoint
+result1 = agent.run_sync(
+    f'Here is our employee handbook:\n\n{handbook}\n\nHow many vacation days do new employees get?'
+)
 
-# Subsequent calls with similar conversation benefit from cache
-result2 = agent.run_sync('What is the capital of Germany?')
-print(f'Cache write: {result1.usage.cache_write_tokens}')
-print(f'Cache read: {result2.usage.cache_read_tokens}')
+# The follow-up continues the conversation, so it starts with the cached prefix
+result2 = agent.run_sync('And after five years?', message_history=result1.all_messages())
+print(f'Cache write: {result1.response.usage.cache_write_tokens}')
+print(f'Cache read: {result2.response.usage.cache_read_tokens}')
 ```
 
 #### Example 2: Comprehensive Caching Strategy
@@ -282,7 +285,7 @@ Cache points can be placed in three locations:
 2. **Tool Definitions**: Via `bedrock_cache_tool_definitions` setting (adds cache point to last tool definition)
 3. **Messages**: Via `CachePoint` markers or `bedrock_cache_messages` setting (adds cache points to message content)
 
-Each setting uses **at most 1 cache point**, but you can combine them.
+Each setting uses **at most 1 cache point**, but you can combine them. The exception is `bedrock_cache_messages`: after a turn that adds more than about 20 content blocks, it also marks the end of the previous request, since Bedrock only looks back about 20 blocks for the previous request's cache entry.
 
 ##### Automatic Cache Point Limiting
 
