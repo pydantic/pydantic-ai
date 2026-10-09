@@ -5,8 +5,11 @@ from collections.abc import Awaitable, Callable, Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Generic, Literal
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any, Generic, Literal, cast
 
+import pydantic
+import pydantic_core
 from pydantic import ValidationError
 
 from . import _usage_attribution, messages as _messages
@@ -30,7 +33,15 @@ from .exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from .messages import RetryPromptPart, ToolCallPart, ToolReturn, parse_tool_kind
+from .messages import (
+    _TYPED_TOOL_PARTS,  # pyright: ignore[reportPrivateUsage]
+    BaseToolCallPart,
+    RetryPromptPart,
+    ToolCallPart,
+    ToolReturn,
+    TypedArgs,
+    parse_tool_kind,
+)
 from .tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import RunUsage
@@ -57,19 +68,75 @@ ToolValidationHandler = Callable[[bool], Awaitable[None]]
 
 
 def _check_tool_kinds(tools: Mapping[str, ToolsetTool[Any]]) -> None:
-    """Refuse a tool whose `tool_kind` no typed tool part has registered, so kinds are declared up front.
+    """Refuse a tool whose `tool_kind` isn't registered, or whose parameters don't fit its kind's arguments.
 
     Checked when a run collects its tools rather than on `ToolDefinition` itself, so a definition
     stored by durable execution still loads after the module registering its kind is gone.
     """
     for tool in tools.values():
-        kind = tool.tool_def.tool_kind
-        if kind is not None and parse_tool_kind(kind) is None:
+        tool_def = tool.tool_def
+        kind = tool_def.tool_kind
+        if kind is None:
+            continue
+        if parse_tool_kind(kind) is None:
             raise UserError(
-                f'Tool {tool.tool_def.name!r} declares `tool_kind={kind!r}`, which no typed tool part has registered. '
+                f'Tool {tool_def.name!r} declares `tool_kind={kind!r}`, which no typed tool part has registered. '
                 'Define a typed `ToolCallPart` / `ToolReturnPart` subclass with this kind, and import its module '
                 'before running the agent.'
             )
+        typed = _TYPED_TOOL_PARTS.get(('tool-call', kind))
+        if typed is None:
+            continue
+        part_cls = cast('type[BaseToolCallPart]', typed.cls)
+        typed_args = part_cls.typed_args
+        if typed_args is BaseToolCallPart.typed_args:
+            # The call part doesn't declare an arguments shape, so there is nothing to check.
+            continue
+        problems = _args_schema_mismatch(typed_args, pydantic_core.to_json(tool_def.parameters_json_schema))
+        if problems:
+            raise UserError(
+                f"Tool {tool_def.name!r} declares `tool_kind={kind!r}`, but its parameters don't fit the arguments "
+                f'`{part_cls.__qualname__}` declares ({typed_args.args_type.__qualname__}): {"; ".join(problems)}.'
+            )
+
+
+@lru_cache(maxsize=256)
+def _args_schema_mismatch(typed_args: TypedArgs[Any], parameters_json_schema: bytes) -> tuple[str, ...]:
+    """How a tool's parameters JSON schema fails to fit the arguments its kind's call part declares.
+
+    Deliberately not full JSON Schema subsumption: every field the declared arguments require must be a
+    required parameter of the tool, and where both give a field a JSON `type`, the types must overlap.
+    Cached per arguments shape and serialized schema, as tools are collected on every step.
+    """
+    declared = pydantic.TypeAdapter(typed_args.args_type).json_schema()
+    schema = pydantic_core.from_json(parameters_json_schema)
+    properties: dict[str, Any] = schema.get('properties') or {}
+    required: list[str] = schema.get('required') or []
+    problems: list[str] = []
+    for name in declared.get('required', []):
+        if name not in properties:
+            problems.append(f'it has no {name!r} parameter')
+        elif name not in required:
+            problems.append(f'its {name!r} parameter is not required')
+    for name, declared_property in declared.get('properties', {}).items():
+        if name in properties:
+            expected, actual = _json_types(declared_property), _json_types(properties[name])
+            if expected and actual and expected.isdisjoint(actual):
+                problems.append(
+                    f'its {name!r} parameter is of type {"/".join(sorted(actual))}, not {"/".join(sorted(expected))}'
+                )
+    return tuple(problems)
+
+
+def _json_types(property_schema: dict[str, Any]) -> set[str]:
+    """The JSON types a property schema names at its top level or in a top-level `anyOf`; empty if unknown."""
+    types: set[str] = set()
+    for option in [property_schema, *property_schema.get('anyOf', [])]:
+        type_ = option.get('type')
+        types.update([type_] if isinstance(type_, str) else type_ or [])
+    if 'number' in types:
+        types.add('integer')
+    return types
 
 
 @dataclass

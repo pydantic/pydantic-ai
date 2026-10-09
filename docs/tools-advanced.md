@@ -1051,45 +1051,51 @@ Change a single tool definition, and the whole prefix is re-created instead — 
 
 ## Typed Tool Parts {#typed-tool-parts}
 
-A tool's name is chosen by whoever wrote or configured it, and can be renamed or prefixed (for example by [`PrefixTools`][pydantic_ai.capabilities.PrefixTools]), so code that needs to recognize a particular tool should not compare names. Instead, a tool can declare what it is with [`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind]. Its call and return parts carry the same `tool_kind` and are promoted to typed subclasses of [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]. A hook or history processor can then match the tool with `isinstance`, whatever it is called. Core's tool search and deferred-capability tools work this way: [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] and [`LoadCapabilityReturnPart`][pydantic_ai.messages.LoadCapabilityReturnPart] are examples.
+A tool's name is chosen by whoever wrote or configured it, and can be renamed or prefixed (for example by [`PrefixTools`][pydantic_ai.capabilities.PrefixTools]), so code that needs to recognize a particular tool should not compare names. Instead, a tool can declare what it is with a _tool kind_. Its call and return parts carry the same [`tool_kind`][pydantic_ai.messages.BaseToolCallPart.tool_kind] and are promoted to typed subclasses of [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]. A hook or history processor can then match the tool with `isinstance`, whatever it is called. Core's tool search and deferred-capability tools work this way: [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] and [`LoadCapabilityReturnPart`][pydantic_ai.messages.LoadCapabilityReturnPart] are examples.
 
-A kind is registered by defining its typed subclass, passing `namespace` and `tool_kind` as class arguments, the way [capability events](capabilities/overview.md#capability-events) are defined. The kind is `'{namespace}.{tool_kind}'`: the namespace keeps kinds from different packages apart, which matters because the kind is stored in every message history. The subclass narrows `args` (or `content`, for a return part) to the shape it promises:
+A kind is registered by defining its typed subclass, passing `namespace` and `tool_kind` as class arguments, the way [capability events](capabilities/overview.md#capability-events) are defined. The kind is `'{namespace}.{tool_kind}'`: the namespace keeps kinds from different packages apart, which matters because the kind is stored in every message history. The class needs no `@dataclass` decorator, and `LookupCallPart.tool_kind` is the kind it registered.
+
+The subclass declares the shape of its arguments in one place, by assigning [`TypedArgs`][pydantic_ai.messages.TypedArgs] to `typed_args` (and a return part the shape of its content, with [`TypedContent`][pydantic_ai.messages.TypedContent] assigned to `typed_content`). A tool then declares its kind by passing the part class as `tool_kind`, here to [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain]:
 
 ```python {title="typed_tool_part.py"}
-from dataclasses import KW_ONLY, dataclass
-
 from typing_extensions import TypedDict
 
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, ToolCallPart
+from pydantic_ai import Agent, TypedArgs
+from pydantic_ai.messages import ToolCallPart
 
 
 class LookupArgs(TypedDict):
     sku: str
 
 
-@dataclass(repr=False)
 class LookupCallPart(ToolCallPart, namespace='inventory', tool_kind='lookup'):
-    _: KW_ONLY
-
-    args: str | LookupArgs | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
+    typed_args = TypedArgs(LookupArgs)
 
 
-response = ModelResponse(parts=[ToolCallPart('lookup_v2', {'sku': 'A-1'}, tool_kind='inventory.lookup')])
-part = response.parts[0]
-assert isinstance(part, LookupCallPart)
-print(part.args)
-#> {'sku': 'A-1'}
+agent = Agent('test')
 
-stored = ModelMessagesTypeAdapter.dump_json([response])
-print(type(ModelMessagesTypeAdapter.validate_json(stored)[0].parts[0]).__name__)
-#> LookupCallPart
+
+@agent.tool_plain(tool_kind=LookupCallPart)
+def check_stock(sku: str) -> bool:
+    return sku.startswith('A')
+
+
+result = agent.run_sync('Is A-1 in stock?')
+call = result.all_messages()[1].parts[0]
+assert isinstance(call, LookupCallPart)
+print(call.tool_kind)
+#> inventory.lookup
+print(call.typed_args)
+#> {'sku': 'a'}
 ```
 
-When you build messages yourself, as in the example above, a part with a kind registered this way is promoted as soon as its `ModelResponse` or `ModelRequest` is built. Core's own kinds (`'tool-search'`, `'capability-load'`) are promoted when a history is loaded, but not when you build their parts by hand; use [`narrow_message_parts`][pydantic_ai.messages.narrow_message_parts] (or `ToolCallPart.narrow_type`) for those.
+`typed_args` returns the arguments validated against the declared shape, statically typed as it (a `LookupArgs` here), or `None` while they are still streaming in or if they don't validate. `args` itself keeps the base type, as it may still hold the raw JSON string. A part is only promoted when its arguments, once they are a dictionary, fit the shape; a return part only when its [`outcome`][pydantic_ai.messages.BaseToolReturnPart.outcome] is `'success'` and its content fits, as the content of any other return is an error rather than the typed result. A kind doesn't have to declare a shape: without `typed_args`, any arguments are promoted.
 
-A tool declares the kind by setting `tool_kind` on its [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], for example in its toolset's `get_tools` or a [`prepare`](#tool-prepare) function. A run whose tools include a kind no typed part has registered raises [`UserError`][pydantic_ai.exceptions.UserError], so kinds are declared up front; a stored `ToolDefinition` with such a kind (for example in durable execution history) still loads.
+Any part with a registered kind is promoted as soon as its [`ModelResponse`][pydantic_ai.messages.ModelResponse] or [`ModelRequest`][pydantic_ai.messages.ModelRequest] is built, whether by a model, by loading a stored history, or by hand, so `ModelResponse(parts=[ToolCallPart('lookup_v2', {'sku': 'A-1'}, tool_kind='inventory.lookup')]).parts[0]` is a `LookupCallPart` too. This applies to core's own kinds (`'tool-search'`, `'capability-load'`) as well.
 
-A typed subclass may only narrow `args` / `content` and add properties; adding a field of its own raises `UserError` when the class is defined. That restriction lets a part fall back to its base class without losing anything. A history recorded with a kind that the current process doesn't register (because the defining module isn't imported, or was removed) still loads: the part stays a plain `ToolCallPart` / `ToolReturnPart` that keeps its `tool_kind`, and becomes the typed part again wherever the kind is registered. A return part whose [`outcome`][pydantic_ai.messages.BaseToolReturnPart.outcome] isn't `'success'` also stays a base part, since its content is an error rather than the typed result.
+A tool declares its kind with the `tool_kind` argument of [`Tool`][pydantic_ai.tools.Tool] and the tool decorators, or by setting [`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind], for example in a toolset's `get_tools` or a [`prepare`](#tool-prepare) function. Either takes the part class or the kind string. When a run collects its tools, it raises [`UserError`][pydantic_ai.exceptions.UserError] for a kind no typed part has registered, so kinds are declared up front; a stored `ToolDefinition` with such a kind (for example in durable execution history) still loads. It also raises `UserError` when the tool's parameters don't fit the kind's `typed_args`: every field the shape requires must be a required parameter of the tool, and where both give a field a JSON type, the types must match. This is a sanity check rather than full JSON Schema comparison.
+
+A typed subclass may only declare the shape of its `args` / `content` and add properties; adding a field of its own raises `UserError` when the class is defined. That restriction lets a part fall back to its base class without losing anything. A history recorded with a kind that the current process doesn't register (because the defining module isn't imported, or was removed) still loads: the part stays a plain `ToolCallPart` / `ToolReturnPart` that keeps its `tool_kind`, and becomes the typed part again wherever the kind is registered.
 
 ## See Also
 

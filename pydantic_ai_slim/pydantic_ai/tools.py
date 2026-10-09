@@ -5,9 +5,9 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
-from typing import Annotated, Any, Concatenate, Generic, Literal, Self, TypeAlias, Union, cast
+from typing import Annotated, Any, Concatenate, Generic, Literal, Self, TypeAlias, Union, cast, overload
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, GetCoreSchemaHandler
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, TypeVar
@@ -26,7 +26,11 @@ from ._json_schema import UseEnumMemberDocstrings
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import UserError
 from .function_signature import FunctionSignature
-from .messages import ToolPartKind
+from .messages import (
+    BaseToolCallPart,
+    BaseToolReturnPart,
+    ToolPartKind,
+)
 from .native_tools import AbstractNativeTool
 
 __all__ = (
@@ -347,6 +351,7 @@ class Tool(Generic[ToolAgentDepsT]):
     sequential: bool
     requires_approval: bool
     metadata: dict[str, Any] | None
+    tool_kind: ToolPartKind | None
     timeout: float | None
     defer_loading: bool
     include_return_schema: bool | None
@@ -374,6 +379,7 @@ class Tool(Generic[ToolAgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolPartKind | type[BaseToolCallPart | BaseToolReturnPart] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -441,6 +447,9 @@ class Tool(Generic[ToolAgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            tool_kind: What the tool is, independent of its name: a kind registered by a typed tool part, or the typed tool part class itself.
+                Its call and return parts are then promoted to the typed parts.
+                See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
@@ -473,6 +482,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
+        self.tool_kind = _tool_kind_of(tool_kind)
         self.timeout = timeout
         self.defer_loading = defer_loading
         self.include_return_schema = include_return_schema
@@ -544,6 +554,7 @@ class Tool(Generic[ToolAgentDepsT]):
             strict=self.strict,
             sequential=self.sequential,
             metadata=self.metadata,
+            tool_kind=self.tool_kind,
             timeout=self.timeout,
             defer_loading=self.defer_loading,
             kind='unapproved' if self.requires_approval else 'function',
@@ -581,6 +592,48 @@ With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `ext
 
 ToolKind: TypeAlias = Literal['function', 'output', 'external', 'unapproved']
 """Kind of tool."""
+
+
+def _tool_kind_of(value: ToolPartKind | type[BaseToolCallPart | BaseToolReturnPart] | None) -> ToolPartKind | None:
+    """The kind a tool declares, given as the kind itself or as a typed tool part class that registers it."""
+    if not isinstance(value, type):
+        return value
+    kind: ToolPartKind | None = getattr(value, '_registered_tool_kind', None)
+    if kind is None:
+        raise UserError(
+            f'`{value.__qualname__}` registers no tool kind; pass a typed tool part class, '
+            "e.g. one defined as `class LookupCallPart(ToolCallPart, namespace='inventory', tool_kind='lookup')`."
+        )
+    return kind
+
+
+class _ToolKindField:
+    """The `ToolDefinition.tool_kind` field: set as a kind or a typed tool part class, read as the kind.
+
+    A data descriptor, so that the constructor (and `dataclasses.replace`) accepts the class while every
+    reader sees `ToolPartKind | None`. The value lives in the instance `__dict__` under the field's own
+    name, which is also where Pydantic puts it when it loads a stored definition.
+    """
+
+    def __set_name__(self, owner: type[Any], name: str) -> None:
+        self._name = name
+
+    @overload
+    def __get__(self, obj: None, owner: type[Any]) -> None: ...
+
+    @overload
+    def __get__(self, obj: object, owner: type[Any]) -> ToolPartKind | None: ...
+
+    def __get__(self, obj: object | None, owner: type[Any]) -> ToolPartKind | None:
+        # On the class, this is the field's default.
+        return None if obj is None else obj.__dict__.get(self._name)
+
+    def __set__(self, obj: object, value: ToolPartKind | type[BaseToolCallPart | BaseToolReturnPart] | None) -> None:
+        obj.__dict__[self._name] = _tool_kind_of(value)
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        return core_schema.nullable_schema(core_schema.str_schema())
 
 
 @dataclass(repr=False, kw_only=True)
@@ -698,8 +751,11 @@ class ToolDefinition:
     the wire; that's `defer_loading`'s question.
     """
 
-    tool_kind: ToolPartKind | None = None
+    tool_kind: _ToolKindField = _ToolKindField()
     """What this tool is, independent of its name (e.g. `'tool-search'`), for tools with typed parts.
+
+    Set it to the kind, or to a typed tool part class that registers it (`tool_kind=LookupCallPart`);
+    either way it reads back as the kind string.
 
     The tool's call and return parts carry it and are promoted to the typed subclasses
     registered for it (such as [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart]

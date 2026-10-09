@@ -7,16 +7,12 @@ history processors can recognize `run_code` with `isinstance` instead of matchin
 
 from __future__ import annotations
 
-from dataclasses import KW_ONLY, dataclass
 from typing import Annotated, NotRequired
 
-from pydantic import Field, TypeAdapter, ValidationError
+from pydantic import Field
 from typing_extensions import TypedDict
 
-from pydantic_ai.messages import ToolCallPart
-
-RUN_CODE_TOOL_KIND = 'code_mode.run_code'
-"""The [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] of `CodeMode`'s `run_code` tool."""
+from pydantic_ai.messages import ToolCallPart, TypedArgs
 
 
 class RunCodeArgs(TypedDict):
@@ -36,10 +32,6 @@ class RunCodeArgs(TypedDict):
     """Whether to reset the REPL state before running `code`."""
 
 
-_RUN_CODE_ARGS_TA = TypeAdapter(RunCodeArgs)
-
-
-@dataclass(repr=False)
 class RunCodeCallPart(ToolCallPart, namespace='code_mode', tool_kind='run_code'):
     """Typed [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] for `CodeMode`'s `run_code` tool.
 
@@ -48,20 +40,8 @@ class RunCodeCallPart(ToolCallPart, namespace='code_mode', tool_kind='run_code')
     so `isinstance(part, RunCodeCallPart)` recognizes it in hooks and history processors.
     """
 
-    _: KW_ONLY
-
-    args: str | RunCodeArgs | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
-    """The call's arguments: a JSON string while they stream (or as some providers return them), else a `RunCodeArgs`."""
-
-    @property
-    def typed_args(self) -> RunCodeArgs | None:
-        """The parsed arguments, or `None` if they are incomplete (still streaming) or don't match `RunCodeArgs`."""
-        if self.args is None or isinstance(self.args, dict):
-            return self.args
-        try:
-            return _RUN_CODE_ARGS_TA.validate_json(self.args)
-        except ValidationError:
-            return None
+    typed_args = TypedArgs(RunCodeArgs)
+    """The validated arguments, or `None` if they are incomplete (still streaming) or don't match `RunCodeArgs`."""
 
     @property
     def code(self) -> str | None:

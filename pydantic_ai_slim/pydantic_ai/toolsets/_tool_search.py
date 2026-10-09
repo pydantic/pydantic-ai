@@ -58,6 +58,7 @@ from ..messages import (
     NativeToolSearchReturnPart,
     ToolAvailabilityDeltaPart,
     ToolReturnPart,
+    ToolSearchCallPart,
     ToolSearchReturnPart,
     post_compaction_window,
 )
@@ -425,7 +426,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             name=_SEARCH_TOOLS_NAME,
             description=self.tool_description or _DEFAULT_TOOL_DESCRIPTION,
             parameters_json_schema=schema,
-            tool_kind='tool-search',
+            tool_kind=ToolSearchCallPart,
             unless_native=unless_native,
         )
 

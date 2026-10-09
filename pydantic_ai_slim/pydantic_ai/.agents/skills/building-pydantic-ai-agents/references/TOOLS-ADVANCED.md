@@ -191,13 +191,12 @@ For HTTP request retries at the transport layer, use the library's retry configu
 
 Tool names can be renamed or prefixed, so never recognize a tool by `tool_name`. Match framework tools with `isinstance` on their typed parts (`ToolSearchCallPart`, `LoadCapabilityReturnPart`, ...).
 
-To make your own tool recognizable, register a kind by defining typed parts with `namespace` and `tool_kind` class arguments. The kind becomes `'{namespace}.{tool_kind}'`:
+To make your own tool recognizable, register a kind by defining a typed part with `namespace` and `tool_kind` class arguments (no `@dataclass` needed). The kind becomes `'{namespace}.{tool_kind}'`. Declare the arguments shape once with `TypedArgs` (a return part declares its content with `TypedContent`), and pass the part class as the tool's `tool_kind`:
 
 ```python
-from dataclasses import KW_ONLY, dataclass
-
 from typing_extensions import TypedDict
 
+from pydantic_ai import Agent, TypedArgs
 from pydantic_ai.messages import ToolCallPart
 
 
@@ -205,16 +204,23 @@ class LookupArgs(TypedDict):
     sku: str
 
 
-@dataclass(repr=False)
 class LookupCallPart(ToolCallPart, namespace='inventory', tool_kind='lookup'):
-    _: KW_ONLY
+    typed_args = TypedArgs(LookupArgs)
 
-    args: str | LookupArgs | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
+
+agent = Agent('openai:gpt-5.2')
+
+
+@agent.tool_plain(tool_kind=LookupCallPart)
+def check_stock(sku: str) -> bool:
+    return sku.startswith('A')
 ```
 
-- A typed part may only narrow `args` (call) or `content` (return) and add properties. Any other field raises `UserError` when the class is defined.
-- The tool declares the kind on its `ToolDefinition` (`replace(tool_def, tool_kind='inventory.lookup')` in a `prepare` function or the toolset's `get_tools`). A run with an unregistered kind raises `UserError`.
-- Its call and return parts are then promoted to the typed classes, so hooks and history processors can use `isinstance(part, LookupCallPart)`.
+- `part.typed_args` is the validated `LookupArgs`, or `None` while the arguments stream in or if they don't fit. Don't redeclare `args`.
+- A typed part may only declare its shape and add properties. Any other field raises `UserError` when the class is defined.
+- `tool_kind` is accepted by `Tool`, the `@agent.tool` / `@agent.tool_plain` / `FunctionToolset.tool` decorators and `ToolDefinition` (e.g. `replace(tool_def, tool_kind=LookupCallPart)` in `prepare`), as the class or the kind string.
+- A run raises `UserError` for an unregistered kind, or when the tool's parameters don't fit `typed_args` (a required field missing or optional, or a mismatched JSON type).
+- Call and return parts are promoted whenever a `ModelResponse` / `ModelRequest` is built, so hooks and history processors can use `isinstance(part, LookupCallPart)`.
 - A history whose kind isn't registered still loads, as base parts that keep their `tool_kind`.
 
 See [Typed tool parts](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#typed-tool-parts).

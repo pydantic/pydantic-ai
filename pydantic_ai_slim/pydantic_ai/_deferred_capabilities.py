@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 from dataclasses import KW_ONLY, dataclass
-from typing import TYPE_CHECKING, Annotated, Literal, NotRequired, cast
+from typing import TYPE_CHECKING, Annotated, Literal, NotRequired
 
 import pydantic
 from typing_extensions import TypedDict
@@ -15,6 +15,8 @@ from .messages import (
     _TYPED_PART_TAGS_BY_TYPE,  # pyright: ignore[reportPrivateUsage]
     ToolCallPart,
     ToolReturnPart,
+    TypedArgs,
+    TypedContent,
 )
 
 if TYPE_CHECKING:
@@ -55,15 +57,8 @@ class LoadCapabilityCallPart(ToolCallPart, _core=True):
     tool_kind: Literal['capability-load'] = 'capability-load'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass."""
 
-    @property
-    def typed_args(self) -> LoadCapabilityArgs | None:
-        """Parsed load-capability arguments, or `None` for incomplete streaming args."""
-        if self.args is None:
-            return None
-        try:
-            return cast('LoadCapabilityArgs', self.args_as_dict(raise_if_invalid=True))
-        except (ValueError, AssertionError):
-            return None
+    typed_args = TypedArgs(LoadCapabilityArgs)
+    """The validated load-capability arguments, or `None` while they stream in or if they don't fit."""
 
     @property
     def capability_id(self) -> str | None:
@@ -91,6 +86,9 @@ class LoadCapabilityReturnPart(ToolReturnPart, _core=True):
 
     tool_kind: Literal['capability-load'] = 'capability-load'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass."""
+
+    typed_content = TypedContent(LoadCapabilityReturn)
+    """The validated load-capability return value, or `None` if it doesn't fit."""
 
     @property
     def instructions(self) -> str | None:

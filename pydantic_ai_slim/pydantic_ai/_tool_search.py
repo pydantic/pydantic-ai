@@ -23,9 +23,8 @@ provider boundaries.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal, NotRequired, assert_never, cast
+from typing import TYPE_CHECKING, Literal, NotRequired, assert_never
 
-import pydantic_core
 from typing_extensions import TypedDict
 
 from . import messages as _messages
@@ -40,6 +39,8 @@ from .messages import (
     NativeToolReturnPart,
     ToolCallPart,
     ToolReturnPart,
+    TypedArgs,
+    TypedContent,
 )
 from .usage import RequestUsage
 
@@ -146,30 +147,18 @@ class NativeToolSearchCallPart(NativeToolCallPart, _core=True):
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (cross-provider tool-search call)."""
 
-    @property
-    def typed_args(self) -> ToolSearchArgs | None:
-        """Typed view of the validated tool-search arguments, or `None` if not yet parseable.
+    typed_args = TypedArgs(ToolSearchArgs)
+    """Typed view of the validated tool-search arguments, or `None` if not yet parseable.
 
-        In non-streaming code (a typed call part on a finalized
-        [`ModelResponse`][pydantic_ai.messages.ModelResponse]), this is always
-        populated — once a part is narrowed to this typed subclass, its `args`
-        have been parsed and validated.
+    In non-streaming code (a typed call part on a finalized
+    [`ModelResponse`][pydantic_ai.messages.ModelResponse]), this is always
+    populated — once a part is narrowed to this typed subclass, its `args`
+    have been validated.
 
-        Returns `None` only in streaming-partial state, where `args` is still an
-        in-progress JSON string the model hasn't finished emitting. For raw
-        string-tolerant access, use the inherited `args_as_dict()`.
-        """
-        if self.args is None:
-            return None
-        if isinstance(self.args, dict):
-            return self.args
-        try:
-            parsed = pydantic_core.from_json(self.args)
-        except ValueError:
-            return None
-        if not isinstance(parsed, dict):
-            return None
-        return cast('ToolSearchArgs', parsed)
+    Returns `None` in streaming-partial state, where `args` is still an
+    in-progress JSON string the model hasn't finished emitting, or when they don't validate.
+    For raw string-tolerant access, use the inherited `args_as_dict()`.
+    """
 
     @property
     def queries(self) -> list[str]:
@@ -218,6 +207,9 @@ class NativeToolSearchReturnPart(NativeToolReturnPart, _core=True):
 
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (cross-provider tool-search return)."""
+
+    typed_content = TypedContent(ToolSearchReturnContent)
+    """The validated tool-search result, or `None` if it doesn't fit."""
 
     @property
     def discovered_tools(self) -> list[ToolSearchMatch]:
@@ -270,30 +262,18 @@ class ToolSearchCallPart(ToolCallPart, _core=True):
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (framework-emitted `search_tools` call)."""
 
-    @property
-    def typed_args(self) -> ToolSearchArgs | None:
-        """Typed view of the validated tool-search arguments, or `None` if not yet parseable.
+    typed_args = TypedArgs(ToolSearchArgs)
+    """Typed view of the validated tool-search arguments, or `None` if not yet parseable.
 
-        In non-streaming code (a typed call part on a finalized
-        [`ModelResponse`][pydantic_ai.messages.ModelResponse]), this is always
-        populated — once a part is narrowed to this typed subclass, its `args`
-        have been parsed and validated.
+    In non-streaming code (a typed call part on a finalized
+    [`ModelResponse`][pydantic_ai.messages.ModelResponse]), this is always
+    populated — once a part is narrowed to this typed subclass, its `args`
+    have been validated.
 
-        Returns `None` only in streaming-partial state, where `args` is still an
-        in-progress JSON string the model hasn't finished emitting. For raw
-        string-tolerant access, use the inherited `args_as_dict()`.
-        """
-        if self.args is None:
-            return None
-        if isinstance(self.args, dict):
-            return self.args
-        try:
-            parsed = pydantic_core.from_json(self.args)
-        except ValueError:
-            return None
-        if not isinstance(parsed, dict):
-            return None
-        return cast('ToolSearchArgs', parsed)
+    Returns `None` in streaming-partial state, where `args` is still an
+    in-progress JSON string the model hasn't finished emitting, or when they don't validate.
+    For raw string-tolerant access, use the inherited `args_as_dict()`.
+    """
 
     @property
     def queries(self) -> list[str]:
@@ -343,6 +323,9 @@ class ToolSearchReturnPart(ToolReturnPart, _core=True):
 
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (framework-emitted `search_tools` return)."""
+
+    typed_content = TypedContent(ToolSearchReturnContent)
+    """The validated tool-search result, or `None` if it doesn't fit."""
 
     @property
     def discovered_tools(self) -> list[ToolSearchMatch]:
