@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Caching
 
 from .models import (
     TimeRangeBuilderError,
@@ -32,6 +33,7 @@ time_range_agent = Agent[TimeRangeDeps, TimeRangeResponse](
     deps_type=TimeRangeDeps,
     instructions="Convert the user's request into a structured time range.",
     retries=1,
+    capabilities=[Caching()],
 )
 time_range_agent.instrument = True
 
