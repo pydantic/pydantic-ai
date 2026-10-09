@@ -8,7 +8,7 @@ from typing import Literal
 
 import pytest
 
-from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 from pydantic_graph.join import ReduceFirstValue, ReducerContext, reduce_sum
 
 from ..._inline_snapshot import snapshot
@@ -336,8 +336,6 @@ async def test_literal_branch_matching():
     async def handle_c(ctx: StepContext[MyState, None, object]) -> str:
         return 'Chose C'  # pragma: no cover
 
-    from pydantic_graph import TypeExpression
-
     g.add(
         g.edge_from(g.start_node).to(choose_option),
         g.edge_from(choose_option).to(
@@ -352,6 +350,44 @@ async def test_literal_branch_matching():
     graph = g.build()
     result = await graph.run(state=MyState())
     assert result == 'Chose B'
+
+
+@pytest.mark.parametrize(
+    ('value', 'expected'),
+    [
+        pytest.param(1, 'Chose int', id='int'),
+        pytest.param(True, 'Chose bool', id='bool'),
+    ],
+)
+async def test_literal_branch_matching_distinguishes_bool_and_int(value: Literal[1, True], expected: str):
+    """Test that Literal branches distinguish bool and int values."""
+    g = GraphBuilder(state_type=MyState, output_type=str)
+
+    @g.step
+    async def choose_option(ctx: StepContext[MyState, None, None]) -> Literal[1, True]:
+        return value
+
+    @g.step
+    async def handle_int(ctx: StepContext[MyState, None, object]) -> str:
+        return 'Chose int'
+
+    @g.step
+    async def handle_bool(ctx: StepContext[MyState, None, object]) -> str:
+        return 'Chose bool'
+
+    g.add(
+        g.edge_from(g.start_node).to(choose_option),
+        g.edge_from(choose_option).to(
+            g.decision()
+            .branch(g.match(TypeExpression[Literal[1]]).to(handle_int))
+            .branch(g.match(TypeExpression[Literal[True]]).to(handle_bool))
+        ),
+        g.edge_from(handle_int, handle_bool).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=MyState())
+    assert result == expected
 
 
 async def test_path_with_label_marker():
