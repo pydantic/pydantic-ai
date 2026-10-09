@@ -1,6 +1,6 @@
 ---
 name: pydantic-ai-harness
-description: Extend Pydantic AI agents with capabilities from pydantic-ai-harness -- the Coder coding agent, file and shell tools in local or sandboxed workspaces (Modal, E2B, Sprites), Code Mode, sub-agents and planning, memory and skills, context compaction, guardrails and spend limits, web research and browsers, hosted SaaS integrations, step persistence, and background agents on Render Workflows. Use when the user mentions pydantic-ai-harness or pydantic_ai_harness, imports a harness capability such as Coder, CodeMode, FileSystem, Shell, SubAgents, Memory, or ToolGuardrail, or wants a Pydantic AI agent that edits files, runs commands or agent-written Python, delegates, remembers, manages long context, stays within limits, or runs model and tool operations as Render tasks.
+description: Extend Pydantic AI agents with capabilities from pydantic-ai-harness -- the Coder coding agent, file and shell tools in local or sandboxed workspaces (Modal, E2B, Sprites), Code Mode, sub-agents and planning, memory and skills, context compaction, guardrails and spend limits, web research and browsers, hosted SaaS integrations, step persistence, and background agents on Render Workflows. Use when the user mentions pydantic-ai-harness or pydantic_ai_harness, imports a harness capability such as Coder, CodeMode, FileSystem, Shell, SubAgents, Memory, or ToolGuardrail, or wants a Pydantic AI agent that edits files, runs commands or agent-written Python, delegates, remembers, manages long context, stays within limits, or runs model and tool operations as chained Render task runs.
 license: MIT
 compatibility: Requires Python 3.11+
 metadata:
@@ -209,7 +209,7 @@ Load the references for the capabilities the task uses; each is self-contained.
 | Add guardrails, prompt-injection screening, model-based tool-call decisions, spend limits, questions to the user, reminders, or a trajectory judge; repair malformed tool arguments | [Control and Safety](./references/CONTROL-AND-SAFETY.md) |
 | Research the web with Exa or You.com, use the `Researcher` stack, or drive a browser | [Research and Browsing](./references/RESEARCH-AND-BROWSING.md) |
 | Connect GitHub, Linear, Notion, Slack, Google Workspace, PostHog, Logfire, or another hosted service | [Hosted Integrations](./references/HOSTED-INTEGRATIONS.md) |
-| Use or evaluate Render Workflows for background agents with separately configured model and tool tasks | [Render Workflows](./references/RUNTIME-AND-EXTENSION.md#renderworkflows); entry-task retries restart the agent |
+| Use or evaluate Render Workflows for background agents with separate model and tool task policies | [Render Workflows](./references/RUNTIME-AND-EXTENSION.md#renderworkflows); retrying the task that calls `agent.run()` starts the agent again |
 | Save, resume, or fork runs; run under AWS Lambda or Absurd; use managed prompts, runtime-created capabilities, ACP, GitHub Agentic Workflows, or agent specs | [Runtime and Extension](./references/RUNTIME-AND-EXTENSION.md) |
 | Test an agent that uses harness capabilities, or debug a failing one | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 
