@@ -19,9 +19,11 @@ When a request falls short of the established prefix by more than `min_missed_ra
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
 from pydantic_ai_harness import WarnOnCacheBusts
 
-agent = Agent('anthropic:claude-sonnet-4-5', capabilities=[WarnOnCacheBusts()])
+# `Caching()` enables caching; `WarnOnCacheBusts()` only observes it.
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[Caching(), WarnOnCacheBusts()])
 result = await agent.run('...')  # a CacheBustWarning fires if a cached prefix collapses mid-run
 # ...and on the next turn, if the prefix the first turn cached no longer reads back:
 await agent.run('...', message_history=result.all_messages())
@@ -114,7 +116,7 @@ The monitor's signal is the `CacheBustWarning`; routing it through `logging` is 
 ## Scope
 
 - **Observational only.** It reports that a cached prefix collapsed and whether the provider's retention window explains it, not what moved the prefix. The structural explanation ("what moved the prefix this turn") is a separate job.
-- **Fires only when caching is enabled and reported.** A run that never establishes a cache never warns.
+- **Cache busts need an established cache.** A run that never establishes a cache never emits a `CacheBustWarning`; only the `CacheNotEnabledWarning` above can fire.
 - **History rewritten by a history processor can warn.** Harness compaction strategies (such as `ClearToolResults` or `SummarizingCompaction`) rewrite messages the provider already cached, which moves the prefix like any other rewrite; only provider-native compaction, recognized by its `CompactionPart`, is classified `compacted`. Silence the warning around the runs where compaction is expected, as shown above.
 - **A mid-run model switch does not warn.** Marks are per `(provider_name, provider_url, model_name)`, so a `FallbackModel` failover starts a fresh mark rather than collapsing the previous model's.
 - **Marks are in-process memory.** They are held on the capability instance, so a conversation continued through a different instance, a different process, or a different worker starts from a clean mark; nothing is persisted or shared.
