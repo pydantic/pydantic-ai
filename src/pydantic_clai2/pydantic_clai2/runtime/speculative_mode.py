@@ -21,7 +21,7 @@ There is no network in the sandbox; anything remote goes through a wrapped tool 
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Literal, TypeGuard
+from typing import TYPE_CHECKING, Literal, TypeGuard
 
 from pydantic_monty import MountDir, OSAccess
 
@@ -34,7 +34,6 @@ from pydantic_ai.capabilities import (
     WrapToolExecuteHandler,
 )
 from pydantic_ai.messages import AgentStreamEvent, RetryPromptPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.workspaces import Workspace
@@ -55,6 +54,10 @@ from pydantic_clai2.runtime.sandbox_calls import (
     SandboxCallStartedEvent,
 )
 from pydantic_clai2.runtime.speculation import SpeculationCounters
+
+if TYPE_CHECKING:
+    # Typing only: `pydantic_ai.models.anthropic` loads the Anthropic SDK.
+    from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 SPECULATIVE_TOOLS: Mapping[str, type[object]] = {
     'list_files': FileSystem,
@@ -293,7 +296,7 @@ class SpeculativeExecution(AbstractCapability[AgentDepsT]):
 
         return describe
 
-    def get_model_settings(self) -> AnthropicModelSettings:
+    def get_model_settings(self) -> 'AnthropicModelSettings':
         """Anthropic buffers a tool call's input by default, which leaves eager execution no runway.
 
         Other providers stream tool arguments already and ignore the setting.

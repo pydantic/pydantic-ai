@@ -2,20 +2,24 @@
 
 import re
 from collections.abc import Mapping
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from anthropic.types.beta import (
-    BetaThinkingBlockBindingParam,
-    BetaThinkingConfigAdaptiveParam,
-    BetaThinkingConfigEnabledParam,
-    BetaThinkingConfigParam,
-)
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
-from pydantic_ai.models.anthropic import AnthropicModelSettings
-from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2.models.custom_params import expand_params
+
+if TYPE_CHECKING:
+    # Typing only: the provider modules load the Anthropic and OpenAI SDKs, and every turn loads this module.
+    from anthropic.types.beta import (
+        BetaThinkingBlockBindingParam,
+        BetaThinkingConfigAdaptiveParam,
+        BetaThinkingConfigEnabledParam,
+        BetaThinkingConfigParam,
+    )
+
+    from pydantic_ai.models.anthropic import AnthropicModelSettings
+    from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 
 
 class ModelSettingsForm(BaseModel):
@@ -157,8 +161,8 @@ class ModelSettingsForm(BaseModel):
             settings['extra_body'] = body
         return settings or None
 
-    def _openai_settings(self) -> OpenAIResponsesModelSettings:
-        openai = OpenAIResponsesModelSettings()
+    def _openai_settings(self) -> 'OpenAIResponsesModelSettings':
+        openai: OpenAIResponsesModelSettings = {}
         if self.openai_reasoning_effort is not None:
             openai['openai_reasoning_effort'] = self.openai_reasoning_effort
         if self.openai_reasoning_context is not None:
@@ -171,8 +175,8 @@ class ModelSettingsForm(BaseModel):
             openai['openai_text_verbosity'] = self.openai_text_verbosity
         return openai
 
-    def _anthropic_settings(self) -> AnthropicModelSettings:
-        anthropic = AnthropicModelSettings()
+    def _anthropic_settings(self) -> 'AnthropicModelSettings':
+        anthropic: AnthropicModelSettings = {}
         if self.anthropic_cache is not None:
             anthropic['anthropic_cache'] = self.anthropic_cache
         if self.anthropic_cache_instructions is not None:
@@ -189,7 +193,7 @@ class ModelSettingsForm(BaseModel):
             anthropic['extra_headers'] = {'anthropic-beta': ','.join(betas)}
         return anthropic
 
-    def _anthropic_thinking(self) -> BetaThinkingConfigParam | None:
+    def _anthropic_thinking(self) -> 'BetaThinkingConfigParam | None':
         """The `thinking` object, carrying Fable 5.1's `display` and `block_binding` keys.
 
         `display` and `block_binding` only exist on the enabled and adaptive shapes, so asking
@@ -211,12 +215,11 @@ class ModelSettingsForm(BaseModel):
         if self.anthropic_thinking_display is not None:
             thinking['display'] = self.anthropic_thinking_display
         if self.anthropic_preserved_thinking is not None:
-            thinking['block_binding'] = BetaThinkingBlockBindingParam(
-                prefix_mismatch_behavior=self.anthropic_preserved_thinking
-            )
+            binding: BetaThinkingBlockBindingParam = {'prefix_mismatch_behavior': self.anthropic_preserved_thinking}
+            thinking['block_binding'] = binding
         return thinking
 
-    def _anthropic_betas(self, *, thinking: BetaThinkingConfigParam | None) -> list[str]:
+    def _anthropic_betas(self, *, thinking: 'BetaThinkingConfigParam | None') -> list[str]:
         """Betas these controls need. Core attaches the thinking-binding beta itself.
 
         The display beta follows the `display` value that actually reaches the body, so a
