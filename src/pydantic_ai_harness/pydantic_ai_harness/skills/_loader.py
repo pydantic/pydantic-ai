@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import posixpath
+import re
 import unicodedata
-import warnings
 from collections.abc import Collection, Hashable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
@@ -63,16 +64,89 @@ class _SkillFrontmatter(BaseModel):
         return stripped
 
 
-@dataclass(frozen=True)
+MissingDirectories: TypeAlias = Literal['error', 'skip']
+"""What `Skills` does with a library directory that does not exist: fail the run, or skip it."""
+
+DuplicateNames: TypeAlias = Literal['error', 'keep_first']
+"""What `Skills` does when two valid skills with different `SKILL.md` files share a name.
+
+Fail the run, or keep the first with a warning.
+"""
+
+_ARGUMENTS_PLACEHOLDER = re.compile(r'\$ARGUMENTS(?![\[\w])')
+"""`$ARGUMENTS` itself, not Claude Code's indexed `$ARGUMENTS[0]` or a longer name such as `$ARGUMENTS_LIST`."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class SkillDefinition:
     """Validated skill metadata and body from a single `SKILL.md`."""
 
     name: str
+    """The skill's name: its `name` frontmatter field, or else its directory's name."""
+
     description: str
+    """The `description` frontmatter field, listed in the model's catalog."""
+
     body: str
+    """The Markdown after the frontmatter, without leading and trailing blank lines."""
+
     ignored_behavioral_fields: tuple[str, ...]
+    """Frontmatter fields such as `allowed-tools` whose behavior `Skills` does not implement."""
+
     path: str
     """Absolute workspace path of the `SKILL.md` it was read from."""
+
+    in_run_workspace: bool = True
+    """Whether it was read from the run's workspace, where the model's file and shell tools can reach its directory.
+
+    `False` for a library read from `Skills(workspace=...)`; `render` then leaves the directory out.
+    """
+
+    @property
+    def directory(self) -> str:
+        """Absolute workspace path of the skill's directory, which holds any `scripts/` or `references/`."""
+        return posixpath.dirname(self.path)
+
+    def render(self, arguments: str | None = None) -> str:
+        """The skill's instructions as the model receives them: a heading, the skill's directory, and the body.
+
+        Pass `arguments` when a user invokes the skill with a command such as `/code-review src/app.py`:
+        every `$ARGUMENTS` in the body becomes `arguments`, and a body without `$ARGUMENTS` gets
+        `ARGUMENTS: <arguments>` appended. Other placeholders, such as Claude Code's indexed `$0` and
+        `$ARGUMENTS[0]`, are left unchanged. Without `arguments`, the result is the instructions the
+        model gets when it loads the skill.
+
+        The directory line is left out unless `in_run_workspace`.
+        """
+        body = self.body
+        if arguments is not None:
+            if _ARGUMENTS_PLACEHOLDER.search(body):
+                # A function, so backslashes in the arguments are not read as group references.
+                body = _ARGUMENTS_PLACEHOLDER.sub(lambda _: arguments, body)
+            elif arguments:
+                body = '\n\n'.join(part for part in (body, f'ARGUMENTS: {arguments}') if part)
+        heading = f'# Skill: {self.name}'
+        if self.in_run_workspace:
+            heading += f'\n\nSkill directory: `{self.directory}`. Relative paths in this skill resolve against it.'
+        return f'{heading}\n\n{body}' if body else heading
+
+
+@dataclass(frozen=True, kw_only=True)
+class SkillCatalog:
+    """The skills `Skills.load` read, and a message for each `SKILL.md` it left out.
+
+    Run-time advice, such as frontmatter fields whose behavior is not implemented, is not included:
+    a run emits it as a `UserWarning`, and each skill's `ignored_behavioral_fields` lists its own.
+    """
+
+    skills: tuple[SkillDefinition, ...]
+    """The selected, valid skills, in catalog order."""
+
+    skipped: tuple[str, ...]
+    """One message per `SKILL.md` left out: malformed, or named like a valid skill found earlier.
+
+    A run emits each as a `UserWarning`; a host showing skills to a person can show them instead.
+    """
 
 
 def _extract_frontmatter(text: str, source: str) -> tuple[str, str]:
@@ -162,6 +236,52 @@ async def _discover_skills(workspace: Workspace, libraries: Sequence[str]) -> li
     return discovered
 
 
+async def _libraries(
+    workspace: Workspace, directories: Sequence[str | Path], missing_directories: MissingDirectories
+) -> list[str]:
+    """The configured libraries that exist, in order, each listed once."""
+    libraries: list[str] = []
+    for configured in directories:
+        library = await workspace.resolve(workspace_path(Path(configured)))
+        if library in libraries:
+            continue
+        entry = await _stat(workspace, library)
+        if entry is None:
+            if missing_directories == 'skip':
+                continue
+            raise ValueError(f'Skill library directory does not exist in the workspace: {configured}')
+        if not entry.is_dir:
+            raise ValueError(f'Skill library path is not a directory: {configured}')
+        if await _is_file(workspace, posixpath.join(library, 'SKILL.md')):
+            raise ValueError(
+                f'Skill library path points to a skill package: {configured}. Pass its parent directory instead.'
+            )
+        libraries.append(library)
+    return libraries
+
+
+async def same_skill(first: tuple[Workspace, str], second: tuple[Workspace, str]) -> bool:
+    """Whether two `SKILL.md` files, each in its workspace, hold one skill: the same file, or a byte-identical copy.
+
+    The same file is recognized through symlinks within one workspace. Only `SKILL.md` is compared,
+    not bundled files. Asked only when two skills share a name, so a catalog without clashes costs
+    no extra round trips.
+    """
+    (first_workspace, first_path), (second_workspace, second_path) = first, second
+    if first_workspace is second_workspace and await first_workspace.realpath(
+        first_path
+    ) == await second_workspace.realpath(second_path):
+        return True
+    return await first_workspace.read_bytes(first_path) == await second_workspace.read_bytes(second_path)
+
+
+def skip_duplicate_name(name: str, kept: str, skipped: str, duplicate_names: DuplicateNames) -> str:
+    """The warning for `skipped`, whose name an earlier `SKILL.md`, `kept`, has; raises when duplicates are errors."""
+    if duplicate_names == 'error':
+        raise ValueError(f'Duplicate skill name {name!r}: {kept} and {skipped}.')
+    return f'Skipping {skipped}: skill name {name!r} is already taken by {kept}.'
+
+
 def _validate_name(name: str, source: str) -> str:
     normalized = _normalize_name(name)
     if (
@@ -207,27 +327,17 @@ async def load_skill_libraries(
     *,
     include: Collection[str] | None,
     exclude: Collection[str],
-) -> tuple[SkillDefinition, ...]:
+    missing_directories: MissingDirectories,
+    duplicate_names: DuplicateNames,
+) -> tuple[list[SkillDefinition], list[str]]:
     """Discover immediate child skill packages under configured directories in `workspace`.
 
-    Relative directories resolve against the workspace's working directory.
+    Relative directories resolve against the workspace's working directory. Returns the parsed
+    skills and a message for each skipped `SKILL.md`. A skill found twice, through a symlinked
+    library or skill directory or as a byte-identical `SKILL.md`, counts once. Names are compared
+    after parsing, so an invalid `SKILL.md` does not hide a valid one with the same name.
     """
-    libraries: list[str] = []
-    for configured in directories:
-        library = await workspace.resolve(workspace_path(Path(configured)))
-        if library in libraries:
-            continue
-        entry = await _stat(workspace, library)
-        if entry is None:
-            raise ValueError(f'Skill library directory does not exist in the workspace: {configured}')
-        if not entry.is_dir:
-            raise ValueError(f'Skill library path is not a directory: {configured}')
-        if await _is_file(workspace, posixpath.join(library, 'SKILL.md')):
-            raise ValueError(
-                f'Skill library path points to a skill package: {configured}. Pass its parent directory instead.'
-            )
-        libraries.append(library)
-
+    libraries = await _libraries(workspace, directories, missing_directories)
     discovered = await _discover_skills(workspace, libraries)
     available_names = frozenset(name for name, _ in discovered)
     normalized_include = None if include is None else frozenset(_normalize_name(name) for name in include)
@@ -238,28 +348,26 @@ async def load_skill_libraries(
         normalized_include if normalized_include is not None else available_names.difference(normalized_exclude)
     )
 
-    selected_files: list[str] = []
-    paths_by_name: dict[str, str] = {}
+    skipped: list[str] = []
+    by_name: dict[str, SkillDefinition] = {}
     for name, skill_file in discovered:
         if name not in selected_names:
             continue
-        if previous := paths_by_name.get(name):
-            raise ValueError(f'Duplicate skill name {name!r}: {previous} and {skill_file}.')
-        paths_by_name[name] = skill_file
-        selected_files.append(skill_file)
-
-    parsed: list[SkillDefinition] = []
-    for skill_file in selected_files:
         try:
             try:
                 text = await workspace.read_text(skill_file)
             except UnicodeDecodeError as error:
                 raise ValueError(f'{skill_file} is not valid UTF-8: {error}') from error
-            parsed.append(parse_skill(text, skill_file))
+            skill = parse_skill(text, skill_file)
         except ValueError as error:
             # A model-editable skill should not make unrelated valid skills unusable.
-            warnings.warn(f'Skipping {skill_file}: {error}', UserWarning, stacklevel=2)
-    return tuple(parsed)
+            skipped.append(f'Skipping {skill_file}: {error}')
+            continue
+        if (previous := by_name.get(skill.name)) is None:
+            by_name[skill.name] = skill
+        elif not await same_skill((workspace, previous.path), (workspace, skill_file)):
+            skipped.append(skip_duplicate_name(skill.name, previous.path, skill_file, duplicate_names))
+    return list(by_name.values()), skipped
 
 
 def _validate_selection(
