@@ -83,6 +83,7 @@ async def test_drop_block_retry_resends_identical_image_bytes(allow_model_reques
     def handle(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         bodies.append(body)
+        assert all(_binary_source_datas(body)), 'request carried empty base64 source data'
         if len(bodies) == 1:
             return httpx2.Response(
                 400,
@@ -90,11 +91,6 @@ async def test_drop_block_retry_resends_identical_image_bytes(allow_model_reques
                     'type': 'error',
                     'error': {'type': 'invalid_request_error', 'message': _STALE_THINKING_BLOCK_MESSAGE},
                 },
-            )
-        if any(data == '' for data in _binary_source_datas(body)):
-            return httpx2.Response(
-                400,
-                json={'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'image cannot be empty'}},
             )
         return httpx2.Response(200, json=_message_response())
 
@@ -139,6 +135,7 @@ async def test_expired_container_fallback_resends_identical_image_bytes(allow_mo
     def handle(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         bodies.append(body)
+        assert all(_binary_source_datas(body)), 'request carried empty base64 source data'
         if len(bodies) == 1:
             return httpx2.Response(
                 404,
@@ -146,11 +143,6 @@ async def test_expired_container_fallback_resends_identical_image_bytes(allow_mo
                     'type': 'error',
                     'error': {'type': 'not_found_error', 'message': 'Container not found: container_from_history'},
                 },
-            )
-        if any(data == '' for data in _binary_source_datas(body)):
-            return httpx2.Response(
-                400,
-                json={'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'image cannot be empty'}},
             )
         return httpx2.Response(200, json=_message_response())
 
@@ -201,20 +193,13 @@ async def test_drop_block_retry_resends_identical_pdf_bytes(allow_model_requests
     def handle(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         bodies.append(body)
+        assert all(_binary_source_datas(body)), 'request carried empty base64 source data'
         if len(bodies) == 1:
             return httpx2.Response(
                 400,
                 json={
                     'type': 'error',
                     'error': {'type': 'invalid_request_error', 'message': _STALE_THINKING_BLOCK_MESSAGE},
-                },
-            )
-        if any(data == '' for data in _binary_source_datas(body)):
-            return httpx2.Response(
-                400,
-                json={
-                    'type': 'error',
-                    'error': {'type': 'invalid_request_error', 'message': 'document cannot be empty'},
                 },
             )
         return httpx2.Response(200, json=_message_response())
