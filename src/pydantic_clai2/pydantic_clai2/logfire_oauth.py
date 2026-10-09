@@ -16,11 +16,12 @@ import threading
 import time
 import webbrowser
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypeVar
 from urllib.parse import urlsplit
 
 import anyio
 import httpx
+import httpx2
 from anyio import to_thread
 from keyring.errors import KeyringError
 from pydantic import (
@@ -36,7 +37,6 @@ from pydantic import (
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
-from pydantic_clai2.mcp import http_client
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 ACCOUNT = 'logfire-oauth'
@@ -50,6 +50,7 @@ _REFRESH_MARGIN = 60.0
 
 Announce = Callable[[str], None]
 Sleep = Callable[[float], Awaitable[None]]
+_RequestT = TypeVar('_RequestT', httpx.Request, httpx2.Request)
 
 
 class SignInError(Exception):
@@ -407,7 +408,15 @@ async def _refresh(http: httpx.AsyncClient, *, resource: str, tokens: Tokens) ->
     return refreshed
 
 
-class DeviceAuth(httpx.Auth):
+def _http() -> httpx.AsyncClient:
+    """The device flow's own client, with the MCP SDK's timeouts and no redirects."""
+    return httpx.AsyncClient(timeout=httpx.Timeout(30, read=300))
+
+
+# The MCP connection's client is legacy `httpx` under FastMCP 3 and `httpx2` under FastMCP 4, and each
+# rejects another family's `Auth` as an invalid `auth`. The flows below serve either, so be both; the
+# unused `auth_flow` the two declare for their own `Request` is what Pyright objects to.
+class DeviceAuth(httpx.Auth, httpx2.Auth):  # pyright: ignore[reportIncompatibleMethodOverride]
     """Bearer tokens from a stored sign-in; refreshes them, or starts a browser sign-in when there is none."""
 
     def __init__(
@@ -416,7 +425,7 @@ class DeviceAuth(httpx.Auth):
         resource: str,
         read_only: bool,
         announce: Announce,
-        http: Callable[[], httpx.AsyncClient] = http_client,
+        http: Callable[[], httpx.AsyncClient] = _http,
         sleep: Sleep = anyio.sleep,
     ) -> None:
         """Tokens for `resource`, the MCP URL; `announce` shows the sign-in link and code."""
@@ -427,11 +436,11 @@ class DeviceAuth(httpx.Auth):
         self._sleep = sleep
         self._lock = anyio.Lock()
 
-    def sync_auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
+    def sync_auth_flow(self, request: _RequestT) -> Generator[_RequestT, object, None]:
         """Unsupported: signing in waits on the network, and MCP clients are async."""
         raise RuntimeError('Logfire sign-in needs an async client.')
 
-    async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
+    async def async_auth_flow(self, request: _RequestT) -> AsyncGenerator[_RequestT, httpx.Response | httpx2.Response]:
         """Send the token; on a 401, refresh or sign in again and retry once."""
         tokens = await self._tokens(rejected=None)
         request.headers['Authorization'] = f'Bearer {tokens.access_token}'

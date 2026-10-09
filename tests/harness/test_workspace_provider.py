@@ -71,7 +71,8 @@ async def test_failed_stop_does_not_replace_original_cancellation() -> None:
             await anyio.sleep_forever()
 
 
-async def test_stop_shielded_finishes_under_outer_cancellation() -> None:
+@pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
+async def test_stop_shielded_finishes_under_outer_cancellation(anyio_backend: str) -> None:
     stopped: list[str] = []
 
     async def stop() -> None:
@@ -127,7 +128,8 @@ async def test_native_repeated_cancel_cannot_abandon_stop(anyio_backend: str) ->
     await exercise(None, 2, asyncio.CancelledError)
 
 
-async def test_stop_cleanup_finishes_before_stop_shielded_returns() -> None:
+@pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
+async def test_stop_cleanup_finishes_before_stop_shielded_returns(anyio_backend: str) -> None:
     events: list[str] = []
 
     async def stop() -> None:

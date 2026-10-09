@@ -1,0 +1,82 @@
+name: CLAI2 bleeding
+
+# Publishes what `/update` installs on CLAI's `main` channel: sdists of `pydantic-clai2` and of
+# the workspace packages it pins exactly, built from each `main` commit that changes them, and
+# `clai2-bleeding.json`, which names that commit. They replace the assets of the `clai2-bleeding`
+# prerelease, whose tag moves with them. Release downloads are not GitHub API requests, so `/update`
+# does not meet the unauthenticated API rate limit that a shared IP exhausts.
+#
+# In pydantic/pydantic-ai only `main` publishes. A fork can run this from "Run workflow" on any
+# branch and point CLAI at its own release with `CLAI_BLEEDING_URL` (see "Updating" in
+# `src/pydantic_clai2/README.md`).
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - src/pydantic_clai2/**
+      - src/pydantic_ai_harness/**
+      - pydantic_ai_slim/**
+      - pydantic_graph/**
+      - .github/workflows/clai2-bleeding.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  # Publish in push order. A newer commit replaces a run still waiting, never one that is uploading.
+  group: clai2-bleeding
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish clai2-bleeding
+    if: github.ref == 'refs/heads/main' || github.repository != 'pydantic/pydantic-ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      TAG: clai2-bleeding
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # The packages read their versions from tags and history.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: false
+
+      - run: src/pydantic_clai2/scripts/build_bleeding.sh dist/bleeding
+
+      - name: Smoke-test the sdists outside the workspace
+        run: |
+          smoke_dir=$(mktemp -d)
+          uv venv "$smoke_dir"
+          uv pip install --python "$smoke_dir/bin/python" dist/bleeding/*.tar.gz
+          "$smoke_dir/bin/clai2" --help
+
+      - name: Move the tag and replace the release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          # Ref updates made with GITHUB_TOKEN start no workflow runs, so CI's tag trigger stays quiet.
+          gh api -X PATCH "repos/$GH_REPO/git/refs/tags/$TAG" -f sha="$SHA" -F force=true \
+            || gh api -X POST "repos/$GH_REPO/git/refs" -f ref="refs/tags/$TAG" -f sha="$SHA"
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            # A prerelease that is never "latest", so it stays out of the release list's baselines.
+            gh release create "$TAG" --verify-tag --prerelease --latest=false --title 'CLAI2 bleeding' \
+              --notes 'Sdists rebuilt from `main` for `/update` on the CLAI `main` channel. Not a release.'
+          fi
+          # Sdists first and the manifest last, so the manifest never names a commit without its files.
+          gh release upload "$TAG" dist/bleeding/*.tar.gz --clobber
+          gh release upload "$TAG" dist/bleeding/clai2-bleeding.json --clobber
+          gh release view "$TAG" --json assets --jq '.assets[].name' | while read -r name; do
+            [ -e "dist/bleeding/$name" ] || gh release delete-asset "$TAG" "$name" --yes
+          done

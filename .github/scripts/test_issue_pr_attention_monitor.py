@@ -16,8 +16,8 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent))
 import issue_pr_attention_monitor as monitor
 
-NOW = dt.datetime(2026, 7, 20, tzinfo=dt.timezone.utc)
-TRIAGE_NOW = dt.datetime(2026, 8, 25, tzinfo=dt.timezone.utc)
+NOW = dt.datetime(2026, 7, 20, tzinfo=dt.UTC)
+TRIAGE_NOW = dt.datetime(2026, 8, 25, tzinfo=dt.UTC)
 TRIAGE_OWNERS = monitor.MAINTAINER_OWNERS
 OLD = '2026-07-16T00:00:00Z'
 

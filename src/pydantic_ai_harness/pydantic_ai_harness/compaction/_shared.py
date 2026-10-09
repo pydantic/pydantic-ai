@@ -10,9 +10,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
-
-from typing_extensions import Self, assert_never
+from typing import TYPE_CHECKING, Protocol, Self, assert_never, runtime_checkable
 
 from pydantic_ai.messages import (
     CompactionPart,
@@ -681,7 +679,7 @@ def find_token_cutoff(
             lo = mid + 1
 
     if candidate >= len(messages):
-        candidate = max(0, len(messages) - 1)  # pragma: no cover
+        candidate = max(0, len(messages) - 1)
 
     # Walk backward to a safe point.
     for idx in range(candidate, -1, -1):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from enum import Enum
+from enum import StrEnum
 from textwrap import dedent
 
 from pydantic import BaseModel, Field
@@ -18,7 +18,7 @@ from pydantic_ai.ui import StateDeps
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 
-class SkillLevel(str, Enum):
+class SkillLevel(StrEnum):
     """The level of skill required for the recipe."""
 
     BEGINNER = 'Beginner'
@@ -26,7 +26,7 @@ class SkillLevel(str, Enum):
     ADVANCED = 'Advanced'
 
 
-class SpecialPreferences(str, Enum):
+class SpecialPreferences(StrEnum):
     """Special preferences for the recipe."""
 
     HIGH_PROTEIN = 'High Protein'
@@ -38,7 +38,7 @@ class SpecialPreferences(str, Enum):
     VEGAN = 'Vegan'
 
 
-class CookingTime(str, Enum):
+class CookingTime(StrEnum):
     """The cooking time of the recipe."""
 
     FIVE_MIN = '5 min'

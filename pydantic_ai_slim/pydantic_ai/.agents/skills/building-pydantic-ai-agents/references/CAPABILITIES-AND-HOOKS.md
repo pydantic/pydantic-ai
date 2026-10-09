@@ -54,6 +54,30 @@ Supported effort values:
 - `'high'`
 - `'xhigh'`
 
+## Configure Prompt Caching Across Providers
+
+Some models only cache what the request asks them to: Anthropic (incl. Bedrock, Vertex and Foundry clients), Bedrock Claude and Nova, and OpenRouter's Anthropic routes. OpenAI GPT-5.6+ and OpenRouter's Gemini 2.5+ routes cache implicitly, and take explicit breakpoints (and on GPT-5.6, cache options) on top. Enable caching on them with the `Caching` capability (or the unified `cache` model setting) rather than reaching for provider-specific settings like `anthropic_cache` or `bedrock_cache_*`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
+
+agent = Agent('anthropic:claude-opus-4-6', name='cached_agent', capabilities=[Caching('1h')])
+```
+
+Accepted values (the same for `model_settings={'cache': ...}`):
+
+- `True` (the capability's default): cache the tool definitions, static instructions and conversation with the provider's default retention, using its automatic caching mode where one exists and placing breakpoints elsewhere
+- `False`: disable library-managed caching (the same as unset, but overrides a model-level default); explicit `CachePoint`s and provider-specific settings still apply, and implicitly caching providers still cache
+- `'5m'`, `'30m'`, `'1h'`: cache with a specific retention, snapped to the nearest tier the provider supports (down where a shorter tier exists)
+- `Caching(messages=False)` / `{'retention': ..., 'messages': False}`: cache only the stable prefix (tool definitions and static instructions), not the conversation, for many one-off conversations sharing long instructions or tools
+
+Cache writes cost more than uncached input (1.25x; 2x for Anthropic's 1-hour cache) while reads cost about 0.1x, so a 1.25x write breaks even after one read and Anthropic's 2x 1-hour write after two; one-shot requests only pay the premium.
+
+Provider-specific cache settings (`anthropic_cache*`, `bedrock_cache_*`, `openrouter_cache_*`, `openai_prompt_cache_options`, `openai_cache_instructions`) take precedence: if any is set, even to `False`, the unified value is ignored entirely. Providers that cache implicitly (OpenAI before GPT-5.6, Gemini, DeepSeek, xAI) ignore the setting. Explicit `CachePoint` markers in the message history still work alongside it.
+
+See [Prompt Caching](https://pydantic.dev/docs/ai/capabilities/caching/) for the per-provider mapping.
+
 ## Intercept Agent Lifecycle with Hooks
 
 Use `Hooks` for decorator-based lifecycle interception.

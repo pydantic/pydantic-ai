@@ -18,7 +18,7 @@ network:
   allowed:
     - defaults
     - python
-    - api.minimax.io
+    - api.z.ai
 tools:
   bash: []
   cli-proxy: false
@@ -30,9 +30,12 @@ safe-outputs:
   report-failure-as-issue: false
   noop:
     report-as-issue: false
-  missing-tool: false
-  missing-data: false
-  report-incomplete: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   jobs:
     record-feature-pick:
       description: "Record one selected feature request for the weekly digest."
@@ -138,7 +141,7 @@ imports:
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
-  - shared/engine-minimax.md
+  - shared/engine-zai.md
   - shared/provider-health.md
   - shared/pre-steps.md
 ---

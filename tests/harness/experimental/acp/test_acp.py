@@ -185,8 +185,9 @@ def _user_texts(messages: list[ModelMessage]) -> list[str]:
         for part in message.parts:
             if not isinstance(part, UserPromptPart):
                 continue
-            if isinstance(part.content, str):  # pragma: no cover - adapter always sends list content
-                texts.append(part.content)
+            if isinstance(part.content, str):
+                # ACP prompts always use list content.
+                texts.append(part.content)  # pragma: no cover
             else:
                 texts.extend(item for item in part.content if isinstance(item, str))
     return texts
@@ -867,6 +868,53 @@ class TestStopReason:
         assert any(getattr(update, 'status', None) == 'failed' for update in state.transcript)
         follow_up = await adapter.prompt(prompt=[acp.text_block('next')], session_id=session_id, message_id='m2')
         assert follow_up.stop_reason == 'end_turn'
+
+    async def test_limit_on_the_retry_keeps_the_rejected_answer(self) -> None:
+        """A limit refusing the retry of a text answer commits that answer, not the unsent retry."""
+
+        class Answer(BaseModel):
+            answer: int
+
+        async def stream(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+            if _last_prompt(messages) == 'next':
+                yield {0: DeltaToolCall(name='final_result', json_args='{"answer": 1}')}
+            else:
+                yield 'plain text where an `Answer` is required'
+
+        agent = Agent(FunctionModel(stream_function=stream), output_type=Answer)
+        adapter: PydanticAIACPAgent[None, Answer] = PydanticAIACPAgent(agent, usage_limits=UsageLimits(request_limit=1))
+        session_id = await _start(adapter, FakeClient())
+
+        response = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id, message_id='m1')
+        assert response.stop_reason == 'max_turn_requests'
+
+        history = adapter._sessions[session_id].history  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(history[-1], ModelResponse) and not history[-1].tool_calls
+        follow_up = await adapter.prompt(prompt=[acp.text_block('next')], session_id=session_id, message_id='m2')
+        assert follow_up.stop_reason == 'end_turn'
+
+    async def test_limit_before_the_run_records_anything_keeps_the_prior_history(self) -> None:
+        """A limit raised before the run records a message, e.g. by a `before_run` hook, commits nothing."""
+        refuse = False
+
+        async def check_budget(ctx: RunContext[Any]) -> None:
+            if refuse:
+                raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
+
+        agent = Agent(TestModel(), capabilities=[Hooks(before_run=check_budget)])
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent)
+        session_id = await _start(adapter, FakeClient())
+        first = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id, message_id='m1')
+        assert first.stop_reason == 'end_turn'
+        history = list(adapter._sessions[session_id].history)  # pyright: ignore[reportPrivateUsage]
+
+        refuse = True
+        response = await adapter.prompt(prompt=[acp.text_block('next')], session_id=session_id, message_id='m2')
+
+        assert response.stop_reason == 'max_turn_requests'
+        assert adapter._sessions[session_id].history == history  # pyright: ignore[reportPrivateUsage]
 
     async def test_default_usage_limits_allow_normal_tool_resume(self) -> None:
         request_count = 0
