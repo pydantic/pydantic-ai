@@ -43,9 +43,11 @@ they agree in the same PR.
 ## Rules for the plugin API
 
 - **Declare, do not register.** A plugin returns what it offers from `get_*`
-  methods, which the loader calls once per load (`collect`). No registration
-  calls, no module-level dicts, no import-time side effects. Tests call
-  `load_plugin(PluginClass, host)`.
+  methods, which the loader calls once per load (`collect`), after awaiting
+  `prepare()`. No registration calls, no module-level dicts, no import-time side
+  effects. Tests call `load_plugin(PluginClass, host)`; it raises `TypeError` for
+  a plugin that overrides `prepare`, whose tests call `from_host`, then
+  `await plugin.prepare()`, then `collect`.
 - **One method per moment, one typed event per method.** A handler never receives
   `*args`, `**kwargs`, `dict`, or `context: object = None`.
 - **No string sub-dispatch.** A handler does not receive `event_type: str` and
