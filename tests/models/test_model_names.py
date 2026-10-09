@@ -1,6 +1,5 @@
 import os
 from collections.abc import Iterator
-from functools import partial
 from typing import Any, Literal, get_args
 
 import httpx
@@ -46,24 +45,12 @@ pytestmark = [
 ]
 
 
-def modify_response(response: dict[str, Any], filter_headers: list[str]) -> dict[str, Any]:  # pragma: lax no cover
-    for header in response['headers'].copy():
-        assert isinstance(header, str)
-        if header.lower() in filter_headers:
-            del response['headers'][header]
-    return response
-
-
 @pytest.fixture(scope='module')
-def vcr_config():  # pragma: lax no cover
+def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:  # pragma: lax no cover
+    """Re-record the provider model lists whenever a developer with the keys runs the module."""
     if os.getenv('CI') or not os.getenv('CEREBRAS_API_KEY'):
-        return {'record_mode': 'none'}
-
-    return {
-        'record_mode': 'rewrite',
-        'filter_headers': ['accept-encoding'],
-        'before_record_response': partial(modify_response, filter_headers=['cache-control', 'connection']),
-    }
+        return vcr_config
+    return {**vcr_config, 'record_mode': 'rewrite'}
 
 
 _PROVIDER_TO_MODEL_NAMES = {
@@ -120,6 +107,11 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:anthropic.claude-3-opus-20240229-v1:0',
         'gateway/bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
         'gateway/bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
+        # Gateway returns HTTP 400 for the bare Haiku 5.5 id and the au./jp./us. profiles.
+        'gateway/bedrock:anthropic.claude-haiku-5-5',
+        'gateway/bedrock:au.anthropic.claude-haiku-5-5',
+        'gateway/bedrock:jp.anthropic.claude-haiku-5-5',
+        'gateway/bedrock:us.anthropic.claude-haiku-5-5',
         'gateway/bedrock:anthropic.claude-instant-v1',
         'gateway/bedrock:anthropic.claude-opus-4-20250514-v1:0',
         'gateway/bedrock:anthropic.claude-sonnet-4-20250514-v1:0',

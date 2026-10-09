@@ -20,7 +20,7 @@ import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -42,9 +42,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-pytestmark = pytest.mark.anyio
-
-_TIMESTAMP = datetime(2024, 1, 1, tzinfo=timezone.utc)
+_TIMESTAMP = datetime(2024, 1, 1, tzinfo=UTC)
 
 # The exact framework-protocol keys the `FallbackModel` side stamps and this module honors. Spelled out
 # here (rather than imported as module privates) since the test pins the wire contract itself.

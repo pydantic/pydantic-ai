@@ -30,6 +30,7 @@ with try_import() as imports_successful:
         wait_for_evaluations,
     )
     from pydantic_evals.online_capability import OnlineEvaluation
+    from pydantic_evals.otel.span_tree import SpanTree
 
 with try_import() as logfire_import_successful:
     from logfire.testing import CaptureLogfire
@@ -80,7 +81,6 @@ if TYPE_CHECKING or imports_successful():
             self.span_refs.append(payload.span_reference)
 
 
-@pytest.mark.anyio
 async def test_basic_dispatch():
     """OnlineEvaluation dispatches evaluators after agent.run()."""
     collector = Collector()
@@ -103,7 +103,6 @@ async def test_basic_dispatch():
     assert ctx.output == 'success (no tool calls)'
 
 
-@pytest.mark.anyio
 async def test_evaluator_context_fields():
     """EvaluatorContext is populated with correct agent run data."""
     collector = Collector()
@@ -133,7 +132,6 @@ async def test_evaluator_context_fields():
 
 
 @needs_logfire
-@pytest.mark.anyio
 async def test_usage_metrics(capfire: CaptureLogfire):
     """Span tree metrics are extracted into EvaluatorContext when instrumented."""
     collector = Collector()
@@ -155,7 +153,6 @@ async def test_usage_metrics(capfire: CaptureLogfire):
     assert ctx.metrics.get('requests', 0) > 0
 
 
-@pytest.mark.anyio
 async def test_sampling_zero_rate():
     """Evaluators with sample_rate=0.0 are never dispatched."""
     collector = Collector()
@@ -177,7 +174,6 @@ async def test_sampling_zero_rate():
     assert len(collector.calls) == 0
 
 
-@pytest.mark.anyio
 async def test_sampling_context_inputs_match_evaluator_inputs():
     """Sampling and evaluation see the same agent inputs value."""
     collector = Collector()
@@ -215,7 +211,6 @@ async def test_sampling_context_inputs_match_evaluator_inputs():
     assert ctx.inputs == 'hello'
 
 
-@pytest.mark.anyio
 async def test_disable_evaluation():
     """disable_evaluation() context manager prevents dispatch."""
     collector = Collector()
@@ -233,7 +228,6 @@ async def test_disable_evaluation():
     assert len(collector.calls) == 0
 
 
-@pytest.mark.anyio
 async def test_config_disabled():
     """Config with enabled=False prevents dispatch."""
     collector = Collector()
@@ -251,7 +245,6 @@ async def test_config_disabled():
     assert len(collector.calls) == 0
 
 
-@pytest.mark.anyio
 async def test_multiple_evaluators():
     """Multiple evaluators all dispatch concurrently."""
     collector = Collector()
@@ -283,7 +276,6 @@ if TYPE_CHECKING or imports_successful():
         raise RuntimeError('model exploded')
 
 
-@pytest.mark.anyio
 async def test_run_on_errors_default_skips_dispatch_on_exception():
     """By default, sampled evaluators are not dispatched when the agent run raises."""
     collector = Collector()
@@ -301,7 +293,6 @@ async def test_run_on_errors_default_skips_dispatch_on_exception():
     assert collector.calls == []
 
 
-@pytest.mark.anyio
 async def test_run_on_errors_dispatches_with_exception_as_output():
     """`run_on_errors=True` dispatches the evaluator with the raised exception as `output`."""
     collector = Collector()
@@ -329,7 +320,6 @@ async def test_run_on_errors_dispatches_with_exception_as_output():
     assert str(ctx.output) == 'model exploded'
 
 
-@pytest.mark.anyio
 async def test_run_on_errors_only_dispatches_opted_in_evaluators():
     """When some evaluators opt in and some don't, only the opted-in ones run on error."""
     collector = Collector()
@@ -357,7 +347,40 @@ async def test_run_on_errors_only_dispatches_opted_in_evaluators():
     assert len(results) == 1
 
 
-@pytest.mark.anyio
+@needs_logfire
+async def test_run_on_errors_evaluator_sees_spans_and_metrics_on_exception(capfire: CaptureLogfire):
+    """Error evaluators receive the spans recorded before the exception and their metrics.
+
+    Regression test for #6927: when the wrapped run raised, the span tree was not
+    finalized and span-derived metrics were not extracted, so `run_on_errors=True`
+    evaluators saw an empty `span_tree` even though the failing model call had
+    completed spans.
+    """
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    agent = Agent(
+        FunctionModel(_failing_model),
+        capabilities=[
+            OnlineEvaluation(
+                evaluators=[OnlineEvaluator(evaluator=AlwaysTrue(), run_on_errors=True)],
+                config=config,
+            ),
+        ],
+    )
+    agent.instrument = True
+
+    with pytest.raises(RuntimeError, match='model exploded'):
+        await agent.run('hello')
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    _results, _failures, ctx = collector.calls[0]
+    assert isinstance(ctx.span_tree, SpanTree)
+    assert len(list(ctx.span_tree)) >= 1
+    assert ctx.metrics.get('requests', 0) >= 1
+
+
 async def test_failing_evaluator_does_not_crash_agent():
     """Evaluator exceptions don't crash the agent run."""
     collector = Collector()
@@ -380,7 +403,6 @@ async def test_failing_evaluator_does_not_crash_agent():
     assert len(failures) == 1
 
 
-@pytest.mark.anyio
 async def test_metadata_merging():
     """Config metadata and run metadata are merged."""
     collector = Collector()
@@ -401,7 +423,6 @@ async def test_metadata_merging():
     assert ctx.metadata['run_key'] == 'run_val'
 
 
-@pytest.mark.anyio
 async def test_empty_config_metadata_is_preserved():
     """An empty config metadata dict stays an empty dict instead of becoming None."""
     collector = Collector()
@@ -420,7 +441,6 @@ async def test_empty_config_metadata_is_preserved():
     assert ctx.metadata == {}
 
 
-@pytest.mark.anyio
 async def test_name_defaults_to_run_id():
     """EvaluatorContext name defaults to run_id when no name is provided."""
     collector = Collector()
@@ -439,7 +459,6 @@ async def test_name_defaults_to_run_id():
     assert ctx.name == result.run_id
 
 
-@pytest.mark.anyio
 async def test_default_config_fallback():
     """OnlineEvaluation uses DEFAULT_CONFIG when no config is provided."""
     collector = Collector()
@@ -464,7 +483,6 @@ def test_serialization_name_is_none():
     assert OnlineEvaluation.get_serialization_name() is None
 
 
-@pytest.mark.anyio
 async def test_streaming_dispatches_after_context_exit():
     """Streaming runs dispatch evaluations only after the stream context exits."""
     collector = Collector()
@@ -488,7 +506,6 @@ async def test_streaming_dispatches_after_context_exit():
     assert ctx.output == 'success (no tool calls)'
 
 
-@pytest.mark.anyio
 async def test_iter_dispatches_after_context_exit():
     """Iter-based runs dispatch evaluations only after the context exits."""
     collector = Collector()
@@ -516,7 +533,6 @@ async def test_iter_dispatches_after_context_exit():
 
 
 @needs_logfire
-@pytest.mark.anyio
 async def test_span_reference_with_logfire(capfire: CaptureLogfire):
     """OnlineEvaluation produces a valid SpanReference when logfire is configured."""
     collector = SpanCollector()
@@ -549,7 +565,6 @@ async def test_span_reference_with_logfire(capfire: CaptureLogfire):
         f'00-1234567890abcdef1234567890abcdef-{"0" * 16}-01',
     ),
 )
-@pytest.mark.anyio
 async def test_malformed_traceparent_yields_no_span_reference(monkeypatch: pytest.MonkeyPatch, traceparent: str):
     """Malformed traceparents do not produce span references."""
     monkeypatch.setattr(

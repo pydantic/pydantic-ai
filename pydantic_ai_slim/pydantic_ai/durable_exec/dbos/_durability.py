@@ -4,13 +4,15 @@ from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
+from weakref import WeakKeyDictionary
 
 from dbos import DBOS
+from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapRunHandler
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversation_id_from_run_id
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import ToolsetKind
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
@@ -25,7 +27,14 @@ from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOp
 from ._utils import StepConfig, guard_enqueue_in_workflow
 
 if TYPE_CHECKING:
-    pass
+    from dbos._context import DBOSContext
+
+_default_run_ids_by_step: WeakKeyDictionary[DBOSContext, dict[int, int]] = WeakKeyDictionary()
+"""Agent runs that drew a default `run_id` at each step position, per workflow execution.
+
+Runs started concurrently (e.g. with `asyncio.gather`) resolve their IDs before either starts a step,
+so they share a position and need the count to tell them apart.
+"""
 
 
 @dataclass(init=False, kw_only=True)
@@ -64,6 +73,11 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         journal_discovery=True,
         sequential_tools_in_durable_context=False,
         tool_config_key=None,
+        # `DBOS.cancel_workflow()` aborts the run with one of these `BaseException`s rather than a
+        # `CancelledError`: `DBOSWorkflowCancelledError` when a step starts (or a preemptible step is
+        # aborted), and, since dbos 3.2, `DBOSWorkflowConflictIDError` when a step that was running as
+        # the workflow was cancelled tries to record its result after the cancel handed ownership off.
+        cancellation_error_types=(DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError),
     )
     # No `tool_config_key`: DBOS takes no per-tool config, and tool metadata is ignored (as it was
     # before this capability existed). It can't be supported without changing durable history: a step
@@ -112,6 +126,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             parallel_execution_mode: Tool-call execution mode applied for the duration
                 of every run. Defaults to `'parallel_ordered_events'` so events
                 replay deterministically. Set to `'sequential'` for strict ordering.
+                A run with a workspace always runs its tool calls sequentially.
             register_legacy_workflows: Register the workflow names used by the deprecated
                 `DBOSAgent` so in-flight wrapper-era workflows can recover during migration.
         """
@@ -206,6 +221,23 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return DBOS.workflow_id is not None and DBOS.step_id is None
 
+    def _default_run_id(self) -> str | None:
+        if not self.in_durable_context:
+            return None
+        from dbos._context import get_local_dbos_context
+
+        context = get_local_dbos_context()
+        assert context is not None and context.workflow_id is not None
+        step = context.function_id + 1
+        runs = _default_run_ids_by_step.setdefault(context, {})
+        index = runs.get(step, 0)
+        runs[step] = index + 1
+        # The first run at a position keeps the ID it had before concurrent runs were told apart.
+        return f'{context.workflow_id}:{step}' if index == 0 else f'{context.workflow_id}:{step}:{index}'
+
+    def _default_conversation_id(self, run_id: str) -> str | None:
+        return conversation_id_from_run_id(run_id) if self.in_durable_context else None
+
     def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
         # A DBOS step degrades to a plain inline call outside a workflow, where enqueueing is
         # safe, so only guard once actually inside a workflow.
@@ -259,5 +291,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         agent = self._agent
         if agent is None:  # pragma: no cover
             return await handler()
-        with agent.parallel_tool_call_execution_mode(self._parallel_execution_mode):
+        # DBOS numbers steps as they start; parallel tools making several workspace steps each could
+        # replay recorded results into the wrong calls on recovery.
+        mode = self._parallel_execution_mode
+        if self.in_durable_context and ctx.workspace.attached:
+            mode = 'sequential'
+        with agent.parallel_tool_call_execution_mode(mode):
             return await handler()

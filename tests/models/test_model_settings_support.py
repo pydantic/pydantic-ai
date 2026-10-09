@@ -29,6 +29,9 @@ that records only path, body and headers on a live transport, while `timeout` is
   when the resolved profile sets `supports_thinking`, and a `thinking_always_enabled` model (Cohere,
   Mistral's magistral) supports it while sending nothing at all. "Payload unchanged" is therefore not
   evidence of non-support, which is exactly what this harness reads it as.
+- `cache` is excluded for the same reason as `thinking`: it is gated per model name via
+  `supports_cache`, and a provider that caches implicitly (OpenAI's automatic caching; Google,
+  which warns instead) supports it while sending nothing at all.
 
 That per-model-name gating bounds this file generally: each class is probed at ONE representative
 model, chosen to exercise the class's full capability, so an entry whose support varies by model
@@ -58,6 +61,8 @@ from pydantic_ai import models
 from pydantic_ai.direct import model_request
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models.system_one import SystemOneModel
+from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
@@ -134,10 +139,8 @@ with try_import() as typesafe_available:
     from pydantic_ai.models.typesafe import TypeSafeModel
     from pydantic_ai.providers.typesafe import TypeSafeProvider
 
-pytestmark = pytest.mark.anyio
 
-
-HAND_MAINTAINED = frozenset({'tool_choice', 'thinking'})
+HAND_MAINTAINED = frozenset({'tool_choice', 'thinking', 'cache'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
 
 PROBE_VALUES: dict[str, tuple[object, ...]] = {
@@ -435,38 +438,43 @@ async def mcp_sampling_probe(settings: ModelSettings) -> str | None:
     return recorder.first
 
 
-async def typesafe_probe(settings: ModelSettings) -> str | None:
-    """Probe TypeSafe with the one request shape it accepts.
+def decision_probe(build: Callable[[httpx2.AsyncClient], Model]) -> Probe:
+    """Probe a decision model with the one request shape it accepts.
 
-    Jev answers an output tool and refuses function tools before any request is sent, so the shared
+    A decision model answers an output tool and refuses function tools before any request is sent, so the shared
     `run_probe_request`, which carries `PROBE_TOOL` and no output tool, would never reach the wire.
     """
-    recorder = Recorder()
 
-    def handle(request: httpx2.Request) -> httpx2.Response:
-        request.read()
-        recorder.record(_request_payload(request.content, request.headers.items(), request.extensions.get('timeout')))
-        return httpx2.Response(400, json={'error': {'message': 'probe', 'type': 'probe'}})
+    async def probe(settings: ModelSettings) -> str | None:
+        recorder = Recorder()
 
-    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
-    model = TypeSafeModel('jev-latest', provider=TypeSafeProvider(api_key=PROBE_KEY, http_client=client))
-    output_tool = ToolDefinition(
-        name='final_result', parameters_json_schema={'type': 'object', 'properties': {'ok': {'type': 'boolean'}}}
-    )
-    try:
-        await model_request(
-            model,
-            [ModelRequest.user_text_prompt('probe')],
-            model_settings=settings,
-            model_request_parameters=ModelRequestParameters(
-                output_mode='tool', output_tools=[output_tool], allow_text_output=False
-            ),
+        def handle(request: httpx2.Request) -> httpx2.Response:
+            request.read()
+            recorder.record(
+                _request_payload(request.content, request.headers.items(), request.extensions.get('timeout'))
+            )
+            return httpx2.Response(400, json={'error': {'message': 'probe', 'type': 'probe'}})
+
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
+        output_tool = ToolDefinition(
+            name='final_result', parameters_json_schema={'type': 'object', 'properties': {'ok': {'type': 'boolean'}}}
         )
-    except Exception:
-        pass
-    finally:
-        await client.aclose()
-    return recorder.first
+        try:
+            await model_request(
+                build(client),
+                [ModelRequest.user_text_prompt('probe')],
+                model_settings=settings,
+                model_request_parameters=ModelRequestParameters(
+                    output_mode='tool', output_tools=[output_tool], allow_text_output=False
+                ),
+            )
+        except Exception:
+            pass
+        finally:
+            await client.aclose()
+        return recorder.first
+
+    return probe
 
 
 def _needs(available: Callable[[], bool], package: str) -> tuple[pytest.MarkDecorator, ...]:
@@ -576,6 +584,16 @@ def _google(client: httpx2.AsyncClient) -> Model:
     return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
 
 
+def _typesafe(client: httpx2.AsyncClient) -> Model:
+    return TypeSafeModel('jev-latest', provider=TypeSafeProvider(api_key=PROBE_KEY, http_client=client))
+
+
+def _system_one(client: httpx2.AsyncClient) -> Model:
+    return SystemOneModel(
+        'clm-latest', provider=SystemOneProvider(base_url='http://localhost:8700', http_client=client)
+    )
+
+
 CASES = [
     Case(
         'OpenAIChatModel',
@@ -620,7 +638,8 @@ CASES = [
     Case('HuggingFaceModel', ('HuggingFace',), huggingface_probe, _needs(huggingface_available, 'huggingface')),
     Case('XaiModel', ('xAI',), xai_probe, _needs(xai_available, 'xai')),
     Case('MCPSamplingModel', ('MCP Sampling',), mcp_sampling_probe, _needs(mcp_available, 'mcp')),
-    Case('TypeSafeModel', ('TypeSafe',), typesafe_probe, _needs(typesafe_available, 'typesafe-sdk')),
+    Case('TypeSafeModel', ('TypeSafe',), decision_probe(_typesafe), _needs(typesafe_available, 'typesafe-sdk')),
+    Case('SystemOneModel', ('System One',), decision_probe(_system_one)),
 ]
 
 
@@ -704,12 +723,12 @@ def test_every_api_backed_model_class_is_probed():
         except ImportError:  # pragma: lax no cover
             continue  # an optional provider SDK isn't installed; its classes can't be probed either
         for name, obj in vars(module).items():
-            # A subscripted generic (`dict[str, Any]`) passes `isinstance(_, type)` on Python 3.10 and
-            # then makes `issubclass` raise, so both it and anything merely imported into the module
-            # are screened out before the base-class question is asked.
             if not isinstance(obj, type) or isinstance(obj, types.GenericAlias):
                 continue
-            if obj.__module__ == module_info.name and issubclass(obj, Model):
+            if obj.__module__ != module_info.name or not issubclass(obj, Model):
+                continue
+            # An abstract base such as `DecisionModel` has no wire of its own; its concrete subclasses are probed.
+            if not inspect.isabstract(cast('type[Model[Any]]', obj)):
                 discovered.add(name)
 
     unprobed = discovered - _NOT_API_BACKED - {case.id for case in CASES}

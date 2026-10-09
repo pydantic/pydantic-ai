@@ -1,22 +1,15 @@
 from __future__ import annotations
 
 import re
-import sys
 from collections import defaultdict
 from dataclasses import dataclass, replace
-from datetime import timezone
-from typing import Any, TypeVar
+from datetime import UTC
+from typing import Any, Self, TypeVar
 from unittest.mock import AsyncMock
 
 import anyio
 import pytest
 from pydantic import ValidationError
-from typing_extensions import Self
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
-else:
-    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 
 from pydantic_ai import (
     AbstractToolset,
@@ -60,8 +53,6 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
-
-pytestmark = pytest.mark.anyio
 
 T = TypeVar('T')
 
@@ -1280,7 +1271,7 @@ async def test_toolset_max_retries_inherits_from_agent():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='call always_fails', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1295,7 +1286,7 @@ async def test_toolset_max_retries_inherits_from_agent():
             ),
             ModelRequest(
                 parts=[],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -1386,7 +1377,7 @@ async def test_prepare_function_sees_agent_max_retries():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='call my_tool', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),

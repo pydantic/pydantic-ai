@@ -1,0 +1,293 @@
+---
+title: Pydantic AI Harness
+description: "Pydantic AI Harness is the official capability library for Pydantic AI: a coding agent, file and shell tools, memory, subagents, and context management."
+---
+
+# Pydantic AI Harness
+
+*Your agent's favorite harness, built on Pydantic AI*
+
+[![Join Slack](https://img.shields.io/badge/Slack-Join%20Slack-4A154B?logo=slack)](https://logfire.pydantic.dev/docs/join-slack/)
+
+**Pydantic AI Harness** is the official [capability](../capabilities/overview.md) and harness library for [Pydantic AI](../index.md). Every Pydantic AI agent already has a light harness: the typed agent loop, [any model](../models/overview.md), your own tools, structured output. For simple agents that's enough. But set an agent loose on complex, long-running work (fix a codebase, research a question, run for hours unattended) and what it needs around the model grows: a [workspace](filesystem.md) to act in, a [plan](planning.md) it keeps current, [memory](memory.md) that carries across sessions, [sub-agents](subagents.md) to hand work to, [context management](compaction.md) that holds up in hour ten, and [durable execution](../durable_execution/overview.md) that survives a restart. **Pydantic AI Harness** ships that harness.
+
+Everything here is one primitive: a [capability](../capabilities/overview.md), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [30+ of them](#capabilities), and complete agents like [Coder](coder.md) and [Researcher](researcher.md) are themselves capabilities combined: they come apart the way they went together. Snap on a single block, compose your own stack, or start from the whole coding agent and take it apart later.
+
+## Quick start
+
+Install with [`uv`](https://docs.astral.sh/uv/):
+
+```bash
+pip/uv-add "pydantic-ai-harness[coder,anthropic]"
+```
+
+<!-- Keep this blown-out example in sync across docs/coder.md, docs/index.md, README.md, pydantic_ai_harness/coder/README.md, and examples/coding_agent.py. -->
+
+```python {names="defined"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness.coder import Coder
+
+agent = Agent(
+    'anthropic:claude-opus-5-5',
+    capabilities=[LocalWorkspace('.'), Coder()],
+)
+result = agent.run_sync('Find out why tests/test_parser.py fails and fix the bug it caught.')
+print(result.output)
+```
+
+`LocalWorkspace('.')` is where the agent works: its file tools and commands run on your machine, in this directory. It is not a sandbox, so commands can reach anything you can. To run the same agent in an isolated cloud machine, swap it for a sandbox capability (Modal, E2B, or Sprites); see [Workspaces](#workspaces).
+
+With [Modal](modal-sandbox.md), for example:
+
+```python
+from pydantic_ai_harness.modal_sandbox import ModalSandbox
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
+```
+
+Coder provides six tools: `read_file`, `write_file`, `edit_file`, `list_files`, `grep`, and `shell`, plus `delegate_task` to hand a sub-task to a fresh run of the same agent, repository context, and context controls. Shell commands are unrestricted and can persist beyond individual runs. Default instructions guide autonomous investigation, editing, and verification; pass `instructions=` to add your own guidance.
+
+```bash
+uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5
+```
+
+The bundled `coder_agent` is the example above without a model.
+
+Every model works: swap the string for [any provider's](../models/overview.md). Need more? Add capabilities to the list; here's the same coder on `gpt-5.6-sol`, with web search and cross-session memory:
+
+```bash
+pip/uv-add "pydantic-ai-slim[openai]"
+```
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace, WebSearch
+from pydantic_ai_harness import Coder, Memory
+from pydantic_ai_harness.memory import FileStore
+
+agent = Agent(
+    'openai:gpt-5.6-sol',
+    capabilities=[
+        LocalWorkspace('.'),
+        Coder(),
+        WebSearch(),  # look up docs and error messages on the web
+        Memory(FileStore('.agent-memory')),  # remembers across sessions
+    ],
+)
+```
+
+[Skills](skills.md) (your `SKILL.md` procedures, loaded on demand; point it at a `skills/` directory and add the `skills` extra), [Web Fetch](../capabilities/web-fetch.md), [Guardrails](guardrails.md), and [Dynamic Workflow](dynamic-workflow.md) slot in the same way; the [Coder page](coder.md#composition) lists what pairs well.
+
+## No magic: it's capabilities all the way down
+
+`Coder` is a regular combined capability: [`FileSystem`](filesystem.md) with five of its tools and content hashes off, [`Shell`](shell.md) with its persistent `shell` tool and no allowlist, [`RepoContext`](repo-context.md), [`SubAgents`](subagents.md) delegating to the agent itself, [`ClearToolResults` and `WarnNearLimits`](compaction.md), and a bounded [`ToolOutputLimits`](tool-output-limits.md), plus its default instructions and JSON argument repair. Use it whole, or build the same agent from those capabilities to change any setting; the [Coder page](coder.md) lists the exact configuration, tool signatures, delegation, and the persistent shell lifecycle.
+
+On a remote sandbox, `Coder` loads repo instructions at run start and may create the sandbox before the first model tool call. Use `Coder(repo_context=False)` for lazy creation.
+
+## Workspaces
+
+A [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) is where the agent's files and commands live: your machine with `LocalWorkspace`, or an isolated sandbox. Harness capabilities never pick one for you. Attach one, or the run fails at its start and tells you what to attach.
+
+[Coder](coder.md), [FileSystem](filesystem.md), [Shell](shell.md), [Repo Context](repo-context.md), and [Macroscope](macroscope.md) work in the run's workspace, starting in its working directory. To work in a subdirectory, set it on the workspace: `LocalWorkspace('./repo')`. To continue in the same files from a later run or another agent, see [Sharing a workspace](coder.md#sharing-a-workspace).
+
+Skills, SubAgents, ToolOutputLimits, and Memory's `FileStore` use the run's workspace for their own files too. To keep those files on your machine while the agent works in a sandbox, point them at a local location:
+
+```python
+from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai_harness import Memory, ToolOutputLimits
+from pydantic_ai_harness.memory import FileStore
+from pydantic_ai_harness.tool_output_limits import LocalFileStore
+
+memory = Memory(FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory')))  # notes on this machine
+limits = ToolOutputLimits(store=LocalFileStore())  # spills in this machine's temp directory
+```
+
+By default, harness files (Shell's background job logs, tool-output spills) go in `.pydantic-ai-harness/` in the workspace's working directory, which is git-ignored.
+
+Step Persistence's file and SQLite stores, Media's disk and SQLite stores, and Code Mode mounts use paths on the machine running the agent, not the run's workspace.
+
+`FileSystem`'s `root_dir` limits only the file tools, not `Shell` commands.
+
+Upgrading from an earlier release? The [Coder page](coder.md#upgrading) lists what changed.
+
+## Capabilities
+
+Every capability is a self-contained unit you drop into `capabilities=[...]`, and they all compose, with each other and with your own. Some come with [`pydantic-ai`](../index.md) itself, the rest with this package; the **Package** column says which. 50+ in all, grouped by what they give your agent:
+
+### Harnesses
+
+Complete agent stacks as regular combined capabilities: one import gives you a working agent, and you can take either apart into the blocks below.
+
+| Harness | Package | What it provides |
+|---|---|---|
+| [Coder](coder.md) | Harness | Six coding tools, persistent shell commands, delegation to itself, autonomous guidance, and context controls |
+| [Researcher](researcher.md) | Harness | A complete web-research stack: search, page fetching, a delegated sub-researcher, and bounded tool output |
+
+### Execution environments
+
+The workspace the agent acts in: the files it edits and the commands it runs, local or isolated.
+
+| Capability | Package | What it does |
+|---|---|---|
+| [FileSystem](filesystem.md) | Harness | Read, write, edit, list, and search files under a root in the run's workspace, with opt-in ripgrep tools; path-traversal checked, secrets read-only |
+| [Shell](shell.md) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
+| [Modal Sandbox](modal-sandbox.md) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
+| [E2B Sandbox](e2b-sandbox.md) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
+| [Sprites Sandbox](sprites-sandbox.md) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
+| [SSH Workspace](ssh-workspace.md) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
+| [Bubblewrap Sandbox](bubblewrap-sandbox.md) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) sandbox on that workspace's host |
+
+### Tools & native abilities
+
+Connections to systems outside the agent's workspace, and abilities the provider executes natively.
+
+| Capability | Package | What it does |
+|---|---|---|
+| [MCP](../capabilities/mcp.md) | Core | Connect any MCP server's tools; local by default, provider-native connectors opt-in |
+| [Image Generation](../capabilities/image-generation.md) | Core | Generate and edit images; provider-native where supported, sub-agent fallback elsewhere |
+| [GitHub](github.md) | Harness | Read and change GitHub repositories, issues, pull requests, and other accessible resources. |
+| [Linear](linear.md) | Harness | Read and change Linear issues, projects, teams, and comments. |
+| [Notion](notion.md) | Harness | Search and change Notion workspace content. |
+| [Google Workspace](google-workspace.md) | Harness | Use Gmail, Calendar, Drive, and other Google Workspace tools. |
+| [StackOne](stackone.md) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
+| [Slack](slack.md) | Harness | Give an agent Slack messages, channels, and canvas tools. |
+| [Ordinal](ordinal.md) | Harness | Draft, schedule, and analyze social posts through [Ordinal](https://www.tryordinal.com)'s hosted MCP server |
+| [Grain](grain.md) | Harness | Search meetings, transcripts, and notes through [Grain](https://grain.com)'s hosted MCP server |
+| [Day AI](day-ai.md) | Harness | Search and update CRM records and meeting context through [Day AI](https://day.ai)'s hosted MCP server |
+| [PostHog](posthog.md) | Harness | Query product analytics and manage feature flags, experiments, and dashboards through [PostHog](https://posthog.com)'s hosted MCP server |
+| [Pylon](pylon.md) | Harness | Work with support issues, accounts, and contacts through [Pylon](https://www.usepylon.com)'s hosted MCP server |
+| [LocalStack](localstack.md) | Harness | An emulated AWS environment with AWS CLI tools |
+| [Macroscope](macroscope.md) | Harness | Run a local [Macroscope](https://docs.macroscope.com/cli) code review and hand the findings to the agent |
+
+### Web & research
+
+Finding and reading things on the open web.
+
+| Capability | Package | What it does |
+|---|---|---|
+| [Web Search](../capabilities/web-search.md) | Core | Provider-native search where available, local DuckDuckGo fallback everywhere |
+| [Web Fetch](../capabilities/web-fetch.md) | Core | Fetch and read URLs, native or local |
+| [X Search](../capabilities/x-search.md) | Core | Search X; native on xAI, subagent fallback elsewhere |
+| [Exa Search](exa-search.md) | Harness | Web research via [Exa](https://exa.ai): excerpted search, full-page reads, opt-in cited deep search |
+| [Exa Agent](exa-search.md) | Harness | Delegate open-ended research to the Exa Agent API |
+| [You.com Search](youdotcom.md) | Harness | Web search and page reads via [You.com](https://you.com): query-relevant excerpts or full-page markdown |
+| [You.com Research](youdotcom.md) | Harness | Cited answers and multi-step research via the You.com Answer, Research, and Finance Research APIs |
+| [Browser Use](browser-use.md) | Harness | Hand web tasks to an autonomous [browser-use](https://github.com/browser-use/browser-use) agent driving a real browser |
+| [Playwright Browser](playwright.md) | Harness | Drive a real Chromium page yourself: navigate, click, type, read, and inspect what the page did |
+
+### Reasoning, planning & delegation
+
+How the agent thinks and divides the work.
+
+| Capability | Package | What it does |
+|---|---|---|
+| [Thinking](../capabilities/thinking.md) | Core | Provider-adaptive extended thinking at configurable effort |
+| [Planning](planning.md) | Harness | Model-owned task plans with a cache-safe live reminder |
+| [Subagents](subagents.md) | Harness | Delegate self-contained tasks to named child agents |
+| [Dynamic Workflow](dynamic-workflow.md) | Harness | The model orchestrates sub-agents from one Python script: fan-out, chain, vote in a single tool call, with hard `max_agent_calls` budgets |
+| [Advisor](advisor.md) | Harness | Let an executor consult a stronger model mid-run |
+| [Background Tools](background-tools.md) | Harness | Run selected tools concurrently; results arrive as follow-up messages |
+
+### Context management
+
+How the agent spends its context window: the difference between an agent that degrades over a long run and one that doesn't, and between paying for tokens N times or once.
+
+| Capability | Package | What it does |
+|---|---|---|
+| [Code Mode](code-mode.md) | Harness | The model writes one Python script that calls many tools inside a [Monty](https://github.com/pydantic/monty) sandbox: one round-trip instead of N, and intermediate results never enter the context window. The answer to tool-call token bloat |
+| [Tool Search](../capabilities/tool-search.md) | Core | Load tool definitions on demand instead of carrying hundreds in every prompt |
+| [Compaction](../capabilities/compaction.md) | Core | Provider-native compaction on OpenAI and Anthropic; the provider summarizes history server-side |
+| [Compaction](compaction.md) | Harness | Model-agnostic strategies: tool-result clearing, sliding-window trimming, LLM summarization, tiered; all window-relative, with live usage reporting |
+| [Tool Output Limits](tool-output-limits.md) | Harness | Truncate, spill to a queryable file, or summarize oversized tool returns at the source |
+| [Warn On Cache Busts](warn-on-cache-busts.md) | Harness | Detect prompt-cache prefix collapses between requests, from the provider's own numbers |
+
+### Knowledge & memory
+
+What the agent knows and remembers, loaded when relevant instead of carried in every prompt.
+
+| Capability | Package | What it does |
+|---|---|---|
+| [Memory](memory.md) | Harness | A persistent, namespaced notebook: bounded prompt injection, on-demand search; in-memory/file/Postgres stores |
+| [Conversation Search](conversation-search.md) | Harness | BM25 search over stored history, including turns compaction dropped |
+| [Skills](skills.md) | Harness | Load [Agent Skill](../capabilities/on-demand.md) (`SKILL.md`) instructions on demand |
+| [Repo Context](repo-context.md) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
+| [Pydantic AI Docs](pydantic-ai-docs.md) | Harness | On-demand Pydantic AI documentation lookup |
+
+### Control & safety
+
+Bounding what the agent may do, and keeping it on-instructions.
+
+| Capability | Package | What it does |
+|---|---|---|
+| [Repair Tool Arguments](repair-tool-arguments.md) | Harness | Repair malformed JSON tool arguments before schema validation. |
+| [Guardrails](guardrails.md) | Harness | Validate/block/redact user input, tool calls, tool results, and output, including secret masking and parallel async guards |
+| [Prompt Injection Defender](prompt-injection-defender.md) | Harness | Classify local tool results for indirect prompt injection and optionally withhold high-risk results |
+| [Spend Limits](spend.md) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |
+| [Ask User](ask-user.md) | Harness | Let the model ask the user multiple-choice questions mid-run; you supply the answerer (terminal, web, test) |
+| [Tool approval](../deferred-tools.md#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |
+| [Tool Call Judge](tool-call-judge.md) | Harness | A second model answers one risk question per tool call and blocks the call before the tool function runs |
+| [Handle Deferred Tool Calls](../capabilities/handle-deferred-tool-calls.md) | Core | Resolve approval-deferred tool calls programmatically |
+| [System Reminders](system-reminders.md) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
+| [Trajectory Judge](trajectory-judge.md) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
+
+### Self-extension
+
+| Capability | Package | What it does |
+|---|---|---|
+| [Capability Creation](capability-creation.md) | Harness | The agent writes, validates, and persists *new capabilities* during a run; the host loads them into a later run via `store.load_active()` and `capabilities=` |
+
+### Execution runtime
+
+Outside the loop: how runs persist, survive failures, and get observed and configured in production.
+
+| Capability | Package | What it does |
+|---|---|---|
+| [Durable execution](../durable_execution/overview.md) | Core | Runs that survive restarts and failures on [Temporal](../durable_execution/temporal.md), [DBOS](../durable_execution/dbos.md), or [Prefect](../durable_execution/prefect.md), with [Restate](../durable_execution/restate.md), [Kitaru](../durable_execution/kitaru.md), and [Airflow](../durable_execution/airflow.md) integrations. See [what works on each engine](durable-execution.md) for Coder, Shell, and FileSystem |
+| [AWS Lambda durability](aws-lambda.md) | Harness | Checkpoint model requests and tool calls into AWS Lambda durable function steps |
+| [Absurd durability](absurd.md) | Harness | Checkpoint model requests, MCP calls, and tool calls into Absurd steps on PostgreSQL |
+| [Step Persistence](step-persistence.md) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
+| [Instrumentation](../capabilities/instrumentation.md) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |
+| [Logfire MCP](logfire-mcp.md) | Harness | Query Logfire telemetry and manage observability resources. |
+| [Managed Prompt](managed-prompt.md) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt; version and roll out without redeploying |
+| [Thread Executor](../capabilities/thread-executor.md) | Core | Run sync tools on a shared thread pool |
+
+Core also ships loop-customization capabilities for production servers: [Select Model](../capabilities/select-model.md), [Resolve Model ID](../capabilities/resolve-model-id.md), [Prepare Tools / Prepare Output Tools](../capabilities/prepare-tools.md), [Prefix Tools](../capabilities/prefix-tools.md), [Set Tool Metadata](../capabilities/set-tool-metadata.md), [Include Tool Return Schemas](../capabilities/include-tool-return-schemas.md), [Process History](../capabilities/process-history.md), [Process Event Stream](../capabilities/process-event-stream.md), [Reinject System Prompt](../capabilities/reinject-system-prompt.md), and [Raise Content Filter Error](../capabilities/raise-content-filter-error.md).
+
+And the agent plugs into any interface: [ACP](acp.md) *(experimental, Harness)* serves it to editors like Zed over the [Agent Client Protocol](https://agentclientprotocol.com), and core ships the [web chat UI](../web.md), [CLI](../cli.md), [frontend adapters](../ui/overview.md) (AG-UI, Vercel AI), and [realtime voice](../realtime/overview.md).
+
+Community packages extend the same capability system further; see [third-party capabilities](../capabilities/third-party.md).
+
+## When do you need the Harness?
+
+"Harness" is the field's term for everything around the model that turns it into an agent: the loop, the tools, the context management. Reach for this package when your agent should *do* more than core's lean harness covers: touch files, run code, browse, remember, delegate, or stay coherent through hours-long runs. The boundary between the packages is mechanical, not a maturity tier: core ships the capabilities that require model or framework support (provider-native tools like [image generation](../capabilities/image-generation.md), provider APIs like [compaction](../capabilities/compaction.md), deep loop integration like [tool search](../capabilities/tool-search.md), and fundamentals like [thinking](../capabilities/thinking.md), [MCP](../capabilities/mcp.md), and [web search](../capabilities/web-search.md)) and the Harness ships everything else, as a separate package so capabilities can iterate at the speed the field moves while Pydantic AI itself stays lean.
+
+## Installation
+
+```bash
+pip/uv-add pydantic-ai-harness
+```
+
+This installs [`pydantic-ai-slim`](../install.md) with it, so it works on its own; you don't need to install Pydantic AI separately. Model providers and the CLI come via extras that pass through to Pydantic AI: `pydantic-ai-harness[anthropic]`, `[cli]`. Some capabilities need their own extra for optional dependencies; each capability's page gives its exact install line. Requires Python 3.11+.
+
+New to Pydantic AI itself? Start with [its docs](../index.md): the agent you mount these capabilities on is defined there.
+
+## Observability
+
+Everything the harness does is observable: core's [Instrumentation](../capabilities/instrumentation.md) capability (or `logfire.instrument_pydantic_ai()`) emits a full trace of every run: every model call and tool call, with token and cost tracking. It's standard OpenTelemetry, so any OTLP backend works; [Logfire](https://pydantic.dev/logfire) is the easiest way to see it during development.
+
+## Build your own
+
+[Capabilities](../capabilities/custom.md) are the primary extension point for Pydantic AI, and every capability in this library doubles as a worked example. Publishing a standalone package? Use the `pydantic-ai-<name>` naming convention; see [Publishing capability packages](../extensibility.md#publishing-capability-packages).
+
+## Version policy
+
+Pydantic AI Harness uses **0.x versioning**, and that's a statement about API stability, not maturity: these capabilities are tested end-to-end and meant for production use, but their APIs may still move between minor releases (0.1 -> 0.2): renamed parameters, changed defaults, restructured APIs, always with deprecation warnings where practical. Patch releases will not intentionally break existing behavior, and every breaking change is documented in release notes with migration guidance your agent can follow. Keeping the Harness a separate package from [Pydantic AI](https://github.com/pydantic/pydantic-ai), which has a [stricter version policy](../version-policy.md), is what lets capabilities iterate at the speed the field moves.
+
+## Pydantic AI references
+
+- [Capabilities](../capabilities/overview.md): what capabilities are, built-in capabilities, building your own
+- [Hooks](../hooks.md): lifecycle hooks reference, ordering, error handling
+- [Extensibility](../extensibility.md): publishing packages, third-party ecosystem
+- [Toolsets](../toolsets.md): building tools for capabilities
+- [API reference](../api/capabilities.md): full API docs

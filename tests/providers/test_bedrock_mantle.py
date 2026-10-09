@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from typing import Literal, get_args
+from datetime import timedelta
+from typing import Literal, assert_never, get_args
 
 import pytest
 from genai_prices.data_snapshot import get_snapshot
 from inline_snapshot import snapshot
-from typing_extensions import assert_never
+from pytest_mock import MockerFixture
 
-from pydantic_ai import UserError
+from pydantic_ai import Agent, ModelSettings, UserError
 from pydantic_ai.models import infer_model, infer_model_profile
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
@@ -26,7 +27,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 
-pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')]
 
 # These tests inspect local provider configuration and routing without making HTTP requests, so VCR cannot cover them.
 
@@ -202,9 +203,10 @@ def test_bedrock_mantle_model_rejects_wrong_endpoint_family() -> None:
 
 def test_bedrock_converse_rejects_proprietary_openai() -> None:
     # Proprietary GPT models Converse doesn't serve (GPT-5.4, GPT-5.5, GPT-5.6 Cyber — and future GPT
-    # generations until AWS lists them) are flagged by the profile (`bedrock_supported_on_converse=False`)
+    # generations until verified on Converse) are flagged by the profile (`bedrock_supported_on_converse=False`)
     # and `BedrockConverseModel` raises at construction with a pointer to `BedrockMantleProvider`.
-    # Exact names, not a prefix: GPT-5.6 Sol/Luna/Terra are served on Converse; `gpt-5.6-cyber` is not.
+    # Exact names, not a prefix: GPT-5.6 Sol/Luna/Terra, GPT-6 Sol/Luna/Astra, and GPT-6.1 Sol are served on
+    # Converse; `gpt-5.6-cyber` is not.
     for model_name in (
         'openai.gpt-5.6-cyber',
         'openai.gpt-5.4',
@@ -218,12 +220,25 @@ def test_bedrock_converse_rejects_proprietary_openai() -> None:
     assert isinstance(infer_model('bedrock:openai.gpt-oss-safeguard-20b'), BedrockConverseModel)
 
 
-def test_bedrock_converse_accepts_gpt_5_6_models() -> None:
-    # #7793: AWS model cards list GPT-5.6 Sol/Luna/Terra on the Converse API — unlike every other
-    # proprietary GPT model, they construct on `BedrockConverseModel`. No Pydantic AI profile overrides
-    # have been verified for them, so the effective profile keeps the relevant defaults.
-    for base_name in ('gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'):
-        assert BedrockProvider.model_profile(f'openai.{base_name}') is None
+def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
+    # AWS serves GPT-5.6 Sol/Luna/Terra (#7793), GPT-6 Sol/Luna/Astra, and GPT-6.1 Sol on the Converse API (see
+    # `test_bedrock_openai_converse`) — unlike every other proprietary GPT model, they construct on
+    # `BedrockConverseModel`. Converse rejects their sampling settings; the rest of the profile keeps the defaults,
+    # except that Bedrock documents a 30-minute prompt-cache TTL for GPT-5.6.
+    for base_name in (
+        'gpt-5.6-sol',
+        'gpt-5.6-luna',
+        'gpt-5.6-terra',
+        'gpt-6-sol',
+        'gpt-6-luna',
+        'gpt-6-astra',
+        'gpt-6.1-sol',
+    ):
+        retention = {'default_cache_retention': timedelta(minutes=30)} if base_name.startswith('gpt-5.6') else {}
+        assert BedrockProvider.model_profile(f'openai.{base_name}') == {
+            'bedrock_disallows_sampling_settings': True,
+            **retention,
+        }
         model = BedrockConverseModel(f'us.openai.{base_name}', provider=BedrockProvider(region_name='us-west-2'))
         assert {
             'supports_json_schema_output': model.profile.get('supports_json_schema_output', False),
@@ -237,6 +252,31 @@ def test_bedrock_converse_accepts_gpt_5_6_models() -> None:
             }
         )
     assert isinstance(infer_model('bedrock:openai.gpt-5.6-luna'), BedrockConverseModel)
+    # GPT-6.1 Sol is served under both Converse routing prefixes.
+    assert isinstance(infer_model('bedrock:global.openai.gpt-6.1-sol'), BedrockConverseModel)
+    BedrockConverseModel('global.openai.gpt-6.1-sol', provider=BedrockProvider(region_name='us-west-2'))
+
+
+async def test_bedrock_converse_gpt_6_1_sol_drops_sampling_settings(
+    allow_model_requests: None, mocker: MockerFixture
+) -> None:
+    model = BedrockConverseModel('us.openai.gpt-6.1-sol', provider=BedrockProvider(region_name='us-west-2'))
+    agent = Agent(model=model, model_settings=ModelSettings(temperature=1.0, top_p=0.9))
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await agent.run('What is the capital of France?')
+
+    inference_config = mock_converse.call_args.kwargs.get('inferenceConfig', {})
+    assert 'temperature' not in inference_config
+    assert 'topP' not in inference_config
 
 
 def test_bedrock_converse_gpt_5_6_inference_id_forms() -> None:
@@ -292,7 +332,7 @@ def test_bedrock_mantle_profiles() -> None:
             'openai_chat_supports_web_search': False,
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
-            'openai_reasoning_enabled_by_default': True,
+            'thinking_enabled_by_default': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_reasoning_mode': True,
             'openai_responses_supports_reasoning_context': True,

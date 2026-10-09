@@ -5,12 +5,12 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
-from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
+from typing import Annotated, Any, Concatenate, Generic, Literal, Self, TypeAlias, Union, cast
 
 from pydantic import AliasChoices, Field
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import ParamSpec, Self, TypeVar
+from typing_extensions import ParamSpec, TypeVar
 
 from . import _function_schema, _utils
 from ._deferred import (
@@ -127,7 +127,7 @@ def only_if_42(
 def hitchhiker(ctx: RunContext[int], answer: str) -> str:
     return f'{ctx.deps} {answer}'
 
-hitchhiker = Tool(hitchhiker, prepare=only_if_42)
+hitchhiker_tool = Tool(hitchhiker, prepare=only_if_42)
 ```
 
 Usage `ToolPrepareFunc[AgentDepsT]`.
@@ -389,7 +389,7 @@ class Tool(Generic[ToolAgentDepsT]):
         async def my_tool(ctx: RunContext[int], x: int, y: int) -> str:
             return f'{ctx.deps} {x} {y}'
 
-        agent = Agent('test', tools=[Tool(my_tool)])
+        agent = Agent('test', tools=[Tool(my_tool)], deps_type=int)
         ```
 
         or with a custom prepare method:
@@ -409,7 +409,7 @@ class Tool(Generic[ToolAgentDepsT]):
             if ctx.deps == 42:
                 return tool_def
 
-        agent = Agent('test', tools=[Tool(my_tool, prepare=prep_my_tool)])
+        agent = Agent('test', tools=[Tool(my_tool, prepare=prep_my_tool)], deps_type=int)
         ```
 
 

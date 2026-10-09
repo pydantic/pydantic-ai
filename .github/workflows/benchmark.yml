@@ -1,0 +1,127 @@
+name: CodSpeed
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: codspeed-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    name: classify changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      content_only: ${{ steps.classify.outputs.content_only }}
+    steps:
+      - name: Classify pull request changes
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Keep classification inline so this token-bearing job never executes PR-authored files.
+          run_benchmarks() {
+            echo 'content_only=false' >> "$GITHUB_OUTPUT"
+          }
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            run_benchmarks
+            exit 0
+          fi
+
+          if ! total=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.changed_files'); then
+            echo '::warning::Could not read the PR changed-file count; running benchmarks.'
+            run_benchmarks
+            exit 0
+          fi
+          if ! [[ "$total" =~ ^[0-9]+$ ]] || [ "$total" -eq 0 ] || [ "$total" -ge 3000 ]; then
+            echo "::warning::PR changed-file count is $total; running benchmarks."
+            run_benchmarks
+            exit 0
+          fi
+          if ! gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > "$RUNNER_TEMP/changed-files.txt"; then
+            echo '::warning::Could not list the PR changed files; running benchmarks.'
+            run_benchmarks
+            exit 0
+          fi
+
+          mapfile -t changed_files < "$RUNNER_TEMP/changed-files.txt"
+          if [ "${#changed_files[@]}" -ne "$total" ]; then
+            echo "::warning::Expected $total changed files, received ${#changed_files[@]}; running benchmarks."
+            run_benchmarks
+            exit 0
+          fi
+
+          needs_docs_checks() {
+            # `test_examples.py` also scans Markdown under the published package directories.
+            case "$1" in
+              README.md|clai/README.md|src/pydantic_clai2/README.md|src/pydantic_ai_harness/README.md) ;;
+              docs/*.md|docs/*.mdc|docs/*.png|docs/*.svg|docs/*.ico|docs/*.jpg|docs/*.jpeg|docs/*.gif|docs/*.webp|docs/*.avif) ;;
+              examples/*.md|pydantic_ai_slim/*.md|pydantic_graph/*.md|pydantic_evals/*.md) ;;
+              *) return 1 ;;
+            esac
+          }
+
+          is_non_test_content() {
+            case "$1" in
+              tests/*|.github/*|.macroscope/*) return 1 ;;
+            esac
+            if needs_docs_checks "$1"; then
+              return 0
+            fi
+            case "$1" in
+              .agents/*.md|.agents/*.tsv|.claude/*.md|agent_docs/*.md|*/AGENTS.md|*/CLAUDE.md) return 0 ;;
+              *.md) [[ "$1" != */* ]] ;;
+              *) return 1 ;;
+            esac
+          }
+
+          content_only=true
+          for changed_file in "${changed_files[@]}"; do
+            IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
+            if ! is_non_test_content "$filename" || \
+              { [ -n "$previous_filename" ] && ! is_non_test_content "$previous_filename"; }; then
+              content_only=false
+              break
+            fi
+          done
+          echo "content_only=$content_only" >> "$GITHUB_OUTPUT"
+
+  benchmarks:
+    name: Run benchmarks
+    needs: classify
+    if: needs.classify.outputs.content_only != 'true'
+    runs-on: codspeed-macro-arm64-graviton-ubuntu-22-04
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: '3.14'
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run the benchmarks
+        uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
+        with:
+          mode: walltime
+          run: uv run pytest tests/benchmarks --codspeed

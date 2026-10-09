@@ -4,14 +4,15 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from io import StringIO
-from typing import Any, Generic, Literal, Protocol
+from typing import Any, Generic, Literal, Protocol, assert_never
 
 from pydantic import BaseModel, TypeAdapter
 from rich.console import Console, Group, RenderableType
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from typing_extensions import TypedDict, TypeVar, assert_never
+from typing_extensions import TypedDict, TypeVar
 
 from pydantic_evals._utils import UNSET, Unset
 
@@ -76,6 +77,22 @@ def _cross_mark(ascii_only: bool) -> str:
 
 def _arrow(ascii_only: bool) -> str:
     return '->' if ascii_only else '→'
+
+
+def _escape_markup(text: str) -> str:
+    """Escape `text` so Rich shows it as written instead of parsing it as markup.
+
+    `rich.markup.escape` also doubles a single trailing backslash so a closing tag right after the text still works,
+    but the extra backslash shows anywhere else, so it's dropped here; `_style_markup` handles those closing tags.
+    """
+    escaped = escape(text)
+    return escaped[:-1] if escaped.endswith('\\\\') and not text.endswith('\\\\') else escaped
+
+
+def _style_markup(markup: str, style: str) -> str:
+    """Wrap `markup` in a `style` tag, doubling any trailing backslashes so they don't escape the closing tag."""
+    markup += '\\' * (len(markup) - len(markup.rstrip('\\')))
+    return f'[{style}]{markup}[/]'
 
 
 InputsT = TypeVar('InputsT', default=Any)
@@ -527,7 +544,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             for failure in self.report_evaluator_failures:
                 msg = f'  {failure.name}: {failure.error_message}'
                 console.print(Text(msg, style='red'))
-        if include_errors and self.failures:  # pragma: no cover
+        if include_errors and self.failures:
             failures_table = self.failures_table(
                 include_input=include_input,
                 include_metadata=include_metadata,
@@ -770,11 +787,11 @@ class _ValueRenderer:
             has_diff = self.diff_checker and self.diff_checker(old, new)
             if has_diff:  # pragma: no branch
                 # If there is a diff, make the name bold and compute the diff_str
-                name = name and f'[bold]{name}[/]'
+                name = name and _style_markup(name, 'bold')
                 diff_str = self.diff_formatter and self.diff_formatter(old, new)
-                if diff_str:  # pragma: no cover
-                    result += f' ({diff_str})'
-                result = f'[{self.diff_style}]{result}[/]'
+                if diff_str:
+                    result += f' ({_escape_markup(diff_str)})'
+                result = _style_markup(result, self.diff_style)
 
         # Add the name
         if name:
@@ -786,9 +803,9 @@ class _ValueRenderer:
         if value is None:
             return MISSING_VALUE_STR
         if isinstance(self.value_formatter, str):
-            return self.value_formatter.format(value)
+            return _escape_markup(self.value_formatter.format(value))
         else:
-            return self.value_formatter(value)
+            return _escape_markup(self.value_formatter(value))
 
 
 class RenderNumberConfig(TypedDict, total=False):
@@ -881,9 +898,9 @@ class _NumberRenderer:
             diff_style = self._get_diff_style(old, new)
             if diff_style:
                 # If there is a diff, make the name bold and compute the diff_str
-                name = name and f'[bold]{name}[/]'
+                name = name and _style_markup(name, 'bold')
                 diff_str = self._get_diff_str(old, new)
-                if diff_str:  # pragma: no branch
+                if diff_str:
                     result += f' ({diff_str})'
                 result = f'[{diff_style}]{result}[/]'
 
@@ -962,7 +979,12 @@ class _NumberRenderer:
         diff = new - old
         if abs(diff) < self.diff_atol + self.diff_rtol * abs(old):
             return None
-        return self.diff_increase_style if diff > 0 else self.diff_decrease_style
+        if diff > 0:
+            return self.diff_increase_style
+        if diff <= 0:
+            return self.diff_decrease_style
+        # A `nan` difference has no direction, so it gets neither the increase nor the decrease style.
+        return None
 
 
 T_contra = TypeVar('T_contra', contravariant=True)
@@ -1060,7 +1082,7 @@ class ReportCaseRenderer:
 
     def build_row(self, case: ReportCase) -> list[str]:
         """Build a table row for a single case."""
-        row = [case.name]
+        row = [_escape_markup(case.name)]
 
         if self.include_input:
             row.append(self.input_renderer.render_value(None, case.inputs) or EMPTY_CELL_STR)
@@ -1137,7 +1159,7 @@ class ReportCaseRenderer:
     ) -> list[str]:
         """Build a table row for a given case ID."""
         assert baseline.name == new_case.name, 'This should only be called for matching case IDs'
-        row = [baseline.name]
+        row = [_escape_markup(baseline.name)]
 
         if self.include_input:  # pragma: no branch
             input_diff = self.input_renderer.render_diff(None, baseline.inputs, new_case.inputs) or EMPTY_CELL_STR
@@ -1246,7 +1268,7 @@ class ReportCaseRenderer:
 
     def build_failure_row(self, case: ReportCaseFailure) -> list[str]:
         """Build a table row for a single case failure."""
-        row = [case.name]
+        row = [_escape_markup(case.name)]
 
         if self.include_input:
             row.append(self.input_renderer.render_value(None, case.inputs) or EMPTY_CELL_STR)
@@ -1258,10 +1280,10 @@ class ReportCaseRenderer:
             row.append(self.output_renderer.render_value(None, case.expected_output) or EMPTY_CELL_STR)
 
         if self.include_error_message:
-            row.append(case.error_message or EMPTY_CELL_STR)
+            row.append(_escape_markup(case.error_message) or EMPTY_CELL_STR)
 
         if self.include_error_stacktrace:
-            row.append(case.error_stacktrace or EMPTY_CELL_STR)
+            row.append(_escape_markup(case.error_stacktrace) or EMPTY_CELL_STR)
 
         return row
 
@@ -1309,7 +1331,7 @@ class ReportCaseRenderer:
         for key in sorted(keys):
             old_val = baseline_dict.get(key)
             new_val = new_dict.get(key)
-            rendered = renderers[key].render_diff(key if include_names else None, old_val, new_val)
+            rendered = renderers[key].render_diff(_escape_markup(key) if include_names else None, old_val, new_val)
             diff_lines.append(rendered)
         return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
 
@@ -1321,7 +1343,8 @@ class ReportCaseRenderer:
         include_names: bool = True,
     ) -> str:
         diff_lines = [
-            renderers[key].render_value(key if include_names else None, val) for key, val in case_dict.items()
+            renderers[key].render_value(_escape_markup(key) if include_names else None, val)
+            for key, val in case_dict.items()
         ]
         return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
 
@@ -1334,9 +1357,9 @@ class ReportCaseRenderer:
     ) -> str:
         diff_lines: list[str] = []
         for key, val in case_dict.items():
-            rendered = renderers[key].render_value(key if include_names else None, val.value)
+            rendered = renderers[key].render_value(_escape_markup(key) if include_names else None, val.value)
             if self.include_reasons and (reason := val.reason):
-                rendered += f'\n  Reason: {reason}\n'
+                rendered += f'\n  Reason: {_escape_markup(reason)}\n'
             diff_lines.append(rendered)
         return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
 
@@ -1350,8 +1373,8 @@ class ReportCaseRenderer:
         for a in assertions:
             line = self._render_assertion_mark(a)
             if self.include_reasons:
-                line = f'{a.name}: {line}\n'
-                line = f'{line}  Reason: {a.reason}\n\n' if a.reason else line
+                line = f'{_escape_markup(a.name)}: {line}\n'
+                line = f'{line}  Reason: {_escape_markup(a.reason)}\n\n' if a.reason else line
             lines.append(line)
         return ''.join(lines)
 
@@ -1408,9 +1431,9 @@ class ReportCaseRenderer:
             return EMPTY_CELL_STR  # pragma: no cover
         lines: list[str] = []
         for failure in failures:
-            line = f'[red]{failure.name}[/]'
+            line = _style_markup(_escape_markup(failure.name), 'red')
             if failure.error_message:
-                line += f': {failure.error_message}'
+                line += f': {_escape_markup(failure.error_message)}'
             lines.append(line)
         return '\n'.join(lines)
 
