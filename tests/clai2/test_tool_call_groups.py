@@ -350,7 +350,9 @@ def test_set_menu_previews_each_style_in_the_choice_picker(tmp_path: Path, monke
     monkeypatch.setattr('pydantic_clai2.ui.menus.field_menu.menu_key', lambda: next(keys))
     result = menu.build_choices(row).run()
     assert result.item is not None and result.item.value == 'grouped'
-    plain = Text.from_ansi(output.getvalue()).plain
+    # The menu paints CRLF rows, and Rich 15.0.0's `from_ansi` blanks each one:
+    # https://github.com/Textualize/rich/issues/4090
+    plain = Text.from_ansi(output.getvalue().replace('\r\n', '\n')).plain
     assert '● shell git status' in plain
     assert '● shell 3, read_file 2, shell 1' in plain
     # The typed-value row has no sample to preview.
