@@ -139,14 +139,14 @@ class AuthorizationGuard:
         self.authorization_headers: list[str | None] = []
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope['type'] == 'http':
-            authorization = next(
-                (value.decode() for name, value in scope['headers'] if name.lower() == b'authorization'), None
-            )
-            self.authorization_headers.append(authorization)
-            if authorization != 'Bearer secret':
-                await Response(status_code=401)(scope, receive, send)
-                return
+        # Only HTTP requests reach the guard: the test enters the app's lifespan directly.
+        authorization = next(
+            (value.decode() for name, value in scope['headers'] if name.lower() == b'authorization'), None
+        )
+        self.authorization_headers.append(authorization)
+        if authorization != 'Bearer secret':
+            await Response(status_code=401)(scope, receive, send)
+            return
 
         await self.app(scope, receive, send)
 
