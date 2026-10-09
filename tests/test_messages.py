@@ -1981,6 +1981,7 @@ assert type(content) is dict, content
 """
 
 
+@pytest.mark.subprocess(reason='needs an interpreter where no pydantic plugin has been registered')
 def test_tool_return_gate_holds_without_a_pydantic_plugin():
     """The gate must not depend on whether anything registered a pydantic plugin.
 

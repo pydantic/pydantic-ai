@@ -144,7 +144,12 @@ def find_filter_examples() -> Iterable[ParameterSet]:
                 if title.endswith('.py'):
                     code_examples[title] = ex
                 test_id += f':{title}'
-            yield pytest.param(ex, id=test_id)
+            marks = (
+                [pytest.mark.subprocess(reason='the example runs Python as a real child process')]
+                if path == Path('docs/workspace.md') or title == 'mcp_client_sampling.py'
+                else []
+            )
+            yield pytest.param(ex, id=test_id, marks=marks)
 
 
 @pytest.fixture
@@ -423,6 +428,7 @@ def examples_type_errors(
     return result['errors']
 
 
+@pytest.mark.subprocess(reason='runs pyright, which is launched through `python -m pyright`')
 @pytest.mark.skipif(not _typecheck_enabled(), reason='type checking the examples is off')
 def test_typecheck_examples_reports_errors_at_their_source(tmp_path: Path):
     """A type error is reported at its line and column in the Markdown or docstring the example came from."""

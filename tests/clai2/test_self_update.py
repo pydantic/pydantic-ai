@@ -344,6 +344,7 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
         await current.command(['now'])
 
 
+@pytest.mark.subprocess(reason='runs a Python one-liner in place of `uv` to check the exit status is returned')
 async def test_run_uv_returns_the_exit_status() -> None:
     assert await _run_uv([sys.executable, '-c', 'raise SystemExit(3)']) == 3
 

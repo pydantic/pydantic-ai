@@ -275,6 +275,7 @@ def _editor(tmp_path: Path, name: str) -> str:
     return shlex.join([sys.executable, str(script)])
 
 
+@pytest.mark.subprocess(reason='runs Python scripts as the `$VISUAL`/`$EDITOR` commands')
 def test_edit_text_opens_visual_then_editor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, 'platform', 'linux')
     built_in: list[EditorApp] = []

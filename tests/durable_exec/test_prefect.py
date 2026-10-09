@@ -583,6 +583,7 @@ runtime_handler_stream_agent = Agent(
 runtime_handler_stream_prefect_agent = PrefectAgent(runtime_handler_stream_agent)  # pyright: ignore[reportDeprecated]
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: CaptureLogfire) -> None:
     """Test a complex agent with tools, MCP servers, and event stream handler."""
 
@@ -1100,6 +1101,7 @@ async def test_prefect_toolset_legacy_constructors() -> None:
     assert wrapped_mcp.id is None
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_task_server` over stdio')
 async def test_prefect_mcptoolset_preserves_task_routing() -> None:
     """Effective task routing forwards through Prefect task wrappers end-to-end.
 
@@ -3254,6 +3256,7 @@ async def test_prefect_durability_task_name_assembly_sequence() -> None:
     ]
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 @pytest.mark.parametrize('blockbuster_enabled', [False])
 async def test_prefect_durability_journals_mcp_discovery(blockbuster_enabled: bool) -> None:
     assert blockbuster_enabled is False
@@ -4273,6 +4276,7 @@ async def test_prefect_mcp_tool_metadata_false_is_rejected() -> None:
         await run_tool()
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 @pytest.mark.parametrize('blockbuster_enabled', [False])
 async def test_prefect_durability_mcp_tool_metadata_false_is_rejected(
     monkeypatch: pytest.MonkeyPatch, blockbuster_enabled: bool

@@ -222,6 +222,9 @@ async def test_empty_startup_browser_and_invalid_restore(tmp_path: Path, monkeyp
         )
 
 
+@pytest.mark.subprocess(
+    reason='runs `python -m pydantic_clai2` to check its argument errors; not process-bound, an in-process call would do'
+)
 @pytest.mark.parametrize('args', [['--resume', 'missing'], ['--resume=missing', 'config']])
 def test_resume_cli_errors_are_normal_parser_errors(tmp_path: Path, run_cli: CliRunner, args: list[str]) -> None:
     result = run_cli('--database', str(tmp_path / 'settings.db'), *args, cwd=tmp_path)

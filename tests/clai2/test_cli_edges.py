@@ -18,6 +18,10 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.ui.rendering.splash import Splash
 from tests.clai2.cli_runner import CliRunner
 
+pytestmark = pytest.mark.subprocess(
+    reason='exercises the installed `pydantic_clai2` entry point end to end, including startup hangs and Ctrl-C'
+)
+
 
 def test_installed_entry_point_starts_and_exits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`python -m pydantic_clai2` without a model: the one launch here that crosses the process boundary."""

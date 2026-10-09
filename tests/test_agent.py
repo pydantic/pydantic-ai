@@ -10094,6 +10094,7 @@ def test_set_mcp_sampling_model():
     assert server2.sampling_model is function_model2
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_explicit_context_manager():
     try:
         from fastmcp.client.transports import StdioTransport
@@ -10117,6 +10118,7 @@ async def test_explicit_context_manager():
             assert server2.is_running
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_implicit_context_manager():
     try:
         from fastmcp.client.transports import StdioTransport
@@ -10136,6 +10138,7 @@ async def test_implicit_context_manager():
         assert server2.is_running
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 def test_parallel_mcp_calls():
     try:
         from fastmcp.client.transports import StdioTransport
