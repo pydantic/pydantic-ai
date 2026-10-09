@@ -2029,19 +2029,57 @@ async def test_anthropic_cache(allow_model_requests: None, setting: bool | Liter
 async def test_unified_cache_uses_automatic_caching(
     allow_model_requests: None, setting: bool | Literal['5m', '30m', '1h'], expected_ttl: str
 ):
-    """The unified `cache` setting reaches the wire as top-level automatic caching."""
+    """The unified `cache` setting reaches the wire as top-level automatic caching for the conversation, plus
+    breakpoints on the instructions and tool definitions so a new conversation can read back the prefix it shares
+    with earlier ones. A `CachePoint` in the conversation still fits in the remaining slot."""
     c = completion_message(
         [BetaTextBlock(text='Response', type='text')],
         usage=BetaUsage(input_tokens=10, output_tokens=5),
     )
     mock_client = MockAnthropic.create_mock(c)
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(model, model_settings=ModelSettings(cache=setting))
+    agent = Agent(model, instructions='System instructions.', model_settings=ModelSettings(cache=setting))
 
-    await agent.run('User message')
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    await agent.run(['Some context', CachePoint(), 'User message'])
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
+    cache_control = {'type': 'ephemeral', 'ttl': expected_ttl}
+    assert completion_kwargs['cache_control'] == cache_control
+    assert completion_kwargs['system'][-1]['cache_control'] == cache_control
+    assert completion_kwargs['tools'][-1]['cache_control'] == cache_control
+    assert [block.get('cache_control') for block in completion_kwargs['messages'][-1]['content']] == [
+        {'type': 'ephemeral', 'ttl': '5m'},
+        None,
+    ]
+
+
+async def test_unified_cache_trims_oldest_cache_point(allow_model_requests: None):
+    """With the instruction, tool definition and automatic breakpoints taking 3 of Anthropic's 4 slots, only the
+    newest `CachePoint` in the conversation is kept."""
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, instructions='System instructions.', model_settings=ModelSettings(cache=True))
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    await agent.run(['Context 1', CachePoint(), 'Context 2', CachePoint(), 'Question'])
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+    assert completion_kwargs['system'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+    assert completion_kwargs['tools'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+    assert [block.get('cache_control') for block in completion_kwargs['messages'][-1]['content']] == [
+        None,
+        {'type': 'ephemeral', 'ttl': '5m'},
+        None,
+    ]
 
 
 async def test_anthropic_cache_with_explicit_breakpoints(allow_model_requests: None):
@@ -13993,7 +14031,8 @@ async def test_unified_cache_writes_then_reads_real_api(
     expected_ttl: str,
     expected_usage: tuple[RunUsage, RunUsage],
 ):
-    """The unified `cache` setting turns on Anthropic's automatic caching, with the requested TTL.
+    """The unified `cache` setting turns on Anthropic's automatic caching and breakpoints the instructions, with the
+    requested TTL.
 
     The same prompt is sent twice: the first run writes the prefix to the cache and the second reads it back.
     """
@@ -14010,11 +14049,69 @@ async def test_unified_cache_writes_then_reads_real_api(
     first = await agent.run(prompt)
     second = await agent.run(prompt)
 
-    # A single top-level `cache_control` and no per-block breakpoints: the API places the breakpoint itself.
+    # A top-level `cache_control`, with which the API breakpoints the conversation itself, plus one on the instructions.
     assert [cache_breakpoints(body) for body in request_capture.bodies('/v1/messages')] == [
-        ({'type': 'ephemeral', 'ttl': expected_ttl}, [])
+        ({'type': 'ephemeral', 'ttl': expected_ttl}, ['system[0]'])
     ] * 2
     assert (first.usage, second.usage) == expected_usage
+
+
+@pytest.mark.vcr()
+async def test_unified_cache_shares_prefix_across_conversations_real_api(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory
+):
+    """With `cache=True`, a new conversation reads back the instructions and tool definitions an earlier one wrote.
+
+    Automatic caching alone only writes at the end of the conversation, and Anthropic only reads cache entries written
+    at a breakpoint, so the second conversation's first request could not reuse the shared prefix without the
+    instruction and tool definition breakpoints.
+    """
+    agent = Agent(
+        anthropic_model('claude-opus-5-5'),
+        instructions='You are a concise Python assistant. ' + 'Answer questions about Python concisely. ' * 650,
+        model_settings=ModelSettings(cache=True),
+    )
+
+    @agent.tool_plain
+    def get_python_version() -> str:  # pragma: no cover
+        """Get the latest stable Python version."""
+        return '3.14'
+
+    first = await agent.run('Name one Python web framework, in one word.')
+    second = await agent.run('Name one Python testing library, in one word.')
+
+    # One request per conversation, so each run's usage is its first request's.
+    assert (first.usage, second.usage) == snapshot(
+        (
+            RunUsage(
+                details={
+                    'input_tokens': 4,
+                    'output_tokens': 4,
+                    'cache_creation_input_tokens': 8180,
+                    'cache_read_input_tokens': 0,
+                },
+                input_tokens=8184,
+                cache_write_tokens=8180,
+                output_tokens=4,
+                cost=Decimal('0.040996'),
+                requests=1,
+            ),
+            RunUsage(
+                details={
+                    'input_tokens': 4,
+                    'output_tokens': 5,
+                    'cache_creation_input_tokens': 85,
+                    'cache_read_input_tokens': 8095,
+                },
+                input_tokens=8184,
+                cache_write_tokens=85,
+                cache_read_tokens=8095,
+                output_tokens=5,
+                cost=Decimal('0.002160'),
+                requests=1,
+            ),
+        )
+    )
 
 
 @pytest.mark.vcr()
