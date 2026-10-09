@@ -69,6 +69,7 @@ try:
         V2ChatResponse,
     )
     from cohere.core.api_error import ApiError
+    from cohere.core.request_options import RequestOptions
     from cohere.v2.client import OMIT
 except ImportError as _import_error:
     raise ImportError(
@@ -212,6 +213,11 @@ class CohereModel(Model[AsyncClientV2]):
                 seed=model_settings.get('seed', OMIT),
                 presence_penalty=model_settings.get('presence_penalty', OMIT),
                 frequency_penalty=model_settings.get('frequency_penalty', OMIT),
+                request_options=(
+                    None
+                    if (max_retries := model_settings.get('max_retries')) is None
+                    else RequestOptions(max_retries=max_retries)
+                ),
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:

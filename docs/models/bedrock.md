@@ -397,7 +397,7 @@ agent = Agent(model)
 
 These boto3 retries are Bedrock's provider SDK retry layer — boto3 counts from the other side, so `Config(retries={'max_attempts': N})` allows `1 + N` total attempts — and there is no `httpx2` transport layer beneath boto3, so this is the only retry layer between the agent's retry budgets and the network. See [Retry multiplication](../retries.md#retry-multiplication) for how the layers stack.
 
-Bedrock uses boto3's built-in retry mechanisms. You can configure retry behavior by passing a custom boto3 client with retry settings:
+Bedrock uses boto3's built-in retry mechanisms, which are configured per client, so [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) has no effect on Bedrock. You can configure retry behavior by passing a custom boto3 client with retry settings:
 
 ```python
 import boto3

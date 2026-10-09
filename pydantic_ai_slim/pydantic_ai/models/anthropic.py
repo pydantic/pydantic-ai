@@ -106,6 +106,7 @@ from ._prompt_cache import (
     raise_earlier_cache_ttls,
     split_cache_setting,
 )
+from ._sdk_retries import with_max_retries
 from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 from ._transport_errors import transport_error_message
 
@@ -1358,6 +1359,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 compaction_boundary=compaction_boundary,
             )
         )
+        client = with_max_retries(self.client, model_settings)
 
         async def create(
             container_param: BetaContainerParams | str | None,
@@ -1368,7 +1370,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             max_tokens = model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile))
 
             async def send(stream: bool) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
-                return await self.client.beta.messages.create(
+                return await client.beta.messages.create(
                     max_tokens=max_tokens,
                     system=system_prompt or OMIT,
                     messages=anthropic_messages,
@@ -1742,6 +1744,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 include_count_tokens_recovery=True,
             )
         )
+        client = with_max_retries(self.client, model_settings)
 
         async def count(
             thinking: BetaThinkingConfigParam | Omit,
@@ -1753,11 +1756,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if thinking_override is not None
                 else model_settings.get('extra_body')
             )
-            if isinstance(self.client, AsyncAnthropicBedrock):
+            if isinstance(client, AsyncAnthropicBedrock):
                 from ._anthropic_bedrock_count_tokens import count_tokens_via_bedrock
 
                 return await count_tokens_via_bedrock(
-                    self.client,
+                    client,
                     self._model_name,
                     system=system_prompt or OMIT,
                     messages=anthropic_messages,
@@ -1778,7 +1781,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     extra_body=extra_body,
                 )
 
-            return await self.client.beta.messages.count_tokens(
+            return await client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
                 messages=anthropic_messages,
                 model=self._model_name,

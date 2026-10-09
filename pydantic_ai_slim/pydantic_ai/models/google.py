@@ -107,6 +107,7 @@ try:
         GoogleSearchDict,
         GroundingMetadata,
         HttpOptionsDict,
+        HttpRetryOptions,
         ImageConfigDict,
         MediaResolution,
         Modality,
@@ -975,6 +976,30 @@ class GoogleModel(Model[Client]):
         except (errors.APIError, httpx2.TransportError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
 
+    def _build_http_options(self, model_settings: GoogleModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
+        """The per-request HTTP options: headers, plus the `timeout` and `max_retries` settings."""
+        http_options: HttpOptionsDict = {'headers': headers}
+        if (timeout := model_settings.get('timeout')) is not None:
+            if isinstance(timeout, int | float):
+                http_options['timeout'] = int(1000 * timeout)
+            else:
+                raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
+        if (max_retries := model_settings.get('max_retries')) is not None:
+            # Per-request `retry_options` replace the client's outright, so carry over everything but the count.
+            client_retry_options = (
+                self.client._api_client._http_options.retry_options  # pyright: ignore[reportPrivateUsage]
+                or HttpRetryOptions()
+            )
+            http_options['retry_options'] = {
+                'attempts': max_retries + 1,
+                'initial_delay': client_retry_options.initial_delay,
+                'max_delay': client_retry_options.max_delay,
+                'exp_base': client_retry_options.exp_base,
+                'jitter': client_retry_options.jitter,
+                'http_status_codes': client_retry_options.http_status_codes,
+            }
+        return http_options
+
     def _translate_thinking(
         self,
         model_settings: GoogleModelSettings,
@@ -1066,12 +1091,7 @@ class GoogleModel(Model[Client]):
         else:
             gla_service_tier = _resolve_gla_service_tier(model_settings)
 
-        http_options: HttpOptionsDict = {'headers': headers}
-        if (timeout := model_settings.get('timeout')) is not None:
-            if isinstance(timeout, int | float):
-                http_options['timeout'] = int(1000 * timeout)
-            else:
-                raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
+        http_options = self._build_http_options(model_settings, headers)
 
         # See `GoogleModelSettings.google_cached_content` for why these three fields are stripped.
         _warn_on_cached_content_strips(cached_content, system_instruction, tools)

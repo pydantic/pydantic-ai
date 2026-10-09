@@ -33,6 +33,9 @@ that records only path, body and headers on a live transport, while `timeout` is
   `supports_cache`, and a provider that caches implicitly (OpenAI's automatic caching; Google,
   which warns instead) supports it while sending nothing at all.
 
+`max_retries` leaves the request it governs unchanged and changes only how many times it is sent, so it
+has its own probe at the end of this file, which answers with a retryable error and counts the attempts.
+
 That per-model-name gating bounds this file generally: each class is probed at ONE representative
 model, chosen to exercise the class's full capability, so an entry whose support varies by model
 carries a parenthetical caveat in the docstring (`Bedrock (Anthropic and Amazon Nova models only)`).
@@ -51,7 +54,7 @@ import textwrap
 import types
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import httpx
 import httpx2
@@ -93,10 +96,14 @@ with try_import() as openai_available:
     from pydantic_ai.providers.zai import ZaiProvider
 
 with try_import() as anthropic_available:
+    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicVertex
+
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as google_available:
+    from google.genai.types import HttpRetryOptions
+
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
@@ -105,6 +112,9 @@ with try_import() as groq_available:
     from pydantic_ai.providers.groq import GroqProvider
 
 with try_import() as mistral_available:
+    from mistralai.client import Mistral
+    from mistralai.client.utils import BackoffStrategy, RetryConfig as MistralRetryConfig
+
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.providers.mistral import MistralProvider
 
@@ -144,6 +154,9 @@ with try_import() as typesafe_available:
 
 HAND_MAINTAINED = frozenset({'tool_choice', 'thinking', 'cache'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
+
+ATTEMPT_COUNTED = frozenset({'max_retries'})
+"""Fields that change how many times a request is sent rather than what it carries; see `RETRY_CASES`."""
 
 PROBE_VALUES: dict[str, tuple[object, ...]] = {
     'max_tokens': (1234567,),
@@ -458,25 +471,31 @@ def decision_probe(build: Callable[[httpx2.AsyncClient], Model]) -> Probe:
             return httpx2.Response(400, json={'error': {'message': 'probe', 'type': 'probe'}})
 
         client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
-        output_tool = ToolDefinition(
-            name='final_result', parameters_json_schema={'type': 'object', 'properties': {'ok': {'type': 'boolean'}}}
-        )
         try:
-            await model_request(
-                build(client),
-                [ModelRequest.user_text_prompt('probe')],
-                model_settings=settings,
-                model_request_parameters=ModelRequestParameters(
-                    output_mode='tool', output_tools=[output_tool], allow_text_output=False
-                ),
-            )
-        except Exception:
-            pass
+            await run_decision_probe_request(build(client), settings)
         finally:
             await client.aclose()
         return recorder.first
 
     return probe
+
+
+async def run_decision_probe_request(model: Model, settings: ModelSettings) -> None:
+    """Make a decision model's one request, swallowing its inevitable failure like `run_probe_request`."""
+    output_tool = ToolDefinition(
+        name='final_result', parameters_json_schema={'type': 'object', 'properties': {'ok': {'type': 'boolean'}}}
+    )
+    try:
+        await model_request(
+            model,
+            [ModelRequest.user_text_prompt('probe')],
+            model_settings=settings,
+            model_request_parameters=ModelRequestParameters(
+                output_mode='tool', output_tools=[output_tool], allow_text_output=False
+            ),
+        )
+    except Exception:
+        pass
 
 
 def _needs(available: Callable[[], bool], package: str) -> tuple[pytest.MarkDecorator, ...]:
@@ -702,7 +721,7 @@ async def test_supported_by_lists_match_the_wire(case: Case, allow_model_request
 
 def test_hand_maintained_fields_are_the_only_unprobed_ones():
     """Every field is either probed above or explicitly hand-maintained — none silently unchecked."""
-    assert set(SUPPORTED_BY_LISTS) == set(PROBE_VALUES) | HAND_MAINTAINED
+    assert set(SUPPORTED_BY_LISTS) == set(PROBE_VALUES) | HAND_MAINTAINED | ATTEMPT_COUNTED
 
 
 def test_every_documented_name_is_probed():
@@ -763,3 +782,218 @@ def test_no_caveat_describes_a_different_setting():
         if referenced in fields and referenced != field_name
     }
     assert not misplaced, f'caveats describing another setting: {sorted(misplaced)}'
+
+
+# `max_retries` leaves every request it governs byte-identical, so the payload diff above can't see it.
+# Instead, each model below is answered with a retryable error, and the probe counts how many times the
+# SDK sends the request: with no setting, with `max_retries=0`, and with `max_retries=1`.
+
+RETRYABLE_STATUS = 503
+RETRY_NOW_HEADERS = {'retry-after-ms': '1', 'retry-after': '0.001'}
+"""Ask for a 1ms wait, so the SDKs that honor these headers retry without a real backoff."""
+
+
+async def _count_attempts(
+    build: Callable[[Any], Model],
+    settings: ModelSettings,
+    *,
+    legacy_http: bool = False,
+    decision: bool = False,
+    status: int = RETRYABLE_STATUS,
+) -> int:
+    """How many times the model's SDK sends one request that keeps failing with `status`."""
+    attempts = 0
+
+    def handle(request: Any) -> Any:
+        nonlocal attempts
+        attempts += 1
+        response_class = httpx.Response if legacy_http else httpx2.Response
+        return response_class(status, json={'error': {'message': 'probe', 'type': 'probe'}}, headers=RETRY_NOW_HEADERS)
+
+    client: Any = (
+        httpx.AsyncClient(transport=httpx.MockTransport(handle))
+        if legacy_http
+        else httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
+    )
+    try:
+        model = build(client)
+        await (run_decision_probe_request if decision else run_probe_request)(model, settings)
+    finally:
+        await client.aclose()
+    return attempts
+
+
+def _google_with_client_retries(client: httpx2.AsyncClient) -> Model:
+    """Google makes no retries by default; give the provider some, retrying a status Google wouldn't by itself."""
+    retry_options = HttpRetryOptions(attempts=4, initial_delay=0.001, max_delay=0.001, http_status_codes=[418])
+    return GoogleModel(
+        'gemini-2.5-flash',
+        provider=GoogleProvider(api_key=PROBE_KEY, http_client=client, retry_options=retry_options),
+    )
+
+
+def _mistral_with_client_retries(client: httpx2.AsyncClient) -> Model:
+    """Mistral makes no retries by default; give the client a `retry_config` bounded by elapsed time."""
+    retry_config = MistralRetryConfig('backoff', BackoffStrategy(1, 1, 1.0, 50), retry_connection_errors=True)
+    mistral = Mistral(api_key=PROBE_KEY, async_client=client, retry_config=retry_config)  # pyright: ignore[reportArgumentType]
+    return MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mistral))
+
+
+def _anthropic_bedrock(client: httpx2.AsyncClient) -> Model:
+    bedrock = AsyncAnthropicBedrock(
+        aws_access_key=PROBE_KEY, aws_secret_key=PROBE_KEY, aws_region='us-east-1', http_client=client
+    )
+    return AnthropicModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=AnthropicProvider(anthropic_client=bedrock)
+    )
+
+
+def _anthropic_vertex(client: httpx2.AsyncClient) -> Model:
+    vertex = AsyncAnthropicVertex(project_id='probe', region='us-east5', access_token=PROBE_KEY, http_client=client)
+    return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=vertex))
+
+
+Attempts = int | Literal['several']
+"""A count, or `'several'` for a retry config bounded by elapsed time rather than by count."""
+
+
+def _no_backoff(response: object, retries: int) -> float:
+    return 0
+
+
+@dataclass(frozen=True)
+class RetryCase:
+    """One model, the `Supported by:` names that cover it, and the attempts it makes with each `max_retries`."""
+
+    id: str
+    names: tuple[str, ...]
+    build: Callable[[Any], Model]
+    attempts: tuple[Attempts, Attempts, Attempts]
+    """Attempts with no setting, with `max_retries=0`, and with `max_retries=1`."""
+    legacy_http: bool = False
+    decision: bool = False
+    status: int = RETRYABLE_STATUS
+    instant_backoff: tuple[tuple[str, object], ...] = ()
+    """SDK internals to patch where the SDK would otherwise wait a second or more between attempts."""
+    marks: tuple[pytest.MarkDecorator, ...] = ()
+
+    @property
+    def forwards_max_retries(self) -> bool:
+        default, *overridden = self.attempts
+        return any(attempts != default for attempts in overridden)
+
+
+_OPENAI = _needs(openai_available, 'openai')
+RETRY_CASES = [
+    RetryCase('OpenAIChatModel', ('OpenAI',), _openai_chat, (3, 1, 2), marks=_OPENAI),
+    RetryCase('OpenAIResponsesModel', ('OpenAI',), _openai_responses, (3, 1, 2), marks=_OPENAI),
+    RetryCase('OpenAICodexModel', ('OpenAI Codex',), _openai_codex, (3, 1, 2), marks=_OPENAI),
+    RetryCase('CerebrasModel', ('Cerebras',), _cerebras, (3, 1, 2), marks=_OPENAI),
+    RetryCase('CrusoeModel', ('Crusoe',), _crusoe, (3, 1, 2), marks=_OPENAI),
+    RetryCase('GitHubCopilotModel', ('GitHub Copilot',), _github_copilot, (3, 1, 2), marks=_OPENAI),
+    RetryCase('OllamaModel', ('Ollama',), _ollama, (3, 1, 2), marks=_OPENAI),
+    RetryCase('OpenRouterModel', ('OpenRouter',), _openrouter, (3, 1, 2), marks=_OPENAI),
+    RetryCase('SnowflakeModel', ('Snowflake',), _snowflake, (3, 1, 2), marks=_OPENAI),
+    RetryCase('ZaiModel', ('Z.AI',), _zai, (3, 1, 2), marks=_OPENAI),
+    RetryCase('BedrockMantleChatModel', ('Bedrock Mantle',), _bedrock_mantle_chat, (3, 1, 2), marks=_OPENAI),
+    RetryCase('BedrockMantleResponsesModel', ('Bedrock Mantle',), _bedrock_mantle_responses, (3, 1, 2), marks=_OPENAI),
+    RetryCase(
+        'OpenAIDecisionsModel', ('OpenAI Decisions',), _openai_decisions, (3, 1, 2), decision=True, marks=_OPENAI
+    ),
+    RetryCase('AnthropicModel', ('Anthropic',), _anthropic, (3, 1, 2), marks=_needs(anthropic_available, 'anthropic')),
+    # A copy of `AsyncAnthropicBedrock` builds its own HTTP client unless handed this one, which would send the
+    # retries past the mock transport; `AsyncAnthropicVertex` has to keep its region and project.
+    RetryCase(
+        'AnthropicModel[bedrock]',
+        ('Anthropic',),
+        _anthropic_bedrock,
+        (3, 1, 2),
+        marks=_needs(anthropic_available, 'anthropic'),
+    ),
+    RetryCase(
+        'AnthropicModel[vertex]',
+        ('Anthropic',),
+        _anthropic_vertex,
+        (3, 1, 2),
+        marks=_needs(anthropic_available, 'anthropic'),
+    ),
+    RetryCase('GroqModel', ('Groq',), _groq, (3, 1, 2), legacy_http=True, marks=_needs(groq_available, 'groq')),
+    # Cohere ignores a sub-second `Retry-After` and backs off for a second or more instead.
+    RetryCase(
+        'CohereModel',
+        ('Cohere',),
+        _cohere,
+        (3, 1, 2),
+        legacy_http=True,
+        instant_backoff=(('cohere.core.http_client._retry_timeout', _no_backoff),),
+        marks=_needs(cohere_available, 'cohere'),
+    ),
+    # Without the provider's `retry_options`, the SDK's default delays apply, starting at a second.
+    RetryCase(
+        'GoogleModel',
+        ('Google',),
+        _google,
+        (1, 1, 2),
+        instant_backoff=(('google.genai._api_client._RETRY_MAX_DELAY', 0.001),),
+        marks=_needs(google_available, 'google'),
+    ),
+    # The per-request retry options keep the provider's delays and its status codes: 418 is retried at all only
+    # because the provider's `retry_options` say so.
+    RetryCase(
+        'GoogleModel[retry_options]',
+        ('Google',),
+        _google_with_client_retries,
+        (4, 1, 2),
+        status=418,
+        marks=_needs(google_available, 'google'),
+    ),
+    RetryCase('MistralModel', ('Mistral',), _mistral, (1, 1, 1), marks=_needs(mistral_available, 'mistral')),
+    # Mistral bounds retries by elapsed time, so the count can only be set to `0`; `1` keeps the client's config.
+    RetryCase(
+        'MistralModel[retry_config]',
+        ('Mistral',),
+        _mistral_with_client_retries,
+        ('several', 1, 'several'),
+        marks=_needs(mistral_available, 'mistral'),
+    ),
+    RetryCase(
+        'TypeSafeModel',
+        ('TypeSafe',),
+        _typesafe,
+        (3, 1, 2),
+        decision=True,
+        marks=_needs(typesafe_available, 'typesafe-sdk'),
+    ),
+    RetryCase('SystemOneModel', ('System One',), _system_one, (1, 1, 1), decision=True),
+]
+"""Every model reached over a mockable HTTP client.
+
+Bedrock and xAI retry inside botocore and a gRPC channel, which no per-request option reaches.
+"""
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id, marks=case.marks) for case in RETRY_CASES])
+async def test_max_retries_sets_how_many_attempts_the_sdk_makes(
+    case: RetryCase, allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+):
+    for target, value in case.instant_backoff:
+        monkeypatch.setattr(target, value)
+
+    attempts: list[Attempts] = []
+    for settings in ({}, {'max_retries': 0}, {'max_retries': 1}):
+        count = await _count_attempts(
+            case.build,
+            cast(ModelSettings, settings),
+            legacy_http=case.legacy_http,
+            decision=case.decision,
+            status=case.status,
+        )
+        attempts.append('several' if count > 1 and 'several' in case.attempts else count)
+
+    assert tuple(attempts) == case.attempts
+
+
+def test_max_retries_supported_by_list_matches_the_attempts():
+    """`max_retries` is listed for exactly the models whose attempt count it changes."""
+    forwarded = {name for case in RETRY_CASES if case.forwards_max_retries for name in case.names}
+    assert set(SUPPORTED_BY_LISTS['max_retries']) == forwarded

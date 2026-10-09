@@ -90,7 +90,7 @@ agent = Agent(model)
 A legacy `httpx.AsyncClient` is not accepted: `anthropic` 1.0 is built on `httpx2` and rejects one at
 client construction.
 
-The `AsyncAnthropic` client that the provider builds also retries failed requests on its own — `max_retries=2` by default, so a request can reach the network up to three times before your code sees an error. Pass `max_retries=0` when you construct the client yourself (for example as `anthropic_client=`) to keep the retry policy in your transport alone. See [Provider SDK retries](../retries.md#provider-sdk-retries) for when this layer fires.
+The `AsyncAnthropic` client that the provider builds also retries failed requests on its own — `max_retries=2` by default, so a request can reach the network up to three times before your code sees an error. Pass `max_retries=0` when you construct the client yourself (for example as `anthropic_client=`) to keep the retry policy in your transport alone, or set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to change the count without building the client, including for an `AsyncAnthropicBedrock` or `AsyncAnthropicVertex` client. See [Provider SDK retries](../retries.md#provider-sdk-retries) for when this layer fires.
 
 ## Model settings
 

@@ -230,6 +230,8 @@ Good defaults:
 - primary expensive/strong model, cheaper fallback for resilience
 - same prompt/output contract across both models
 - per-model settings only when the user actually needs them
+- `model_settings={'max_retries': 0}` on the agent, or on every candidate but the last, so the provider SDK's own
+  retries (2 by default on OpenAI, Anthropic, Groq and Cohere) don't hold up the fallback; Bedrock and xAI ignore it
 
 The answering response's `failed_attempts` lists the attempts the fallback moved on from (model, provider,
 `'error'` or `'rejected'` outcome, error, start time, duration, usage); when every model fails they're on
