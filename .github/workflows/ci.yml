@@ -230,6 +230,7 @@ jobs:
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
           .github/scripts/test_ci_content_classifier.py
+          .github/scripts/test_shard_durations.py
 
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
       # answer here silently stops type errors reaching a developer's terminal.
@@ -638,6 +639,10 @@ jobs:
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # `actions: read` lets `shard_durations.py` find and download `main`'s test-durations artifacts.
+    permissions:
+      contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -652,6 +657,7 @@ jobs:
       # The 3.11 legacy tracer needs a third shard to stay within the job timeout.
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.python-version == '3.11' }}
       SPLITS: ${{ matrix.python-version == '3.11' && 3 || 2 }}
+      DURATIONS_PREFIX: test-durations-${{ matrix.python-version }}-all-extras-
       # Rebenchmark after https://github.com/cbornet/blockbuster/pull/61 is released in a
       # compatible version; re-enable if a shard then stays comfortably within its timeout.
       BLOCKBUSTER_ENABLED: false
@@ -736,11 +742,19 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
+      # Each shard stores the durations of the tests it ran and uploads them; the latest `main`
+      # run's set balances this run's shards. Without it (first run, expired artifacts, API
+      # failure), `pytest-split` falls back to splitting by test count.
+      - name: fetch test durations from main
+        run: >-
+          uv run --no-project python .github/scripts/shard_durations.py fetch
+          --prefix "$DURATIONS_PREFIX" --shards "$SPLITS" --output "$RUNNER_TEMP/test-durations-main.json"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       # `-n logical` (see note on the `test` job). Split into `SPLITS` shards with `pytest-split`
-      # so this, the slowest install shape, keeps pace with the rest of the matrix. The split is
-      # by test count, not measured duration -- no `.test_durations` file is committed -- so
-      # rebalance with `--store-durations` if `ci_duration.py`'s report shows the shards
-      # drifting apart. The 3.11 cells use three shards; every test runs once per version.
+      # so this, the slowest install shape, keeps pace with the rest of the matrix, balanced by the
+      # durations fetched above. The 3.11 cells use three shards; every test runs once per version.
       # Everything under `tests/durable_exec` and every test marked `temporal` runs in
       # `test-durable-exec` instead: those tests pin xdist groups around real local servers, so
       # the chains they form would otherwise be this job's critical-path floor.
@@ -756,10 +770,31 @@ jobs:
           fi
           # `--all-packages` so the extras of every workspace member are installed, not just the
           # root package's: that is where `pydantic-ai-harness`'s optional integrations get tested.
+          # `pytest-split` reads the split from `--durations-path`, then overwrites it with this shard's.
+          cp "$RUNNER_TEMP/test-durations-main.json" "$RUNNER_TEMP/test-durations.json" 2>/dev/null || true
           uv run --all-packages --all-extras --no-extra mcp-tasks "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
-            --ignore=tests/durable_exec -m "not temporal" --splits "$SPLITS" --group ${{ matrix.shard }}
+            --ignore=tests/durable_exec -m "not temporal" --splits "$SPLITS" --group ${{ matrix.shard }} \
+            --store-durations --clean-durations --durations-path "$RUNNER_TEMP/test-durations.json"
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
+
+      - name: store test durations
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.DURATIONS_PREFIX }}${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-durations.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # Show authors what their change costs: new tests over a second and tests that got at least
+      # twice as slow as on `main`, in the job summary. One coverage-free version is enough.
+      - name: report new and slower tests
+        if: ${{ !cancelled() && matrix.python-version == '3.12' }}
+        run: >-
+          uv run --no-project python .github/scripts/shard_durations.py report
+          --baseline "$RUNNER_TEMP/test-durations-main.json" --current "$RUNNER_TEMP/test-durations.json"
+          --title "all-extras on ${{ matrix.python-version }}, shard ${{ matrix.shard }}"
 
       - name: cover Absurd without a database URL
         if: matrix.python-version == '3.14' && matrix.shard == 1
@@ -905,6 +940,10 @@ jobs:
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # See `test-all-extras`.
+    permissions:
+      contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -919,6 +958,7 @@ jobs:
       BLOCKBUSTER_ENABLED: false
       # The docs examples are type-checked in the Python 3.14 all-extras jobs.
       TYPECHECK_EXAMPLES: false
+      DURATIONS_PREFIX: test-durations-${{ matrix.python-version }}-lowest-versions-
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -973,8 +1013,16 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
+      # See the matching step in `test-all-extras`.
+      - name: fetch test durations from main
+        run: >-
+          uv run --no-project python .github/scripts/shard_durations.py fetch
+          --prefix "$DURATIONS_PREFIX" --shards 2 --output "$RUNNER_TEMP/test-durations-main.json"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       # `-n logical` (see note on the `test` job). Split into 2 shards with `pytest-split`
-      # (see the matching note in `test-all-extras` for why, and for the rebalancing caveat).
+      # (see the matching note in `test-all-extras` for why, and how they are balanced).
       # The durable-execution suites and harness `temporal` tests run in `test-durable-exec`
       # (its `lowest` leg covers this resolution), keeping their grouped xdist chains off this
       # job's critical path.
@@ -988,10 +1036,21 @@ jobs:
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
+          cp "$RUNNER_TEMP/test-durations-main.json" "$RUNNER_TEMP/test-durations.json" 2>/dev/null || true
           uv run --no-sync "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
-            --ignore=tests/durable_exec -m "not temporal" --splits 2 --group ${{ matrix.shard }}
+            --ignore=tests/durable_exec -m "not temporal" --splits 2 --group ${{ matrix.shard }} \
+            --store-durations --clean-durations --durations-path "$RUNNER_TEMP/test-durations.json"
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
+
+      - name: store test durations
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.DURATIONS_PREFIX }}${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-durations.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       # See the matching step in the `test` job.
       - name: combine coverage files
