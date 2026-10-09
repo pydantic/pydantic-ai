@@ -141,6 +141,7 @@ async def test_current_time_is_read_in_an_activity(client: Client) -> None:
     assert 'The current UTC time is within the hour starting `' in output
 
 
+@pytest.mark.subprocess(reason='uses the `whoami_url` MCP server, which runs in its own process')
 async def test_auth_function_runs_under_temporal(client: Client, whoami_url: str) -> None:
     per_user.url = whoami_url
     async with Worker(

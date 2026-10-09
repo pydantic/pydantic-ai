@@ -439,8 +439,14 @@ Pydantic AI distinguishes between **[function tools](tools.md)** (tools you regi
 | `'auto'` (default) | Model decides whether to use tools. All tools available. |
 | `'none'` | Disable function tools. Model can respond with text or use output tools. |
 | `'required'` | Force the model to use a function tool. Excludes output tools, so set dynamically via a [capability](#dynamic-tool-choice-via-capabilities) or use [direct model requests](direct.md); raises an error when set statically in `agent.run()`. |
-| `['tool_a', ...]` | Restrict to specific tools by name. Excludes output tools — same dynamic/direct requirement as `'required'`. |
+| `['tool_a', ...]` | Force a call to one of the named function and/or output tools. A static list must name an output tool so an agent run can finish. |
 | [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]`(function_tools=['...'])` | Restrict function tools while auto-including all output tools. |
+
+A list can force one specific output tool among several. Give each output tool a stable name with
+[`ToolOutput(..., name=...)`](output.md#tool-output) and name it in the list: with
+`output_type=[ToolOutput(Fruit, name='return_fruit'), ToolOutput(Vehicle, name='return_vehicle')]`,
+`tool_choice=['return_fruit']` forces the model to return a `Fruit`. In contrast, `'required'` excludes output tools, while `ToolOrOutput` keeps the
+selected function tools plus all output tools available and also allows text or image output.
 
 Tools hidden by [deferred loading](#tool-search) interact with `tool_choice`: a tool that is still
 hidden is ignored when forcing by name, and an explicit choice raises only when every requested
@@ -480,7 +486,7 @@ result = agent.run_sync(
 
 ### Dynamic tool choice via capabilities {#dynamic-tool-choice-via-capabilities}
 
-`tool_choice='required'` and `['tool_a', ...]` exclude output tools, so setting either one *statically* would force a tool call on every step and leave the agent unable to produce a final response. `agent.run()` raises a `UserError` when it detects these values on the static baseline (the `model_settings` argument of [`Agent.run`][pydantic_ai.agent.AbstractAgent.run], the agent's own `model_settings`, or the underlying model's defaults).
+`tool_choice='required'` excludes output tools, so setting it *statically* would force a function tool call on every step and leave the agent unable to produce a final response. A static list has the same problem when it names no output tool, even when plain text output is allowed, because the list requires a named tool call on every step. `agent.run()` raises a `UserError` for these values on the static baseline (the `model_settings` argument of [`Agent.run`][pydantic_ai.agent.AbstractAgent.run], the agent's own `model_settings`, or the underlying model's defaults). A static list that names at least one output tool is accepted.
 
 To vary `tool_choice` *per step* — for example, to force a specific tool on the first step and then let the model decide — return a callable from a capability's [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings]. The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] with full access to `ctx.messages` and `ctx.run_step`, so it can inspect what has already happened in the run and adapt.
 

@@ -20,6 +20,10 @@
     options:
       inherited_members: true
 
+::: pydantic_ai.providers.openai_decisions
+    options:
+      inherited_members: true
+
 ::: pydantic_ai.providers.xai
 
 ::: pydantic_ai.providers.deepseek

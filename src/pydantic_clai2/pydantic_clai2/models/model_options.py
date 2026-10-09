@@ -4,7 +4,7 @@ import re
 
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.openai import openai_model_profile
-from pydantic_clai2.models.model_settings import ModelSettingsForm, model_defaults
+from pydantic_clai2.models.model_settings import ModelSettingsForm, gpt_defaults
 from pydantic_clai2.models.profiles import base_model, provider_of
 
 
@@ -12,7 +12,7 @@ def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
     """Offer native controls only for the provider that will consume them, whichever profile runs it."""
     provider, _, name = base_model(model).partition(':')
     name = name.rsplit('/', 1)[-1]
-    family_defaults = bool(model_defaults(model=model))
+    family_defaults = bool(gpt_defaults(model=model))
     options: dict[str, tuple[str, ...]] = {key: () for key in ('max_tokens', 'temperature', 'seed', 'custom_params')}
     if provider in ('openai', 'openai-chat', 'openai-responses', 'openai-codex'):
         options = _openai_options(provider=provider, name=name, family_defaults=family_defaults)
@@ -28,6 +28,7 @@ def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
         options['thinking'] = ()
         if provider in ('openrouter', 'vllm'):
             options = _openai_options(provider='openai-chat', name=name, family_defaults=family_defaults)
+    options['cache'] = ()
     glm = _glm_version(name=name)
     if glm is not None and glm >= (4, 5):
         options['glm_thinking'] = ()

@@ -27,7 +27,9 @@ def anyio_backend() -> str:
     return 'asyncio'
 
 
-@pytest.fixture(params=[256, 8192], ids=['256-tools', '8192-tools'])
+@pytest.fixture(
+    params=[pytest.param(256, id='256-tools'), pytest.param(8192, id='8192-tools', marks=pytest.mark.codspeed_only)]
+)
 async def searchable_agent(
     request: pytest.FixtureRequest, searches: int, changing_corpus: bool
 ) -> tuple[Agent[int, str], Iterator[int]]:
@@ -103,7 +105,9 @@ async def test_keyword_tool_search(
     ]
 
 
-@pytest.fixture(params=[256, 8192], ids=['256-tools', '8192-tools'])
+@pytest.fixture(
+    params=[pytest.param(256, id='256-tools'), pytest.param(8192, id='8192-tools', marks=pytest.mark.codspeed_only)]
+)
 async def parallel_search_agent(request: pytest.FixtureRequest, searches: int) -> Agent[None, str]:
     async def lookup() -> str:
         return 'ok'

@@ -8,9 +8,17 @@ import httpx2
 import pytest
 from pydantic import BaseModel, Field, WithJsonSchema
 
-from pydantic_ai import Agent, ModelHTTPError, ToolCallPart
+from pydantic_ai import Agent, BinaryContent, ModelHTTPError, ToolCallPart
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import infer_model
+from pydantic_ai.models.decision import (
+    ChoiceAnswer,
+    ChoiceQuestion,
+    DecisionRequest,
+    NoulQuestion,
+    ScoreAnswer,
+    ScoreQuestion,
+)
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.system_one import SystemOneModel, SystemOneModelSettings
 from pydantic_ai.models.test import TestModel
@@ -474,6 +482,23 @@ async def test_http_error(allow_model_requests: None):
     assert exc_info.value.model_name == 'clm-latest'
 
 
+async def test_decide_rejects_image_evidence_before_a_request(allow_model_requests: None):
+    captured = Captured(ticket_answers)
+    model = mock_model(captured)
+
+    with pytest.raises(UserError, match='System One does not support image input'):
+        await model.decide(
+            DecisionRequest(
+                state='Review this image.',
+                questions={'q': NoulQuestion()},
+                images=(BinaryContent(b'image', media_type='image/png'),),
+            ),
+            {},
+        )
+
+    assert captured.requests == []
+
+
 async def test_http_error_with_a_text_body(allow_model_requests: None):
     def handler(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(502, text='embedder unreachable')
@@ -642,6 +667,70 @@ async def test_rounded_score_can_match_rounded_probabilities(
 
     result = await Agent(mock_model(handler), output_type=Mood).run('Slightly frustrating.')
     assert result.output == Mood(frustration=1)
+
+
+@pytest.mark.parametrize(
+    'probabilities',
+    [
+        pytest.param({'a': 0.335, 'b': 0.335, 'c': 0.335}, id='three-decimal'),
+        pytest.param({str(option): 0.0 for option in range(200)}, id='all-zero'),
+    ],
+)
+async def test_choice_preserves_probability_tolerance(probabilities: dict[str, float], allow_model_requests: None):
+    """Synthetic boundary responses pin the existing tolerance without requiring the API to emit them."""
+    choice = next(iter(probabilities))
+    captured = Captured(
+        lambda _: answers(
+            choice={
+                'type': 'choice',
+                'choice': choice,
+                'confidence': probabilities[choice],
+                'probabilities': probabilities,
+            }
+        )
+    )
+    response = await mock_model(captured).decide(
+        DecisionRequest(
+            state='Choose an option.',
+            questions={'choice': ChoiceQuestion(criteria={option: None for option in probabilities})},
+        ),
+        {},
+    )
+    assert response.answers == {
+        'choice': ChoiceAnswer(choice=choice, confidence=probabilities[choice], probabilities=probabilities)
+    }
+
+
+@pytest.mark.parametrize(
+    'probability',
+    [pytest.param(0.0, id='all-zero'), pytest.param(0.005, id='uniform-rounded')],
+)
+async def test_200_level_score_preserves_probability_tolerance(probability: float, allow_model_requests: None):
+    """Synthetic boundary responses pin System One's established two-decimal score tolerance."""
+    probabilities: dict[str, float] = {str(level): probability for level in range(200)}
+    captured = Captured(
+        lambda _: answers(
+            score={
+                'type': 'score',
+                'score': 99.5,
+                'confidence': probability,
+                'probabilities': probabilities,
+            }
+        )
+    )
+    request = DecisionRequest(
+        state='Choose a level.',
+        questions={'score': ScoreQuestion(criteria=[str(level) for level in range(200)])},
+    )
+
+    response = await mock_model(captured).decide(request, {})
+    assert response.answers == {
+        'score': ScoreAnswer(
+            score=99.5,
+            confidence=probability,
+            probabilities={level: probability for level in range(200)},
+        )
+    }
 
 
 async def test_provider_recreates_its_client():

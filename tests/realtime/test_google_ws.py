@@ -938,7 +938,7 @@ async def test_handle_barge_in_over_live_speech(
 
 
 async def test_extended_thinking_async_tool_round(
-    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
 ) -> None:
     """`gemini-3.8-live-extended-thinking` speaks a filler, runs the tool in the background, then answers.
 
@@ -953,7 +953,8 @@ async def test_extended_thinking_async_tool_round(
     @agent.tool_plain
     async def search_flights(origin: str, destination: str) -> str:
         """Search flights between two cities. Takes several seconds."""
-        await anyio.sleep(5)
+        # Only the live model needs a slow tool to speak its filler; replay follows the recorded frame order.
+        await anyio.sleep(5 if realtime_recording else 0)
         return 'KLM at 120 dollars'
 
     events: list[Any] = []
