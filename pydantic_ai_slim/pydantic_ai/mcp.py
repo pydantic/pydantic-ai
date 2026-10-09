@@ -1751,6 +1751,9 @@ def _make_httpx_client_factory(
 class _BorrowedHTTPClient:
     """A non-closing proxy for a user-owned HTTP client."""
 
+    # HTTP request methods that accept an `auth=` keyword argument.
+    _AUTH_METHODS = frozenset({'stream', 'request', 'send', 'get', 'post', 'put', 'patch', 'delete', 'head', 'options'})
+
     def __init__(self, client: AsyncHTTPClient, auth: HTTPAuth | None) -> None:
         self._client = client
         self._auth = auth
@@ -1765,42 +1768,10 @@ class _BorrowedHTTPClient:
         pass
 
     def __getattr__(self, name: str) -> Any:
-        return getattr(self._client, name)
-
-    def _call(self, method: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        if self._auth is not None:
-            kwargs.setdefault('auth', self._auth)
-        return method(*args, **kwargs)
-
-    def stream(self, *args: Any, **kwargs: Any) -> Any:
-        return self._call(self._client.stream, *args, **kwargs)
-
-    def request(self, *args: Any, **kwargs: Any) -> Any:
-        return self._call(self._client.request, *args, **kwargs)
-
-    def send(self, *args: Any, **kwargs: Any) -> Any:
-        return self._call(self._client.send, *args, **kwargs)
-
-    def get(self, *args: Any, **kwargs: Any) -> Any:
-        return self._call(self._client.get, *args, **kwargs)
-
-    def post(self, *args: Any, **kwargs: Any) -> Any:
-        return self._call(self._client.post, *args, **kwargs)
-
-    def put(self, *args: Any, **kwargs: Any) -> Any:
-        return self._call(self._client.put, *args, **kwargs)
-
-    def patch(self, *args: Any, **kwargs: Any) -> Any:
-        return self._call(self._client.patch, *args, **kwargs)
-
-    def delete(self, *args: Any, **kwargs: Any) -> Any:
-        return self._call(self._client.delete, *args, **kwargs)
-
-    def head(self, *args: Any, **kwargs: Any) -> Any:
-        return self._call(self._client.head, *args, **kwargs)
-
-    def options(self, *args: Any, **kwargs: Any) -> Any:
-        return self._call(self._client.options, *args, **kwargs)
+        attr = getattr(self._client, name)
+        if self._auth is not None and name in self._AUTH_METHODS:
+            return functools.partial(attr, auth=self._auth)
+        return attr
 
 
 def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any, Any]:

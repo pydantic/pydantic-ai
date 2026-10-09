@@ -121,36 +121,6 @@ pytestmark = [
 MCP_SDK_V2 = imports_successful() and is_mcp_sdk_v2()
 
 
-class BearerAuth(httpx.Auth):
-    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
-        request.headers['Authorization'] = 'Bearer secret'
-        yield request
-
-
-class BearerAuth2(httpx2.Auth):
-    def auth_flow(self, request: httpx2.Request) -> Generator[httpx2.Request, httpx2.Response, None]:
-        request.headers['Authorization'] = 'Bearer secret'
-        yield request
-
-
-class AuthorizationGuard:
-    def __init__(self, app: ASGIApp) -> None:
-        self.app = app
-        self.authorization_headers: list[str | None] = []
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        # Only HTTP requests reach the guard: the test enters the app's lifespan directly.
-        authorization = next(
-            (value.decode() for name, value in scope['headers'] if name.lower() == b'authorization'), None
-        )
-        self.authorization_headers.append(authorization)
-        if authorization != 'Bearer secret':
-            await Response(status_code=401)(scope, receive, send)
-            return
-
-        await self.app(scope, receive, send)
-
-
 def make_mcp_error(code: int, message: str) -> McpError:
     """Construct an MCP protocol error with either SDK generation.
 
@@ -361,6 +331,7 @@ class TestMCPToolsetConstruction:
         ['request', 'send', 'get', 'post', 'put', 'patch', 'delete', 'head', 'options'],
     )
     async def test_http_client_factory_applies_auth(self, method_name: str):
+        """Test the private factory because MCP transports only call `stream`, `post`, and `delete`."""
         authorization_headers: list[str | None] = []
         httpx_module = cast(Any, httpx2 if MCP_SDK_V2 else httpx)
 
@@ -374,9 +345,6 @@ class TestMCPToolsetConstruction:
 
         if method_name == 'request':
             await borrowed_client.request('POST', url)
-        elif method_name == 'stream':
-            async with borrowed_client.stream('POST', url):
-                pass
         elif method_name == 'send':
             await borrowed_client.send(client.build_request('POST', url))
         else:
@@ -386,6 +354,7 @@ class TestMCPToolsetConstruction:
         await client.aclose()
 
     async def test_http_client_factory_preserves_per_request_auth(self):
+        """Test the private factory because MCP transports never pass explicit per-call `auth`."""
         authorization_headers: list[str | None] = []
         httpx_module = cast(Any, httpx2 if MCP_SDK_V2 else httpx)
 
@@ -693,6 +662,33 @@ class TestMCPToolsetIntegration:
         assert toolset.is_running is False
 
     async def test_http_client_auth_and_lifecycle_across_agent_runs(self):
+        class BearerAuth(httpx.Auth):
+            def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
+                request.headers['Authorization'] = 'Bearer secret'
+                yield request
+
+        class BearerAuth2(httpx2.Auth):
+            def auth_flow(self, request: httpx2.Request) -> Generator[httpx2.Request, httpx2.Response, None]:
+                request.headers['Authorization'] = 'Bearer secret'
+                yield request
+
+        class AuthorizationGuard:
+            def __init__(self, app: ASGIApp) -> None:
+                self.app = app
+                self.authorization_headers: list[str | None] = []
+
+            async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+                # Only HTTP requests reach the guard: the test enters the app's lifespan directly.
+                authorization = next(
+                    (value.decode() for name, value in scope['headers'] if name.lower() == b'authorization'), None
+                )
+                self.authorization_headers.append(authorization)
+                if authorization != 'Bearer secret':
+                    await Response(status_code=401)(scope, receive, send)
+                    return
+
+                await self.app(scope, receive, send)
+
         server: FastMCP[None] = FastMCP('auth_server')
 
         @server.tool
