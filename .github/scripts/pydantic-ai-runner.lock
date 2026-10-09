@@ -14,13 +14,16 @@ exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
 pydantic-monty-runtime = false
+pydocket = "2026-10-08T22:57:02Z"
 pydantic-handlebars = false
+fastmcp = "2026-10-08T22:57:02Z"
 pydantic-extra-types = false
 pydantic = false
 pydantic-core = false
 pydantic-ai-harness = false
 logfire-api = false
 cassetter = false
+fastmcp-slim = "2026-10-08T22:57:02Z"
 listentome = false
 logfire = false
 pydantic-settings = false
@@ -31,6 +34,7 @@ termflow-md = "2026-10-02T15:05:25Z"
 anthropic = "2026-09-28T18:04:04Z"
 openai = "2026-10-06T21:31:20Z"
 google-genai = "2026-09-22T17:23:02Z"
+fastmcp-tasks = "2026-10-08T22:57:02Z"
 
 [manifest]
 requirements = [
