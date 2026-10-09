@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import inspect
-from collections.abc import Iterator
+import sys
+from collections.abc import Generator, Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -139,3 +141,35 @@ def current_event_loop_for_sync_tests(
     if not inspect.iscoroutinefunction(request.function):
         asyncio.set_event_loop(session_event_loop)
     yield
+
+
+def _test_opened_pixeltable(item: pytest.Item) -> bool:
+    """Whether this test might have opened a Pixeltable catalog.
+
+    Mentioning Pixeltable in the node id is enough to check; teardown still returns immediately
+    when no catalog is running. Store-contract cases are the exception: they select the backend
+    with an integer index, so the node id never says Pixeltable.
+    """
+    if 'pixeltable' in item.nodeid.casefold():
+        return True
+    return item.path.name == 'test_stores.py' and '[3]' in item.nodeid
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtest_teardown(item: pytest.Item) -> Generator[None, None, None]:
+    """Collect Pixeltable connection cycles before the next test widens warning filters.
+
+    psycopg leaves unclosed AF_UNIX sockets and event loops in cycles after catalog use.
+    `pytest.warns` and `warnings.simplefilter('error')` override the suite's ResourceWarning
+    ignores, so a later test that happens to collect those cycles fails — either `len(record)`
+    counts the resource warnings, or `__del__` becomes an `ExceptionGroup` of unraisables.
+    """
+    yield
+    if not _test_opened_pixeltable(item):
+        return
+    env_module = sys.modules.get('pixeltable.env')
+    env_type = getattr(env_module, 'Env', None) if env_module is not None else None
+    if getattr(env_type, '_instance', None) is None:
+        return
+    # Full collection: the cycles are already in an older generation, so generation 0 is not enough.
+    gc.collect()

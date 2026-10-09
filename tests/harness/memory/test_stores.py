@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import os
@@ -9,6 +10,7 @@ import sqlite3
 import subprocess
 import sys
 import uuid
+import warnings
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
@@ -1117,6 +1119,25 @@ async def test_file_store_success_leaves_no_staged_files(tmp_path: Path) -> None
     assert (tmp_path / 'notes/main.md').read_text() == 'one'
     assert _staged_files(tmp_path) == []
     assert await store.list_paths(limit=10) == ['notes/main.md']
+
+
+@pytest.mark.skipif(not _PIXELTABLE_AVAILABLE, reason='pixeltable extra')
+class TestPixeltableCyclesDoNotEscape:
+    """Catalog connections must be collected before a later test treats warnings as errors.
+
+    Pytest runs a class in definition order. `test_next_filter_sees_no_resource_warnings` has to
+    stay after `test_open_catalog`: that is the gap where disk-loading tests failed.
+    """
+
+    async def test_open_catalog(self, tmp_path: Path) -> None:
+        store = _local_store(tmp_path, 3)
+        await store.write('notes/main.md', 'one', expected_version=None)
+
+    def test_next_filter_sees_no_resource_warnings(self) -> None:
+        # `pytest.warns` and `warnings.simplefilter('error')` override the suite's ResourceWarning ignores.
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            gc.collect()
 
 
 class _FilesystemOnly:
