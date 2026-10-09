@@ -93,7 +93,7 @@ with try_import() as imports_successful:
     from urllib3 import HTTPResponse
 
     from pydantic_ai.models.bedrock import (
-        _DATA_RETENTION_ERROR_NOTE,  # pyright: ignore[reportPrivateUsage]
+        _DATA_RETENTION_HINT,  # pyright: ignore[reportPrivateUsage]
         BedrockConverseModel,
         BedrockModelName,
         BedrockModelSettings,
@@ -688,11 +688,11 @@ async def test_bedrock_count_tokens_error(allow_model_requests: None, bedrock_pr
     assert exc_info.value.status_code == 400
     assert exc_info.value.model_name == model_id
     assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
-    assert not hasattr(exc_info.value, '__notes__')
+    assert exc_info.value.hint is None
 
 
 @pytest.mark.parametrize('stream', [False, True])
-async def test_bedrock_data_retention_error_note(allow_model_requests: None, stream: bool):
+async def test_bedrock_data_retention_error_hint(allow_model_requests: None, stream: bool):
     """A mock is required because reproducing this error requires an account without the required retention mode."""
     error = ClientError(
         {
@@ -724,9 +724,9 @@ async def test_bedrock_data_retention_error_note(allow_model_requests: None, str
     assert exc.status_code == 400
     assert exc.body == error.response
     assert str(exc) == snapshot(
-        "status_code: 400, model_name: us.amazon.nova-micro-v1:0, body: {'Error': {'Code': 'ValidationException', 'Message': \"data retention mode 'default' is not available for this model\"}, 'ResponseMetadata': {'RequestId': 'test-request-id', 'HostId': '', 'HTTPStatusCode': 400, 'HTTPHeaders': {}, 'RetryAttempts': 0}}"
+        "status_code: 400, model_name: us.amazon.nova-micro-v1:0, body: {'Error': {'Code': 'ValidationException', 'Message': \"data retention mode 'default' is not available for this model\"}, 'ResponseMetadata': {'RequestId': 'test-request-id', 'HostId': '', 'HTTPStatusCode': 400, 'HTTPHeaders': {}, 'RetryAttempts': 0}}. Bedrock rejected this model under the account's data retention mode for this Region. Models that require human review, such as Claude Fable 5 and 5.1, need the account's data retention mode set to `aws_review` (or the legacy `provider_data_share`) with the Bedrock control plane's `PutAccountDataRetention` API, as it can't be set per request. See https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html"
     )
-    assert exc.__notes__ == [_DATA_RETENTION_ERROR_NOTE]
+    assert exc.hint == _DATA_RETENTION_HINT
 
 
 async def test_bedrock_request_non_http_error(allow_model_requests: None):
