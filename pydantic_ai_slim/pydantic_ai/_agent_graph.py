@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import Context, ContextVar, copy_context
 from copy import copy, deepcopy
 from dataclasses import field, replace
+from datetime import datetime
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, assert_never, cast
 
@@ -533,6 +534,9 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation, repr=False)
     """The run's first-party cancellation controller. Runtime-only: holds a live task reference."""
+
+    deadline: datetime | None = None
+    """The run's deadline, from `timeout=` or inherited from an enclosing run; exposed as `RunContext.deadline`."""
 
     pending_immediate_dispatches: dict[int, list[anyio.Event]] = dataclasses.field(
         default_factory=dict[int, list[anyio.Event]], repr=False
@@ -2766,6 +2770,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         _model_id=ctx.deps.model_id,
         usage=ctx.state.usage,
         usage_limits=ctx.deps.usage_limits,
+        deadline=ctx.deps.deadline,
         prompt=ctx.deps.prompt,
         messages=ctx.state.message_history,
         validation_context=None,
@@ -2807,10 +2812,10 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
 
 
 def run_cancelled_snapshot(
-    message: str, state: GraphAgentState, deps: GraphAgentDeps[Any, Any]
+    message: str, state: GraphAgentState, deps: GraphAgentDeps[Any, Any], *, timed_out: bool = False
 ) -> exceptions.RunCancelled:
-    """Build a `RunCancelled` carrying a detached snapshot of the run's current state."""
-    return exceptions.RunCancelled(
+    """Build a `RunCancelled` (or `RunTimedOut`) carrying a detached snapshot of the run's current state."""
+    return (exceptions.RunTimedOut if timed_out else exceptions.RunCancelled)(
         message,
         messages=state.message_history,
         new_message_index=deps.new_message_index,

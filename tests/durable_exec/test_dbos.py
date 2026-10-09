@@ -9,7 +9,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -58,6 +58,7 @@ from pydantic_ai.exceptions import (
     ModelHTTPError,
     ModelRetry,
     RunCancelled,
+    RunTimedOut,
     ToolFailed,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -4879,3 +4880,74 @@ async def test_dbos_default_ids_survive_recovery(dbos: DBOS) -> None:
     handle = await asyncio.to_thread(DBOS._execute_workflow_id, workflow_id)  # pyright: ignore[reportPrivateUsage]
     assert sorted(tuple(ids) for ids in await asyncio.to_thread(handle.get_result)) == seen
     assert sorted(stable_ids_seen[3:]) == seen
+
+
+deadline_agent = Agent(TestModel(), name='deadline_agent', capabilities=[DBOSDurability()])
+deadline_seen: list[datetime | None] = []
+
+
+@deadline_agent.tool
+def record_deadline(ctx: RunContext[object]) -> str:
+    deadline_seen.append(ctx.deadline)
+    return 'ok'
+
+
+@DBOS.workflow()
+async def deadline_workflow() -> str:
+    result = await deadline_agent.run('Hello', timeout=3600)
+    if len(deadline_seen) == 1:
+        raise _ProcessCrash
+    return result.output
+
+
+async def test_dbos_deadline_survives_recovery(dbos: DBOS) -> None:
+    """The run's start time is recorded as a step, so a recovered workflow keeps its original deadline."""
+    deadline_seen.clear()
+    workflow_id = f'deadline-{uuid.uuid4()}'
+    before = datetime.now(UTC)
+    with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+        await deadline_workflow()
+    [deadline] = deadline_seen
+    assert deadline is not None
+    assert before + timedelta(seconds=3600) <= deadline <= datetime.now(UTC) + timedelta(seconds=3600)
+
+    # Recovery re-executes the workflow function: the start-time step replays, so the tool, which runs in
+    # the workflow, sees the same deadline even though time has moved on.
+    await asyncio.sleep(0.01)
+    handle = await asyncio.to_thread(DBOS._execute_workflow_id, workflow_id)  # pyright: ignore[reportPrivateUsage]
+    assert await asyncio.to_thread(handle.get_result) == '{"record_deadline":"ok"}'
+    assert deadline_seen == [deadline, deadline]
+
+
+def _call_slow_tool_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('slow_tool')])
+
+
+timed_out_agent = Agent(
+    FunctionModel(_call_slow_tool_model_fn), name='timed_out_agent', capabilities=[DBOSDurability()]
+)
+
+
+@timed_out_agent.tool_plain
+async def slow_tool() -> str:
+    await asyncio.sleep(30)
+    return 'never reached'  # pragma: no cover
+
+
+@DBOS.workflow()
+async def timed_out_workflow() -> list[str]:
+    try:
+        await timed_out_agent.run('Hello', timeout=0.1)
+    except RunTimedOut as exc:
+        return [type(message).__name__ for message in exc.all_messages()]
+    return []  # pragma: no cover
+
+
+async def test_dbos_timeout_in_workflow(dbos: DBOS) -> None:
+    assert await timed_out_workflow() == ['ModelRequest', 'ModelResponse', 'ModelRequest']
+
+
+async def test_dbos_timeout_outside_workflow(dbos: DBOS) -> None:
+    """Outside a workflow the capability is transparent: the run's own clock starts the deadline."""
+    with pytest.raises(RunTimedOut):
+        await timed_out_agent.run('Hello', timeout=0.1)

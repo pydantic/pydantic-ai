@@ -3,12 +3,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakKeyDictionary
 
 from dbos import DBOS
 from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 
+from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapRunHandler
@@ -237,6 +239,17 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
+
+    async def _run_start_time(self) -> datetime | None:
+        if not self.in_durable_context:
+            return None
+
+        # Recorded as a step, so a recovered workflow counts the run's `timeout=` from when it first started.
+        # A coroutine function, so DBOS records the step without blocking the event loop.
+        async def run_start_time() -> datetime:
+            return now_utc()
+
+        return await DBOS.run_step_async({'name': f'{self.name}.run_start_time'}, run_start_time)
 
     def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
         # A DBOS step degrades to a plain inline call outside a workflow, where enqueueing is

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
@@ -505,6 +506,18 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in reversed(self.capabilities):
             if (conversation_id := capability._default_conversation_id(run_id)) is not None:
                 return conversation_id
+        return None
+
+    def _run_clock(self) -> Callable[[], datetime] | None:
+        for capability in reversed(self.capabilities):
+            if (clock := capability._run_clock()) is not None:
+                return clock
+        return None
+
+    async def _run_start_time(self) -> datetime | None:
+        for capability in reversed(self.capabilities):
+            if (start := await capability._run_start_time()) is not None:
+                return start
         return None
 
     # --- Run lifecycle hooks ---

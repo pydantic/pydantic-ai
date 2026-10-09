@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal, cast
 
+from prefect import task
 from prefect.context import FlowRunContext
 
+from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversation_id_from_run_id
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
@@ -122,6 +125,25 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
+
+    async def _run_start_time(self) -> datetime | None:
+        context = FlowRunContext.get()
+        if context is None:
+            return None
+        # A cached task keyed by the run's position in the flow, so a flow retry counts the run's
+        # `timeout=` from when it first started. Prefect rebuilds the counter in the same order on retry.
+        key = 'pydantic_ai:run_start_time'
+        sequence = context.task_run_dynamic_keys.get(key, 0)
+        assert isinstance(sequence, int)
+        context.task_run_dynamic_keys[key] = sequence + 1
+
+        @task
+        async def run_start_time(sequence_key: str, sequence: int) -> datetime:
+            return now_utc()
+
+        return await run_start_time.with_options(name=f'{self.name}__run_start_time', **default_task_config)(
+            key, sequence
+        )
 
     def get_durable_operation_backend(self) -> DurableOperationBackend[TaskConfig]:
         def tool_config(
