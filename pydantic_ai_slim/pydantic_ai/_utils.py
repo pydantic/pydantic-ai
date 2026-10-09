@@ -8,7 +8,6 @@ import inspect
 import re
 import sys
 import textwrap
-import time
 import uuid
 from builtins import BaseExceptionGroup as BaseExceptionGroup
 from collections.abc import (
@@ -17,6 +16,7 @@ from collections.abc import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Collection,
     Generator,
     Iterable,
     Iterator,
@@ -333,6 +333,27 @@ async def cancel_and_drain(*tasks: asyncio.Task[Any], msg: object = None) -> Non
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+async def wait_for_any_task(
+    tasks: Collection[asyncio.Task[Any]], timeout: float | None = None
+) -> set[asyncio.Task[Any]]:
+    """Wait for any task to finish without cancelling tasks that remain in flight."""
+    ready = anyio.Event()
+
+    def notify_done(_: asyncio.Task[Any]) -> None:
+        ready.set()
+
+    for task in tasks:
+        task.add_done_callback(notify_done)
+    try:
+        with anyio.move_on_after(timeout):
+            await ready.wait()
+    finally:
+        for task in tasks:
+            task.remove_done_callback(notify_done)
+
+    return {task for task in tasks if task.done()}
+
+
 def raise_if_cancelling() -> None:
     """Re-assert an external cancellation that a completed step absorbed (level-triggered backstop).
 
@@ -500,7 +521,7 @@ async def group_by_temporal(
                     wait_time = soft_max_interval
                 else:
                     # wait for the time remaining in the group
-                    wait_time = soft_max_interval - (time.monotonic() - group_start_time)
+                    wait_time = soft_max_interval - (anyio.current_time() - group_start_time)
 
                 # if there's no current task, we get the next one
                 if task is None:
@@ -508,8 +529,7 @@ async def group_by_temporal(
                     # so far, this doesn't seem to be a problem
                     task = asyncio.create_task(anext(aiterator))  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
 
-                # we use asyncio.wait to avoid cancelling the coroutine if it's not done
-                done, _ = await asyncio.wait((task,), timeout=wait_time)
+                done = await wait_for_any_task((task,), timeout=wait_time)
 
                 if done:
                     # the one task we waited for completed
@@ -527,7 +547,7 @@ async def group_by_temporal(
                         task = None
                         # if this is the first item in the group, set the group start time
                         if group_start_time is None:
-                            group_start_time = time.monotonic()
+                            group_start_time = anyio.current_time()
                 elif buffer:
                     # otherwise if the task timeout expired and we have items in the buffer, yield the buffer
                     yield buffer

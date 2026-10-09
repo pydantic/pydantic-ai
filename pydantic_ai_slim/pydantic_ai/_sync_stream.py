@@ -78,7 +78,7 @@ async def _hold_context_manager(
 async def _wait_for_task(task: asyncio.Task[None]) -> None:
     """Wait for a task, then yield once so queued loop-stop callbacks run before this waiter completes."""
     if not task.done():
-        await asyncio.wait((task,))
+        await _utils.wait_for_any_task((task,))
     await anyio.sleep(0)
 
 
