@@ -491,6 +491,7 @@ def test_logfire(
                         'allow_image_output': False,
                         'instruction_parts': None,
                         'thinking': None,
+                        'cache': None,
                     }
                 )
             ),
@@ -1290,6 +1291,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                             }
                         ],
                         'thinking': None,
+                        'cache': None,
                     }
                 )
             ),
@@ -1567,6 +1569,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'allow_image_output': False,
                         'instruction_parts': None,
                         'thinking': None,
+                        'cache': None,
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',

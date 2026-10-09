@@ -430,9 +430,33 @@ def test_from_data_uri_base64():
     assert bc.media_type == 'image/png'
 
 
+def test_from_data_uri_parameterized_media_type_round_trip():
+    bc = BinaryContent.from_data_uri('data:application/json;charset=utf-8;base64,eyJhIjogMX0=')
+    # The media type is stored verbatim, parameters included.
+    assert bc.media_type == 'application/json;charset=utf-8'
+    assert bc.data == b'{"a": 1}'
+    assert bc.data_uri == 'data:application/json;charset=utf-8;base64,eyJhIjogMX0='
+
+
 def test_from_data_uri_non_base64():
     with pytest.raises(ValueError, match='must be base64-encoded'):
         BinaryContent.from_data_uri('data:text/plain,Hello%20World')
+
+
+def test_from_data_uri_percent_encoded_base64():
+    raw = BinaryContent.from_data_uri('data:image/png;base64,/w==')
+    assert raw.data == b'\xff'
+
+    assert BinaryContent.from_data_uri('data:image/png;base64,%2Fw==').data == raw.data
+    assert BinaryContent.from_data_uri('data:image/png;base64,/w%3D%3D').data == raw.data
+
+
+def test_from_data_uri_escaped_plus_and_alnum():
+    content = BinaryContent.from_data_uri('data:application/octet-stream;base64,AB+C')
+    assert content.data == b'\x00\x1f\x82'
+
+    escaped = BinaryContent.from_data_uri('data:application/octet-stream;base64,A%42%2BC')
+    assert escaped.data == content.data
 
 
 @pytest.mark.xdist_group(name='url_formats')

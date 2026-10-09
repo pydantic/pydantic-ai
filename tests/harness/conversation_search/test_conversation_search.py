@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import warnings
+from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -57,6 +58,8 @@ from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     FileStepStore,
     InMemoryStepStore,
+    PostgresConnection,
+    PostgresStepStore,
     RunRecord,
     SqliteStepStore,
     StepPersistence,
@@ -292,6 +295,12 @@ class TestSnapshotHistorySource:
         assert isinstance(InMemoryStepStore(), SnapshotStore)
         assert isinstance(FileStepStore(tmp_path / 'runs'), SnapshotStore)
         assert isinstance(SqliteStepStore(database=tmp_path / 'runs.db'), SnapshotStore)
+
+        class _UnusedPool:
+            def acquire(self) -> AbstractAsyncContextManager[PostgresConnection]:
+                raise AssertionError('the pool is not queried')  # pragma: no cover
+
+        assert isinstance(PostgresStepStore(_UnusedPool()), SnapshotStore)
 
     def test_rejects_store_without_snapshot_seam(self) -> None:
         # A store that lists runs but has not implemented `list_snapshots` (for

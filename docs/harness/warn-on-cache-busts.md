@@ -19,9 +19,11 @@ When a request falls short of the established prefix by more than `min_missed_ra
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
 from pydantic_ai_harness import WarnOnCacheBusts
 
-agent = Agent('anthropic:claude-sonnet-4-5', capabilities=[WarnOnCacheBusts()])
+# `Caching()` enables caching; `WarnOnCacheBusts()` only observes it.
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[Caching(), WarnOnCacheBusts()])
 result = await agent.run('...')  # a CacheBustWarning fires if a cached prefix collapses mid-run
 # ...and on the next turn, if the prefix the first turn cached no longer reads back:
 await agent.run('...', message_history=result.all_messages())
@@ -58,6 +60,10 @@ A response that ran a native tool, such as web search or code execution, may rep
 Marks are kept per conversation (`RunContext.conversation_id`), not per run. A run that continues an earlier one via `message_history` -- including history that was serialized and loaded back, which carries the conversation id with it -- is judged against the prefix the earlier run established, so the first request of the next turn is checked against what the previous turn cached. That is where a moved prefix most often hides: history rewritten between turns, or a tool or instruction that differs from one turn to the next. A run that starts a new conversation (no history, or `conversation_id='new'`) starts from a clean mark. The warning says whether the mark it compared against came from this run or from an earlier run of the conversation.
 
 A continuation that comes back after the retention window has elapsed is classified `ttl_expired` and doesn't warn. A conversation's marks are forgotten once it has been idle for 24 hours, longer than any provider documents keeping a cache, or when more than 4,096 conversations on the same instance have been active more recently.
+
+## Caching not enabled
+
+Models such as Anthropic's (including on the Bedrock and Vertex AI SDK clients), Bedrock's Claude and Nova, and OpenRouter's Anthropic routes only cache what the request asks them to. OpenAI's models and OpenRouter's Gemini routes, which cache implicitly, are never reported. When a request of at least 4,096 input tokens goes to such a model with no caching configured (neither the unified `cache` setting nor a provider-specific one), no `CachePoint` in its history, and no cache usage reported, the monitor emits a `CacheNotEnabledWarning` pointing to `cache=True` and the `Caching()` capability, once per conversation and model. Setting `cache=False` says caching was left off on purpose, so it doesn't warn. Silence or escalate it with the `warnings` filters, like `CacheBustWarning`.
 
 ## Options
 
@@ -110,7 +116,7 @@ The monitor's signal is the `CacheBustWarning`; routing it through `logging` is 
 ## Scope
 
 - **Observational only.** It reports that a cached prefix collapsed and whether the provider's retention window explains it, not what moved the prefix. The structural explanation ("what moved the prefix this turn") is a separate job.
-- **Fires only when caching is enabled and reported.** A run that never establishes a cache never warns.
+- **Cache busts need an established cache.** A run that never establishes a cache never emits a `CacheBustWarning`; only the `CacheNotEnabledWarning` above can fire.
 - **History rewritten by a history processor can warn.** Harness compaction strategies (such as `ClearToolResults` or `SummarizingCompaction`) rewrite messages the provider already cached, which moves the prefix like any other rewrite; only provider-native compaction, recognized by its `CompactionPart`, is classified `compacted`. Silence the warning around the runs where compaction is expected, as shown above.
 - **A mid-run model switch does not warn.** Marks are per `(provider_name, provider_url, model_name)`, so a `FallbackModel` failover starts a fresh mark rather than collapsing the previous model's.
 - **Marks are in-process memory.** They are held on the capability instance, so a conversation continued through a different instance, a different process, or a different worker starts from a clean mark; nothing is persisted or shared.

@@ -1393,7 +1393,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         return await self._make_request(ctx)
 
     @asynccontextmanager
-    async def stream(
+    async def stream(  # noqa: C901
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
@@ -1414,6 +1414,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         _handler_response: _messages.ModelResponse | None = None
         _handler_called = False
         _handler_usage_recorded = False
+        _stream_cut_short = False
         time_to_first_chunk: float | None = None
         accounted_responses: list[_messages.ModelResponse] = []
         before_model_request_context: list[tuple[ContextVar[Any], Any]] = []
@@ -1421,7 +1422,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         async def _streaming_handler(
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
-            nonlocal _handler_called, _handler_response, _handler_usage_recorded, time_to_first_chunk
+            nonlocal _handler_called, _handler_response, _handler_usage_recorded, _stream_cut_short, time_to_first_chunk
             if _handler_called:
                 raise exceptions.UserError('`wrap_model_request` may call its handler only once')
             _handler_called = True
@@ -1453,6 +1454,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 try:
                     await stream_done.wait()
                 finally:
+                    if not stream_done.is_set():
+                        # `wrap_model_request` stopped the handler while the stream is still being consumed,
+                        # e.g. a parallel `InputGuardrail` blocking the prompt. Stop the consumer's pull before
+                        # the stream closes; it continues with the response `wrap_model_request` returns instead.
+                        _stream_cut_short = await agent_stream._abandon_model_stream(_wrap_response)  # pyright: ignore[reportPrivateUsage]
                     # Report TTFT in a `finally` so it also lands when the consumer raises
                     # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
                     # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
@@ -1482,6 +1488,20 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         else:
             wrap_awaitable = _streaming_handler(wrap_request_context)
         wrap_task = asyncio.create_task(wrap_awaitable)
+
+        async def _wrap_response() -> _messages.ModelResponse | None:
+            """The response `wrap_model_request` finishes with after abandoning the stream.
+
+            Any error it raises instead is raised to the consumer, so it can't act on the cut-short
+            stream, except `ModelRetry`, which ends the stream for the retry below.
+            """
+            try:
+                # Shielded so a cancelled consumer leaves `wrap_task` to the stream teardown below.
+                return await asyncio.shield(wrap_task)
+            except exceptions.SkipModelRequest as e:
+                return e.response
+            except exceptions.ModelRetry:
+                return None
 
         # Wait for handler to start or wrap to complete (short-circuit).
         # If outer cancellation arrives during this wait, drain both tasks before re-raising
@@ -1576,7 +1596,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         )
                 else:
                     try:
-                        model_response = await wrap_task
+                        try:
+                            model_response = await wrap_task
+                        except exceptions.SkipModelRequest as e:
+                            # `wrap_model_request` skipped the request after the stream opened, e.g. a parallel
+                            # `InputGuardrail` that blocked the prompt. The consumer then streamed the skip's
+                            # response in place of the model's. If the consumer had already received the model's
+                            # whole response, it may have acted on it, so the skip propagates instead.
+                            if not _stream_cut_short:
+                                raise
+                            model_response = e.response
                     except exceptions.ModelRetry as e:
                         self._enforce_usage_limits(ctx, accounted_responses)
                         # `_handler_response` is unset only if the handler failed between stream

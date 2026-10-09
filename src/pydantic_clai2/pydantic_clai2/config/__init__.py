@@ -10,6 +10,8 @@ UpdateChannel = Literal['stable', 'main']
 UPDATE_CHANNELS: tuple[UpdateChannel, ...] = get_args(UpdateChannel)
 STORED_MAIN_CHANNEL = 'bleeding'
 """`main`'s former name, still what is saved for it: older builds accept only this name."""
+ToolCallDisplay = Literal['detailed', 'grouped']
+TOOL_CALL_DISPLAYS: tuple[ToolCallDisplay, ...] = get_args(ToolCallDisplay)
 
 
 class Settings(BaseModel):
@@ -41,6 +43,13 @@ class Settings(BaseModel):
             'Ctrl+X Ctrl+S toggles it.'
         ),
     )
+    instructions: str = Field(
+        default='',
+        description=(
+            "Your own instructions, sent after CLAI's built-in, AGENTS.md, and plugin instructions. "
+            '/system_prompt edits them.'
+        ),
+    )
     session_namer: bool = Field(default=True, description='Name saved sessions in the background using a model.')
     session_namer_model: str | None = Field(
         default=None, description='Naming model override; null uses the current model.'
@@ -55,6 +64,14 @@ class Settings(BaseModel):
     )
     thinking: bool = Field(default=True, description="Show the model's thinking as it streams.")
     splash: bool = Field(default=True, description='Animate the startup splash. Takes effect next start.')
+    tool_calls: ToolCallDisplay = Field(
+        default='detailed',
+        description=(
+            'How tool calls print: detailed gives each call its own line with arguments; '
+            'grouped counts consecutive calls by tool on one live line. Grouped ignores display.tool_output '
+            'and display.tool_arg_chars; file diffs still print.'
+        ),
+    )
     tool_output: bool = Field(
         default=False, description='Show shell and grep output below tool summaries. File diffs are always shown.'
     )
@@ -101,6 +118,7 @@ SETTING_FIELDS = {
     'display.theme': 'theme',
     'display.spinner': 'spinner',
     'display.splash': 'splash',
+    'display.tool_calls': 'tool_calls',
     'display.tool_output': 'tool_output',
     'display.shell_lines': 'shell_lines',
     'display.grep_lines': 'grep_lines',
@@ -108,13 +126,16 @@ SETTING_FIELDS = {
     'display.smooth_seconds': 'smooth_seconds',
     'run.tool_retries': 'tool_retries',
     'run.speculative_code_mode': 'speculative_code_mode',
+    'run.instructions': 'instructions',
     'accounts.pool': 'pool_accounts',
     'sessions.naming': 'session_namer',
     'sessions.naming_model': 'session_namer_model',
     'updates.channel': 'update_channel',
 }
 
-STRING_SETTINGS = frozenset({'model', 'display.theme', 'display.spinner', 'updates.channel'})
+STRING_SETTINGS = frozenset(
+    {'model', 'run.instructions', 'display.theme', 'display.spinner', 'display.tool_calls', 'updates.channel'}
+)
 """Keys whose typed value is taken as text rather than parsed as JSON."""
 
 

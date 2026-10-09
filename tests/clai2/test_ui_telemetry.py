@@ -254,6 +254,31 @@ def test_only_the_newest_subscriber_records(exporter: InMemorySpanExporter, tmp_
     assert recorded(exporter) == [('after', {})]
 
 
+def test_a_root_only_subscriber_is_told_of_selection_but_records_nothing(
+    content_exporter: InMemorySpanExporter,
+) -> None:
+    selected: list[str] = []
+
+    def root(name: str) -> None:
+        selected.append(name)
+
+    unsubscribe = telemetry.subscribe(logfire.DEFAULT_LOGFIRE_INSTANCE, root=partial(root, 'newer'), ui_events=False)
+    try:
+        telemetry.conversation_selected()
+        assert selected == ['newer']
+        # UI telemetry still goes to the newest subscriber with `ui_events`, under its content setting.
+        assert telemetry.prompt_text('hello') == {telemetry.PROMPT: 'hello'}
+        with telemetry.span('command /{command}', command='session'):
+            telemetry.record('inner')
+    finally:
+        unsubscribe()
+        unsubscribe()  # A second call is harmless.
+    selected.clear()
+    telemetry.conversation_selected()
+    assert selected == []
+    assert recorded(content_exporter) == [('inner', {}), ('command /session', {'command': 'session'})]
+
+
 def test_nothing_is_recorded_without_a_subscriber() -> None:
     telemetry.record('ignored', value=1)
     with telemetry.span('ignored') as span:
@@ -333,7 +358,7 @@ async def test_conversations_cleared_and_resumed(exporter: InMemorySpanExporter,
     await session.resume(saved)
     assert recorded(exporter) == [
         ('conversation cleared', {'messages': 2}),
-        ('conversation resumed', {'outcome': 'completed', 'messages': 2, 'other_workspace': False}),
+        ('conversation resumed', {'outcome': 'completed', 'messages': 2, 'other_workspace': False, 'forked': False}),
     ]
 
 

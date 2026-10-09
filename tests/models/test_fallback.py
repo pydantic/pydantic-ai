@@ -318,6 +318,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'allow_image_output': False,
                         'instruction_parts': None,
                         'thinking': None,
+                        'cache': None,
                     },
                     'logfire.span_type': 'span',
                     'gen_ai.conversation.id': IsStr(),
@@ -470,6 +471,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                         'allow_image_output': False,
                         'instruction_parts': None,
                         'thinking': None,
+                        'cache': None,
                     },
                     'logfire.span_type': 'span',
                     'gen_ai.conversation.id': IsStr(),
@@ -594,6 +596,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'allow_image_output': False,
                         'instruction_parts': None,
                         'thinking': None,
+                        'cache': None,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
@@ -1338,6 +1341,7 @@ Don't include any text or Markdown fencing before or after.
                             },
                         ],
                         'thinking': None,
+                        'cache': None,
                     },
                     'gen_ai.conversation.id': IsStr(),
                     'logfire.span_type': 'span',
@@ -3430,3 +3434,57 @@ async def test_fallback_tries_next_model_on_non_json_response_body(allow_model_r
 
     assert result.output == 'Hello from fallback'
     assert requests_made == {'primary': 1, 'fallback': 1}
+
+
+async def test_fallback_on_response_handler_tuple() -> None:
+    """Response handlers in a tuple take the same registration path as list entries."""
+
+    def reject_primary(response: ModelResponse) -> bool:
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'primary' in part.content
+
+    async def reject_primary_async(response: ModelResponse) -> bool:
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'primary' in part.content
+
+    for handler in (reject_primary, reject_primary_async):
+        fallback_model = FallbackModel(primary_model, fallback_model_impl, fallback_on=(handler,))
+        agent = Agent(model=fallback_model)
+
+        result = await agent.run('hello')
+        assert result.output == 'fallback response'
+
+
+async def test_fallback_on_exception_handler_tuple() -> None:
+    """Exception handlers in a tuple fall back like the equivalent single handler."""
+
+    def retry_http_error(exc: Exception) -> bool:
+        return isinstance(exc, ModelHTTPError) and exc.status_code == 500
+
+    async def retry_http_error_async(exc: Exception) -> bool:
+        return isinstance(exc, ModelHTTPError) and exc.status_code == 500
+
+    for handler in (retry_http_error, retry_http_error_async):
+        fallback_model = FallbackModel(failure_model, success_model, fallback_on=(handler,))
+        agent = Agent(model=fallback_model)
+
+        result = await agent.run('hello')
+        assert result.output == 'success'
+
+
+async def test_fallback_on_mixed_tuple() -> None:
+    """A tuple mixing an exception type and an exception handler falls back like the equivalent list."""
+
+    def retry_http_error(exc: Exception) -> bool:
+        return isinstance(exc, ModelHTTPError) and exc.status_code == 500
+
+    async def retry_http_error_async(exc: Exception) -> bool:
+        return isinstance(exc, ModelHTTPError) and exc.status_code == 500
+
+    for handler in (retry_http_error, retry_http_error_async):
+        # The ValueError entry never matches; the handler entry triggers the fallback.
+        fallback_model = FallbackModel(failure_model, success_model, fallback_on=(ValueError, handler))
+        agent = Agent(model=fallback_model)
+
+        result = await agent.run('hello')
+        assert result.output == 'success'
