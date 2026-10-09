@@ -635,7 +635,9 @@ jobs:
   # that baseline once here means every shard of this run splits from the same file, so each module
   # runs exactly once even if the API fails (the files are then empty and the split falls back to
   # module size). Keep the shard counts in step with `SPLITS` in the jobs below. It runs alongside
-  # `classify`, not after it, to stay off the critical path.
+  # `classify`, not after it, to stay off the critical path, so it also runs (and its result goes
+  # unused) on content-only and clai2-only changes, where the sharded jobs are skipped. That costs a
+  # few API calls; don't add `needs: classify` to save them.
   test-durations-baseline:
     name: fetch test durations baseline
     runs-on: ubuntu-latest
@@ -826,8 +828,9 @@ jobs:
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
 
+      # Only `main` push runs are ever read back as the baseline (`shard_durations.py fetch`).
       - name: store test durations
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event_name == 'push' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ env.DURATIONS_PREFIX }}${{ matrix.shard }}
@@ -1087,8 +1090,9 @@ jobs:
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
 
+      # Only `main` push runs are ever read back as the baseline (`shard_durations.py fetch`).
       - name: store test durations
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event_name == 'push' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ env.DURATIONS_PREFIX }}${{ matrix.shard }}

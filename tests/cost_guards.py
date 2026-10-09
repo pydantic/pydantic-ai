@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
+from typing_extensions import TypedDict
 
 PLUGIN_NAME = 'pydantic_ai_cost_guards'
 BUDGET_ENV_VAR = 'PYTEST_TEST_BUDGET_SECONDS'
@@ -309,7 +310,9 @@ def _over_budget_message(item: pytest.Item, spent: float, budget: float, state: 
 
 
 @pytest.hookimpl(wrapper=True)
-def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> Generator[None, Any, Any]:
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
     report: pytest.TestReport = yield
     # `pytest_runtest_protocol` stashes the state before any report is made.
     state = item.stash[_STATE_KEY]
@@ -381,7 +384,18 @@ def pytest_collection_finish(session: pytest.Session) -> None:
     config.stash[_MARKER_SCOPES_KEY] = {key: (size, key not in incomplete) for key, size in sizes.items()}
 
 
-def _subprocess_marker_info(item: pytest.Item, state: _TestState) -> dict[str, Any] | None:
+class _MarkerInfo(TypedDict):
+    """What a teardown report carries about the test's `subprocess` marker; plain JSON so `pytest-xdist` can ship it."""
+
+    key: str
+    location: str
+    size: int
+    complete: bool
+    eligible: bool
+    spawned: bool
+
+
+def _subprocess_marker_info(item: pytest.Item, state: _TestState) -> _MarkerInfo | None:
     if (scope := _marker_scope(item)) is None:
         return None
     key, location = scope
@@ -429,7 +443,7 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
     if not _aggregates:
         return
     aggregate = _aggregates[-1]
-    info: dict[str, Any] | None = getattr(report, 'python_subprocess_marker', None)
+    info: _MarkerInfo | None = getattr(report, 'python_subprocess_marker', None)
     if info is None:
         return
     marker = aggregate.markers.setdefault(info['key'], _MarkerAggregate(info['location'], info['size']))
@@ -532,7 +546,7 @@ def pytest_testnodedown(node: Any, error: object) -> None:
         aggregate.over_collection_budget[module] = max(aggregate.over_collection_budget.get(module, 0), seconds)
 
 
-def pytest_terminal_summary(terminalreporter: Any, config: pytest.Config) -> None:
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter, config: pytest.Config) -> None:
     aggregate = config.stash.get(_AGGREGATE_KEY, None) or _SessionAggregate()
     if aggregate.stale:
         terminalreporter.section('stale subprocess markers', red=True)
