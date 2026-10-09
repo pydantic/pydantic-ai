@@ -2162,6 +2162,7 @@ class TestEntryPoints:
         assert seen == ['host:custom']
         assert response.stop_reason == 'max_turn_requests'
 
+    @pytest.mark.subprocess(reason='the one test that drives the ACP entry point over real stdio')
     async def test_end_to_end_over_stdio(self) -> None:
         """Drive the adapter as a real subprocess over ACP stdio, as a TUI client would."""
         client = FakeClient()

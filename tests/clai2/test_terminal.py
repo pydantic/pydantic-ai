@@ -357,6 +357,7 @@ def test_cli_settings(tmp_path: Path, run_cli: CliRunner) -> None:
     assert result.returncode != 0
 
 
+@pytest.mark.subprocess(reason='asserts what a fresh interpreter imports')
 def test_import_is_light() -> None:
     result = subprocess.run(
         [sys.executable, '-c', 'import pydantic_clai2, sys; assert "pydantic_ai" not in sys.modules'],

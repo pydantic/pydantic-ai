@@ -11,7 +11,7 @@ import secrets
 import sys
 import warnings
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
-from contextlib import ExitStack, contextmanager, suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -722,55 +722,33 @@ except ImportError:
     pass
 
 
-_prefect_test_server_key = pytest.StashKey[ExitStack]()
-
-
-def _start_prefect_test_server(config: pytest.Config) -> None:
-    """Enter the worker's Prefect test server, once, and keep it until the session finishes."""
-    if _prefect_test_server_key in config.stash or importlib.util.find_spec('prefect') is None:
-        return
-    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
-    from prefect.testing.utilities import prefect_test_harness
-
-    stack = config.stash[_prefect_test_server_key] = ExitStack()
-    # The task-run recorder is a background writer against the same sqlite file the flows write to.
-    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
-    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
-    # here reads what it records: task run states reach the API through the task engine.
-    stack.enter_context(temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}))
-    stack.enter_context(prefect_test_harness(server_startup_timeout=120))
-
-
-@pytest.hookimpl(wrapper=True)
-def pytest_runtest_protocol(item: pytest.Item, nextitem: pytest.Item | None) -> Generator[None, object, object]:
-    # Started here rather than in the fixture so its 15-25s startup is not charged to the setup of
-    # whichever Prefect test happens to run first in the worker.
-    if 'prefect_test_server' in getattr(item, 'fixturenames', ()):
-        _start_prefect_test_server(item.config)
-    return (yield)
-
-
-def pytest_sessionfinish(session: pytest.Session) -> None:
-    if (stack := session.config.stash.get(_prefect_test_server_key, None)) is None:
-        return
-    stack.close()
-    # Prefect's test server leaves client sockets for GC on Python 3.14; collect them here, where the
-    # warning is expected, rather than in whichever test the collector happens to run in.
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', message='unclosed.*socket', category=ResourceWarning)
-        gc.collect()
-
-
-@pytest.fixture
-def prefect_test_server() -> None:
+@pytest.fixture(scope='session')
+def prefect_test_server() -> Iterator[None]:
     """A Prefect test server with an isolated database, shared by every Prefect test in the worker.
 
     Starting one takes 15-25s on a CI runner, so tests that run Prefect flows request this fixture
     and share the `prefect` xdist group, starting a single server per job instead of one per module
     or test. The implicit ephemeral server would instead use the shared default `PREFECT_HOME` and a
-    short connect timeout that flakes on slow runners. `pytest_runtest_protocol` starts the server.
+    short connect timeout that flakes on slow runners.
     """
     pytest.importorskip('prefect')
+    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
+    from prefect.testing.utilities import prefect_test_harness
+
+    # The task-run recorder is a background writer against the same sqlite file the flows write to.
+    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
+    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
+    # here reads what it records: task run states reach the API through the task engine.
+    with (
+        temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}),
+        prefect_test_harness(server_startup_timeout=120),
+    ):
+        yield
+    # Prefect's test server leaves client sockets for GC on Python 3.14; collect them here, where the
+    # warning is expected, rather than in whichever test the collector happens to run in.
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message='unclosed.*socket', category=ResourceWarning)
+        gc.collect()
 
 
 def raise_if_exception(e: Any) -> None:

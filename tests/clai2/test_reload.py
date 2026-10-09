@@ -119,5 +119,6 @@ def run_import_script_in_subprocess(tmp_path: Path, mode: str) -> None:
         'syntax',
     ],
 )
+@pytest.mark.subprocess(reason='checks how a fresh interpreter re-imports a changed module graph')
 def test_reload_changed_import_graph(tmp_path: Path, mode: str) -> None:
     run_import_script_in_subprocess(tmp_path, mode)

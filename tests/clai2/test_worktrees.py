@@ -13,10 +13,6 @@ from pydantic_ai_harness.step_persistence.conversations import SqliteConversatio
 from pydantic_clai2.runtime.worktrees import Worktree, open_worktree
 from tests.clai2.cli_runner import CliResult, CliRunner
 
-pytestmark = pytest.mark.subprocess(
-    reason='launches `python -m pydantic_clai2` against real repositories; not process-bound, an in-process call would do'
-)
-
 
 def git(directory: Path, *args: str) -> str:
     return subprocess.run(
