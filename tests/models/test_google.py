@@ -5398,7 +5398,8 @@ async def test_google_connect_error_is_wrapped(allow_model_requests: None, strea
         )
         with pytest.raises(ModelAPIError) as exc_info:
             if stream:
-                await Agent(model).run_stream('test').__aenter__()
+                async with Agent(model).run_stream('test'):
+                    pass  # pragma: no cover
             else:
                 await Agent(model).run('test')
 
