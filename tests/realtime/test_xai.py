@@ -921,8 +921,7 @@ class _StaysOpen(FakeWebSocket):
     async def __aiter__(self) -> AsyncIterator[Any]:
         while self._incoming:
             yield self._incoming.pop(0)
-        await asyncio.Event().wait()
-        raise AssertionError('unreachable')  # pragma: no cover
+        await asyncio.Event().wait()  # pragma: no cover (the connection re-dials without reading on)
 
 
 async def test_max_duration_error_reconnects_without_waiting_for_the_close(monkeypatch: pytest.MonkeyPatch) -> None:
