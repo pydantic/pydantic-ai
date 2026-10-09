@@ -130,9 +130,15 @@ async def main():
         #> The capital of France is Paris.
 ```
 
-You can also use a [`Model`][pydantic_ai.models.Model] or [`Provider`][pydantic_ai.providers.Provider] directly as an async context manager for the same effect.
+You can also use a [`Model`][pydantic_ai.models.Model] or [`Provider`][pydantic_ai.providers.Provider] directly as an async context manager for the same effect. In a long-lived service such as a web server, enter the agent once when the service starts and run it inside that block.
 
-An agent you don't enter this way enters its model for the duration of each run instead. The provider then closes its HTTP client when the run ends and creates a new one for the next run, so no connections are reused between runs. A model name passed to a run, as in `agent.run(..., model='openai:gpt-5.2')`, goes further: it creates a new provider, and with it a new HTTP client, for every run. In a long-lived service such as a web server, enter the agent once when the service starts and run it inside that block, and to switch models per run, pass `Model` instances you created and entered (`async with model:`) once, rather than model names.
+What happens without that block depends on where a run's model comes from:
+
+- **The agent's own model, or a `Model` instance passed to a run:** the provider creates its HTTP client along with the model, and every run reuses it. Nothing closes the client until you enter and exit the agent, model or provider. An agent created with `defer_model_check=True` treats its model name like a model name passed to a run.
+- **A model name passed to a run**, as in `agent.run(..., model='openai:gpt-5.2')`, or returned by a [model selector](../capabilities/select-model.md): the run creates a new provider, with a new HTTP client, and closes the client when it ends, so no connections are reused. Inside `async with agent:`, the agent instead creates one provider per model name and reuses it for later runs until the block exits. A [`resolve_model_id`](../capabilities/resolve-model-id.md) capability can resolve the same name differently for each run, so with one, each run resolves the name again.
+- **A `Model` instance a model selector returns:** each run enters and exits the model, which closes its provider's HTTP client at the end of the run and creates a new one for the next. Enter the model yourself (`async with model:`) to keep the client open across runs.
+
+An HTTP client's connections belong to the event loop that opened them, so a client that stays open between runs can't be used from another event loop. Repeated [`run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] calls in one thread share an event loop, but a second `asyncio.run(agent.run(...))` with an agent that isn't entered fails with `RuntimeError: Event loop is closed`. When each run gets its own event loop, enter the agent inside it, so the client is closed before its event loop is, and the next one creates a new client.
 
 Pydantic AI only ever closes an HTTP client it created itself. A client you pass in is yours to close, whether it's an `http_client` or a provider SDK client, such as `openai_client`, `anthropic_client` (including `AsyncAnthropicVertex`), Google's `client`, or `xai_client`.
 
