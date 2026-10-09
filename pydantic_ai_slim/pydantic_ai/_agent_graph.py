@@ -1579,6 +1579,22 @@ async def _after_streamed_model_request(
         ) from retry
 
 
+async def _outside_attempts(awaitable: Awaitable[T]) -> T:
+    """Await the once-per-step model request hooks, where a `RetryModelRequest` has no attempt to retry.
+
+    `before_model_request` and `wrap_model_request` run before any attempt; every hook that runs during one
+    has its `RetryModelRequest` handled by the attempt loop, so one that escapes to here came from them.
+    """
+    try:
+        return await awaitable
+    except exceptions.RetryModelRequest as retry:
+        raise exceptions.UserError(
+            '`RetryModelRequest` can only be raised from `prepare_model_request`, `on_model_request_error` or '
+            '`after_model_request`: `before_model_request` and `wrap_model_request` run once per request step, '
+            'before any attempt. To use another model for the whole step, set `request_context.model` instead.'
+        ) from retry
+
+
 def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
     """Show the first-run banner, from whichever path prepared the run's first request.
 
@@ -1728,7 +1744,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
         else:
             wrap_awaitable = _streaming_handler(wrap_request_context)
-        wrap_task = asyncio.create_task(wrap_awaitable)
+        wrap_task = asyncio.create_task(_outside_attempts(wrap_awaitable))
 
         async def _wrap_response() -> _messages.ModelResponse | None:
             """The response `wrap_model_request` finishes with after abandoning the stream.
@@ -1957,13 +1973,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         try:
             try:
                 if root_capability._has_wrap_model_request:  # pyright: ignore[reportPrivateUsage]
-                    model_response = await root_capability.wrap_model_request(
-                        run_context,
-                        request_context=request_context,
-                        handler=model_handler,
+                    model_response = await _outside_attempts(
+                        root_capability.wrap_model_request(
+                            run_context,
+                            request_context=request_context,
+                            handler=model_handler,
+                        )
                     )
                 else:
-                    model_response = await model_handler(request_context)
+                    model_response = await _outside_attempts(model_handler(request_context))
             except exceptions.SkipModelRequest as e:
                 model_response = e.response
             except exceptions.ModelRetry:

@@ -11,7 +11,7 @@ from dataclasses import replace
 import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, TextPart
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Hooks
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Hooks, WrapModelRequestHandler
 from pydantic_ai.exceptions import ModelAPIError, ModelRetry, RetryModelRequest, UserError
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -385,3 +385,32 @@ async def test_open_failure_is_raised_when_the_consumer_never_iterates_the_strea
                 if Agent.is_model_request_node(node):
                     async with node.stream(run.ctx):
                         pass
+
+
+class RetryFromBeforeModelRequest(AbstractCapability[None]):
+    async def before_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        raise RetryModelRequest()
+
+
+class RetryFromWrapModelRequest(AbstractCapability[None]):
+    async def wrap_model_request(
+        self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        raise RetryModelRequest()
+
+
+@pytest.mark.parametrize('capability', [RetryFromBeforeModelRequest(), RetryFromWrapModelRequest()])
+@pytest.mark.parametrize('streaming', [False, True])
+async def test_retry_model_request_before_any_attempt_is_a_user_error(
+    capability: AbstractCapability[None], streaming: bool
+):
+    """`before_model_request` and `wrap_model_request` run once per step, before there is an attempt to retry."""
+    agent = Agent(FunctionModel(success), deps_type=type(None), capabilities=[capability])
+    with pytest.raises(UserError, match='can only be raised from `prepare_model_request`'):
+        if streaming:
+            async with agent.run_stream('x') as stream:
+                await stream.get_output()  # pragma: no cover
+        else:
+            await agent.run('x')
