@@ -330,9 +330,10 @@ def test_model_http_error_retry_after_http_date():
     assert result > 0
 
 
-def test_model_http_error_retry_after_unparseable():
+@pytest.mark.parametrize('retry_after', ['not-a-number-or-date', 'Wed, 21 Oct 999999999999 07:28:00 GMT'])
+def test_model_http_error_retry_after_unparseable(retry_after: str):
     """retry_after returns None for a Retry-After value it cannot parse."""
-    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': 'not-a-number-or-date'})
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': retry_after})
     assert exc.retry_after is None
 
 

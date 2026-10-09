@@ -19,7 +19,7 @@ they stay, and have no pinned scenario to retire.
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -76,24 +76,9 @@ def _inserted_user_speech(sim: Simulation, violation: InvariantViolation) -> boo
 
 ALL = frozenset({'openai', 'azure', 'xai', 'gemini', 'gpt-live'})
 OPENAI_PROTOCOL = frozenset({'openai', 'azure', 'xai'})
-
-
-def _tool_results_request_refused(sim: Simulation, violation: InvariantViolation) -> bool:
-    return any(input_.kind == 'tool_output' and input_.refused_read is not None for input_ in sim.truth.inputs)
-
-
-REFUSED_TOOL_RESULTS_REQUEST = Finding(
-    id='SIM-12',
-    title=(
-        'a response request for tool results that the provider refuses keeps its reply reservation (a refused request '
-        'for a user turn releases it), so `wait_for_reply()` hangs'
-    ),
-    tracked_by='reply reservations released with a refused request (#8765 did not cover it); found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'wait.hang'}),
-    providers=OPENAI_PROTOCOL,
-    matches=_tool_results_request_refused,
-)
+LEGACY_CORE = ALL - OPENAI_PROTOCOL
+"""The providers whose sessions still run the current session core: the new one (`_core.py`) fixed the finding for
+the others."""
 
 
 def _late_cancel(sim: Simulation, violation: InvariantViolation) -> bool:
@@ -122,7 +107,7 @@ ANCHORED_USER_TURNS = Finding(
     tracked_by='history projected from an append-only event log, so snapshots are prefixes of later ones',
     evidence='live-stress',
     codes=frozenset({'history.inserted'}),
-    providers=ALL,
+    providers=LEGACY_CORE,
     matches=_inserted_user_speech,
 )
 
@@ -188,22 +173,6 @@ LOST_RESPONSE_RESERVATION = Finding(
     ),
 )
 
-LOST_UNSTARTED_REQUEST = Finding(
-    id='SIM-3',
-    title=(
-        'a reconnect re-asks for the requests deferred behind a lost, not-yet-started response, but not for that '
-        'response itself, so its reservation leaks and `wait_for_reply()` hangs'
-    ),
-    tracked_by='an outbox that replays every unanswered request after a reconnect; found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'wait.hang'}),
-    providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: (
-        getattr(sim, 'deferred_requests', 0) > 0
-        and any(response.lost and response.started_read is None for response in sim.truth.responses.values())
-    ),
-)
-
 
 def _receive_loop_send_failed(sim: Simulation, violation: InvariantViolation) -> bool:
     network = getattr(getattr(sim, 'server', None), 'network', None)
@@ -262,25 +231,20 @@ SENT_BEFORE_REPLY_STARTED = Finding(
     ),
     evidence='recorded',
     codes=frozenset({'history.order'}),
-    providers=ALL,
+    providers=LEGACY_CORE,
     matches=_sent_before_reply_content,
 )
 
 
 def _spoken_before_reply(sim: Simulation, violation: InvariantViolation) -> bool:
-    """A spoken turn committed after a response ended, which the user started before that response was over.
-
-    Either server VAD heard them start before it ended, or their voiced audio started streaming before any of its
-    content arrived.
-    """
+    """A spoken turn committed after a response ended, which the user started before that response was over: their
+    voiced audio started streaming before any of its content arrived."""
     input_ = sim.truth.input(violation.context.get('input', ''))
     response = sim.truth.responses.get(violation.context.get('response', ''))
     if input_ is None or response is None or input_.kind != 'speech' or response.seq_end is None:
         return False
-    if input_.seq <= response.seq_end:
+    if input_.seq <= response.seq_end:  # pragma: lax no cover (the other way round)
         return False
-    if (started := sim.truth.speech_started.get(input_.key)) is not None and started <= response.seq_end:
-        return True  # Server VAD heard the user start before the response ended.
 
     content_read, ended, cancelled = response.content_read, response.seq_end, response.status == 'cancelled'
 
@@ -317,31 +281,8 @@ SPEAKING_ORDER = Finding(
     ),
     evidence='recorded',
     codes=frozenset({'history.order'}),
-    providers=ALL,
+    providers=LEGACY_CORE,
     matches=_spoken_before_reply,
-)
-
-
-def _committed_by_hand_under_server_vad(sim: Simulation, violation: InvariantViolation) -> bool:
-    """A spoken turn that reached the server before a response started, with a manual commit in the trace."""
-    input_ = sim.truth.input(violation.context.get('input', ''))
-    response = sim.truth.responses.get(violation.context.get('response', ''))
-    if input_ is None or response is None or input_.kind != 'speech':
-        return False
-    return input_.seq < response.seq_start and any(operation.name == 'commit_audio' for operation in sim.operations)
-
-
-COMMITTED_BY_HAND_UNDER_SERVER_VAD = Finding(
-    id='OR9',
-    title=(
-        'a spoken turn committed by hand while server VAD is on is filed after the reply to a turn VAD committed '
-        'later (the rest of OR9: push-to-talk, barge-in, and transcription off were fixed by #8764)'
-    ),
-    tracked_by='#8764 (follow-up)',
-    evidence='live-stress',
-    codes=frozenset({'history.order'}),
-    providers=OPENAI_PROTOCOL,
-    matches=_committed_by_hand_under_server_vad,
 )
 
 
@@ -363,7 +304,7 @@ WAIT_BEFORE_REPLY_CONTENT = Finding(
     tracked_by='an explicit response-started event from the adapters opens the exchange; found by this simulator',
     evidence='recorded',
     codes=frozenset({'wait.early'}),
-    providers=ALL,
+    providers=LEGACY_CORE,
     matches=_waited_before_reply_content,
 )
 
@@ -421,14 +362,11 @@ RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
 KNOWN_FINDINGS: list[Finding] = [
     WAIT_BEFORE_REPLY_CONTENT,
     RESERVATION_TAKEN_BY_OTHER_RESPONSE,
-    REFUSED_TOOL_RESULTS_REQUEST,
     ANCHORED_USER_TURNS,
     REPEATED_TERMINAL,
     LATE_CANCEL_DROPS_CONTENT,
     SENT_BEFORE_REPLY_STARTED,
     SPEAKING_ORDER,
-    COMMITTED_BY_HAND_UNDER_SERVER_VAD,
-    LOST_UNSTARTED_REQUEST,
     RECEIVE_LOOP_SEND_FAILURE,
 ]
 """Checked in order: the more specific findings for a code come before the more general ones."""
@@ -474,16 +412,24 @@ CUT_OFF_TURN_COMPLETE = Finding(
 )
 
 
-def _continued_after_calling(sim: Simulation) -> bool:
-    """A response went on after its first tool call: it said more, or called another tool in a later message."""
+def _continued_after_calling(sim: Simulation, responses: Iterable[TruthResponse] | None = None) -> bool:
+    """A response went on after its first tool call: it said more, or called another tool in a later message.
+
+    Any response, unless `responses` narrows it to the ones a violation names.
+    """
     truth = sim.truth
     return any(
         any(truth.word_seq[word] > first for word in response.words)
         or any(truth.tool_calls[call_id].seq > first for call_id in response.tool_calls)
-        for response in truth.responses.values()
+        for response in (truth.responses.values() if responses is None else responses)
         if response.tool_calls
         for first in [truth.tool_calls[response.tool_calls[0]].seq]
     )
+
+
+def _reply_continued_across_a_round(sim: Simulation, violation: InvariantViolation) -> bool:
+    """A response the violation names continued after its first tool call."""
+    return _continued_after_calling(sim, _context_responses(sim, violation) or [])
 
 
 def _spoke_after_calling(sim: Simulation, violation: InvariantViolation) -> bool:
@@ -637,32 +583,6 @@ LIVE_RAW_CLOSE_ERROR = Finding(
 )
 
 
-def _refused_while_speaking(sim: Simulation, violation: InvariantViolation) -> bool:
-    input_ = sim.truth.input(violation.context.get('input', ''))
-    return (
-        input_ is not None
-        and input_.kind == 'speech'
-        and any(other.rejected and other.refused_read is not None for other in sim.truth.inputs)
-    )
-
-
-REFUSED_CONTEXT_MISFILES_SPEECH = Finding(
-    id='SIM-14',
-    title=(
-        'context sent while the user is speaking (before the session read `speech_started`) and refused by the '
-        'provider takes the spoken turn with it: the turn is filed after its own reply'
-    ),
-    tracked_by=(
-        'history ordered by what the provider saw, not by the send a turn was anchored to: the session falls back '
-        'to appending a turn whose anchor was withdrawn; found by this simulator'
-    ),
-    evidence='simulated',
-    codes=frozenset({'history.order'}),
-    providers=OPENAI_PROTOCOL,
-    matches=_refused_while_speaking,
-)
-
-
 def _parked_error(sim: Simulation, violation: InvariantViolation) -> bool:
     from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
@@ -685,28 +605,6 @@ PARKED_ERROR_LEAVES_REQUEST_OWED = Finding(
     codes=frozenset({'wait.hang'}),
     providers=ALL,
     matches=_parked_error,
-)
-
-
-def _speech_cleared_after_barge_in(sim: Simulation, violation: InvariantViolation) -> bool:
-    started = sim.truth.speech_started
-    return any(key not in sim.truth.speech_committed for key in started) and any(
-        operation.name == 'clear_audio' for operation in sim.operations
-    )
-
-
-CLEARED_BARGE_IN = Finding(
-    id='SIM-16',
-    title=(
-        'a request deferred behind a response that server VAD then cut off is dropped for the barge-in, but if '
-        'the app clears the buffered speech (`clear_audio`) no spoken turn follows, and the dropped request keeps '
-        'its reservation, so `wait_for_reply()` hangs'
-    ),
-    tracked_by='reply reservations released with the request the barge-in dropped; found by this simulator after #8765',
-    evidence='recorded',
-    codes=frozenset({'wait.hang'}),
-    providers=OPENAI_PROTOCOL,
-    matches=_speech_cleared_after_barge_in,
 )
 
 
@@ -753,13 +651,14 @@ LIVE_REPLY_SPLIT_BY_TOOL_ROUND = Finding(
     id='SIM-18',
     title=(
         'on GPT-Live, a spoken reply that goes on across a delegated tool round is recorded in two pieces around '
-        "the tool's return (the GPT-Live counterpart of #8760)"
+        "the tool's return (the GPT-Live counterpart of #8760); when the model has started another reply by then, "
+        "the delegation's later tool call is recorded in that reply instead, with the words around it"
     ),
     tracked_by='per-response-id state, so a response the session already recorded can be continued; found by this simulator',
     evidence='recorded',
-    codes=frozenset({'response.duplicated'}),
+    codes=frozenset({'response.duplicated', 'response.mixed', 'response.truncated'}),
     providers=frozenset({'gpt-live'}),
-    matches=lambda sim, violation: _continued_after_calling(sim),
+    matches=_reply_continued_across_a_round,
 )
 
 EXTENDED_THINKING_PARALLEL_CALLS = Finding(
@@ -777,46 +676,33 @@ EXTENDED_THINKING_PARALLEL_CALLS = Finding(
 )
 
 
-BARGE_IN_ON_A_TOOL_ROUND = Finding(
-    id='SIM-20',
-    title=(
-        'server VAD cuts off a response that called a tool while a request is deferred behind it: the request is '
-        'dropped for the barge-in but keeps its reservation, so `wait_for_reply()` hangs (the part of OR3 #8765 left)'
-    ),
-    tracked_by='reply reservations released with the request the barge-in dropped; found by this simulator',
-    evidence='recorded',
-    codes=frozenset({'wait.hang'}),
-    providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: (
-        getattr(sim, 'deferred_requests', 0) > 0
-        and any(response.tool_calls and response.status == 'cancelled' for response in sim.truth.responses.values())
-    ),
-)
-
-
 def _refusal_around_a_reconnect(sim: Simulation) -> bool:
     """A refusal the next connection loss followed with no response started in between: nothing released its request."""
     truth = sim.truth
-    for input_ in truth.inputs:
-        if input_.refused_at is None:
-            continue
-        refused = input_.refused_at
+
+    def unreleased(refused: int) -> bool:
         loss = next((loss for loss in truth.connection_losses if loss > refused), None)
-        if loss is not None and not any(refused < response.seq_start < loss for response in truth.responses.values()):
-            return True
-    return False
+        return loss is not None and not any(
+            refused < response.seq_start < loss for response in truth.responses.values()
+        )
+
+    return any(input_.refused_at is not None and unreleased(input_.refused_at) for input_ in truth.inputs)
 
 
 LOST_REFUSAL = Finding(
     id='SIM-21',
     title=(
         'a request for a response the provider refuses around a reconnect (the refusal lost with the connection, or '
-        'read just before it drops) leaves a reservation neither re-asked nor released, so `wait_for_reply()` hangs'
+        'read just before it drops) leaves a reservation neither re-asked nor released, so `wait_for_reply()` hangs: '
+        'xAI resumes the conversation, so the connection still expects the reply there'
     ),
-    tracked_by='a reconnect resolves the reply obligations its connection lost; found by this simulator',
+    tracked_by=(
+        'a reconnect resolving the reply obligations its connection lost, also where the provider resumes the '
+        'conversation (fixed by the session core elsewhere); found by this simulator'
+    ),
     evidence='simulated',
     codes=frozenset({'wait.hang'}),
-    providers=OPENAI_PROTOCOL,
+    providers=frozenset({'xai'}),
     matches=lambda sim, violation: _refusal_around_a_reconnect(sim),
 )
 
@@ -848,39 +734,6 @@ TERMINAL_DISCARDED_WITH_THE_CONNECTION = Finding(
 )
 
 
-def _barged_in_without_a_vad_reply(sim: Simulation) -> bool:
-    """Server VAD, set not to answer, cut off a response while a request was deferred behind it (or a tool result awaited its reply)."""
-    options = getattr(sim, 'openai', None)
-    return (
-        options is not None
-        and options.turn_detection == 'server_vad'
-        and options.vad_interrupts
-        and not options.vad_responds
-        and (
-            getattr(sim, 'deferred_requests', 0) > 0
-            or any(input_.kind == 'tool_output' and input_.answered_by is None for input_ in sim.truth.inputs)
-        )
-        and any(response.status == 'cancelled' for response in sim.truth.responses.values())
-        # The user's turn is still there for VAD to answer (a cleared one is SIM-16's).
-        and any(sim.truth.input(key) is not None for key in sim.truth.speech_started)
-    )
-
-
-BARGE_IN_WITHOUT_A_VAD_REPLY = Finding(
-    id='SIM-32',
-    title=(
-        "with server VAD's `create_response` off, a request deferred behind a response the user barged in on (or the "
-        "reply to that response's tool results) is dropped as if VAD would answer the turn, but nothing does, so "
-        '`wait_for_reply()` hangs'
-    ),
-    tracked_by='a request dropped for a barge-in only when server VAD answers the turn; found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'wait.hang'}),
-    providers=frozenset({'openai', 'azure'}),
-    matches=lambda sim, violation: _barged_in_without_a_vad_reply(sim),
-)
-
-
 def _turn_without_its_transcript(sim: Simulation) -> bool:
     """With transcription on, a spoken turn's transcript never reached the client before the session ended or dropped."""
     ended = sim.close_requested is not None or sim.receive_ended or bool(sim.truth.connection_losses)
@@ -904,27 +757,6 @@ def _hand_commit_unanswered_at_the_end(sim: Simulation) -> bool:
     )
 
 
-def _server_vad(sim: Simulation) -> bool:
-    """Whether the simulated OpenAI-protocol session runs server VAD (xAI push-to-talk reports speech too)."""
-    options = getattr(sim, 'openai', None)
-    return options is not None and options.turn_detection == 'server_vad'
-
-
-def _clear_after_an_unread_vad_commit(sim: Simulation) -> bool:
-    """Without transcription, the app cleared the buffer after server VAD committed a turn, before reading that it had."""
-    if not _server_vad(sim) or getattr(sim, 'openai').transcription:
-        return False
-    truth = sim.truth
-    clears = [operation.issued for operation in sim.operations if operation.name == 'clear_audio']
-    # Turns server VAD committed (not the app), and when the client read that it had.
-    vad_turns = [
-        (started, input_.committed_read)
-        for key, started in truth.speech_started.items()
-        if key in truth.speech_committed and (input_ := truth.input(key)) is not None and not input_.committed_by_client
-    ]
-    return any(started < issued and (read is None or issued < read) for started, read in vad_turns for issued in clears)
-
-
 def _push_to_talk_audio_after_a_repeated_terminal(sim: Simulation) -> bool:
     options = getattr(sim, 'openai', None)
     return (
@@ -940,9 +772,8 @@ PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL = Finding(
     id='SIM-36',
     title=(
         'on xAI push-to-talk, audio sent after a `response.done` the server repeated is held behind a reply that '
-        'already ended: the current session loses the turn, and the new core (in shadow) leaves `wait_for_reply()` '
-        'hanging, or holds back the reply after it (a repeated terminal is a robustness fault no provider was '
-        'recorded sending, see 8801)'
+        'already ended: the session core leaves `wait_for_reply()` hanging, or holds back the reply after it (a '
+        'repeated terminal is a robustness fault no provider was recorded sending, see 8801)'
     ),
     tracked_by="#9070's held audio released by the response that ended, not by the next terminal; found by this simulator",
     evidence='simulated',
@@ -952,27 +783,12 @@ PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL = Finding(
 )
 
 
-CLEAR_AFTER_AN_UNREAD_VAD_COMMIT = Finding(
-    id='SIM-35',
-    title=(
-        "without input transcription, a `clear_audio()` made after server VAD committed the user's turn, but before "
-        'the session read that it had, drops the turn: the provider keeps it, and answers it, but history never '
-        'records it'
-    ),
-    tracked_by='user turns recorded from the provider committing them; found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'history.turn_missing'}),
-    providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: _clear_after_an_unread_vad_commit(sim),
-)
-
-
 HAND_COMMIT_UNANSWERED_AT_THE_END = Finding(
     id='SIM-34',
     title=(
         'a spoken turn `commit_audio()` committed is lost when the connection drops, or the session closes or ends (on '
-        'a failed send, an exceeded limit), before its reply is over: always in the new session core (in shadow), '
-        'and in the current session on xAI, whose held commit goes out with the request'
+        "a failed send, an exceeded limit), before its reply is over (the session core's own: the current one loses "
+        'it only on xAI, whose held commit goes out with the request)'
     ),
     tracked_by='user turns recorded from the provider committing them; found by this simulator on #9422',
     evidence='simulated',
@@ -982,104 +798,18 @@ HAND_COMMIT_UNANSWERED_AT_THE_END = Finding(
 )
 
 
-def _audio_after_a_clear(sim: Simulation) -> bool:
-    """Microphone audio was on its way at the same time as a clear or commit the app made (the two raced)."""
-
-    def span(operation: Operation) -> tuple[int, float]:
-        return operation.issued, operation.completed if operation.completed is not None else float('inf')
-
-    audio = [span(operation) for operation in sim.operations if operation.name == 'send_audio']
-    buffer_ops = [span(operation) for operation in sim.operations if operation.name in ('clear_audio', 'commit_audio')]
-    return any(start < end_b and start_b < end for start, end in audio for start_b, end_b in buffer_ops)
-
-
-AUDIO_AFTER_A_CLEAR = Finding(
-    id='SIM-26',
-    title=(
-        'audio still streaming from the microphone when the app calls `clear_audio()` or `commit_audio()` lands after '
-        'it, and the turn a later `commit_audio()` commits on the provider is never recorded: the session thinks the '
-        'buffer is empty'
-    ),
-    tracked_by='user turns recorded from the provider committing them; found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'history.turn_missing'}),
-    providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: _audio_after_a_clear(sim),
-)
-
-
-def _hand_commit_under_server_vad(sim: Simulation, violation: InvariantViolation) -> bool:
-    if (
-        not _server_vad(sim)
-        or not sim.truth.speech_started
-        or not any(operation.name == 'commit_audio' for operation in sim.operations)
-    ):
-        return False
-    if violation.code != 'history.order':
-        return True
-    input_ = sim.truth.input(violation.context.get('input', ''))
-    return input_ is not None and input_.committed_by_client
-
-
-HAND_COMMIT_UNDER_SERVER_VAD = Finding(
-    id='SIM-27',
-    title=(
-        'a `commit_audio()` while server VAD is hearing the user commits what was buffered as a turn of its own, and '
-        'VAD commits another when the user stops, but the session records only one of the two; on xAI, which adds '
-        'the VAD turn when it hears speech start, the hand-committed one is recorded where its audio began, before '
-        'a reply that ended before it was committed'
-    ),
-    tracked_by='user turns recorded from the provider committing them (the rest of OR9); found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'history.turn_missing', 'history.order'}),
-    providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: _hand_commit_under_server_vad(sim, violation),
-)
-
-
 TURN_LOST_AT_CLOSE = Finding(
     id='SIM-25',
     title=(
         'a spoken turn committed with input transcription on, whose transcript never arrives (the session closes or '
-        'ends on an error, or the connection drops, first), is never recorded: it waits for a transcript that never comes (surfaced by '
-        'Macroscope for closing after `commit_audio()`). The new session core (in shadow) also holds back the replies '
-        'after it, so a reply after a reconnect is missing too (and is counted as a request it does not record)'
+        'ends on an error, or the connection drops, first), is never recorded: it waits for a transcript that never '
+        'comes (surfaced by Macroscope for closing after `commit_audio()`)'
     ),
     tracked_by='user turns recorded from the provider committing them, not from their transcript; found reviewing #9070',
     evidence='recorded',
-    codes=frozenset({'history.turn_missing', 'response.missing', 'usage.requests'}),
+    codes=frozenset({'history.turn_missing'}),
     providers=OPENAI_PROTOCOL,
     matches=lambda sim, violation: _turn_without_its_transcript(sim),
-)
-
-
-def _sent_during_a_lost_reply(sim: Simulation, violation: InvariantViolation) -> bool:
-    """Everything the re-dialed conversation lacks is a user input sent while a reply the drop cut off was in flight."""
-    lost = [response for response in sim.truth.responses.values() if response.lost]
-
-    def held_back(fingerprint: str) -> bool:
-        role, _, key = fingerprint.partition(':')
-        input_ = sim.truth.input(key)
-        return (
-            role == 'user'
-            and input_ is not None
-            and any(response.connection == input_.connection and response.seq_start < input_.seq for response in lost)
-        )
-
-    return all(held_back(fingerprint) for fingerprint in violation.context['missing'])
-
-
-INPUT_HELD_BEHIND_A_LOST_REPLY = Finding(
-    id='SIM-28',
-    title=(
-        'an input sent while a reply is in flight, which history holds back until that reply is final, is left out of '
-        'the replay when a drop cuts the reply off: history records it, but the re-dialed conversation never gets it'
-    ),
-    tracked_by='replaying history only once the turn the drop cut off is settled; found by this simulator',
-    evidence='recorded',
-    codes=frozenset({'history.not_restored'}),
-    providers=OPENAI_PROTOCOL,
-    matches=_sent_during_a_lost_reply,
 )
 
 
@@ -1093,24 +823,6 @@ def _send_failed_across_reconnect(sim: Simulation, violation: InvariantViolation
         isinstance(error, RealtimeError)
         and error.message.startswith('Realtime connection failed while sending')
         and sim.truth.connections > 1
-    )
-
-
-def _request_commit_spoken_over(sim: Simulation) -> bool:
-    """xAI push-to-talk without transcription: the user spoke again after a request for a response committed a turn."""
-    options = getattr(sim, 'openai', None)
-    # (A send that asks for a response sends a request too.)
-    requests = [
-        operation.issued
-        for operation in sim.operations
-        if operation.name in ('create_response', 'send_text', 'send_image_respond')
-    ]
-    audio = [operation.issued for operation in sim.operations if operation.name == 'send_audio']
-    return (
-        options is not None
-        and options.turn_detection == 'manual'
-        and not options.transcription
-        and any(request < sent for request in requests for sent in audio)
     )
 
 
@@ -1151,40 +863,6 @@ DEFERRED_REQUEST_DROPPED_AFTER_SPEECH = Finding(
 )
 
 
-def _xai_push_to_talk_speech(sim: Simulation, violation: InvariantViolation) -> bool:
-    options = getattr(sim, 'openai', None)
-    input_ = sim.truth.input(violation.context.get('input', ''))
-    return options is not None and options.turn_detection == 'manual' and input_ is not None and input_.kind == 'speech'
-
-
-PUSH_TO_TALK_ORDER = Finding(
-    id='SIM-31',
-    title=(
-        "on xAI push-to-talk, a spoken turn the session held back behind a reply (#9070's held audio and commit) is "
-        'recorded on the wrong side of a reply: history does not follow the order xAI got them in'
-    ),
-    tracked_by="history in the provider's conversation order (the refactor); found gating #9070",
-    evidence='simulated',
-    codes=frozenset({'history.order'}),
-    providers=frozenset({'xai'}),
-    matches=_xai_push_to_talk_speech,
-)
-
-
-PUSH_TO_TALK_TURN_SPOKEN_OVER = Finding(
-    id='SIM-29',
-    title=(
-        'on xAI push-to-talk without input transcription, the turn a request for a response commits is never recorded '
-        'when the user speaks again during its reply (which stops the reply with no `response.done`)'
-    ),
-    tracked_by='user turns recorded from the provider committing them; found gating #9070',
-    evidence='simulated',
-    codes=frozenset({'history.turn_missing'}),
-    providers=frozenset({'xai'}),
-    matches=lambda sim, violation: _request_commit_spoken_over(sim),
-)
-
-
 NON_AUDIO_SEND_DURING_RECONNECT = Finding(
     id='G3b',
     title=(
@@ -1217,21 +895,25 @@ FRAME_CUT_OFF_BY_CLOSE = Finding(
 
 
 def _provider_reply_before_any_echo(sim: Simulation, violation: InvariantViolation) -> bool:
-    """A response the provider started on its own was read after the input went out, before any of ours was."""
+    """A response the provider started on its own was read after the input went out, before any of ours was.
+
+    When the violation names a response (`history.order`), it is that one.
+    """
     key = violation.context.get('input')
-    if not isinstance(key, str) or (input_ := sim.truth.input(key)) is None:
+    if not isinstance(key, str) or (input_ := sim.truth.input(key)) is None:  # pragma: lax no cover
         return False
     issued = min((operation.issued for operation in sim.operations if operation.key == key), default=input_.seq)
     responses = sim.truth.responses.values()
     first_echo = min(
         (r.started_read for r in responses if r.trigger == 'create' and r.started_read is not None), default=None
     )
+    named = _context_responses(sim, violation)
     return any(
         response.trigger != 'create'
         and response.started_read is not None
         and response.started_read > issued
         and (first_echo is None or response.started_read < first_echo)
-        for response in responses
+        for response in (responses if named is None else named)
     )
 
 
@@ -1254,27 +936,55 @@ PROVIDER_REPLY_BEFORE_ANY_ECHO = Finding(
 )
 
 
+CLEARED_TURN_LOSES_ITS_TRANSCRIPT = Finding(
+    id='SIM-37',
+    title=(
+        'clearing the input audio while the user is still speaking ends a spoken turn xAI already added (it adds '
+        'one at speech start): the turn is recorded at once with what transcript it had, so the transcript xAI '
+        'still sends for it is dropped'
+    ),
+    tracked_by=(
+        'an audio clear that settles only a turn not yet in the conversation, leaving one that joined to wait for '
+        'its transcript; found by review of the session core'
+    ),
+    evidence='simulated',
+    codes=frozenset({'history.transcript_lost'}),
+    providers=frozenset({'xai'}),
+    matches=lambda sim, violation: violation.context.get('input') in sim.truth.speech_cleared,
+)
+
+
+UNCOMMITTED_STOP_RECORDED_AS_A_TURN = Finding(
+    id='SIM-38',
+    title=(
+        'a spoken turn joins the conversation at `speech_stopped`, which server VAD normally commits at once; if it '
+        "doesn't (the user goes on, and a later start's item is committed instead), the turn waits for a "
+        'transcript that never comes, holding back what follows it for the transcript wait, and is then recorded '
+        'as an empty user turn the provider never had'
+    ),
+    tracked_by=(
+        'placing a spoken turn at its commit wherever the provider commits it separately; found by review of the '
+        'session core'
+    ),
+    evidence='simulated',
+    codes=frozenset({'history.phantom_turn'}),
+    providers=frozenset({'openai', 'azure'}),
+    # No more phantom turns than stops taken back: each of those makes at most one.
+    matches=lambda sim, violation: violation.context.get('extra', 0) <= len(sim.truth.speech_stopped_uncommitted),
+)
+
+
 KNOWN_FINDINGS.extend(
     [
         FRAME_CUT_OFF_BY_CLOSE,
         NON_AUDIO_SEND_DURING_RECONNECT,
         TURN_LOST_AT_CLOSE,
-        INPUT_HELD_BEHIND_A_LOST_REPLY,
-        PUSH_TO_TALK_TURN_SPOKEN_OVER,
-        CLEAR_AFTER_AN_UNREAD_VAD_COMMIT,
         PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL,
         HAND_COMMIT_UNANSWERED_AT_THE_END,
-        PUSH_TO_TALK_ORDER,
         DEFERRED_REQUEST_DROPPED_AFTER_SPEECH,
-        AUDIO_AFTER_A_CLEAR,
-        HAND_COMMIT_UNDER_SERVER_VAD,
-        BARGE_IN_WITHOUT_A_VAD_REPLY,
         LOST_REFUSAL,
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
-        BARGE_IN_ON_A_TOOL_ROUND,
-        REFUSED_CONTEXT_MISFILES_SPEECH,
         PARKED_ERROR_LEAVES_REQUEST_OWED,
-        CLEARED_BARGE_IN,
         EXTENDED_THINKING_PARALLEL_CALLS,
         LIVE_REPLY_SPLIT_BY_TOOL_ROUND,
         ASYNC_BATCH_OF_THREE,
@@ -1289,6 +999,8 @@ KNOWN_FINDINGS.extend(
         # The general reservation leaks last: a more specific finding explains a hang better.
         LOST_RESPONSE_RESERVATION,
         PROVIDER_REPLY_BEFORE_ANY_ECHO,
+        CLEARED_TURN_LOSES_ITS_TRANSCRIPT,
+        UNCOMMITTED_STOP_RECORDED_AS_A_TURN,
     ]
 )
 

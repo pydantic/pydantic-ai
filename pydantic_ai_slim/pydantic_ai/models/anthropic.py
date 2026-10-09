@@ -479,7 +479,7 @@ AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 class AnthropicStaleThinkingBlockWarning(Warning):
     """Warning raised when Anthropic rejected a replayed thinking block and Pydantic AI retried without it.
 
-    Claude Fable 5.1, Claude Opus 5.5, and Claude Sonnet 5.5 bind each thinking block to the
+    Claude Fable 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Haiku 5.5 bind each thinking block to the
     conversation prefix that produced it and reject a replay once that prefix changes — which a dynamic
     [instructions][pydantic_ai.Agent.instructions] function and a
     [filtered toolset](../toolsets.md#filtering-tools) both do by design. Anthropic enforces the
@@ -815,7 +815,7 @@ def _drop_stale_thinking_blocks(thinking: dict[str, object] | Omit) -> dict[str,
 
     A binding model emits thinking blocks whether or not the request configured thinking, so the
     retry usually has no `thinking` object for the binding to ride in, and an `extra_body` one may
-    carry no `type`. Claude Sonnet 5.5 rejects a `thinking` object without a `type`, and every binding
+    carry no `type`. Claude Sonnet 5.5 and Haiku 5.5 reject a `thinking` object without a `type`, and every binding
     model thinks adaptively when none is given, so `'adaptive'` fills the gap without changing what
     the caller asked for. The retry sends the whole object through `extra_body`, since the SDK's
     discriminated union has no typed home for `block_binding` on every config shape.
@@ -3182,7 +3182,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> None:
         """Reject `xhigh`/`max` effort combined with explicitly disabled thinking.
 
-        Claude Opus 5 caps effort at `high` once thinking is disabled, while Claude Opus 4.8 accepts
+        Claude Opus 5 and Haiku 5.5 cap effort at `high` once thinking is disabled, while Claude Opus 4.8 accepts
         every effort level in that combination. Fail fast with a helpful message rather than letting
         the API return an opaque 400.
         """

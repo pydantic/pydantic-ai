@@ -544,7 +544,8 @@ class ModelSettings(TypedDict, total=False):
 
     Explicit `CachePoint` markers in the message history can be combined with this setting; when
     a request would exceed the provider's maximum number of cache breakpoints, the oldest message
-    breakpoints are dropped first. Provider-specific cache settings (e.g. `anthropic_cache`,
+    breakpoints are dropped first (on OpenAI, the server drops the earliest breakpoints first, starting
+    with the instruction breakpoint). Provider-specific cache settings (e.g. `anthropic_cache`,
     `bedrock_cache_instructions`) take precedence: if any is set, including to `False`, this unified
     field is ignored entirely for that request.
 

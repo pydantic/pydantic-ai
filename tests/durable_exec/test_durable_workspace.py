@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import errno
 import pickle
+import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -127,6 +128,13 @@ class FreshWorkspaces(AbstractCapability[Any]):
         backend = FakeWorkspace(ref.id if ref is not None else 'fresh', ref=ref)
         self.backends.append(backend)
         return backend
+
+
+async def test_an_engine_without_default_ids_keeps_fresh_uuid7s() -> None:
+    """An engine built on the public base supplies no replay-stable `run_id`, so the defaults stay UUID7s."""
+    agent = Agent(TestModel(), name='engine_without_default_ids', capabilities=[FakeDurability()])
+    result = await agent.run('Hello.')
+    assert [uuid.UUID(result.run_id).version, uuid.UUID(result.conversation_id).version] == [7, 7]
 
 
 def _run_context() -> RunContext[None]:
