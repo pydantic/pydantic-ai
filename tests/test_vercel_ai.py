@@ -1597,7 +1597,7 @@ async def test_vercel_ai_id_only_tool_call_delta_emits_no_args_fragment():
         async for event in adapter.encode_stream(adapter.run_stream())
     ]
 
-    args_fragments = [
+    args_fragments: list[str] = [
         event['inputTextDelta'] for event in events if isinstance(event, dict) and event['type'] == 'tool-input-delta'
     ]
     assert args_fragments == snapshot(['{"x":', '1}'])
@@ -1607,6 +1607,7 @@ async def test_vercel_ai_id_only_tool_call_delta_emits_no_args_fragment():
 
 async def test_vercel_ai_null_string_args_delta_preserved_verbatim():
     """A genuine `'null'` `args_delta` string must be emitted verbatim: the skip is `is None`, not falsiness."""
+    calls: list[int | None] = []
 
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -1614,14 +1615,15 @@ async def test_vercel_ai_null_string_args_delta_preserved_verbatim():
         if len(messages) == 1:
             yield {0: DeltaToolCall(name='f', json_args='{"x":', tool_call_id='c')}
             yield {0: DeltaToolCall(tool_call_id='c', json_args='null')}
-            yield {0: DeltaToolCall(json_args='1}')}
+            yield {0: DeltaToolCall(json_args='}')}
         else:
             yield 'Done'
 
     agent = Agent(model=FunctionModel(stream_function=stream_function))
 
     @agent.tool_plain
-    def f(x: int) -> str:
+    def f(x: int | None) -> str:
+        calls.append(x)
         return 'ok'
 
     request = SubmitMessage(
@@ -1634,10 +1636,12 @@ async def test_vercel_ai_null_string_args_delta_preserved_verbatim():
         async for event in adapter.encode_stream(adapter.run_stream())
     ]
 
-    args_fragments = [
+    args_fragments: list[str] = [
         event['inputTextDelta'] for event in events if isinstance(event, dict) and event['type'] == 'tool-input-delta'
     ]
-    assert args_fragments == snapshot(['{"x":', 'null', '1}'])
+    assert args_fragments == snapshot(['{"x":', 'null', '}'])
+    assert json.loads(''.join(args_fragments)) == {'x': None}
+    assert calls == [None]
 
 
 async def test_run_stream_thinking_with_signature():
