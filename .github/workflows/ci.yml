@@ -722,7 +722,8 @@ jobs:
       ABSURD_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
     services:
       postgres:
-        image: postgres:16
+        # AWS's mirror of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
+        image: public.ecr.aws/docker/library/postgres:16
         ports:
           - 5432:5432
         env:
@@ -1435,7 +1436,8 @@ jobs:
     timeout-minutes: 15
     services:
       mongodb:
-        image: mongo:8
+        # AWS's mirror of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
+        image: public.ecr.aws/docker/library/mongo:8
         ports:
           - 27017:27017
         options: >-
@@ -1470,7 +1472,8 @@ jobs:
     timeout-minutes: 15
     services:
       redis:
-        image: redis:8
+        # AWS's mirror of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
+        image: public.ecr.aws/docker/library/redis:8
         ports:
           - 6379:6379
         options: >-
