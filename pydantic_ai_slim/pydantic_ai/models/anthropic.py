@@ -102,6 +102,7 @@ from ._anthropic_containers import is_tool_result_only as _is_tool_result_only
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
 from ._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
 from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
+from ._transport_errors import transport_error_message
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
     'compaction': 'stop',
@@ -427,6 +428,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> G
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
         raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except httpx2.TransportError as e:
+        # `anthropic` wraps transport failures in `APIConnectionError` only until the response starts; one that breaks
+        # off a stream mid-way surfaces as the raw `httpx2` error.
+        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
 
 
 LatestAnthropicModelNames = ModelParam
@@ -1118,20 +1123,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
-        # A non-streaming request's transport errors reach us as the SDK's `APIConnectionError`, but a stream's don't.
-        try:
-            response = await self._messages_create(messages, False, model_settings, model_request_parameters)
-            if isinstance(response, BetaMessage):
-                return self._process_response(response, model_request_parameters, model_settings)
-            # The request was streamed behind the scenes, see `_messages_create`.
-            async with response.source:
-                streamed_response = await self._process_streamed_response(
-                    response, model_request_parameters, model_settings
-                )
-                async for _ in streamed_response:
-                    pass
-        except httpx2.TransportError as e:
-            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+        response = await self._messages_create(messages, False, model_settings, model_request_parameters)
+        if isinstance(response, BetaMessage):
+            return self._process_response(response, model_request_parameters, model_settings)
+        # The request was streamed behind the scenes, see `_messages_create`. `_map_api_errors` maps a transport error
+        # that breaks the stream off, both while it opens and while it's read.
+        async with response.source:
+            streamed_response = await self._process_streamed_response(
+                response, model_request_parameters, model_settings
+            )
+            async for _ in streamed_response:
+                pass
         return streamed_response.get()
 
     async def count_tokens(
