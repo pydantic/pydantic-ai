@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 import json
 from abc import abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Collection, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -244,6 +244,27 @@ def _probability_bounds(probabilities: Collection[float]) -> tuple[list[Decimal]
     lower: list[Decimal] = [max(Decimal(0), value - half_unit) for value, half_unit in zip(values, half_units)]
     upper: list[Decimal] = [min(Decimal(1), value + half_unit) for value, half_unit in zip(values, half_units)]
     return lower, upper
+
+
+def _score_fits(lower: Sequence[Decimal], upper: Sequence[Decimal], score: float) -> bool:
+    """Whether rounded probabilities can sum to one and produce the displayed score."""
+    remaining = Decimal(1) - sum(lower, Decimal(0))
+    valid = 0 <= remaining <= sum((high - low for low, high in zip(lower, upper)), Decimal(0))
+    if valid:
+        bounds: list[Decimal] = []
+        for levels in (range(len(lower)), reversed(range(len(lower)))):
+            rest = remaining
+            mean = sum((level * low for level, low in enumerate(lower)), Decimal(0))
+            for level in levels:
+                taken = min(rest, upper[level] - lower[level])
+                mean += level * taken
+                rest -= taken
+            bounds.append(mean)
+        displayed_score = Decimal(str(score))
+        score_decimals = max(2, -int(displayed_score.as_tuple().exponent))
+        score_half_unit = Decimal(1).scaleb(-score_decimals) / 2
+        valid = displayed_score + score_half_unit >= bounds[0] and displayed_score - score_half_unit <= bounds[1]
+    return valid
 
 
 _UNSUPPORTED_FIELD_HINT = (
@@ -570,23 +591,7 @@ class DecisionModel(Model[InterfaceClient]):
             # within their rounding intervals could produce that score, using at least two decimals.
             probabilities: list[float] = [answer.probabilities[level] for level in range(len(question.criteria))]
             lower, upper = _probability_bounds(probabilities)
-            remaining = Decimal(1) - sum(lower, Decimal(0))
-            valid = 0 <= remaining <= sum((high - low for low, high in zip(lower, upper)), Decimal(0))
-            if valid:
-                bounds: list[Decimal] = []
-                for levels in (range(len(lower)), reversed(range(len(lower)))):
-                    rest = remaining
-                    mean = sum((level * low for level, low in enumerate(lower)), Decimal(0))
-                    for level in levels:
-                        taken = min(rest, upper[level] - lower[level])
-                        mean += level * taken
-                        rest -= taken
-                    bounds.append(mean)
-                score = Decimal(str(answer.score))
-                score_decimals = max(2, -int(score.as_tuple().exponent))
-                score_half_unit = Decimal(1).scaleb(-score_decimals) / 2
-                valid = score + score_half_unit >= bounds[0] and score - score_half_unit <= bounds[1]
-            return valid
+            return _score_fits(lower, upper, answer.score)
         else:
             assert_never(question)
 

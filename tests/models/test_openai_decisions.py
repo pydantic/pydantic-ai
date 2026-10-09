@@ -18,6 +18,7 @@ import anyio
 import httpx2
 import pytest
 from cassetter import Cassette
+from dirty_equals import IsJson
 from pydantic import BaseModel, Field, JsonValue, ValidationError, WithJsonSchema
 from pydantic.json_schema import JsonSchemaValue
 
@@ -1063,7 +1064,15 @@ async def test_image_in_history_and_text_in_current_prompt(
                     'content': [
                         {
                             'type': 'input_text',
-                            'text': '{"history": [{"user": "<image 1>"}, {"assistant": "This image was attached earlier."}], "text": "Does the pictured fruit have green flesh and black seeds?"}',
+                            'text': IsJson(
+                                {
+                                    'history': [
+                                        {'user': '<image 1>'},
+                                        {'assistant': 'This image was attached earlier.'},
+                                    ],
+                                    'text': 'Does the pictured fruit have green flesh and black seeds?',
+                                }
+                            ),
                         },
                         {'type': 'input_text', 'text': '<image 1>:'},
                         {'type': 'input_image', 'image_url': IsStr(regex=r'^data:image/jpeg;base64,.+$')},
@@ -1077,24 +1086,6 @@ async def test_image_in_history_and_text_in_current_prompt(
                     'instructions': 'Does the pictured fruit have green flesh and black seeds?',
                 }
             ],
-        }
-    )
-    assert isinstance(request_body, dict)
-    input_messages = request_body['input']
-    assert isinstance(input_messages, list)
-    input_message = input_messages[0]
-    assert isinstance(input_message, dict)
-    content = input_message['content']
-    assert isinstance(content, list)
-    state_part = content[0]
-    assert isinstance(state_part, dict)
-    state_text = state_part['text']
-    assert isinstance(state_text, str)
-    state: JsonValue = json.loads(state_text)
-    assert state == snapshot(
-        {
-            'history': [{'user': '<image 1>'}, {'assistant': 'This image was attached earlier.'}],
-            'text': 'Does the pictured fruit have green flesh and black seeds?',
         }
     )
     assert [(request.method, request.uri) for request in vcr.requests] == [
@@ -1160,6 +1151,20 @@ async def test_images_from_assistant_and_tool_returns_keep_their_labels_and_orde
     answer_call = response.parts[0]
     assert isinstance(answer_call, ToolCallPart)
     assert answer_call.args == {'value': True}
+    expected_state: dict[str, JsonValue] = {
+        'history': [
+            {'user': 'Earlier image question.'},
+            {'assistant': 'assistant before'},
+            {'assistant': '<image 1>'},
+            {'assistant': 'assistant after'},
+        ],
+        'text': 'Look up the image.',
+        'done': [
+            {'tool_call': {'name': 'lookup', 'args': {}}},
+            {'tool_return': {'name': 'lookup', 'content': '["tool before","<image 2>","tool after"]'}},
+            {'tool_return': {'name': 'native_lookup', 'content': '["native before","<image 3>","native after"]'}},
+        ],
+    }
     request_body: JsonValue = json.loads(captured.requests[0].content)
     assert request_body == snapshot(
         {
@@ -1170,7 +1175,7 @@ async def test_images_from_assistant_and_tool_returns_keep_their_labels_and_orde
                     'content': [
                         {
                             'type': 'input_text',
-                            'text': '{"history": [{"user": "Earlier image question."}, {"assistant": "assistant before"}, {"assistant": "<image 1>"}, {"assistant": "assistant after"}], "text": "Look up the image.", "done": [{"tool_call": {"name": "lookup", "args": {}}}, {"tool_return": {"name": "lookup", "content": "[\\"tool before\\",\\"<image 2>\\",\\"tool after\\"]"}}, {"tool_return": {"name": "native_lookup", "content": "[\\"native before\\",\\"<image 3>\\",\\"native after\\"]"}}]}',
+                            'text': IsJson(expected_state),
                         },
                         {'type': 'input_text', 'text': '<image 1>:'},
                         {'type': 'input_image', 'image_url': 'data:image/png;base64,YXNzaXN0YW50LWltYWdl'},
@@ -1187,34 +1192,6 @@ async def test_images_from_assistant_and_tool_returns_keep_their_labels_and_orde
                     'name': 'value',
                     'instructions': '{"field": "value", "question": "Does the input include an image?"}',
                 }
-            ],
-        }
-    )
-    assert isinstance(request_body, dict)
-    input_messages = request_body['input']
-    assert isinstance(input_messages, list)
-    input_message = input_messages[0]
-    assert isinstance(input_message, dict)
-    content = input_message['content']
-    assert isinstance(content, list)
-    state_part = content[0]
-    assert isinstance(state_part, dict)
-    state_text = state_part['text']
-    assert isinstance(state_text, str)
-    state: JsonValue = json.loads(state_text)
-    assert state == snapshot(
-        {
-            'history': [
-                {'user': 'Earlier image question.'},
-                {'assistant': 'assistant before'},
-                {'assistant': '<image 1>'},
-                {'assistant': 'assistant after'},
-            ],
-            'text': 'Look up the image.',
-            'done': [
-                {'tool_call': {'name': 'lookup', 'args': {}}},
-                {'tool_return': {'name': 'lookup', 'content': '["tool before","<image 2>","tool after"]'}},
-                {'tool_return': {'name': 'native_lookup', 'content': '["native before","<image 3>","native after"]'}},
             ],
         }
     )
@@ -1254,6 +1231,24 @@ async def test_image_urls_in_tool_returns_are_downloaded_and_labeled(allow_model
 
     assert result.output is True
     download.assert_awaited_once_with(image_url, data_format='bytes')
+    expected_state: dict[str, JsonValue]
+    if native:
+        expected_state = {
+            'history': [
+                {'user': 'Look up the image.'},
+                {'tool_return': {'name': 'native_lookup', 'content': '["before","<image 1>","after"]'}},
+            ],
+            'text': 'Does the lookup contain an image?',
+        }
+    else:
+        expected_state = {
+            'history': [
+                {'user': 'Look up the image.'},
+                {'tool_call': {'name': 'lookup', 'args': {}}},
+                {'tool_return': {'name': 'lookup', 'content': '["before","<image 1>","after"]'}},
+            ],
+            'text': 'Does the lookup contain an image?',
+        }
     request_body: JsonValue = json.loads(captured.requests[0].content)
     assert request_body == snapshot(
         {
@@ -1264,7 +1259,7 @@ async def test_image_urls_in_tool_returns_are_downloaded_and_labeled(allow_model
                     'content': [
                         {
                             'type': 'input_text',
-                            'text': IsStr(),
+                            'text': IsJson(expected_state),
                         },
                         {'type': 'input_text', 'text': '<image 1>:'},
                         {'type': 'input_image', 'image_url': 'data:image/png;base64,dG9vbC1pbWFnZQ=='},
@@ -1276,39 +1271,6 @@ async def test_image_urls_in_tool_returns_are_downloaded_and_labeled(allow_model
             ],
         }
     )
-    assert isinstance(request_body, dict)
-    request_input_value = request_body['input']
-    assert isinstance(request_input_value, list)
-    input_message = request_input_value[0]
-    assert isinstance(input_message, dict)
-    content = input_message['content']
-    assert isinstance(content, list)
-    state_part = content[0]
-    assert isinstance(state_part, dict)
-    state_text = state_part['text']
-    assert isinstance(state_text, str)
-    state: JsonValue = json.loads(state_text)
-    if native:
-        assert state == snapshot(
-            {
-                'history': [
-                    {'user': 'Look up the image.'},
-                    {'tool_return': {'name': 'native_lookup', 'content': '["before","<image 1>","after"]'}},
-                ],
-                'text': 'Does the lookup contain an image?',
-            }
-        )
-    else:
-        assert state == snapshot(
-            {
-                'history': [
-                    {'user': 'Look up the image.'},
-                    {'tool_call': {'name': 'lookup', 'args': {}}},
-                    {'tool_return': {'name': 'lookup', 'content': '["before","<image 1>","after"]'}},
-                ],
-                'text': 'Does the lookup contain an image?',
-            }
-        )
 
 
 @pytest.mark.parametrize(
@@ -1354,6 +1316,35 @@ async def test_failed_tool_return_image_keeps_order_and_one_error_wrapper(allow_
     ).run('Does the failed lookup retain its image?', message_history=history)
 
     assert result.output is True
+    expected_state: dict[str, JsonValue]
+    if native:
+        expected_state = {
+            'history': [
+                {'user': 'Look up this image.'},
+                {'tool_call': {'name': 'native_lookup', 'args': {}}},
+                {
+                    'tool_return': {
+                        'name': 'native_lookup',
+                        'content': '{"error":"[\\"before\\",\\"<image 1>\\",\\"after\\"]"}',
+                    }
+                },
+            ],
+            'text': 'Does the failed lookup retain its image?',
+        }
+    else:
+        expected_state = {
+            'history': [
+                {'user': 'Look up this image.'},
+                {'tool_call': {'name': 'lookup', 'args': {}}},
+                {
+                    'tool_return': {
+                        'name': 'lookup',
+                        'content': '{"error":"[\\"before\\",\\"<image 1>\\",\\"after\\"]"}',
+                    }
+                },
+            ],
+            'text': 'Does the failed lookup retain its image?',
+        }
     request_body: JsonValue = json.loads(captured.requests[0].content)
     assert request_body == snapshot(
         {
@@ -1364,7 +1355,7 @@ async def test_failed_tool_return_image_keeps_order_and_one_error_wrapper(allow_
                     'content': [
                         {
                             'type': 'input_text',
-                            'text': IsStr(),
+                            'text': IsJson(expected_state),
                         },
                         {'type': 'input_text', 'text': '<image 1>:'},
                         {'type': 'input_image', 'image_url': 'data:image/png;base64,dG9vbC1pbWFnZQ=='},
@@ -1376,69 +1367,6 @@ async def test_failed_tool_return_image_keeps_order_and_one_error_wrapper(allow_
             ],
         }
     )
-    assert isinstance(request_body, dict)
-    input_messages_value = request_body['input']
-    assert isinstance(input_messages_value, list)
-    input_message_value = input_messages_value[0]
-    assert isinstance(input_message_value, dict)
-    input_content_value = input_message_value['content']
-    assert isinstance(input_content_value, list)
-    state_part_value = input_content_value[0]
-    assert isinstance(state_part_value, dict)
-    state_text = state_part_value['text']
-    assert isinstance(state_text, str)
-    state: JsonValue = json.loads(state_text)
-    if native:
-        assert state == snapshot(
-            {
-                'history': [
-                    {'user': 'Look up this image.'},
-                    {'tool_call': {'name': 'native_lookup', 'args': {}}},
-                    {
-                        'tool_return': {
-                            'name': 'native_lookup',
-                            'content': '{"error":"[\\"before\\",\\"<image 1>\\",\\"after\\"]"}',
-                        }
-                    },
-                ],
-                'text': 'Does the failed lookup retain its image?',
-            }
-        )
-    else:
-        assert state == snapshot(
-            {
-                'history': [
-                    {'user': 'Look up this image.'},
-                    {'tool_call': {'name': 'lookup', 'args': {}}},
-                    {
-                        'tool_return': {
-                            'name': 'lookup',
-                            'content': '{"error":"[\\"before\\",\\"<image 1>\\",\\"after\\"]"}',
-                        }
-                    },
-                ],
-                'text': 'Does the failed lookup retain its image?',
-            }
-        )
-    assert isinstance(state, dict)
-    history_entries_value = state['history']
-    assert isinstance(history_entries_value, list)
-    tool_return_contents: list[str] = []
-    for entry in history_entries_value:
-        assert isinstance(entry, dict)
-        tool_return_value = entry.get('tool_return')
-        if isinstance(tool_return_value, dict):
-            content = tool_return_value['content']
-            assert isinstance(content, str)
-            tool_return_contents.append(content)
-
-    assert len(tool_return_contents) == 1
-    error_wrapper: JsonValue = json.loads(tool_return_contents[0])
-    assert isinstance(error_wrapper, dict)
-    assert set(error_wrapper) == {'error'}
-    error_content = error_wrapper['error']
-    assert isinstance(error_content, str)
-    assert json.loads(error_content) == snapshot(['before', '<image 1>', 'after'])
     assert ModelMessagesTypeAdapter.dump_json(history) == original_history
 
 
@@ -2265,17 +2193,6 @@ async def test_direct_decide_sends_image_evidence_with_ordered_labels(
 
     assert response.answers == {'q': NoulAnswer(noul=0.9)}
     request_body: JsonValue = json.loads(captured.requests[0].content)
-    assert isinstance(request_body, dict)
-    request_input = request_body['input']
-    assert isinstance(request_input, list)
-    input_message = request_input[0]
-    assert isinstance(input_message, dict)
-    content = input_message['content']
-    assert isinstance(content, list)
-    first_image_input = content[2]
-    assert isinstance(first_image_input, dict)
-    assert first_image_input.pop('detail', None) == detail_field.get('detail')
-    first_image_input['detail'] = '<expected detail>'
     assert request_body == snapshot(
         {
             'model': 'gpt-6-luna',
@@ -2285,13 +2202,13 @@ async def test_direct_decide_sends_image_evidence_with_ordered_labels(
                     'content': [
                         {
                             'type': 'input_text',
-                            'text': '{"history": [{"user": "Receipt <image 1>"}], "text": "Compare <image 2>."}',
+                            'text': IsJson({'history': [{'user': 'Receipt <image 1>'}], 'text': 'Compare <image 2>.'}),
                         },
                         {'type': 'input_text', 'text': '<image 1>:'},
                         {
                             'type': 'input_image',
                             'image_url': 'data:image/png;base64,Zmlyc3Q=',
-                            'detail': '<expected detail>',
+                            **detail_field,
                         },
                         {'type': 'input_text', 'text': '<image 2>:'},
                         {'type': 'input_image', 'image_url': 'data:image/jpeg;base64,c2Vjb25k'},
@@ -2301,12 +2218,6 @@ async def test_direct_decide_sends_image_evidence_with_ordered_labels(
             'questions': [{'type': 'predicate', 'name': 'q', 'instructions': 'Is it a receipt?'}],
         }
     )
-    state_part = content[0]
-    assert isinstance(state_part, dict)
-    state_text = state_part['text']
-    assert isinstance(state_text, str)
-    state: JsonValue = json.loads(state_text)
-    assert state == snapshot({'history': [{'user': 'Receipt <image 1>'}], 'text': 'Compare <image 2>.'})
 
 
 async def test_direct_decide_rejects_non_image_evidence_before_a_request(allow_model_requests: None):
