@@ -144,6 +144,9 @@ those limits. Exact limits and provider behavior can change, so provider pages a
 - [Gemini session resumption](gemini.md#session-resumption)
 - [xAI session behavior](xai.md#feature-support-and-limitations)
 
+xAI reports its cap with a `max_duration` error before closing, which a reconnect policy recovers from
+like any other drop.
+
 Gemini sends `GoAway` shortly before its cap but Pydantic AI currently reconnects only after the
 connection drops, so a long call can briefly drop mid-turn.
 
