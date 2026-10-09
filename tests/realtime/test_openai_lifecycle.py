@@ -19,6 +19,7 @@ from pydantic_ai.realtime._lifecycle import (
     InputAdded,
     InputLost,
     LifecycleEvent,
+    OutputItemDetails,
     ResponseEnded,
     ResponseRequestRefused,
     ResponseStarted,
@@ -737,7 +738,7 @@ async def test_xai_places_a_spoken_turn_when_it_adds_its_item() -> None:
         [
             'RealtimeInputSpeechStartEvent',
             UserTurnStarted(turn_id='item_u1'),
-            UserTurnEnded(turn_id='item_u1'),
+            UserTurnEnded(turn_id='item_u1', still_speaking=True),
             ResponseStarted(response_id='resp_1', user_turn_id='item_u1'),
             UserTurnDiscarded(turn_id='item_u1'),
             'RealtimeInputSpeechEndEvent',
@@ -825,6 +826,32 @@ async def test_a_reconnect_loses_a_request_the_connection_no_longer_counts_as_ac
     stream.feed(done('resp_1'))
     events = await stream.rest()
     assert [event for event in events if isinstance(event, InputLost)] == snapshot([InputLost(input_ids=(1,))])
+
+
+async def test_an_assistant_messages_phase_is_kept_for_its_part() -> None:
+    """gpt-realtime-2.x labels each assistant message `commentary` or `final_answer`."""
+
+    def item_added(item: object) -> dict[str, Any]:
+        return {'type': 'response.output_item.added', 'response_id': 'resp_1', 'item': item}
+
+    message: dict[str, Any] = {'type': 'message', 'role': 'assistant', 'content': []}
+    stream = Stream(
+        created('resp_1'),
+        item_added({**message, 'id': 'item_a1', 'phase': 'commentary'}),
+        item_added({**message, 'id': 'item_a2'}),
+        item_added({**message, 'phase': 'final_answer'}),
+        item_added('not an item'),
+        {
+            'type': 'response.output_item.added',
+            'response_id': '',
+            'item': {**message, 'id': 'item_a3', 'phase': 'final_answer'},
+        },
+        done('resp_1'),
+    )
+    events = [event for event in await stream.rest() if isinstance(event, OutputItemDetails)]
+    assert events == snapshot(
+        [OutputItemDetails(response_id='resp_1', item_id='item_a1', provider_details={'phase': 'commentary'})]
+    )
 
 
 async def test_what_we_sent_ahead_of_our_commit_joins_the_conversation_before_its_turn() -> None:
@@ -919,13 +946,18 @@ async def test_a_turn_cleared_before_it_joined_never_does() -> None:
 
 
 def test_a_failed_commit_drops_only_what_it_noted() -> None:
-    """Another commit noted meanwhile stays; one a reconnect already forgot is nothing to drop."""
+    """Another commit noted meanwhile stays, whichever of the two fails; one a reconnect already forgot is nothing to drop."""
     lifecycle = OpenAILifecycle()
     lifecycle.message_sent(0)
     first = lifecycle.audio_commit_sent()
     second = lifecycle.audio_commit_sent()
-    lifecycle.audio_commit_failed(first)
-    assert list(lifecycle._sent_before_commits) == [second]  # pyright: ignore[reportPrivateUsage]
-    lifecycle.socket_replaced()
+    # The two notes are equal, so only identity tells them apart.
+    assert first == second
     lifecycle.audio_commit_failed(second)
+    assert [id(noted) for noted in lifecycle._sent_before_commits] == [id(first)]  # pyright: ignore[reportPrivateUsage]
+    third = lifecycle.audio_commit_sent()
+    lifecycle.audio_commit_failed(first)
+    assert [id(noted) for noted in lifecycle._sent_before_commits] == [id(third)]  # pyright: ignore[reportPrivateUsage]
+    lifecycle.socket_replaced()
+    lifecycle.audio_commit_failed(third)
     assert not lifecycle._sent_before_commits  # pyright: ignore[reportPrivateUsage]

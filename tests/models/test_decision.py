@@ -918,6 +918,37 @@ async def test_profile_score_limit_overrides_the_class(allow_model_requests: Non
     assert isinstance(model.requests[0].questions['score'], ScoreQuestion)
 
 
+class InstructedDecisionModel(InMemoryDecisionModel):
+    requires_instructions = True
+
+
+@pytest.mark.parametrize(
+    ('model', 'instructions'),
+    [
+        pytest.param(InMemoryDecisionModel(), None, id='class-default'),
+        pytest.param(InstructedDecisionModel(), 'Which of these applies?', id='class'),
+        pytest.param(
+            InMemoryDecisionModel(profile=DecisionModelProfile(decision_requires_instructions=True)),
+            'Which of these applies?',
+            id='profile',
+        ),
+        pytest.param(
+            InstructedDecisionModel(profile=DecisionModelProfile(decision_requires_instructions=False)),
+            None,
+            id='profile-overrides-class',
+        ),
+    ],
+)
+async def test_requires_instructions(
+    model: InMemoryDecisionModel, instructions: str | None, allow_model_requests: None
+):
+    """A model that requires instructions, by its class or its profile, gets a generic question when nothing is asked."""
+    await Agent(model, output_type=Literal['billing', 'bug']).run('Charged twice.')
+    question = model.requests[0].questions['response']
+    assert isinstance(question, ChoiceQuestion)
+    assert question.instructions == instructions
+
+
 async def test_levels_over_score_limit_can_be_optional(allow_model_requests: None):
     model = TenLevelDecisionModel()
     result = await Agent(model, output_type=OptionalElevenLevelReview).run('Score this.')
@@ -1038,7 +1069,7 @@ async def escalate(ctx: RunContext[None]) -> str:
     return 'escalated'
 
 
-class Priority(str, Enum):
+class Priority(str, Enum):  # noqa: UP042
     """How soon the ticket needs a reply."""
 
     now = 'now'
@@ -1409,7 +1440,7 @@ def test_unsure_route_pickles():
     )
 
 
-class Reprioritise(str, Enum):
+class Reprioritise(str, Enum):  # noqa: UP042
     """Change how soon the ticket needs a reply."""
 
     now = 'now'
@@ -1485,7 +1516,7 @@ async def test_the_route_question_carries_the_agent_instructions(allow_model_req
     )
 
 
-class Bank(str, Enum):
+class Bank(str, Enum):  # noqa: UP042
     """The banks the customer's accounts can be with."""
 
     ing = 'ing'
@@ -2086,7 +2117,7 @@ async def test_a_route_with_nothing_to_ask_could_be_the_one_taken(allow_model_re
     assert list(model.requests[0].questions) == snapshot(['route'])
 
 
-class Area(str, Enum):
+class Area(str, Enum):  # noqa: UP042
     billing = 'billing'
     bug = 'bug'
 

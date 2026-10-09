@@ -1,346 +1,787 @@
-"""Blank while resizing, then replay output without stale-coordinate erases."""
+"""The live panel paints frames from the transcript, on the alternate screen, and prints the session on close."""
 
 import io
-from typing import IO
+from collections.abc import Callable
 
 import pytest
+from rich.console import Console
+from rich.text import Text
+from termflow.ansi import make_clipboard_copy
+from termflow.live import ScreenBuffer
+from termflow.live.buffer import REVERSE
+from termflow.themes import PALETTES, reset_palette
 
-from pydantic_clai2.ui.prompt import prompt_surface
-from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.prompt_selection import MouseReport, Selection, mouse_report
+from pydantic_clai2.ui.prompt.prompt_surface import (
+    ENTER,
+    FRAME_INTERVAL,
+    LEAVE,
+    MAX_HELD_OSC,
+    MODES_OFF,
+    MODES_ON,
+    WHEEL_ROWS,
+    PromptSurface,
+    open_in_browser,
+)
+from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
+from pydantic_clai2.ui.prompt.transcript_view import SCROLLED_HINT
+from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
 
 ROWS = ('TOP', 'DRAFT', 'BOTTOM', 'FOOTER')
 
 
 class Screen:
-    def __init__(self) -> None:
+    def __init__(self, *, width: int = 80, height: int = 24) -> None:
         self.now = 0.0
-        self.terminal = SurfaceTerminal(width=80, height=24)
+        self.terminal = SurfaceTerminal(width=width, height=height)
+        self.opened: list[str] = []
         self.surface = PromptSurface(
             output=self.terminal,
             size=lambda: (self.terminal.width, self.terminal.height),
             clock=lambda: self.now,
+            open_url=self.opened.append,
         )
-        self.surface.paint(ROWS)
 
-    def resize(self, *, width: int, height: int) -> None:
-        self.terminal.resize(width=width, height=height)
-        self.surface.paint(ROWS)
+    def write(self, text: str) -> None:
+        """Write a frame interval apart, so every write paints."""
+        self.now += FRAME_INTERVAL
+        self.surface.write(text)
 
-    def settle(self, *, rows: tuple[str, ...] = ROWS) -> None:
-        self.now += 0.3
-        self.surface.paint(rows)
+    def lines(self) -> list[str]:
+        return self.terminal.lines()
 
 
-@pytest.mark.parametrize('tty', [False, True])
-async def test_streaming_does_not_touch_editor(tty: bool) -> None:
-    class Output(io.StringIO):
-        def isatty(self) -> bool:
-            return tty
-
-    output = Output()
+def test_modified_key_and_mouse_reporting_are_scoped_to_editor_ownership() -> None:
+    output = io.StringIO()
     surface = PromptSurface(output=output, size=lambda: (80, 24))
-    surface.paint(ROWS)
-    start = len(output.getvalue())
-    for text in ('one', ' two', '\n', 'next'):
-        surface.write(text)
-        surface.flush()
+    for activation in range(1, 3):
         surface.paint(ROWS)
-    await surface.drain()
-    assert output.getvalue()[start:] == ('one two\r\nnext\r\n' if tty else 'one two\nnext\n')
-    assert surface.isatty() is tty
-    surface.release()
-    start = len(output.getvalue())
-    surface.release()
-    assert output.getvalue()[start:] == ''
+        surface.paint((*ROWS, 'EXTRA ROW'))
+        assert output.getvalue().count(MODES_ON) == activation
+        assert output.getvalue().count(MODES_OFF) == activation - 1
+        surface.release()
+        surface.release()
+        assert output.getvalue().count(MODES_OFF) == activation
+    # Kitty keeps a flag stack per screen: push after entering, pop before leaving.
+    assert output.getvalue().index(ENTER) < output.getvalue().index(MODES_ON)
+    surface.restore()
+    assert output.getvalue().rindex(MODES_OFF) < output.getvalue().rindex(LEAVE)
+    assert output.getvalue().count(ENTER) == output.getvalue().count(LEAVE) == 1
 
 
-def test_typing_changes_only_the_draft_row_without_showing_cursor() -> None:
+def test_output_fills_the_panel_above_the_pinned_rows() -> None:
     screen = Screen()
+    screen.write('before the editor\n')
+    assert screen.terminal.getvalue() == '', 'nothing paints before the editor opens'
+    screen.surface.paint(ROWS)
+    assert screen.terminal.alternate
+    for chunk in ('one', ' two', '\n', 'next'):
+        screen.write(chunk)
+    lines = screen.lines()
+    assert lines[:3] == ['before the editor', 'one two', 'next']
+    assert lines[-4:] == list(ROWS)
+    assert not any(lines[3:-4])
+
+
+def test_typing_sends_only_the_changed_cells_without_showing_the_cursor() -> None:
+    screen = Screen()
+    screen.write('transcript\n')
+    screen.surface.paint(ROWS)
     start = len(screen.terminal.getvalue())
     screen.surface.paint(('TOP', 'DRAFT!', 'BOTTOM', 'FOOTER'))
     update = screen.terminal.getvalue()[start:]
-    assert '\x1b[22;1H' in update and 'DRAFT!' in update
-    assert 'TOP' not in update and 'BOTTOM' not in update and 'FOOTER' not in update
-    assert '\x1b[?25' not in update and '\x1b[2J' not in update
-
-
-def test_editor_growth_is_not_a_physical_resize() -> None:
-    screen = Screen()
+    assert '!' in update and 'DRAFT' not in update and 'transcript' not in update and 'FOOTER' not in update
+    assert '\x1b[?25h' not in update and '\x1b[2J' not in update
     start = len(screen.terminal.getvalue())
-    screen.surface.paint(('TOP', 'DRAFT', 'SECOND LINE', 'BOTTOM', 'FOOTER'))
-    screen.surface.paint(ROWS)
-    assert '\x1b[2J' not in screen.terminal.getvalue()[start:]
-    assert screen.terminal.lines()[-4:] == list(ROWS)
-
-
-def test_resize_blanks_viewport_and_resets_quiet_timer_until_settled() -> None:
-    screen = Screen()
-    screen.surface.write('before resize\npartial')
-    screen.resize(width=100, height=40)
-    assert not any(screen.terminal.lines())
-    screen.surface.write(' continuation\nnew output\n')
-    assert not any(screen.terminal.lines())
-    for width, height in ((50, 18), (120, 45), (80, 24)):
-        screen.now += 0.15
-        screen.resize(width=width, height=height)
-        assert not any(screen.terminal.lines())
-    screen.now += 0.249
-    screen.surface.paint(('TOP', 'LATEST DRAFT', 'BOTTOM', 'FOOTER'))
-    assert not any(screen.terminal.lines())
-    screen.now += 0.002
-    screen.surface.paint(('TOP', 'LATEST DRAFT', 'BOTTOM', 'FOOTER'))
-    lines = screen.terminal.lines()
-    assert lines[-4:] == ['TOP', 'LATEST DRAFT', 'BOTTOM', 'FOOTER']
-    assert 'before resize' in lines and 'partial continuation' in lines and 'new output' in lines
-    assert 'DRAFT' not in lines
-    assert '\x1b[3J' not in screen.terminal.getvalue()
-    start = len(screen.terminal.getvalue())
-    screen.surface.paint(('TOP', 'LATEST DRAFT', 'BOTTOM', 'FOOTER'))
+    screen.surface.paint(('TOP', 'DRAFT!', 'BOTTOM', 'FOOTER'))
     assert screen.terminal.getvalue()[start:] == ''
 
 
-def test_signal_notices_keep_screen_blank_even_when_reported_size_lags() -> None:
+def test_editor_growth_takes_rows_from_the_transcript_and_gives_them_back() -> None:
+    screen = Screen(height=8)
+    screen.surface.paint(ROWS)
+    for index in range(10):
+        screen.write(f'line {index}\n')
+    screen.surface.paint(('TOP', 'DRAFT', 'SECOND LINE', 'BOTTOM', 'FOOTER'))
+    assert screen.lines() == ['line 8', 'line 9', '', 'TOP', 'DRAFT', 'SECOND LINE', 'BOTTOM', 'FOOTER']
+    screen.surface.paint(ROWS)
+    assert screen.lines() == ['line 7', 'line 8', 'line 9', '', *ROWS]
+
+
+def test_writes_inside_a_frame_interval_wait_for_refresh() -> None:
     screen = Screen()
+    screen.surface.paint(ROWS)
+    screen.write('first\n')
+    screen.surface.write('second\n')
+    assert 'second' not in screen.lines()
+    screen.surface.refresh()
+    assert 'second' in screen.lines()
+    start = len(screen.terminal.getvalue())
+    screen.surface.refresh()
+    assert screen.terminal.getvalue()[start:] == ''
+
+
+def test_resize_rewraps_the_transcript_from_the_retained_output() -> None:
+    screen = Screen(width=40)
+    screen.surface.paint(ROWS)
+    screen.write('x' * 60 + '\n')
+    assert screen.lines()[:2] == ['x' * 40, 'x' * 20]
+    screen.terminal.resize(width=80, height=30)
     screen.surface.resize_notice()
     screen.surface.paint(ROWS)
-    assert not any(screen.terminal.lines())
-    screen.now += 0.2
-    screen.surface.resize_notice()
-    screen.now += 0.2
+    assert screen.lines()[0] == 'x' * 60
+    assert screen.lines()[-4:] == list(ROWS)
+    assert '\x1b[3J' not in screen.terminal.getvalue()
+
+
+def test_resize_notice_repaints_every_cell() -> None:
+    screen = Screen()
     screen.surface.paint(ROWS)
-    assert not any(screen.terminal.lines())
-    screen.settle()
-    assert screen.terminal.lines()[-4:] == list(ROWS)
+    start = len(screen.terminal.getvalue())
+    screen.surface.resize_notice()
+    screen.surface.paint(ROWS)
+    assert '\x1b[2J' in screen.terminal.getvalue()[start:]
 
 
-def test_resize_during_write_does_not_require_a_paint_to_pause() -> None:
+def test_menus_get_the_main_screen_and_held_output_shows_afterwards() -> None:
     screen = Screen()
-    screen.terminal.resize(width=100, height=40)
-    screen.surface.write('queued without a poll\n')
-    assert not any(screen.terminal.lines())
-    screen.settle()
-    assert 'queued without a poll' in screen.terminal.lines()
-
-
-def test_replay_does_not_itself_append_to_or_clear_native_scrollback() -> None:
-    screen = Screen()
-    for index in range(50):
-        screen.surface.write(f'line {index:02d}\n')
-    screen.resize(width=80, height=40)
-    history = screen.terminal.history.copy()
-    screen.settle()
-    assert screen.terminal.history == history
-    assert 'line 49' in screen.terminal.lines()
-    assert not any('DRAFT' in line for line in screen.terminal.history)
-
-
-@pytest.mark.parametrize('ending', ['partial', 'a' * 80, 'line\n'])
-def test_streaming_continues_at_replayed_cursor(ending: str) -> None:
-    screen = Screen()
-    screen.surface.write(ending)
-    screen.resize(width=80, height=40)
-    screen.settle()
-    screen.surface.write('tail')
-    lines = screen.terminal.lines()
-    if ending == 'partial':
-        assert 'partialtail' in lines
-    else:
-        assert 'tail' in lines
-        assert ending.rstrip('\n') in lines
-
-
-def test_tiny_terminal_then_grow_keeps_transcript_and_draft() -> None:
-    screen = Screen()
-    screen.surface.write('retained\n')
-    screen.resize(width=10, height=2)
-    screen.settle(rows=('DRAFT',))
-    assert 'retained' in screen.terminal.lines()
-    assert 'DRAFT' not in screen.terminal.lines()
-    screen.resize(width=80, height=24)
-    screen.settle()
-    assert screen.terminal.lines()[-4:] == list(ROWS)
-    assert 'retained' in screen.terminal.lines()
-
-
-@pytest.mark.parametrize('pending', [False, True])
-def test_release_during_resize_flushes_output_and_restores_terminal(pending: bool) -> None:
-    screen = Screen()
-    screen.terminal.resize(width=60, height=20)
-    if pending:
-        screen.surface.write('queued before exit\n')
+    screen.write('conversation\n')
+    screen.surface.paint(ROWS)
     screen.surface.release()
-    assert screen.terminal.getvalue().endswith('\x1b[?25h\x1b[?2026l')
-    if pending:
-        assert 'queued before exit' in screen.terminal.lines()
-    screen.surface.resize_notice()
-    screen.surface.write('menu\n')
+    with screen.surface.held(), screen.surface.held():
+        assert not screen.terminal.alternate
+        start = len(screen.terminal.getvalue())
+        screen.write('streamed while the menu was open\n')
+        screen.surface.refresh()
+        assert screen.terminal.getvalue()[start:] == ''
     screen.surface.paint(ROWS)
-    assert screen.terminal.lines()[-4:] == list(ROWS)
-    assert screen.terminal.getvalue().count('\x1b[?25l') >= 2
+    assert screen.terminal.alternate
+    assert screen.lines()[:2] == ['conversation', 'streamed while the menu was open']
 
 
-def test_long_resize_spools_all_new_output_and_closes_the_spool(monkeypatch: pytest.MonkeyPatch) -> None:
-    opened: list[IO[str]] = []
-    original = prompt_surface.SpooledTemporaryFile
+def test_inline_widgets_keep_the_panel_on_screen() -> None:
+    screen = Screen()
+    screen.surface.paint(ROWS)
+    screen.surface.release()
+    with screen.surface.held(leave_screen=False):
+        screen.write('question\n')
+        assert 'question' not in screen.lines()
+        screen.surface.paint(('1. Patch',))
+        assert screen.terminal.alternate
+        assert screen.lines()[0] == 'question' and screen.lines()[-1] == '1. Patch'
 
-    def spool(**kwargs: object) -> IO[str]:
-        stream = original(max_size=16, mode='w+t', encoding='utf-8', newline='')
-        opened.append(stream)
-        return stream
 
-    monkeypatch.setattr(prompt_surface, 'SpooledTemporaryFile', spool)
+def test_released_panel_shows_command_output_without_editor_rows() -> None:
+    screen = Screen()
+    screen.surface.paint(ROWS)
+    screen.write('partial')
+    screen.surface.release()
+    assert screen.lines()[0] == 'partial'
+    assert not any(row in screen.lines() for row in ROWS)
+    screen.write('command output\n')
+    assert screen.lines()[:2] == ['partial', 'command output']
+    assert screen.terminal.alternate
+
+
+async def test_close_prints_the_session_into_the_main_screen_once() -> None:
+    screen = Screen()
+    screen.terminal.write('$ clai2\r\n')
+    transcript = screen.surface.transcript
+    console = Console(file=screen.terminal, force_terminal=True)
+    with transcript.capture(console):
+        console.print('banner')
+    screen.terminal.write('\r')  # Startup runs in cooked mode, where the newline also returned the carriage.
+    screen.surface.paint(ROWS)
+    screen.write('\x1b]8;;https://example.com\x1b\\linked\x1b]8;;\x1b\\ answer')
+    await screen.surface.drain()
+    screen.surface.restore()
+    assert not screen.terminal.alternate
+    assert screen.lines()[:3] == ['$ clai2', 'banner', 'linked answer']
+    printed = Text.from_ansi(screen.terminal.getvalue().rsplit(LEAVE, 1)[1])
+    assert printed.get_style_at_offset(Console(), 0).link == 'https://example.com', 'scrollback keeps links'
+    screen.surface.restore()
+    assert screen.lines()[:4] == ['$ clai2', 'banner', 'linked answer', '']
+
+
+def test_close_leaves_lines_forgotten_by_clear_out_of_scrollback() -> None:
     output = io.StringIO()
-    now = 0.0
-    size = (80, 24)
-    surface = PromptSurface(output=output, size=lambda: size, clock=lambda: now)
-    surface.paint(ROWS)
-    size = (100, 40)
-    content = 'tool output line\n' * 10000
-    surface.write(content)
-    assert content not in output.getvalue()
-    now = 0.3
-    surface.paint(ROWS)
-    assert output.getvalue().endswith(content)
-    assert len(opened) == 1 and opened[0].closed
+    surface = PromptSurface(output=output, size=lambda: (80, 24))
+    surface.write('before clear\n')
+    surface.transcript.clear()
+    surface.write('after clear\n')
+    assert [Text.from_ansi(row).plain for row in surface.transcript.frame(width=80, height=5).rows] == [
+        'after clear',
+        '',
+    ]
+    surface.restore()
+    assert output.getvalue() == 'after clear\n'
 
 
-async def test_empty_output_and_empty_drain() -> None:
-    output = io.StringIO()
-    surface = PromptSurface(output=output, size=lambda: (1, 2))
-    assert surface.write('') == 0
-    await surface.drain()
-    assert output.getvalue() == ''
+def test_clear_blanks_the_panel_and_follows_new_output() -> None:
+    screen = Screen(height=10)
+    screen.surface.paint(ROWS)
+    for index in range(20):
+        screen.write(f'line {index}\n')
+    screen.write('partial')
+    screen.surface.scroll(3)
+    start = len(screen.terminal.getvalue())
+    screen.surface.clear()
+    screen.surface.paint(ROWS)
+    assert '\x1b[2J' in screen.terminal.getvalue()[start:], 'every cell repaints'
+    assert '\x1b[3J' not in screen.terminal.getvalue(), 'the terminal scrollback is left alone'
+    assert screen.surface.view.anchor is None
+    assert screen.lines() == [''] * 6 + list(ROWS)
+    screen.write('after\n')
+    screen.surface.refresh()
+    assert screen.lines()[:2] == ['after', '']
+    screen.surface.restore()
+    assert not screen.terminal.alternate
+    assert screen.lines()[0] == 'after', 'cleared output does not reach the scrollback on exit'
 
 
-def test_failed_resize_release_still_closes_output_spool(monkeypatch: pytest.MonkeyPatch) -> None:
-    opened: list[io.StringIO] = []
+def test_clear_keeping_current_output_lets_a_running_turn_finish_its_line_or_part() -> None:
+    screen = Screen()
+    screen.surface.paint(ROWS)
+    screen.write('earlier\n')
+    screen.write('\x1b[1mbold ')
+    screen.surface.clear(keep_current=True)
+    screen.write('line\n')
+    assert screen.lines()[:2] == ['bold line', '']
 
-    def spool(**kwargs: object) -> IO[str]:
-        stream = io.StringIO()
-        opened.append(stream)
-        return stream
+    def render(*, source: str, width: int) -> str:
+        # The width and theme never change, so the streamed rows show and nothing renders again.
+        raise NotImplementedError
 
-    class Output(io.StringIO):
-        broken = False
+    block = screen.surface.markdown(render=render, width=80)
+    block.write('streamed ')
+    screen.surface.clear(keep_current=True)
+    block.write('answer\n')
+    screen.surface.refresh()
+    assert screen.lines()[:2] == ['streamed answer', '']
 
+    screen.write('tool output\n')
+    screen.surface.clear(keep_current=True)
+    screen.surface.paint(ROWS)
+    assert not any(screen.lines()[:-4]), 'a part followed by other output is finished'
+
+
+@pytest.mark.parametrize('terminator', ['\x07', '\x1b\\'])
+def test_palette_controls_reach_the_terminal_and_repaint(terminator: str) -> None:
+    screen = Screen()
+    screen.surface.paint(ROWS)
+    start = len(screen.terminal.getvalue())
+    screen.write(f'\x1b]11;#0a1929{terminator}')
+    assert screen.terminal.getvalue()[start:] == f'\x1b]11;#0a1929{terminator}', 'the frame waits for the next refresh'
+    screen.surface.refresh()
+    assert '\x1b[2J' in screen.terminal.getvalue()[start:], 'every cell repaints in the new colours'
+    assert screen.surface.transcript.frame(width=80, height=2).rows == ('',)
+
+
+async def test_palette_reset_reaches_the_terminal_unsplit_on_a_slow_runner() -> None:
+    """Termflow writes a reset as three controls; no frame may paint between them, however slow."""
+    screen = Screen()
+    screen.surface.paint(ROWS)
+    screen.write('partial')
+    await screen.surface.drain()
+    start = len(screen.terminal.getvalue())
+
+    class Slow(io.StringIO):
         def write(self, text: str) -> int:
-            if self.broken:
-                raise OSError('terminal gone')
-            return super().write(text)
+            screen.now += 1  # Every write lands after the frame interval.
+            return screen.surface.write(text)
 
-    monkeypatch.setattr(prompt_surface, 'SpooledTemporaryFile', spool)
-    output = Output()
-    size = (80, 24)
-    surface = PromptSurface(output=output, size=lambda: size)
-    surface.paint(ROWS)
-    size = (100, 40)
-    surface.write('queued')
-    output.broken = True
-    with pytest.raises(OSError, match='terminal gone'):
-        surface.release()
-    assert len(opened) == 1 and opened[0].closed
-    surface.release()
+    reset_palette(output=Slow())
+    update = screen.terminal.getvalue()[start:]
+    assert update == '\x1b]104\x07\x1b]111\x07\x1b]110\x07'
+    screen.surface.refresh()
+    assert screen.terminal.getvalue()[start:].count('\x1b[2J') == 1, 'one repaint, not one per control'
+    await screen.surface.drain()
+    rows = [Text.from_ansi(row).plain for row in screen.surface.transcript.frame(width=80, height=5).rows]
+    assert rows == ['partial', ''], 'controls are not content, so no blank line follows'
 
 
-def test_replacement_editor_can_reuse_transcript_after_reload() -> None:
+def test_scrolling_holds_the_view_while_output_arrives_and_returns_to_follow() -> None:
+    screen = Screen(height=10)
+    screen.surface.paint(ROWS)
+    for index in range(20):
+        screen.write(f'line {index}\n')
+    assert screen.lines()[:6] == [f'line {index}' for index in range(15, 20)] + ['']
+    assert screen.surface.page == 5
+    screen.surface.scroll(screen.surface.page)
+    view = screen.lines()[:6]
+    assert view[:5] == [f'line {index}' for index in range(10, 15)]
+    assert view[5].endswith(SCROLLED_HINT.rstrip())
+    screen.write('line 20\n')
+    assert screen.lines()[:5] == view[:5]
+    screen.surface.scroll(100)
+    assert screen.lines()[0] == 'line 0', 'scrolling stops at the oldest row'
+    screen.surface.scroll(-100)
+    assert screen.surface.view.anchor is None
+    assert screen.lines()[:6] == [f'line {index}' for index in range(16, 21)] + ['']
+
+
+def test_short_transcripts_do_not_scroll() -> None:
     screen = Screen()
-    screen.surface.write('retained across reload\n')
-    screen.surface.release()
-    replacement = PromptSurface(
-        output=screen.terminal,
-        size=lambda: (screen.terminal.width, screen.terminal.height),
-        clock=lambda: screen.now,
-        transcript=screen.surface.transcript,
+    screen.surface.paint(ROWS)
+    screen.write('only line\n')
+    screen.surface.scroll(5)
+    assert screen.surface.view.anchor is None
+    assert screen.lines()[0] == 'only line'
+
+
+def test_scroll_anchor_survives_eviction_by_following_again() -> None:
+    terminal = SurfaceTerminal(width=40, height=8)
+    surface = PromptSurface(
+        output=terminal, size=lambda: (40, 8), transcript=TranscriptBuffer(max_lines=10), clock=lambda: 1.0
     )
-    replacement.paint(ROWS)
-    screen.terminal.resize(width=100, height=40)
-    replacement.paint(ROWS)
-    screen.now += 0.3
-    replacement.paint(ROWS)
-    assert 'retained across reload' in screen.terminal.lines()
+    surface.paint(('EDITOR',))
+    for index in range(10):
+        surface.write(f'line {index}\n')
+    surface.scroll(3)
+    assert surface.view.anchor is not None
+    for index in range(10, 30):
+        surface.write(f'line {index}\n')
+    surface.refresh()
+    assert surface.view.anchor is None
+    assert 'line 29' in terminal.lines()
 
 
-def test_popup_reopening_reuses_gap_without_scrolling_blank_lines() -> None:
+def test_markdown_renders_again_for_a_new_width_or_theme() -> None:
+    calls: list[tuple[int, str]] = []
+
+    def render(*, source: str, width: int) -> str:
+        calls.append((width, theme.name()))
+        return f'{theme.name()} {width}: {source}\n'
+
+    screen = Screen(width=40)
+    screen.surface.paint(ROWS)
+    block = screen.surface.markdown(render=render, width=40)
+    block.extend('**bold**')
+    block.write('streamed bold\n')
+    screen.surface.refresh()
+    assert screen.lines()[0] == 'streamed bold'
+    assert calls == []
+    screen.terminal.resize(width=60, height=24)
+    screen.surface.paint(ROWS)
+    assert screen.lines()[0] == 'default 60: **bold**'
+    with theme.use(lambda: 'github_light'):
+        screen.surface.paint(ROWS)
+        assert screen.lines()[0] == 'github_light 60: **bold**'
+        screen.surface.paint(ROWS)
+    assert calls == [(60, 'default'), (60, 'github_light')]
+    block.freeze()
+    screen.surface.paint(ROWS)
+    assert screen.lines()[0] == 'streamed bold', 'an aborted part keeps what it showed'
+
+
+def test_a_theme_change_repaints_earlier_tool_output_in_the_new_palette() -> None:
+    def truecolor(colour: str) -> str:
+        red, green, blue = (int(colour[index : index + 2], 16) for index in (1, 3, 5))
+        return f'38;2;{red};{green};{blue}m'
+
+    selected = ['default']
+    screen = Screen(width=40)
+    with theme.use(lambda: selected[0]):
+        screen.write(f'\x1b[{truecolor(theme.color(theme.MUTED))}earlier tool output\x1b[0m\n')
+        screen.surface.paint(ROWS)
+        painted = len(screen.terminal.getvalue())
+        selected[0] = 'tokyo_night'
+        screen.surface.paint(ROWS)
+    assert truecolor(PALETTES['tokyo_night'].ansi[8]) in screen.terminal.getvalue()[painted:]
+    assert screen.lines()[0] == 'earlier tool output'
+
+
+async def test_drain_settles_a_partial_line_once() -> None:
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
+    surface.write('partial')
+    await surface.drain()
+    await surface.drain()
+    assert [Text.from_ansi(row).plain for row in surface.transcript.frame(width=80, height=5).rows] == ['partial', '']
+    assert surface.isatty() is False
+
+
+def test_scroll_before_open_and_during_a_hold_does_not_paint() -> None:
     screen = Screen()
-    screen.surface.write('transcript tail\npartial')
-    popup = ('TOP', 'DRAFT', 'BOTTOM', 'one', 'two', 'three', 'FOOTER')
-    screen.surface.paint(popup)
-    history = screen.terminal.history.copy()
-    transcript_rows = screen.terminal.lines()[: -len(popup)]
-    for count in (1, 2, 3, 0, 3, 1, 0, 3):
-        screen.surface.paint((*ROWS[:-1], *('suggestion' for _ in range(count)), ROWS[-1]))
-        assert screen.terminal.history == history
-    assert screen.terminal.lines()[: -len(popup)] == transcript_rows
-    screen.surface.write(' continuation')
-    assert 'partial continuation' in screen.terminal.lines()
+    screen.surface.scroll(1)
+    assert screen.terminal.getvalue() == ''
+    screen.surface.paint(ROWS)
+    with screen.surface.held():
+        start = len(screen.terminal.getvalue())
+        screen.surface.scroll(1)
+        assert screen.terminal.getvalue()[start:] == ''
 
 
-@pytest.mark.parametrize('history', [2, 30])
-def test_output_resumes_under_history_after_a_menu_releases_the_screen(history: int) -> None:
-    terminal = SurfaceTerminal(width=80, height=24)
-    terminal.write(''.join(f'banner {index}\r\n' for index in range(history)))
-    surface = PromptSurface(output=terminal, size=lambda: (terminal.width, terminal.height))
-    surface.paint(ROWS)
-    surface.write('> /add_model\n\n')
-    surface.release()
-    surface.write('No changes.\n\n')
-    surface.paint(ROWS)
-    surface.write('next\n')
-    lines = terminal.lines()
-    top = lines.index(f'banner {history - 1}')
-    assert lines[top : top + 6] == [f'banner {history - 1}', '> /add_model', '', 'No changes.', '', 'next']
-    assert lines[-len(ROWS) :] == list(ROWS)
-    assert terminal.history == [f'banner {index}' for index in range(max(0, history + 6 - (24 - len(ROWS))))]
+def test_transcript_scrolls_rows_within_one_wrapped_item_and_skips_empty_parts() -> None:
+    from pydantic_clai2.ui.prompt.transcript_view import TranscriptView
+
+    buffer = TranscriptBuffer()
+    view = TranscriptView(buffer)
+    assert view.window(width=4, height=0) == []
+
+    # Empty Markdown parts have no rows, but still have an id. They were streamed at another
+    # width, so each window renders them again, and they stay empty.
+    def render(*, source: str, width: int) -> str:
+        assert (source, width) == ('', 4)
+        return ''
+
+    buffer.markdown(render=render, width=1, changed=lambda: None)
+    buffer.write('abcdefghijklmnopqrstuvwxyz\n')
+    buffer.markdown(render=render, width=1, changed=lambda: None)
+    assert view.window(width=4, height=3) == ['uvwx', 'yz', '']
+    view.scroll(3)
+    assert view.window(width=4, height=3) == ['ijkl', 'mnop', 'qrst']
+    view.scroll(-1)
+    assert view.window(width=4, height=3) == ['mnop', 'qrst', 'uvwx']
+    view.anchor = (2, 0)  # A part that is still empty.
+    assert view.window(width=4, height=3) == ['qrst', 'uvwx', 'yz']
+    view.scroll(-100)
+    assert view.anchor is None
+    # An empty anchor at the very beginning falls back to the last row.
+    view.anchor = (0, 0)
+    assert view.window(width=4, height=3) == ['uvwx', 'yz', '']
 
 
-@pytest.mark.parametrize('resize', [False, True])
-def test_release_finishes_partial_output_before_shell_can_overwrite_it(resize: bool) -> None:
+@pytest.mark.parametrize('terminator', ['\x07', '\x1b\\'])
+def test_palette_controls_split_across_writes_reach_the_terminal_whole(terminator: str) -> None:
+    control = f'\x1b]11;#0a1929{terminator}'
+    for split in range(1, len(control)):
+        screen = Screen()
+        screen.surface.paint(ROWS)
+        start = len(screen.terminal.getvalue())
+        screen.write('text ' + control[:split])
+        screen.write(control[split:] + 'more\n')
+        assert screen.terminal.getvalue()[start:].count(control) == 1, split
+        assert [Text.from_ansi(row).plain for row in screen.surface.transcript.frame(width=80, height=5).rows] == [
+            'text more',
+            '',
+        ]
+
+
+def test_controls_only_split_does_not_mark_a_partial_line() -> None:
     screen = Screen()
-    screen.surface.write('partial streamed response')
-    if resize:
-        screen.resize(width=100, height=40)
+    screen.surface.paint(ROWS)
+    screen.write('\x1b]104')
+    screen.write('\x07')
+    assert '\x1b]104\x07' in screen.terminal.getvalue()
+    assert not screen.surface._partial  # pyright: ignore[reportPrivateUsage]
+
+
+def test_overlong_unterminated_control_is_dropped_not_held_forever() -> None:
+    screen = Screen()
+    screen.surface.paint(ROWS)
+    screen.write('\x1b]11;' + 'x' * (MAX_HELD_OSC + 1))
+    screen.write('\x07after\n')
+    assert '\x1b]11;' not in screen.terminal.getvalue()
+    assert screen.surface._held == ''  # pyright: ignore[reportPrivateUsage]
+
+
+def test_split_hyperlinks_stay_in_the_transcript_and_are_not_forwarded() -> None:
+    screen = Screen()
+    screen.surface.paint(ROWS)
+    screen.write('\x1b]8;;https://example.com')
+    screen.write('\x1b\\link\x1b]8;;\x1b\\\n')
+    assert '\x1b]8;;https://example.com' not in screen.terminal.getvalue()
+    assert Text.from_ansi(screen.surface.transcript.frame(width=80, height=5).rows[0]).plain == 'link'
+
+
+def press(column: int, row: int) -> str:
+    return f'\x1b[<0;{column};{row}M'
+
+
+def drag(column: int, row: int) -> str:
+    return f'\x1b[<32;{column};{row}M'
+
+
+def release(column: int, row: int) -> str:
+    return f'\x1b[<0;{column};{row}m'
+
+
+def highlighted(surface: PromptSurface) -> list[str]:
+    """The text of each painted row's reverse-video cells."""
+    frame = surface._frame  # pyright: ignore[reportPrivateUsage]
+    assert frame is not None
+    rows: list[str] = []
+    for row in range(frame.height):
+        cells = range(row * frame.width, (row + 1) * frame.width)
+        text = ''.join(frame.chars[index] for index in cells if frame.attrs[index] & REVERSE)
+        if text and SCROLLED_HINT.strip() not in text:  # The hint is reverse video of its own.
+            rows.append(text)
+    return rows
+
+
+def test_dragging_highlights_cells_and_releasing_copies_them() -> None:
+    """The panel reports the mouse for the wheel, so most terminals no longer select text themselves."""
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('first line here\nsecond line\nthird\n')
+    assert screen.surface.transcript_key('mouse', press(7, 1)) is None
+    assert highlighted(screen.surface) == [], 'a press alone selects nothing'
+    assert screen.surface.transcript_key('mouse', drag(10, 1)) is None
+    assert highlighted(screen.surface) == ['line']
+    assert screen.surface.transcript_key('mouse', drag(3, 3)) is None
+    assert highlighted(screen.surface) == ['line here' + ' ' * 25, 'second line' + ' ' * 29, 'thi']
+    start = len(screen.terminal.getvalue())
+    assert screen.surface.transcript_key('mouse', release(3, 3)) == 'line here\nsecond line\nthi'
+    assert screen.terminal.getvalue()[start:] == make_clipboard_copy('line here\nsecond line\nthi')
+    assert highlighted(screen.surface), 'the copied cells stay highlighted'
+    assert screen.lines()[:3] == ['first line here', 'second line', 'third'], 'selection never changes text'
+
+
+def test_dragging_backwards_selects_the_same_cells_in_reading_order() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('alpha beta\ngamma\n')
+    for report in (press(3, 2), drag(1, 1), drag(7, 1), release(7, 1)):
+        copied = screen.surface.transcript_key('mouse', report)
+    assert copied == 'beta\ngam'
+
+
+def test_clicks_other_buttons_and_blank_drags_copy_nothing() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('text\n')
+    start = len(screen.terminal.getvalue())
+    # A click, a drag that ends on its own cell, a release without a press, a right drag, junk.
+    for report in (
+        press(2, 1),
+        release(2, 1),
+        release(2, 1),
+        '\x1b[<2;2;1M',
+        '\x1b[<34;4;1M',
+        '\x1b[<2;4;1m',
+        'not a mouse report',
+    ):
+        assert screen.surface.transcript_key('mouse', report) is None
+    assert highlighted(screen.surface) == []
+    for report in (press(20, 3), drag(30, 4)):
+        screen.surface.transcript_key('mouse', report)
+    assert screen.surface.transcript_key('mouse', release(30, 4)) is None, 'blank cells have nothing to copy'
+    assert '\x1b]52;' not in screen.terminal.getvalue()[start:]
+
+
+def click(screen: Screen, column: int, row: int) -> list[str]:
+    """The URLs one press and release at a cell opened."""
+    opened = len(screen.opened)
+    for report in (press(column, row), release(column, row)):
+        assert screen.surface.transcript_key('mouse', report) is None
+    return screen.opened[opened:]
+
+
+def test_clicking_a_url_opens_it() -> None:
+    """Reporting the mouse stops the terminal opening links on Cmd+click, and Cmd is never reported."""
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('See https://ai.pydantic.dev/docs, then\n(https://x.dev/Foo_(bar)).\n')
+    assert click(screen, 5, 1) == ['https://ai.pydantic.dev/docs'], 'the first character'
+    assert click(screen, 32, 1) == ['https://ai.pydantic.dev/docs'], 'the last character'
+    assert click(screen, 33, 1) == [], 'trailing punctuation is not part of the URL'
+    assert click(screen, 1, 1) == []
+    assert click(screen, 10, 2) == ['https://x.dev/Foo_(bar)']
+    assert click(screen, 2, 7) == [], 'the editor rows below the transcript'
+    for report in (press(5, 1), drag(12, 1), release(12, 1)):
+        screen.surface.transcript_key('mouse', report)
+    assert len(screen.opened) == 3, 'a drag over a URL selects it instead'
+
+
+def test_clicking_a_url_wrapped_across_rows_opens_all_of_it() -> None:
+    url = 'https://github.com/pydantic/pydantic-ai/pull/9936/files'
+    screen = Screen(width=20, height=12)
+    screen.surface.paint(ROWS)
+    screen.write(f'Go {url}\nnext\n')
+    assert screen.lines()[:4] == [f'Go {url[:17]}', url[17:37], url[37:], 'next']
+    assert click(screen, 10, 2) == [url]
+    assert click(screen, 2, 3) == [url]
+    assert click(screen, 2, 4) == []
+
+
+@pytest.mark.parametrize('after', ['next', 'API_KEY=secret'])
+def test_a_url_ending_at_the_edge_never_runs_into_the_next_line(after: str) -> None:
+    """Only genuine wraps join rows, so a click cannot open, or leak, the line after a URL."""
+    url = 'https://example.com/a'
+    screen = Screen(width=len(url), height=10)
+    screen.surface.paint(ROWS)
+    screen.write(f'{url}\n{after}\n')
+    assert screen.lines()[:2] == [url, after]
+    assert click(screen, 5, 1) == [url]
+    assert click(screen, 2, 2) == []
+
+
+def test_a_url_cut_off_by_the_viewport_is_not_opened() -> None:
+    """Its address is incomplete, and its visible part may even be another URL from its query."""
+    outer, inner = 'https://a.dev/?next=', 'https://b.dev/page'
+    screen = Screen(width=20, height=8)
+    screen.surface.paint(ROWS)
+    screen.write(f'{outer}{inner}\ndone\nmore\n')
+    assert screen.lines()[:4] == [inner, 'done', 'more', ''], 'the first row scrolled away above'
+    assert click(screen, 3, 1) == []
+    screen.surface.transcript_key('pageup')
+    assert screen.lines()[:2] == [outer, inner], 'once all of it shows'
+    assert click(screen, 3, 2) == [outer + inner]
+    url = 'https://github.com/pydantic/pydantic-ai/pull/9936/files'
+    screen = Screen(width=20, height=8)
+    screen.surface.paint(ROWS)
+    screen.write(''.join(f'line {index}\n' for index in range(4)) + f'{url}\n')
+    screen.surface.scroll(2)
+    assert screen.lines()[2:4] == [url[:20], SCROLLED_HINT.rstrip()], 'the hint covers the rest of the URL'
+    assert click(screen, 3, 3) == []
+
+
+def test_a_url_wrapped_inside_markdown_opens_whole() -> None:
+    url = 'https://github.com/pydantic/pydantic-ai/pull/9936/files'
+
+    def render(*, source: str, width: int) -> str:
+        return f'{source}\nafter\n'
+
+    screen = Screen(width=20, height=12)
+    screen.surface.paint(ROWS)
+    screen.surface.markdown(render=render, width=40).extend(url)
+    screen.surface.paint(ROWS)
+    assert screen.lines()[:4] == [url[:20], url[20:40], url[40:], 'after']
+    assert click(screen, 3, 2) == [url]
+    assert click(screen, 2, 4) == []
+
+
+def test_opening_a_url_does_not_wait_for_the_browser(monkeypatch: pytest.MonkeyPatch) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr('webbrowser.open', opened.append)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.prompt_surface.Thread', _Inline)
+    open_in_browser('https://ai.pydantic.dev')
+    assert opened == ['https://ai.pydantic.dev']
+
+
+class _Inline:
+    def __init__(self, *, target: Callable[[str], object], args: tuple[str], daemon: bool) -> None:
+        assert daemon, 'a browser that never returns must not keep CLAI alive'
+        self.target, self.args = target, args
+
+    def start(self) -> None:
+        self.target(*self.args)
+
+
+def test_scrolling_resizing_and_releasing_the_panel_clear_the_highlight() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    for index in range(20):
+        screen.write(f'line {index}\n')
+
+    def select() -> None:
+        for report in (press(1, 1), drag(4, 1), release(4, 1)):
+            screen.surface.transcript_key('mouse', report)
+        assert highlighted(screen.surface) == ['line']
+
+    select()
+    screen.surface.transcript_key('mouse', '\x1b[<64;1;1M')
+    assert screen.surface.view.anchor is not None, 'the wheel still scrolls'
+    assert highlighted(screen.surface) == [], 'the selected text moved away'
+    select()
+    screen.surface.transcript_key('pagedown')
+    assert screen.surface.view.anchor is None and highlighted(screen.surface) == []
+    select()
+    screen.surface.resize_notice()
+    screen.surface.paint(ROWS)
+    assert highlighted(screen.surface) == []
+    select()
+    screen.surface.clear()  # Ctrl+L.
+    assert screen.surface.selection.anchor is None
+    for index in range(20):
+        screen.write(f'line {index}\n')
+    select()
     screen.surface.release()
-    screen.terminal.write('shell prompt')
-    assert 'partial streamed response' in screen.terminal.lines()
-    assert 'shell prompt' in screen.terminal.lines()
+    assert highlighted(screen.surface) == [], 'a menu or command never shows a stale highlight'
+    screen.surface.release()
 
 
-@pytest.mark.parametrize('released', [False, True])
-def test_held_output_survives_resize_and_release_until_the_outer_hold_exits(released: bool) -> None:
-    output = io.StringIO()
-    now = 0.0
-    size = (80, 24)
-    surface = PromptSurface(output=output, size=lambda: size, clock=lambda: now)
-    surface.paint(ROWS)
-    surface.write('before\n')
-    with surface.held():
-        surface.write('one\n')
-        with surface.held():
-            surface.write('two\n')
-        assert 'one' not in output.getvalue()
-        size = (100, 40)
-        surface.write('three\n')
-        now = 0.3
-        surface.paint(ROWS)
-        if released:
-            surface.release()
-        assert 'one' not in output.getvalue()
-    text = output.getvalue()
-    assert text.index('before') < text.index('one\n') < text.index('two\n') < text.index('three\n')
+def test_output_that_moves_the_selected_text_drops_the_selection() -> None:
+    """Screen cells, not transcript rows: a release must never copy text the user did not drag over."""
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    for index in range(4):
+        screen.write(f'line {index}\n')
+    for report in (press(1, 1), drag(6, 1)):
+        screen.surface.transcript_key('mouse', report)
+    assert highlighted(screen.surface) == ['line 0']
+    screen.write('line 4\n')  # Below the selection: the selected cells still show the same text.
+    assert highlighted(screen.surface) == ['line 0']
+    screen.write('line 5\nline 6\n')  # Following the newest output scrolls `line 0` away.
+    assert screen.lines()[0] != 'line 0'
+    assert highlighted(screen.surface) == []
+    assert screen.surface.transcript_key('mouse', drag(6, 1)) is None, 'the drag ended with the selection'
+    assert screen.surface.transcript_key('mouse', release(6, 1)) is None
+    assert '\x1b]52;' not in screen.terminal.getvalue()
 
 
-def test_hold_ending_mid_resize_replays_once_the_viewport_settles() -> None:
-    output = io.StringIO()
-    now = 0.0
-    size = (80, 24)
-    surface = PromptSurface(output=output, size=lambda: size, clock=lambda: now)
-    surface.paint(ROWS)
-    with surface.held():
-        surface.write('held\n')
-        size = (100, 40)
-        surface.paint(ROWS)
-    assert 'held' not in output.getvalue()
-    now = 0.3
-    surface.paint(ROWS)
-    assert 'held\n' in output.getvalue()
+def test_a_drag_during_a_hold_highlights_on_the_next_frame() -> None:
+    """An inline question repaints the panel itself after each report."""
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('context\n')
+    screen.surface.release()
+    with screen.surface.held(leave_screen=False):
+        screen.surface.paint(('1. Patch',))
+        for report in (press(1, 1), drag(3, 1)):
+            screen.surface.transcript_key('mouse', report)
+        assert highlighted(screen.surface) == []
+        screen.surface.paint(('1. Patch',))
+        assert highlighted(screen.surface) == ['con']
+        assert screen.surface.transcript_key('mouse', release(3, 1)) == 'con'
+
+
+def test_a_release_before_any_frame_copies_nothing() -> None:
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (40, 10))
+    surface.selection = Selection(anchor=(0, 0), head=(0, 3), held=True)
+    assert surface.transcript_key('mouse', release(4, 1)) is None
+
+
+def test_cells_already_in_reverse_video_still_look_selected() -> None:
+    frame = ScreenBuffer(4, 1)
+    frame.attrs[1] = REVERSE  # The editor's painted cursor, for example.
+    Selection(anchor=(0, 0), head=(0, 2)).highlight(frame, rows=1, previous=None)
+    assert [attrs & REVERSE for attrs in frame.attrs] == [REVERSE, REVERSE, REVERSE, 0]
+
+
+def test_releasing_another_button_mid_drag_does_not_end_it() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('alpha beta\n')
+    for report in (press(1, 1), drag(3, 1), '\x1b[<2;3;1M'):
+        screen.surface.transcript_key('mouse', report)
+    assert screen.surface.transcript_key('mouse', '\x1b[<2;3;1m') is None, 'the right button let go'
+    assert screen.surface.transcript_key('mouse', drag(5, 1)) is None
+    assert screen.surface.transcript_key('mouse', release(5, 1)) == 'alpha'
+
+
+def test_malformed_mouse_reports_are_ignored() -> None:
+    assert mouse_report('\x1b[<' + '9' * 5000 + ';1;1M') is None, 'longer than `int` accepts'
+    assert mouse_report('\x1b[<0;1M') is None
+    assert mouse_report('\x1b[<0;10;5M') == MouseReport(button=0, cell=(4, 9), released=False)
+
+
+def test_selection_spans_clamp_to_the_frame() -> None:
+    selection = Selection(anchor=(-1, -5), head=(99, 99))
+    assert selection.span(width=4, rows=3) == range(0, 12)
+    assert selection.span(width=4, rows=2) == range(0, 8), 'rows below the transcript are not selectable'
+    assert Selection(anchor=(0, 0)).span(width=4, rows=3) == range(0)
+    assert Selection(anchor=(0, 0)).text(ScreenBuffer(4, 3), rows=3) == '', 'a click selects nothing'
+
+
+def test_a_drag_into_the_editor_copies_only_the_transcript() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('answer\n')
+    for report in (press(1, 1), drag(5, 9)):  # Row 9 is the editor's `BOTTOM` row.
+        screen.surface.transcript_key('mouse', report)
+    assert not any(row in highlighted(screen.surface) for row in ROWS)
+    assert screen.surface.transcript_key('mouse', release(5, 9)) == 'answer'
+
+
+def test_the_wheel_scrolls_both_ways_with_or_without_modifiers() -> None:
+    screen = Screen(height=10)
+    screen.surface.paint(ROWS)
+    for index in range(20):
+        screen.write(f'line {index}\n')
+    newest = screen.lines()[0]
+    screen.surface.transcript_key('mouse', '\x1b[<68;1;1M')  # Shift+wheel up.
+    assert screen.lines()[0] == f'line {int(newest.split()[1]) - WHEEL_ROWS}'
+    screen.surface.transcript_key('mouse', '\x1b[<65;1;1M')
+    assert screen.surface.view.anchor is None

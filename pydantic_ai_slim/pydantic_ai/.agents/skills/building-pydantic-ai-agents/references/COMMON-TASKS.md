@@ -5,7 +5,7 @@ This file exists as a compatibility index for older links into `COMMON-TASKS.md`
 Prefer the narrower task-family guides below so the agent loads only the material it needs:
 
 - [AGENTS-CORE.md](./AGENTS-CORE.md) — agent creation, output, deps, specs, models, run methods
-- [CAPABILITIES-AND-HOOKS.md](./CAPABILITIES-AND-HOOKS.md) — `Thinking`, `WebSearch`, `Hooks`, custom capabilities
+- [CAPABILITIES-AND-HOOKS.md](./CAPABILITIES-AND-HOOKS.md) — `Thinking`, prompt caching, `WebSearch`, `Hooks`, custom capabilities
 - [ON-DEMAND-CAPABILITIES.md](./ON-DEMAND-CAPABILITIES.md) — progressive disclosure, deferred capabilities, capabilities on demand, `load_capability`
 - [TOOLS-CORE.md](./TOOLS-CORE.md) — `@agent.tool`, `Tool`, toolsets, MCP, common search tools
 - [NATIVE-TOOLS.md](./NATIVE-TOOLS.md) — provider-native tools like `WebSearchTool` and `CodeExecutionTool`
@@ -33,6 +33,14 @@ Read [Define Agents Declaratively with Specs](./AGENTS-CORE.md#define-agents-dec
 ## Enable Thinking Across Providers
 
 Read [Enable Thinking Across Providers](./CAPABILITIES-AND-HOOKS.md#enable-thinking-across-providers).
+
+## Configure Prompt Caching Across Providers
+
+Read [Configure Prompt Caching Across Providers](./CAPABILITIES-AND-HOOKS.md#configure-prompt-caching-across-providers).
+
+## Debug Low Cache Hit Rate
+
+Read the debugging checklist in [Configure Prompt Caching Across Providers](./CAPABILITIES-AND-HOOKS.md#configure-prompt-caching-across-providers).
 
 ## Use MCP Servers
 

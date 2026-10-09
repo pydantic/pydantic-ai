@@ -6,12 +6,11 @@ from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from functools import cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
+from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, assert_never
 
 import anyio
 from opentelemetry.trace import Span, get_current_span
 from opentelemetry.util.types import AttributeValue
-from typing_extensions import assert_never
 
 from pydantic_ai._instrumentation import (
     model_attributes,
@@ -138,11 +137,7 @@ class FallbackModel(Model):
 
     def _parse_fallback_on(self, fallback_on: FallbackOn) -> None:
         """Parse the fallback_on parameter into exception and response handlers."""
-        if isinstance(fallback_on, tuple):
-            if fallback_on:
-                # Tuple of exception types (typing guarantees tuple contents are exception types)
-                self._exception_handlers.append(_exception_types_to_handler(fallback_on))  # type: ignore[arg-type]
-        elif _is_exception_type(fallback_on):
+        if _is_exception_type(fallback_on):
             # Single exception type
             self._exception_handlers.append(_exception_types_to_handler((fallback_on,)))
         elif callable(fallback_on):
@@ -456,6 +451,14 @@ class FallbackModel(Model):
     @cached_property
     def profile(self) -> ModelProfile:
         raise NotImplementedError('FallbackModel does not have its own model profile.')
+
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """A fallback model can't know which model will serve the request, so no retention is claimed."""
+        return None
+
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
+        # Which model serves the request isn't known here, so nothing is claimed about its caching either.
+        return False
 
     @property
     def context_window(self) -> int | None:

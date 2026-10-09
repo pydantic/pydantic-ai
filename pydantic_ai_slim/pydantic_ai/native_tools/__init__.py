@@ -65,6 +65,7 @@ AdvisorModelName = (
         'claude-opus-4-6',
         'claude-sonnet-5-5',
         'claude-sonnet-4-6',
+        'claude-haiku-5-5',
     ]
     | str
 )
@@ -74,6 +75,7 @@ These are the models Anthropic currently accepts as the *advisor* — the strong
 executor consults mid-generation. The executor/advisor pairing is validated by the API, not here.
 The literals are Anthropic model IDs; on OpenRouter, pass a catalog slug string instead
 (e.g. `anthropic/claude-opus-4.8` or the `~anthropic/claude-opus-latest` alias).
+See [Anthropic's model compatibility list](https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool#model-compatibility).
 """
 
 

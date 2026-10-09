@@ -10,7 +10,7 @@ from __future__ import annotations as _annotations
 
 from contextlib import suppress
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from time import perf_counter_ns
 from typing import TYPE_CHECKING
 
@@ -40,7 +40,7 @@ ATTEMPT_ATTRIBUTE = 'pydantic_ai.model_request.attempt'
 class AttemptStart:
     """When an attempt started: a wall-clock timestamp for the record, and a monotonic one to time it by."""
 
-    timestamp: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     _monotonic_ns: int = field(default_factory=perf_counter_ns)
 
     def elapsed(self) -> timedelta:
