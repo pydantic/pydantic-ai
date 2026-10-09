@@ -185,6 +185,13 @@ class TestPixeltableToolsetQuery:
                 else:
                     tools.query_table(path, columns=columns)
 
+    def test_default_query_of_only_unselectable_columns_is_a_retry(self, root: str) -> None:
+        # Default projection drops array columns, so a table of only those has nothing to select.
+        path = f'{root}.vectors'
+        create_table(path, {'vec': pxt.Array[(8,), pxt.Float]})
+        with pytest.raises(ModelRetry, match='No selectable columns'):
+            _tools([path]).query_table(path)
+
     def test_named_media_column_is_rejected(self, catalog: str, tmp_path: Path) -> None:
         docs = create_table(f'{catalog}.docs', {'doc': pxt.Document, 'title': pxt.String})
         note = tmp_path / 'note.md'
