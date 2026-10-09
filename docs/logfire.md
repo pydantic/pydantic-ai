@@ -256,11 +256,11 @@ Instrumented agent runs report prompt-cache health without additional configurat
 
 These attributes are on model-request spans only. The agent-run span carries no cache ratio, since one aggregated across requests to different models isn't interpretable (the OpenTelemetry GenAI conventions dropped cache attributes from `invoke_agent` spans for the same reason); compute a run-level figure from its `gen_ai.aggregated_usage.*` token counts if you need one.
 
-Only an `unexpected` collapse — one that happens while the provider's documented retention window should still have been active — emits a `pydantic_ai.cache.collapse` span event for alerting and investigation, carrying `established_tokens`, `cache_read_tokens` and `missed_tokens` along with the `provider_name` and `model_name` that served the request. Every other classification is recorded on the span but stays silent, so the event means "the cacheable prefix moved when it shouldn't have" rather than "something about caching happened":
+Only an `unexpected` collapse — one that happens while the provider's documented retention window should still have been active — emits a `pydantic_ai.cache.collapse` span event for alerting and investigation, carrying `established_tokens`, `cache_read_tokens` and `missed_tokens` along with the `provider_name` and `model_name` that served the request. Every other classification is recorded on the span but stays silent, so the event means "cache reuse fell when the cache should still have been warm" rather than "something about caching happened". The detector sees usage and timing, not request content, so it reports that a miss happened, not what caused it; the [Caching](capabilities/caching.md#monitoring-cache-efficiency) page has a debugging order:
 
 | `collapse_reason` | Meaning | Emits the event |
 |-------------------|---------|-----------------|
-| `unexpected` | The retention window should still have been active, so the prefix moved. | Yes |
+| `unexpected` | The retention window should still have been active, so the cached prefix most likely changed. Check for prefix changes and the provider's cache diagnostics. | Yes |
 | `ttl_expired` | The gap since the last request exceeded the provider's retention window. | No |
 | `compacted` | Provider-native compaction replaced the history before a [`CompactionPart`][pydantic_ai.messages.CompactionPart] with its summary, which shrinks the prefix by design. | No |
 | `unknown` | The provider publishes no retention window, so the collapse can't be attributed. | No |

@@ -107,6 +107,11 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:anthropic.claude-3-opus-20240229-v1:0',
         'gateway/bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
         'gateway/bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
+        # Gateway returns HTTP 400 for the bare Haiku 5.5 id and the au./jp./us. profiles.
+        'gateway/bedrock:anthropic.claude-haiku-5-5',
+        'gateway/bedrock:au.anthropic.claude-haiku-5-5',
+        'gateway/bedrock:jp.anthropic.claude-haiku-5-5',
+        'gateway/bedrock:us.anthropic.claude-haiku-5-5',
         'gateway/bedrock:anthropic.claude-instant-v1',
         'gateway/bedrock:anthropic.claude-opus-4-20250514-v1:0',
         'gateway/bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
