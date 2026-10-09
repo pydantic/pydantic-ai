@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import warnings
+from collections.abc import Generator
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -25,6 +26,7 @@ from unittest.mock import AsyncMock
 
 import anyio
 import httpx
+import httpx2
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, ValidationError
@@ -69,6 +71,8 @@ with try_import() as imports_successful:
         from fastmcp.utilities.tasks import TaskConfig
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
     from mcp import types as mcp_types
+    from starlette.responses import Response
+    from starlette.types import ASGIApp, Receive, Scope, Send
 
     from pydantic_ai import _mcp, mcp as mcp_module
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
@@ -193,7 +197,9 @@ toolset = MCPToolset(
     auth=httpx2.BasicAuth('user', 'pass'),
     http_client=client,
 )
-assert toolset.client.transport.httpx_client_factory() is client
+borrowed_client = toolset.client.transport.httpx_client_factory()
+assert borrowed_client is not client
+assert borrowed_client.is_closed is False
 
 assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), (
     'the MCP toolset imported httpx'
@@ -289,25 +295,83 @@ class TestMCPToolsetConstruction:
         assert isinstance(toolset.client.transport, StreamableHttpTransport)
         assert toolset.client.transport.headers == {'X-Key': 'foo'}
 
-    def test_http_client_kwarg_uses_factory(self):
+    async def test_http_client_kwarg_uses_factory(self):
         client = httpx.AsyncClient()
         toolset = MCPToolset('https://example.com/mcp', http_client=client)
         assert isinstance(toolset.client.transport, StreamableHttpTransport)
         assert toolset.client.transport.httpx_client_factory is not None
-        assert toolset.client.transport.httpx_client_factory() is client
+        borrowed_client = toolset.client.transport.httpx_client_factory()
+        assert borrowed_client is not client
         # FastMCP's StreamableHttpTransport calls the factory with `follow_redirects`, which the
         # mcp SDK's `McpHttpClientFactory` protocol doesn't declare; the factory must accept it.
         factory = _make_httpx_client_factory(client)
-        assert factory(follow_redirects=True) is client
+        assert factory(follow_redirects=True) is not client
 
-    def test_sse_url_with_http_client_uses_factory(self):
+        borrowed_clients = [factory(), factory()]
+        assert borrowed_clients[0] is not borrowed_clients[1]
+        for borrowed_client in borrowed_clients:
+            async with borrowed_client:
+                assert borrowed_client.is_closed is False
+            await borrowed_client.aclose()
+            assert client.is_closed is False
+
+        await client.aclose()
+
+    async def test_sse_url_with_http_client_uses_factory(self):
         client = httpx.AsyncClient()
         toolset = MCPToolset('https://example.com/sse', http_client=client)
         assert isinstance(toolset.client.transport, SSETransport)
         assert toolset.client.transport.httpx_client_factory is not None
-        assert toolset.client.transport.httpx_client_factory() is client
+        assert toolset.client.transport.httpx_client_factory() is not client
         factory = _make_httpx_client_factory(client)
-        assert factory(follow_redirects=True) is client
+        assert factory(follow_redirects=True) is not client
+        await client.aclose()
+
+    @pytest.mark.parametrize(
+        'method_name',
+        ['request', 'send', 'get', 'post', 'put', 'patch', 'delete', 'head', 'options'],
+    )
+    async def test_http_client_factory_applies_auth(self, method_name: str):
+        """Test the private factory because MCP transports only call `stream`, `post`, and `delete`."""
+        authorization_headers: list[str | None] = []
+        httpx_module = cast(Any, httpx2 if MCP_SDK_V2 else httpx)
+
+        async def handle_request(request: Any) -> Any:
+            authorization_headers.append(request.headers.get('Authorization'))
+            return httpx_module.Response(200)
+
+        client = httpx_module.AsyncClient(transport=httpx_module.MockTransport(handle_request))
+        borrowed_client = _make_httpx_client_factory(client)(auth=httpx_module.BasicAuth('user', 'pass'))
+        url = 'https://example.com/mcp'
+
+        if method_name == 'request':
+            await borrowed_client.request('POST', url)
+        elif method_name == 'send':
+            await borrowed_client.send(client.build_request('POST', url))
+        else:
+            await getattr(borrowed_client, method_name)(url)
+
+        assert authorization_headers == ['Basic dXNlcjpwYXNz']
+        await client.aclose()
+
+    async def test_http_client_factory_preserves_per_request_auth(self):
+        """Test the private factory because MCP transports never pass explicit per-call `auth`."""
+        authorization_headers: list[str | None] = []
+        httpx_module = cast(Any, httpx2 if MCP_SDK_V2 else httpx)
+
+        async def handle_request(request: Any) -> Any:
+            authorization_headers.append(request.headers.get('Authorization'))
+            return httpx_module.Response(200)
+
+        client = httpx_module.AsyncClient(transport=httpx_module.MockTransport(handle_request))
+        borrowed_client = _make_httpx_client_factory(client)(auth=httpx_module.BasicAuth('user', 'pass'))
+
+        await borrowed_client.post('https://example.com/mcp', auth=httpx_module.BasicAuth('override', 'auth'))
+        without_factory_auth = _make_httpx_client_factory(client)()
+        await without_factory_auth.delete('https://example.com/mcp')
+
+        assert authorization_headers == ['Basic b3ZlcnJpZGU6YXV0aA==', None]
+        await client.aclose()
 
     def test_http_kwargs_with_non_url_input_raises(self):
         """HTTP-only kwargs (headers/auth/verify/http_client) must error out when the connection
@@ -597,6 +661,71 @@ class TestMCPToolsetIntegration:
             assert toolset.capabilities.tools is True
             assert toolset.instructions == 'You are an MCP test server.'
         assert toolset.is_running is False
+
+    async def test_http_client_auth_and_lifecycle_across_agent_runs(self):
+        class BearerAuth(httpx.Auth):
+            def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
+                request.headers['Authorization'] = 'Bearer secret'
+                yield request
+
+        class BearerAuth2(httpx2.Auth):
+            def auth_flow(self, request: httpx2.Request) -> Generator[httpx2.Request, httpx2.Response, None]:
+                request.headers['Authorization'] = 'Bearer secret'
+                yield request
+
+        class AuthorizationGuard:
+            def __init__(self, app: ASGIApp) -> None:
+                self.app = app
+                self.authorization_headers: list[str | None] = []
+
+            async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+                # Only HTTP requests reach the guard: the test enters the app's lifespan directly.
+                authorization = next(
+                    (value.decode() for name, value in scope['headers'] if name.lower() == b'authorization'), None
+                )
+                self.authorization_headers.append(authorization)
+                if authorization != 'Bearer secret':
+                    await Response(status_code=401)(scope, receive, send)
+                    return
+
+                await self.app(scope, receive, send)
+
+        server: FastMCP[None] = FastMCP('auth_server')
+
+        @server.tool
+        async def ping() -> str:
+            return 'pong'
+
+        app = server.http_app(stateless_http=True, json_response=True)
+        guarded_app = AuthorizationGuard(app)
+        client: httpx.AsyncClient | httpx2.AsyncClient
+        auth: httpx.Auth | httpx2.Auth
+        if MCP_SDK_V2:
+            client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=guarded_app))
+            auth = BearerAuth2()
+        else:
+            client = httpx.AsyncClient(transport=httpx.ASGITransport(app=guarded_app))
+            auth = BearerAuth()
+
+        try:
+            async with app.router.lifespan_context(app):
+                # The guard rejects requests made through the bare client, without `auth`.
+                assert (await client.post('http://testserver/mcp')).status_code == 401
+                guarded_app.authorization_headers.clear()
+
+                toolset = MCPToolset('http://testserver/mcp', http_client=client, auth=auth)
+                agent = Agent(TestModel(call_tools=['ping']), toolsets=[toolset])
+
+                first_result = await agent.run('ping')
+                second_result = await agent.run('ping')
+
+            assert first_result.output == '{"ping":"pong"}'
+            assert second_result.output == '{"ping":"pong"}'
+            assert guarded_app.authorization_headers
+            assert set(guarded_app.authorization_headers) == {'Bearer secret'}
+            assert client.is_closed is False
+        finally:
+            await client.aclose()
 
     async def test_aexit_called_before_aenter_raises(self, fastmcp_server: FastMCP[None]):
         """Calling `__aexit__` before any `__aenter__` should raise — `_running_count` is 0."""
