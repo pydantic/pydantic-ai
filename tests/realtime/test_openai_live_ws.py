@@ -362,6 +362,9 @@ async def test_an_image_is_described_by_the_backend(
             async for event in session:  # pragma: no branch
                 if isinstance(event, RealtimeTurnCompleteEvent):
                     break
+        # The reply the image asked for is over: nothing is owed any more.
+        core = session._core  # pyright: ignore[reportPrivateUsage]
+        assert core is not None and not core.wait_tokens()
 
     spoken = ' '.join(
         part.transcript or ''

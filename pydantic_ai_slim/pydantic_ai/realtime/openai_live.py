@@ -95,6 +95,8 @@ from ..providers import Provider, infer_provider
 from ..providers.gateway import normalize_gateway_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+from ._inferred_lifecycle import InferredLifecycle
+from ._lifecycle import LIFECYCLE_EVENT_TYPES, TaggedEvent
 from ._openai_protocol import (
     RealtimeHandshakeError,
     _without_media as without_media,  # pyright: ignore[reportPrivateUsage]
@@ -602,6 +604,7 @@ class OpenAILiveConnection(RealtimeConnection):
     """
 
     transport_errors: ClassVar[tuple[type[Exception], ...]] = (websockets.WebSocketException, OSError)
+    _lifecycle_version: ClassVar[int] = 2
 
     def __init__(
         self,
@@ -685,6 +688,13 @@ class OpenAILiveConnection(RealtimeConnection):
         # The backend's reasoning since its last other output item, per delegation. A search replays into
         # the Responses API only with the reasoning item that led to it, so that is recorded with it.
         self._pending_reasoning: dict[str | None, list[ResponseReasoningItem]] = {}
+        # Which response, user turn, and input each frame is about (see `_tagged_frames()`). Live always
+        # transcribes, and closes the user's turn as the model's reply starts.
+        self._lifecycle = InferredLifecycle(transcribes=True, audio_starts_response=False)
+        # Every `send()` call is numbered (see `InputRejected.input_index`).
+        self._inputs_sent = 0
+        # Whether the frame just mapped had the model take the turn (see `_open_response()`).
+        self._took_turn = False
 
     @property
     def model_name(self) -> str | None:
@@ -720,28 +730,41 @@ class OpenAILiveConnection(RealtimeConnection):
     # --- sending ----------------------------------------------------------------------------------
 
     async def send(self, content: RealtimeInput) -> None:
+        input_index = self._inputs_sent
+        self._inputs_sent += 1
+        self._lifecycle.input_sent(input_index, content)
+        try:
+            delivered = await self._send_input(content)
+        except BaseException:
+            self._lifecycle.input_failed(input_index)
+            raise
+        if not delivered:
+            # A tool result whose backend gave up on the call: nothing will reply to it.
+            self._lifecycle.input_unanswerable(input_index)
+
+    async def _send_input(self, content: RealtimeInput) -> bool:
+        """Send one input; `False` if it goes nowhere."""
         if isinstance(content, str):
             # A soliciting text turn. Live has no user-message event, so this goes in as speakable
             # context: the model relays or answers it rather than hearing it as the user's own words.
             await _check_context_length(content)
             await self._send_event({'type': 'session.commentary.append', 'delegation_id': None, 'content': content})
-            return
+            return True
         if isinstance(content, TextContext):
             # Context that `thinking` carries without prompting speech itself. The model may still
             # choose to mention it.
             await _check_context_length(content.text)
             await self._send_event({'type': 'session.thinking.append', 'delegation_id': None, 'content': content.text})
-            return
+            return True
         if isinstance(content, ToolResult):
-            await self._send_tool_result(content)
-            return
+            return await self._send_tool_result(content)
         if isinstance(content, CreateResponse):
             # Reaches the connection only right after an image: the profile's
             # `image_input_requires_response` is what lets the session send one, and `create_response()`
             # itself still needs manual turn control. Running the backend on the queued image is the
             # response: Live opens a delegation for it and speaks the result.
             await self._send_event({'type': 'response.create'})
-            return
+            return True
         if isinstance(content, (CommitAudio, ClearAudio, CancelResponse, TruncateOutput)):
             raise UserError(
                 'OpenAI GPT-Live drives turn-taking itself: manual turn control, cancellation, and '
@@ -759,7 +782,7 @@ class OpenAILiveConnection(RealtimeConnection):
                     },
                 }
             )
-            return
+            return True
         async with self._audio_send_lock:
             self._input_audio_sends += 1
             booked = self._input_audio_end, self._audio_end
@@ -772,6 +795,7 @@ class OpenAILiveConnection(RealtimeConnection):
                 # Audio that never went out doesn't hold the idle frames back.
                 self._input_audio_end, self._audio_end = booked
                 raise
+        return True
 
     def _start_idle_audio(self) -> None:
         """Stream silence whenever the application sends no audio, until the connection closes.
@@ -819,8 +843,8 @@ class OpenAILiveConnection(RealtimeConnection):
     def _idle_frame_due(self) -> float:
         return max(self._next_idle_frame, self._input_audio_end + _IDLE_AUDIO_GAP)
 
-    async def _send_tool_result(self, result: ToolResult) -> None:
-        """Return a tool result to the delegated Responses backend and let it continue."""
+    async def _send_tool_result(self, result: ToolResult) -> bool:
+        """Return a tool result to the delegated Responses backend and let it continue; `False` if it goes nowhere."""
         # Mapped first: downloading media can wait, and the backend can give up on the call meanwhile,
         # which only the checks below, made after it, can see.
         follow_up = await _tool_result_follow_up(result, provider_name=self._provider_name)
@@ -830,7 +854,7 @@ class OpenAILiveConnection(RealtimeConnection):
             # The backend that asked for this call gave up before it was answered. Sending the output
             # would attach it to nothing, and `response.create` would start a turn nobody asked for.
             self._abandoned_calls.discard(result.tool_call_id)
-            return
+            return False
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
         if delegation is not None:
             delegation.pending_tool_calls.discard(result.tool_call_id)
@@ -845,15 +869,15 @@ class OpenAILiveConnection(RealtimeConnection):
         if delegation is None:
             # A call we can't correlate to a delegation has no response we can wait on, so continue now.
             await self._send_event({'type': 'response.create'})
-            return
-        if delegation.pending_tool_calls:
+        elif delegation.pending_tool_calls:
             # With `parallel_tool_calls` the backend resumes from all of its calls' outputs together.
-            return
-        if delegation.response_in_flight:
+            pass
+        elif delegation.response_in_flight:
             # The response that asked for these calls may still ask for more: continue at its terminal.
             delegation.continuation_due = True
-            return
-        await self._continue(delegation)
+        else:
+            await self._continue(delegation)
+        return True
 
     async def _send_due_continuations(self) -> None:
         """Continue each delegation whose asking response just ended with every result already in."""
@@ -922,7 +946,18 @@ class OpenAILiveConnection(RealtimeConnection):
 
     # --- receiving --------------------------------------------------------------------------------
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:  # noqa: C901
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async for frame in self._tagged_frames():
+            for event, _ in frame:
+                if not isinstance(event, LIFECYCLE_EVENT_TYPES):
+                    yield event
+
+    def _frame(self, codec: list[RealtimeCodecEvent]) -> list[TaggedEvent]:
+        """One frame's codec events, with the lifecycle events around them."""
+        took_turn, self._took_turn = self._took_turn, False
+        return self._lifecycle.message(codec, takes_turn=took_turn)
+
+    async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:  # noqa: C901
         # One read is always in flight: the next one starts before this frame is handled, so nothing
         # arrives while the consumer is busy and no frame is dropped between iterations.
         if self._idle_audio:
@@ -958,39 +993,47 @@ class OpenAILiveConnection(RealtimeConnection):
                         # A graceful close ends whatever was in flight. Live never says a turn is over,
                         # so without this the last reply would be settled as interrupted even though the
                         # model had finished speaking and the session closed normally.
-                        for event in self._settle_open_turns():
-                            yield event
+                        settled = self._frame(self._settle_open_turns())
+                        yield [*settled, *((event, False) for event in self._lifecycle.connection_lost())]
                         return
                     dropped = e
                 except self.transport_errors as e:
                     dropped = e
                 else:
-                    for event in self._map_frame(raw):
-                        self._hand_over(event)
-                        yield event
+                    frame = self._frame(self._map_frame(raw))
+                    for event, _ in frame:
+                        if isinstance(event, SessionUsage):
+                            self._hand_over(event)
+                    yield frame
                     try:
                         await self._send_due_continuations()
                     except self.transport_errors as e:
                         dropped = e
                 if dropped is not None:
+                    # Nothing under way on the dropped connection will finish, whether or not it is re-dialed.
+                    lost: list[TaggedEvent] = [(event, False) for event in self._lifecycle.connection_lost()]
                     if self._reconnect is None or self._dial is None:
+                        yield lost
                         raise dropped
                     # The read started above is on the dead socket.
                     self._cancel_read()
-                    if not await self._try_reconnect():
+                    reconnected = await self._try_reconnect()
+                    lost += [(event, False) for event in self._lifecycle.take_pending()]
+                    if not reconnected:
                         self._gave_up = True
-                        yield RealtimeSessionErrorEvent(
+                        error = RealtimeSessionErrorEvent(
                             message=f'OpenAI GPT-Live connection dropped; reconnect failed: {dropped}',
                             recoverable=False,
                         )
+                        yield [*lost, (error, False)]
                         return
-                    yield RealtimeSessionReconnectEvent(state_restored=self._restored)
+                    yield [*lost, (RealtimeSessionReconnectEvent(state_restored=self._restored), False)]
                     pending = self._start_read()
                     continue
             # Checked after every frame, not just when the socket goes quiet: the idle audio track
             # keeps frames arriving, so a wait that returns is no evidence that anyone spoke.
-            for event in self._expire_quiet_turn():
-                yield event
+            if expired := self._expire_quiet_turn():
+                yield self._frame(expired)
 
     def _raise_if_idle_audio_failed(self) -> None:
         """Re-raise what stopped the idle-audio pump, rather than let the session go quietly deaf to text.
@@ -1125,6 +1168,9 @@ class OpenAILiveConnection(RealtimeConnection):
         self._heard_voice()
         events = self._close_input_turn()
         self._response_open = True
+        # Its reply starts here, even with nothing of it to report: work it delegated, or speech a WebRTC
+        # sideband doesn't forward.
+        self._took_turn = True
         return events
 
     def _map_frame(self, raw: str | bytes) -> list[RealtimeCodecEvent]:

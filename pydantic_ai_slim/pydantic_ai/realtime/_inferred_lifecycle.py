@@ -1,27 +1,29 @@
-"""Gemini Live's lifecycle events: which response, user turn, and input each message is about.
+"""Lifecycle events for a protocol that identifies no responses, turns, or inputs: which each message is about.
 
-`GoogleRealtimeConnection` feeds this tracker the inputs it sends and the codec events each server message
-makes, and yields the [lifecycle events](./_lifecycle.py) it produces alongside them. Unlike the OpenAI
-protocol, Gemini Live identifies almost nothing, so nearly everything here is worked out from the order of
-what the connection sends and reads:
+Gemini Live and OpenAI GPT-Live give their responses no ids, have no response-start frame and no item
+acknowledgements, so their connections feed this tracker the inputs they send and the codec events each
+server message makes, and yield the [lifecycle events](./_lifecycle.py) it works out from their order
+alongside them:
 
-- A response has no id and no start frame: it starts with its first output (audio, a transcript, a native
-  tool part, a tool call) or the first report of its usage, and ends at `turn_complete`, or at the empty usage
-  report that closes a tool-call frame. Its id is made up (`ResponseStarted.provider_id=False`).
-- A response answers every input that asked for one and hadn't been answered when it started (a typed turn,
-  a tool result): Gemini replies to each on its own, in order (`ResponseStarted.basis='inferred'`).
+- A response starts with its first output (audio, a transcript, a native tool part, a tool call), or where the
+  connection says the model took the turn without one (GPT-Live delegating work), and ends at its terminal
+  (`ResponseDone`), or at the usage report that closes a response's tool calls. Its id is made up
+  (`ResponseStarted.provider_id=False`).
+- A response answers every input that asked for one and hadn't been answered when it started (a typed turn, a
+  tool result): the model replies to each on its own, in order (`ResponseStarted.basis='inferred'`).
 - A spoken turn has no id and no speech frames either: it starts with its first input transcript, joins the
-  conversation as the reply to it starts, and has its whole transcript once that reply ends (Gemini rarely
-  marks a transcript finished). Without input transcription, audio streamed since the last reply is a turn
-  of its own, with no transcript, when the model next replies to speech.
+  conversation as the reply to it starts, and has its whole transcript once that reply ends, if the transcript
+  isn't marked finished before. Without input transcription, audio streamed since the last reply is a turn of
+  its own, with no transcript, when the model next replies to speech.
 - An input joins the conversation when it is sent, unless a reply is under way or owed: then it reached the
   provider while the model was working on that reply, which it follows.
-- A dropped connection loses the response under way and every reply still owed: a re-dial never resumes a
-  generation, even when it resumes the session.
+- A dropped connection loses the response under way and every reply still owed: neither protocol resumes a
+  generation on a new connection.
 """
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -41,6 +43,7 @@ from ._lifecycle import (
 )
 from .codec import (
     AudioDelta,
+    CreateResponse,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -62,11 +65,26 @@ class _Turn:
     """Its transcript is whole: marked finished, or no more will come."""
 
 
-class GeminiLifecycle:
-    """Turns a Gemini Live connection's sends and messages into lifecycle events."""
+class InferredLifecycle:
+    """Turns a connection's sends and messages into lifecycle events, for a protocol that identifies nothing."""
 
-    def __init__(self, *, transcribes: bool) -> None:
+    def __init__(
+        self, *, transcribes: bool, transcripts_lag_replies: bool = False, audio_starts_response: bool = True
+    ) -> None:
+        """Track a connection's lifecycle.
+
+        Args:
+            transcribes: Whether the user's speech is transcribed: if not, audio alone makes a spoken turn.
+            transcripts_lag_replies: Whether the provider can transcribe the user's words after the model started
+                answering them (Gemini does): a transcript that starts while a reply nobody asked for is under way
+                is then the speech that reply answers, rather than speech over it.
+            audio_starts_response: Whether output audio is the model speaking. GPT-Live's output is a continuous
+                track, silent between replies: its connection says where the model takes the turn instead
+                (`message(takes_turn=True)`), and audio outside a reply is no response.
+        """
+        self._audio_starts_response = audio_starts_response
         self._transcribes = transcribes
+        self._transcripts_lag_replies = transcripts_lag_replies
         self._pending: list[LifecycleEvent] = []
         """Events that come outside any message (an input sent), yielded ahead of the next one."""
         self._responses = 0
@@ -106,7 +124,7 @@ class GeminiLifecycle:
         else:
             # Nothing is going on: it joins the conversation as it arrives.
             self._pending.append(InputAdded(input_id=input_id))
-        if isinstance(content, (str, ToolResult)):
+        if isinstance(content, (str, ToolResult, CreateResponse)):
             self._unanswered.append(input_id)
 
     def input_failed(self, input_id: InputId) -> None:
@@ -114,6 +132,12 @@ class GeminiLifecycle:
         self._unanswered = [unanswered for unanswered in self._unanswered if unanswered != input_id]
         self._held = [held for held in self._held if held != input_id]
         self._pending = [event for event in self._pending if event != InputAdded(input_id=input_id)]
+
+    def input_unanswerable(self, input_id: InputId) -> None:
+        """An input went (or was meant to go) out, but the provider will never reply to it."""
+        if input_id in self._unanswered:
+            self._unanswered.remove(input_id)
+            self._pending.append(InputLost(input_ids=(input_id,)))
 
     def take_pending(self) -> list[LifecycleEvent]:
         pending, self._pending = self._pending, []
@@ -125,8 +149,13 @@ class GeminiLifecycle:
 
     # --- what the server says ---------------------------------------------------------------------
 
-    def message(self, codec: list[RealtimeCodecEvent]) -> list[TaggedEvent]:
-        """The lifecycle events around the codec events one server message makes, in order."""
+    def message(self, codec: Sequence[RealtimeCodecEvent], *, takes_turn: bool = False) -> list[TaggedEvent]:
+        """The lifecycle events around the codec events one server message makes, in order.
+
+        `takes_turn` says the message has the model take the turn (GPT-Live's connection says where, as its audio
+        track runs on between replies): a response starts with its audio, or after its events if it has none,
+        if none is under way.
+        """
         tagged: list[TaggedEvent] = [(event, False) for event in self.take_pending()]
         if any(isinstance(event, RealtimeResponseInterruptedEvent) for event in codec):
             # The user cut in, and the message reports what they said ahead of the cut: that is new speech, not
@@ -136,17 +165,25 @@ class GeminiLifecycle:
             self._close_turn(closed)
             tagged.extend((event, False) for event in closed)
         for event in codec:
-            before, after = self._event(event)
+            before, after = self._event(event, takes_turn=takes_turn)
             tagged.extend((lifecycle, False) for lifecycle in before)
             tagged.append((event, False))
             tagged.extend((lifecycle, False) for lifecycle in after)
+        if takes_turn:
+            started: list[LifecycleEvent] = []
+            self._ensure_response(started)
+            tagged.extend((lifecycle, False) for lifecycle in started)
         return tagged
 
-    def _event(self, event: RealtimeCodecEvent) -> tuple[list[LifecycleEvent], list[LifecycleEvent]]:
+    def _event(
+        self, event: RealtimeCodecEvent, *, takes_turn: bool = False
+    ) -> tuple[list[LifecycleEvent], list[LifecycleEvent]]:
         before: list[LifecycleEvent] = []
         after: list[LifecycleEvent] = []
-        output = isinstance(event, (AudioDelta, PartStartEvent, ToolCall)) or (
-            isinstance(event, OutputTranscript) and bool(event.text)
+        output = (
+            isinstance(event, (PartStartEvent, ToolCall))
+            or (isinstance(event, AudioDelta) and (self._audio_starts_response or takes_turn))
+            or (isinstance(event, OutputTranscript) and bool(event.text))
         )
         if self._deferred is not None:
             if isinstance(event, (ToolCall, ResponseDone)):
@@ -167,7 +204,7 @@ class GeminiLifecycle:
                 self._calls_awaiting_usage = True
         elif isinstance(event, SessionUsage):
             # Usage reported between responses doesn't start one: it is the next response's (see `_response_done`).
-            if self._calls_awaiting_usage:
+            if event.response_scoped and self._calls_awaiting_usage:
                 # A tool-call frame's report: the calls' response is over, and the answer comes once every result
                 # is in.
                 self._end(after, status='completed', finish_reason='tool_call')
@@ -235,7 +272,7 @@ class GeminiLifecycle:
         self._open = f'pydantic_ai_response_{self._responses}'
         if turn_id is not None:
             self._turn_reply = self._open
-        elif not answers and self._transcribes:
+        elif not answers and self._transcribes and self._transcripts_lag_replies:
             self._unprompted_reply = self._open
         continues, self._continues = self._continues, None
         events.append(
