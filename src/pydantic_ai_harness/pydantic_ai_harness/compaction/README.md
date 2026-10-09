@@ -402,8 +402,16 @@ from the edit point onward -- the next request pays a cache-write. Use `ClearToo
 `SummarizingCompaction(model=...)` accepts a model name or `Model`; when left `None` it inherits the
 running agent's model. That model has to write text, so an agent running a model that can't, such as a
 decision model like TypeSafe's Jev, needs `model=` set to a language model; without it, the first compaction
-raises a `UserError` saying so. Its nested summary run inherits the parent usage limits and reserves one request from a
-finite request limit for the pending parent request. Pass `model_settings` to give the dedicated summary call
+raises a `UserError` saying so. A summary that is empty or only whitespace is retried within the summary
+run's output retries. Exhausting those retries raises `UnexpectedModelBehavior` rather than replacing
+history with an empty summary. Its nested summary run inherits the parent usage limits and reserves
+one request from a finite request limit for the pending parent request. These limits also apply to
+retries: if the summary run exhausts its budget first, it raises `UsageLimitExceeded` instead. To fall
+back on either failure, set `FallbackCompaction`'s
+`fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded)`, preferably with a fallback strategy that
+makes no model requests. This does not increase the parent run's limits.
+
+Pass `model_settings` to give the dedicated summary call
 settings that differ from defaults carried by that model; the supplied settings merge over the model defaults
 without mutating the model or the settings dictionary. Pass `summarization_capabilities` to attach
 capabilities to the summary agent; capabilities on the outer agent do not run on the summary call.
