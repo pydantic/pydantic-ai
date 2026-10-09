@@ -3012,7 +3012,10 @@ async def test_a_session_whose_socket_closed_is_not_asked_to_end_again() -> None
 
 
 async def test_backend_tokens_arriving_as_the_session_ends_count_as_session_usage() -> None:
-    """A backend response finishing during the drain has no reply left to land on, but its tokens are still billed."""
+    """A backend response finishing during the drain has no reply left to land on, but it is still billed.
+
+    Its report stays response-scoped: it was a request the backend made, which the session counts.
+    """
     completed = {
         'type': 'response.event',
         'event_id': 'e1',
@@ -3032,9 +3035,46 @@ async def test_backend_tokens_arriving_as_the_session_ends_count_as_session_usag
     reports = await _ended(_LiveSink(ws))
 
     assert [(report.usage.input_tokens, report.usage.audio_seconds, report.response_scoped) for report in reports] == [
-        (10, 0, False),
+        (10, 0, True),
         (0, 4, False),
     ]
+
+
+@pytest.mark.parametrize(
+    'limits',
+    [UsageLimits(request_limit=0), UsageLimits(per_request_input_tokens_limit=5)],
+    ids=['request_limit', 'per_request_input_tokens_limit'],
+)
+async def test_a_backend_request_reported_while_closing_is_held_to_the_request_limits(
+    model: OpenAILiveModel, limits: UsageLimits
+) -> None:
+    """A backend response that ends as the session closes is a request like any other: one over a limit fails `close()`."""
+
+    class _BackendFinishingSocket(_FakeWebSocket):
+        async def send(self, data: str) -> None:
+            if json.loads(data)['type'] == 'session.close':
+                terminal = _backend_terminal(
+                    usage={
+                        'input_tokens': 10,
+                        'input_tokens_details': {'cache_write_tokens': 0, 'cached_tokens': 0},
+                        'output_tokens': 2,
+                        'output_tokens_details': {'reasoning_tokens': 0},
+                        'total_tokens': 12,
+                    }
+                )
+                self._frames.append(
+                    json.dumps({'type': 'response.event', 'event_id': 'e1', 'delegation_id': 'd1', 'event': terminal})
+                )
+            await super().send(data)
+
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _BackendFinishingSocket([started], closed_seconds=1)
+    with _patched_connect(ws), pytest.raises(UsageLimitExceeded):
+        async with Agent().realtime(model, usage_limits=limits).session() as session:
+            reading = asyncio.ensure_future(anext(aiter(session)))
+            await asyncio.sleep(0.01)
+    reading.cancel()
+    assert (session.usage.requests, session.usage.input_tokens) == (1, 10)
 
 
 async def test_closing_a_session_whose_socket_drops_finishes_promptly(model: OpenAILiveModel) -> None:
