@@ -79,9 +79,13 @@ day-ai = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if dista
 posthog = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 pylon = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 prompt-injection-defender = ["stackone-defender>=0.7.3,<0.8 ; python_full_version >= '3.11'"]
-# 3.15 marker removable once onnxruntime ships cp315 wheels (tracked in #9455):
+# The base requirement keeps pattern detection installed on 3.15, where onnxruntime has no wheels yet.
+# Fold back into one `[onnx]` line once onnxruntime ships cp315 wheels (tracked in #9455):
 # https://pypi.org/project/onnxruntime/#files
-prompt-injection-defender-ml = ["stackone-defender[onnx]>=0.7.3,<0.8 ; python_full_version >= '3.11' and python_full_version < '3.15'"]
+prompt-injection-defender-ml = [
+    "stackone-defender>=0.7.3,<0.8 ; python_full_version >= '3.11'",
+    "stackone-defender[onnx]>=0.7.3,<0.8 ; python_full_version >= '3.11' and python_full_version < '3.15'",
+]
 github = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 slack = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 coder = ["ripgrep==14.1.0 ; sys_platform != 'android'"]
