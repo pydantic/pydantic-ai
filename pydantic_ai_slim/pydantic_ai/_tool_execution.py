@@ -850,7 +850,6 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     and not task.cancelled()
                     and task.exception() is None
                     and index not in tool_parts_by_index
-                    and index not in deferred_calls_by_index
                 ):
                     # A tool that finished before a sibling raised or the run was cancelled keeps
                     # its return in the interrupted request, so resuming from that history doesn't
