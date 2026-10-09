@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Iterable
-from typing import TYPE_CHECKING
-
-from typing_extensions import Self
+from typing import TYPE_CHECKING, Self
 
 from ._warnings import PydanticAIDeprecationWarning
 from .messages import ModelMessage
