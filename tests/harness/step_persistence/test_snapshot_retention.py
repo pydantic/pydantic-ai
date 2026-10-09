@@ -354,12 +354,14 @@ class TestSqliteStorePruneEdgeCases:
         store = SqliteStepStore(database=db, media_store=None, max_snapshots_per_run=keep)
         await _save(store, 'r1', 0)  # creates the schema and the first row
 
-        conn = sqlite3.connect(db, check_same_thread=False, isolation_level=None)
+        # One transaction: in autocommit mode every row is its own WAL commit, ~10s for the seed.
+        conn = sqlite3.connect(db, check_same_thread=False)
         try:
-            conn.executemany(
-                'INSERT INTO snapshots (run_id, step_index, timestamp, state, messages) VALUES (?, ?, ?, ?, ?)',
-                [('r1', step, '2026-01-01T00:00:00+00:00', 'complete', '[]') for step in range(1, keep + 2)],
-            )
+            with conn:
+                conn.executemany(
+                    'INSERT INTO snapshots (run_id, step_index, timestamp, state, messages) VALUES (?, ?, ?, ?, ?)',
+                    [('r1', step, '2026-01-01T00:00:00+00:00', 'complete', '[]') for step in range(1, keep + 2)],
+                )
         finally:
             conn.close()
 
