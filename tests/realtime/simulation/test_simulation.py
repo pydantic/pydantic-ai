@@ -194,9 +194,8 @@ def test_second_commit_keeps_the_turn_of_earlier_audio_in_place() -> None:
     run_clean(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual')), scenario)
 
 
-@known('SIM-11')
-def test_known_live_utterance_spoken_before_a_reply_filed_before_it() -> None:
-    """On GPT-Live, audio streamed before the model's reply is transcribed as a turn only after that reply."""
+def test_live_utterance_spoken_after_a_reply_is_filed_after_it() -> None:
+    """On GPT-Live, audio streamed before the model's reply, transcribed only after it, is a turn after it (SIM-11, fixed by the session core)."""
 
     def scenario(sim: LiveSimulation) -> None:
         sim.send_audio()
@@ -205,7 +204,7 @@ def test_known_live_utterance_spoken_before_a_reply_filed_before_it() -> None:
         sim.user_says()
         sim.settle()
 
-    reproduce('SIM-11', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
 def test_refused_tool_results_request_ends_the_wait() -> None:
@@ -925,15 +924,16 @@ def test_gemini_spoken_turn_is_not_inserted_into_recorded_history() -> None:
     run_clean(GeminiSimulation(), scenario)
 
 
-@known('E')
-def test_known_live_spoken_turn_inserted_into_recorded_history() -> None:
+def test_live_spoken_turn_is_not_inserted_into_recorded_history() -> None:
+    """E, fixed by the session core."""
+
     def scenario(sim: LiveSimulation) -> None:
         sim.send_audio()
         sim.send_text(respond=False)
         sim.user_says(deliver=False)
         sim.settle()
 
-    reproduce('E', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
 def test_gemini_turn_spoken_after_a_reply_is_filed_after_it() -> None:
@@ -949,8 +949,9 @@ def test_gemini_turn_spoken_after_a_reply_is_filed_after_it() -> None:
     run_clean(GeminiSimulation(), scenario)
 
 
-@known('SIM-2a')
-def test_known_live_text_sent_after_a_delegation_recorded_after_the_next_reply() -> None:
+def test_live_text_sent_after_a_delegation_is_recorded_in_order() -> None:
+    """SIM-2a, fixed by the session core."""
+
     def scenario(sim: LiveSimulation) -> None:
         sim.delegate(deliver=False)
         sim.settle()
@@ -958,7 +959,7 @@ def test_known_live_text_sent_after_a_delegation_recorded_after_the_next_reply()
         sim.user_says(deliver=False)
         sim.settle()
 
-    reproduce('SIM-2a', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
 def test_gemini_turn_sent_during_a_tool_round_is_recorded_after_it() -> None:
@@ -1033,13 +1034,14 @@ def test_wait_waits_for_a_started_vad_reply() -> None:
     run_clean(OpenAISimulation(), scenario)
 
 
-@known('SIM-2b')
-def test_known_wait_returns_before_a_delegated_reply() -> None:
+def test_wait_waits_for_a_delegated_reply() -> None:
+    """SIM-2b, fixed by the session core."""
+
     def scenario(sim: LiveSimulation) -> None:
         sim.delegate()
         sim.wait_for_reply()
 
-    reproduce('SIM-2b', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
 def test_reconnect_asks_again_for_an_unstarted_reply() -> None:
@@ -1124,19 +1126,19 @@ def test_send_during_reconnect_survives_gemini() -> None:
     run_clean(GeminiSimulation(), scenario)
 
 
-@known('SIM-6')
-def test_known_live_parallel_calls_leak_reservations() -> None:
+def test_live_parallel_calls_are_answered_once() -> None:
+    """SIM-6, fixed by the session core."""
+
     def scenario(sim: LiveSimulation) -> None:
         sim.delegate()
         sim.backend_call(count=2)
         sim.settle()
 
-    reproduce('SIM-6', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
-@known('SIM-6')
-def test_known_live_results_of_delegations_in_a_row_answered_together() -> None:
-    """Two delegations each call a tool; the model answers both results with one reply, which leaves one owed."""
+def test_live_results_of_delegations_in_a_row_answered_together() -> None:
+    """Two delegations each call a tool, and the model answers both results with one reply (SIM-6, fixed by the session core)."""
 
     def scenario(sim: LiveSimulation) -> None:
         sim.delegate()
@@ -1146,17 +1148,18 @@ def test_known_live_results_of_delegations_in_a_row_answered_together() -> None:
         sim.backend_call()
         sim.settle()
 
-    reproduce('SIM-6', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
-@known('SIM-7')
-def test_known_live_queued_text_answered_together() -> None:
+def test_live_queued_text_answered_together() -> None:
+    """SIM-7, fixed by the session core."""
+
     def scenario(sim: LiveSimulation) -> None:
         sim.send_text()
         sim.send_text()
         sim.settle()
 
-    reproduce('SIM-7', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
 @known('SIM-8')
@@ -1167,15 +1170,16 @@ def test_known_live_drop_raises_a_raw_websocket_error() -> None:
     reproduce('SIM-8', LiveSimulation(), scenario)
 
 
-@known('SIM-9')
-def test_known_live_abandoned_calls_keep_reservations() -> None:
+def test_live_abandoned_calls_owe_nothing() -> None:
+    """SIM-9, fixed by the session core."""
+
     def scenario(sim: LiveSimulation) -> None:
         sim.delegate()
         sim.backend_call()
         sim.backend_finish(status='failed')
         sim.settle()
 
-    reproduce('SIM-9', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
 @known('8763c #3')

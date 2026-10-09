@@ -107,7 +107,7 @@ from ..providers import Provider, infer_provider
 from ..settings import ThinkingEffort, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._google_lifecycle import GeminiLifecycle
+from ._inferred_lifecycle import InferredLifecycle
 from ._lifecycle import LIFECYCLE_EVENT_TYPES, TaggedEvent
 from ._utils import (
     DEFAULT_MAX_RECONNECTS,
@@ -1542,7 +1542,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # completes.
         self._tool_call_turn_unanswered = False
         # Which response, user turn, and input each message is about (see `_tagged_frames()`).
-        self._lifecycle = GeminiLifecycle(transcribes=input_transcription_enabled)
+        self._lifecycle = InferredLifecycle(transcribes=input_transcription_enabled, transcripts_lag_replies=True)
 
     @property
     def _can_reconnect(self) -> bool:
