@@ -27,6 +27,7 @@ def test_defaults_apply_without_saved_preferences(tmp_path: Path, provider: str,
     context, _ = make_context(tmp_path)
     model = f'{provider}:{name}'
     assert context.model_settings(model) == {
+        'cache': True,
         'thinking': True,
         'service_tier': 'default',
         'openai_reasoning_effort': 'medium',
@@ -39,11 +40,43 @@ def test_defaults_apply_without_saved_preferences(tmp_path: Path, provider: str,
 
 
 @pytest.mark.parametrize('model', ['openai:gpt-5.5', 'openai:gpt-5.60', 'gpt-60', 'gpt-5.6ish', 'test', ''])
-def test_other_models_unchanged(model: str) -> None:
-    assert model_defaults(model=model) == {}
+def test_other_models_only_cache(model: str) -> None:
+    assert model_defaults(model=model) == {'cache': True}
 
 
-@pytest.mark.parametrize(('provider', 'ttl'), [('anthropic', '5m'), ('gateway/anthropic', '5m'), ('claude-code', '1h')])
+@pytest.mark.parametrize(
+    'model', ['bedrock:us.anthropic.claude-sonnet-4-6', 'openrouter:anthropic/claude-sonnet-4.6', 'openai:gpt-5.6']
+)
+def test_unified_cache_default_can_be_overridden(tmp_path: Path, model: str) -> None:
+    """Models outside CLAI's native Anthropic providers cache through the unified setting, which the user can change."""
+    context, _ = make_context(tmp_path)
+    assert (context.model_settings(model) or {}).get('cache') is True
+    source = ModelSettingsSource(context.store, model)
+    menu = FieldMenu(source, searchable=False)
+    row = menu.row_for('cache')
+    assert row is not None
+    assert source.current(row) == row.default == 'true'
+    assert source.apply(row, 'false').startswith('Saved')
+    assert context.store.model_settings(model) == {'cache': False}
+    assert (context.model_settings(model) or {}).get('cache') is False
+    assert source.apply(row, '1h').startswith('Saved')
+    assert (context.model_settings(model) or {}).get('cache') == '1h'
+    source.reset(row)
+    assert (context.model_settings(model) or {}).get('cache') is True
+
+
+@pytest.mark.parametrize('provider', ['anthropic', 'gateway/anthropic', 'claude-code'])
+def test_native_anthropic_providers_hide_unified_cache(provider: str) -> None:
+    """The native `anthropic_cache*` settings take precedence there, so the unified one would have no effect."""
+    model = f'{provider}:claude-sonnet-4-6'
+    assert 'cache' not in model_options(model=model)
+    assert 'cache' not in model_defaults(model=model)
+
+
+@pytest.mark.parametrize(
+    ('provider', 'ttl'),
+    [('anthropic', '5m'), ('gateway/anthropic', '5m'), ('claude-code', '1h'), ('claude-code@work', '1h')],
+)
 def test_anthropic_cache_defaults(tmp_path: Path, provider: str, ttl: str) -> None:
     context, _ = make_context(tmp_path)
     model = f'{provider}:claude-sonnet-4-6'
@@ -193,7 +226,7 @@ def test_unknown_and_nonreasoning_fallbacks(model: str) -> None:
 
 def test_model_preview(tmp_path: Path) -> None:
     context, _ = make_context(tmp_path)
-    assert 'No custom settings' in model_settings_summary(store=context.store, model='test')
+    assert 'Prompt Caching: true' in model_settings_summary(store=context.store, model='test')
     context.store.save_model_settings('openai:gpt-6', {'openai_reasoning_effort': 'high'})
     text = model_settings_summary(store=context.store, model='openai:gpt-6')
     assert 'Reasoning Effort: high' in text and 'Verbosity: low' in text
@@ -225,4 +258,4 @@ def test_chat_compatible_reasoning_defaults_can_be_overridden(tmp_path: Path, pr
 
 @pytest.mark.parametrize('model', ['custom:gpt-6', 'custom:o3'])
 def test_unknown_provider_does_not_claim_chat_protocol_support(model: str) -> None:
-    assert set(model_options(model=model)) == {'max_tokens', 'thinking', 'custom_params'}
+    assert set(model_options(model=model)) == {'max_tokens', 'thinking', 'custom_params', 'cache'}

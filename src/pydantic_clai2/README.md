@@ -521,7 +521,7 @@ takes its place, and a run's own `workspace=` replaces it for that run. Commands
 this process's environment minus LLM provider API keys. Model names resolve as in
 `clai2`, the agent's own and any a run passes, so `openai-codex:` and `github-copilot:`
 use the sign-ins saved with `/login`. CLAI's per-model defaults apply too, such as
-Anthropic prompt caching. Without `model`, every run must pass one.
+prompt caching. Without `model`, every run must pass one.
 
 Nothing else you saved for `clai2` applies: no saved, drop-in, or project plugins, no
 `.clai/settings.json`, no `/model settings`, and no `chain:` fallback chains. `ask_user`
@@ -990,10 +990,16 @@ from the model's next request, even in a running turn. `r` resets a field; Esc
 or Ctrl-C goes back. Fixed choices
 open a picker; numeric fields accept typed values, and empty input resets.
 
-CLAI2 enables Anthropic conversation, static-instruction, and tool-schema caching by default:
-`anthropic:` and `gateway/anthropic:` use a 5-minute TTL, while `claude-code:` uses 1 hour.
+CLAI2 enables prompt caching by default for every model whose provider supports configuring it.
+On `anthropic:`, `gateway/anthropic:`, and `claude-code:`, it caches the conversation, static
+instructions, and tool schemas through the Anthropic settings: `anthropic:` and `gateway/anthropic:`
+use a 5-minute TTL, while `claude-code:` uses 1 hour. Automatic caching advances to the last cacheable
+block, including tool results. Every other model gets the unified `Prompt Caching` setting (`cache`),
+which covers Claude and Nova on Amazon Bedrock, OpenRouter's Anthropic and
+Gemini routes, and OpenAI's GPT-5.6 and later; providers that cache implicitly or not at all ignore it.
+Set it to `false` to turn caching off for a model, or to `1h` to keep the cache longer.
 These are CLI defaults only; plain Pydantic AI agents are unchanged. Saved cache settings override
-the defaults. Automatic caching advances to the last cacheable block, including tool results.
+the defaults.
 
 `/effort` shows the active model's configured reasoning effort and supported values.
 `/effort high` (or another listed value) saves it for that model; `/effort reset`

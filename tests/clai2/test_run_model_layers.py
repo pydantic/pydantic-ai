@@ -565,6 +565,10 @@ async def test_settings_saved_mid_turn_match_the_merged_settings(tmp_path: Path)
         thinking = info.model_request_parameters.thinking
         assert thinking is not None
         settings['thinking'] = thinking
+        # Core moves `cache` out of the settings too, into the request parameters.
+        cache = info.model_request_parameters.cache
+        assert cache is not None
+        settings['cache'] = cache
         recorded.append(settings)
         if edits:
             store.save_model_settings(name, edits.pop(0))
@@ -575,7 +579,10 @@ async def test_settings_saved_mid_turn_match_the_merged_settings(tmp_path: Path)
 
     recorded: list[ModelSettings] = []
     model = FunctionModel(
-        respond, stream_function=stream, model_name=name, profile=ModelProfile(supports_thinking=True)
+        respond,
+        stream_function=stream,
+        model_name=name,
+        profile=ModelProfile(supports_thinking=True, supports_cache=True),
     )
     tool = Capability[None](tools=[Tool(lambda: 'ok', name='noop', takes_ctx=False)])
     await run_turn(tmp_path, settings=resolve_settings({'model': name}), plugins=(tool,), resolve=lambda _: model)
