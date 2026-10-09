@@ -908,7 +908,8 @@ RETRY_CASES = [
         ('Anthropic',),
         _anthropic_bedrock,
         (3, 1, 2),
-        marks=_needs(anthropic_available, 'anthropic'),
+        # `AsyncAnthropicBedrock` signs requests with botocore, which comes with the `bedrock` extra.
+        marks=_needs(anthropic_available, 'anthropic') + _needs(bedrock_available, 'bedrock'),
     ),
     RetryCase(
         'AnthropicModel[vertex]',
