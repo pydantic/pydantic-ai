@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from importlib.metadata import distributions
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import anyio
 import pydantic
@@ -1112,12 +1112,13 @@ def _chain_schema(names: tuple[str, str, str, str], value_type: str, *, defs_lay
 
 def _assert_all_json_schema_refs_resolve(value: Any, defs: dict[str, dict[str, Any]]) -> None:
     if isinstance(value, dict):
-        if ref := value.get('$ref'):
+        mapping = cast(dict[str, Any], value)
+        if ref := mapping.get('$ref'):
             assert str(ref).removeprefix('#/$defs/') in defs
-        for nested in value.values():
+        for nested in mapping.values():
             _assert_all_json_schema_refs_resolve(nested, defs)
     elif isinstance(value, list):
-        for nested in value:
+        for nested in cast(list[Any], value):
             _assert_all_json_schema_refs_resolve(nested, defs)
 
 
