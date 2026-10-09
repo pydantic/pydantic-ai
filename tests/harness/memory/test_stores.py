@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import os
 import sqlite3
+import subprocess
+import sys
+import uuid
+import warnings
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
+from importlib.util import find_spec
 from pathlib import Path
 from types import TracebackType
 from typing import Protocol
@@ -49,17 +55,70 @@ class Store(MemoryStore, SearchableMemoryStore, Protocol):
     """Combined contract implemented by the bundled stores."""
 
 
-def _local_stores(tmp_path: Path) -> list[Store]:
-    return [
-        InMemoryStore(),
-        FileStore('files', workspace=LocalWorkspaceBackend(tmp_path)),
-        SqliteMemoryStore(database=tmp_path / 'memory.sqlite3'),
-    ]
+def test_wildcard_import_without_pixeltable() -> None:
+    """A fresh interpreter must import ordinary stores without the Pixeltable extra."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            '-c',
+            """
+import sys
+sys.modules['pixeltable'] = None
+namespace = {}
+exec('from pydantic_ai_harness.memory import *', namespace)
+from pydantic_ai_harness.memory import InMemoryStore, Memory, PostgresMemoryStore
+assert namespace['InMemoryStore'] is InMemoryStore
+assert namespace['Memory'] is Memory
+assert namespace['PostgresMemoryStore'] is PostgresMemoryStore
+assert 'PixeltableMemoryStore' not in namespace
+""",
+        ],
+        env={key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize('index', range(3))
+_PIXELTABLE_AVAILABLE = sys.version_info >= (3, 11) and find_spec('pixeltable') is not None
+_STORE_INDEXES = (
+    0,
+    1,
+    2,
+    pytest.param(3, marks=pytest.mark.skipif(not _PIXELTABLE_AVAILABLE, reason='pixeltable extra')),
+)
+_VERSION_INDEXES = (
+    0,
+    2,
+    pytest.param(3, marks=pytest.mark.skipif(not _PIXELTABLE_AVAILABLE, reason='pixeltable extra')),
+)
+
+
+@pytest.fixture(autouse=True)
+def _pixeltable_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give Pixeltable a temporary home for this test only, unless the run already chose one.
+
+    `monkeypatch` restores the variable afterwards; `os.environ.get` keeps a home set by the
+    Pixeltable integration conftest without adding a branch that one environment cannot cover.
+    """
+    monkeypatch.setenv('PIXELTABLE_HOME', os.environ.get('PIXELTABLE_HOME', str(tmp_path / 'pixeltable')))
+
+
+def _local_store(tmp_path: Path, index: int) -> Store:
+    if index == 0:
+        return InMemoryStore()
+    if index == 1:
+        return FileStore('files', workspace=LocalWorkspaceBackend(tmp_path))
+    if index == 2:
+        return SqliteMemoryStore(database=tmp_path / 'memory.sqlite3')
+    from pydantic_ai_harness.memory import PixeltableMemoryStore
+
+    return PixeltableMemoryStore(table_name=f'harness_contract_{uuid.uuid4().hex[:8]}.memory')
+
+
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_compare_and_set_contract(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
 
     created = await store.write('notes/main.md', 'one', expected_version=None)
     assert created.version is not None
@@ -86,9 +145,9 @@ async def test_local_store_compare_and_set_contract(tmp_path: Path, index: int) 
     assert await store.read('notes/main.md', max_chars=1_000) is None
 
 
-@pytest.mark.parametrize('index', (0, 2))  # `FileStore` versions are content hashes; see below.
+@pytest.mark.parametrize('index', _VERSION_INDEXES)  # `FileStore` versions are content hashes; see below.
 async def test_local_store_versions_do_not_repeat_after_delete_and_recreate(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     first = await store.write('main.md', 'same', expected_version=None)
     await store.delete('main.md', expected_version=first.version)
     recreated = await store.write('main.md', 'same', expected_version=None)
@@ -100,9 +159,9 @@ async def test_local_store_versions_do_not_repeat_after_delete_and_recreate(tmp_
         await store.delete('main.md', expected_version=first.version)
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_read_and_listing_bounds(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     created = await store.write('a.md', '0123456789', expected_version=None)
     await store.write('b.md', 'b', expected_version=None)
     await store.write('c.md', 'c', expected_version=None)
@@ -119,9 +178,9 @@ async def test_local_store_read_and_listing_bounds(tmp_path: Path, index: int) -
     assert await store.list_paths(limit=2) == ['a.md', 'b.md']
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_operation_receipts(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     operation = MemoryOperation(id='run-1:call-1', fingerprint='write:notes/main.md:one')
 
     first = await store.write('notes/main.md', 'one', expected_version=None, operation=operation)
@@ -144,9 +203,9 @@ async def test_local_store_operation_receipts(tmp_path: Path, index: int) -> Non
     assert (await store.delete('missing.md', expected_version=None, operation=delete_operation)).replayed
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_scoped_bounded_search(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     for path, content in (
         ('tenant-a/main/alpha.md', 'alpha alpha'),
         ('tenant-a/main/beta.md', 'alpha'),
@@ -154,6 +213,17 @@ async def test_local_store_scoped_bounded_search(tmp_path: Path, index: int) -> 
         ('tenant-b/main/private.md', 'alpha alpha alpha'),
     ):
         await store.write(path, content, expected_version=None)
+
+    assert await store.list_paths('tenant-a/main/', limit=10) == [
+        'tenant-a/main/alpha.md',
+        'tenant-a/main/beta.md',
+        'tenant-a/main/other.md',
+    ]
+    assert await store.list_paths('tenant-b/main/', limit=10) == ['tenant-b/main/private.md']
+    assert await store.list_paths('tenant-a/main/', limit=2) == [
+        'tenant-a/main/alpha.md',
+        'tenant-a/main/beta.md',
+    ]
 
     result = await store.search('tenant-a/main/', 'alpha', limit=10, max_files=10, max_chars=80, max_file_chars=1_000)
     assert [match.path for match in result.matches] == [
@@ -171,23 +241,24 @@ async def test_local_store_scoped_bounded_search(tmp_path: Path, index: int) -> 
     assert tiny.matches == []
     assert tiny.truncated
 
-    for query, limit, max_files, max_chars in (
-        ('', 10, 10, 80),
-        ('alpha', 0, 10, 80),
-        ('alpha', 10, 0, 80),
-        ('alpha', 10, 10, 0),
+    for query, limit, max_files, max_chars, max_file_chars in (
+        ('', 10, 10, 80, 1_000),
+        ('alpha', 0, 10, 80, 1_000),
+        ('alpha', 10, 0, 80, 1_000),
+        ('alpha', 10, 10, 0, 1_000),
+        ('alpha', 10, 10, 80, 0),
     ):
         empty = await store.search(
-            '', query, limit=limit, max_files=max_files, max_chars=max_chars, max_file_chars=1_000
+            '', query, limit=limit, max_files=max_files, max_chars=max_chars, max_file_chars=max_file_chars
         )
         assert empty.matches == []
         assert empty.scanned == 0
         assert not empty.truncated
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_search_snippets_cover_tiny_and_offset_windows(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     await store.write('a', '012345alpha-tail', expected_version=None)
 
     tiny = await store.search('', 'alpha', limit=1, max_files=1, max_chars=3, max_file_chars=1_000)
@@ -198,38 +269,44 @@ async def test_local_store_search_snippets_cover_tiny_and_offset_windows(tmp_pat
     assert offset.matches[0].snippet.startswith('...')
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_search_bounds_each_file_and_ignores_namespace_prefix(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     namespace = 'n' * 180
     prefix = f'{namespace}/main/'
     await store.write(f'{prefix}note.md', 'prefix TARGET', expected_version=None)
 
     bounded = await store.search(prefix, 'target', limit=10, max_files=10, max_chars=100, max_file_chars=6)
     assert bounded.matches == []
+    assert bounded.truncated
+    cut_hit = await store.search(prefix, 'prefix', limit=10, max_files=10, max_chars=100, max_file_chars=6)
+    assert [match.path for match in cut_hit.matches] == [f'{prefix}note.md']
+    assert cut_hit.truncated
     namespace_result = await store.search(prefix, namespace, limit=10, max_files=10, max_chars=100, max_file_chars=100)
     assert namespace_result.matches == []
     visible = await store.search(prefix, 'target', limit=10, max_files=10, max_chars=20, max_file_chars=100)
     assert [match.path for match in visible.matches] == [f'{prefix}note.md']
+    assert not visible.truncated
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 @pytest.mark.parametrize('path', ('../escape.md', '/absolute.md', 'a//b.md', 'a/../../b.md', 'a b.md'))
 async def test_local_stores_reject_unsafe_paths(tmp_path: Path, index: int, path: str) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     with pytest.raises(ValueError):
         await store.read(path, max_chars=1_000)
 
 
 def test_bundled_stores_implement_public_protocols(tmp_path: Path) -> None:
-    for store in _local_stores(tmp_path):
+    for index in range(4 if _PIXELTABLE_AVAILABLE else 3):
+        store = _local_store(tmp_path, index)
         assert isinstance(store, MemoryStore)
         assert isinstance(store, SearchableMemoryStore)
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_stores_reject_non_positive_read_and_listing_bounds(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     with pytest.raises(ValueError, match='max_chars'):
         await store.read('main.md', max_chars=0)
     with pytest.raises(ValueError, match='limit'):
@@ -1042,6 +1119,25 @@ async def test_file_store_success_leaves_no_staged_files(tmp_path: Path) -> None
     assert (tmp_path / 'notes/main.md').read_text() == 'one'
     assert _staged_files(tmp_path) == []
     assert await store.list_paths(limit=10) == ['notes/main.md']
+
+
+@pytest.mark.skipif(not _PIXELTABLE_AVAILABLE, reason='pixeltable extra')
+class TestPixeltableCyclesDoNotEscape:
+    """Catalog connections must be collected before a later test treats warnings as errors.
+
+    Pytest runs a class in definition order. `test_next_filter_sees_no_resource_warnings` has to
+    stay after `test_open_catalog`: that is the gap where disk-loading tests failed.
+    """
+
+    async def test_open_catalog(self, tmp_path: Path) -> None:
+        store = _local_store(tmp_path, 3)
+        await store.write('notes/main.md', 'one', expected_version=None)
+
+    def test_next_filter_sees_no_resource_warnings(self) -> None:
+        # `pytest.warns` and `warnings.simplefilter('error')` override the suite's ResourceWarning ignores.
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            gc.collect()
 
 
 class _FilesystemOnly:
