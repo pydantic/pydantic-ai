@@ -11,6 +11,8 @@ import json
 import multiprocessing
 import os
 import sys
+import threading
+import warnings
 from dataclasses import replace
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -293,9 +295,12 @@ def run_mode(root: Path, mode: str, environment: dict[str, str]) -> None:
 
 def serve() -> None:
     # Forked from this single-threaded server, each child starts from the same imported modules.
+    # Forking a threaded process can deadlock the child, so a thread started by an import fails loudly.
+    warnings.filterwarnings('error', message=r'.*use of fork\(\) may lead to deadlocks', category=DeprecationWarning)
     context = multiprocessing.get_context('fork')
     for line in sys.stdin:
         request = json.loads(line)
+        assert threading.active_count() == 1, threading.enumerate()
         child = context.Process(target=run_mode, args=(Path(request['root']), request['mode'], request['environment']))
         child.start()
         child.join()

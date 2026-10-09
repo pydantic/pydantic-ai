@@ -1,6 +1,7 @@
 """Development reloads replace running shell code without replacing the process or conversation."""
 
 import json
+import multiprocessing
 import os
 import shutil
 import subprocess
@@ -46,6 +47,9 @@ def reload_server() -> Iterator[ReloadServer]:
 @pytest.mark.parametrize(
     'mode',
     ['unchanged', 'success', 'custom', 'new_imports', 'stock', 'syntax', 'import', 'build', 'harness', 'transcript'],
+)
+@pytest.mark.skipif(
+    'fork' not in multiprocessing.get_all_start_methods(), reason='the reload server forks a child per scenario'
 )
 def test_reload_running_shell(tmp_path: Path, reload_server: ReloadServer, mode: str) -> None:
     copy_package(tmp_path)
