@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, timedelta
@@ -41,6 +41,7 @@ from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import (
     AgentInstructionSource,
+    AgentStreamEvent,
     FinishReason,
     InstructionId,
     InstructionPart,
@@ -2181,6 +2182,52 @@ async def test_response_handler_not_triggered() -> None:
 
     result = await agent.run('hello')
     assert result.output == snapshot('primary response')
+
+
+async def test_response_handler_not_applied_to_streamed_requests_warns() -> None:
+    """Response handlers can't judge a streamed response, so each way of streaming warns and accepts it."""
+
+    async def primary_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'primary response'
+
+    async def fallback_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'fallback response'  # pragma: no cover
+
+    def reject_primary(response: ModelResponse) -> bool:
+        return any(isinstance(part, TextPart) and 'primary' in part.content for part in response.parts)
+
+    fallback = FallbackModel(
+        FunctionModel(primary_response, stream_function=primary_stream),
+        FunctionModel(fallback_response, stream_function=fallback_stream),
+        fallback_on=reject_primary,
+    )
+    agent = Agent(model=fallback)
+    warning = '`FallbackModel` response handlers in `fallback_on` are not applied to streamed requests'
+
+    result = await agent.run('hello')
+    assert result.output == snapshot('fallback response')
+
+    async def event_stream_handler(_ctx: RunContext[Any], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:
+            pass
+
+    with pytest.warns(UserWarning, match=warning):
+        result = await agent.run('hello', event_stream_handler=event_stream_handler)
+    assert result.output == snapshot('primary response')
+
+    listening_agent = Agent(model=fallback)
+
+    @listening_agent.on_event
+    async def _(_ctx: RunContext[Any], _event: AgentStreamEvent) -> None:
+        pass
+
+    with pytest.warns(UserWarning, match=warning):
+        result = await listening_agent.run('hello')
+    assert result.output == snapshot('primary response')
+
+    with pytest.warns(UserWarning, match=warning):
+        async with agent.run_stream('hello') as stream:
+            assert await stream.get_output() == snapshot('primary response')
 
 
 async def test_response_handler_all_fail() -> None:

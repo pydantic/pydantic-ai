@@ -510,8 +510,9 @@ When the agent is [instrumented](../logfire.md), the model request (`chat`) span
 In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure — for example, an unexpected finish reason or a native tool reporting failure.
 
 !!! note "Non-streaming only"
-    Response-based fallback currently only works with non-streaming requests (`agent.run()` and `agent.run_sync()`).
-    For streaming requests (`agent.run_stream()`), only exception-based fallback is supported.
+    Response-based fallback only works with non-streamed requests. A streamed response has already reached you by the time it could be judged, so response handlers aren't applied to it: it's accepted as is, and a `UserWarning` is emitted. Exception-based fallback still applies while the stream is being opened.
+
+    Requests are streamed by [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], and also by [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] and [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] when the run has an `event_stream_handler` or an [`on_event`](../capabilities/overview.md#reacting-to-events) listener.
 
 The `fallback_on` parameter accepts:
 
