@@ -4,7 +4,7 @@ import re
 
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.openai import openai_model_profile
-from pydantic_clai2.models.model_settings import ANTHROPIC_PROVIDERS, ModelSettingsForm, gpt_defaults
+from pydantic_clai2.models.model_settings import ModelSettingsForm, gpt_defaults
 from pydantic_clai2.models.profiles import base_model, provider_of
 
 
@@ -16,7 +16,7 @@ def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
     options: dict[str, tuple[str, ...]] = {key: () for key in ('max_tokens', 'temperature', 'seed', 'custom_params')}
     if provider in ('openai', 'openai-chat', 'openai-responses', 'openai-codex'):
         options = _openai_options(provider=provider, name=name, family_defaults=family_defaults)
-    elif provider in ANTHROPIC_PROVIDERS:
+    elif provider in ('anthropic', 'gateway/anthropic', 'claude-code'):
         options = _anthropic_options(name=name)
     elif provider in ('google', 'google-gla', 'google-vertex'):
         options['top_p'] = ()
@@ -28,8 +28,7 @@ def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
         options['thinking'] = ()
         if provider in ('openrouter', 'vllm'):
             options = _openai_options(provider='openai-chat', name=name, family_defaults=family_defaults)
-    if provider not in ANTHROPIC_PROVIDERS:
-        options['cache'] = ()
+    options['cache'] = ()
     glm = _glm_version(name=name)
     if glm is not None and glm >= (4, 5):
         options['glm_thinking'] = ()

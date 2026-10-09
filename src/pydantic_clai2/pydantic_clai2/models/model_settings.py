@@ -16,7 +16,6 @@ from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2.models.custom_params import expand_params
-from pydantic_clai2.models.profiles import provider_of
 
 
 class ModelSettingsForm(BaseModel):
@@ -253,26 +252,13 @@ class ModelSettingsForm(BaseModel):
         return body
 
 
-ANTHROPIC_PROVIDERS = ('anthropic', 'gateway/anthropic', 'claude-code')
-"""Providers whose prompt caching CLAI configures with the native `anthropic_cache*` settings."""
-
-
 def model_defaults(*, model: str) -> dict[str, JsonValue]:
-    """CLAI's prompt caching defaults for every model, and reasoning defaults for GPT families.
+    """CLAI's prompt caching default for every model, and reasoning defaults for GPT families.
 
-    Claude through the native Anthropic providers gets the Anthropic settings, which also cache the
-    instructions and tool definitions separately, so new conversations reuse them. Every other model
-    gets the unified `cache` setting, which providers without configurable caching ignore.
+    Caching uses the unified `cache` setting, which providers without configurable caching ignore. A
+    saved `anthropic_cache*` override still applies, since provider-specific cache settings take
+    precedence over it.
     """
-    # Without the account profile, as `model_options` offers the controls: `claude-code@work` is `claude-code`.
-    provider = provider_of(model)
-    if provider in ANTHROPIC_PROVIDERS:
-        ttl = '1h' if provider == 'claude-code' else '5m'
-        return {
-            'anthropic_cache': ttl,
-            'anthropic_cache_instructions': ttl,
-            'anthropic_cache_tool_definitions': ttl,
-        }
     return {'cache': True, **gpt_defaults(model=model)}
 
 

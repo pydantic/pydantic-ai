@@ -990,16 +990,12 @@ from the model's next request, even in a running turn. `r` resets a field; Esc
 or Ctrl-C goes back. Fixed choices
 open a picker; numeric fields accept typed values, and empty input resets.
 
-CLAI2 enables prompt caching by default for every model whose provider supports configuring it.
-On `anthropic:`, `gateway/anthropic:`, and `claude-code:`, it caches the conversation, static
-instructions, and tool schemas through the Anthropic settings: `anthropic:` and `gateway/anthropic:`
-use a 5-minute TTL, while `claude-code:` uses 1 hour. Automatic caching advances to the last cacheable
-block, including tool results. Every other model gets the unified `Prompt Caching` setting (`cache`),
-which covers Claude and Nova on Amazon Bedrock, OpenRouter's Anthropic and
-Gemini routes, and OpenAI's GPT-5.6 and later; providers that cache implicitly or not at all ignore it.
-Set it to `false` to turn caching off for a model, or to `1h` to keep the cache longer.
-These are CLI defaults only; plain Pydantic AI agents are unchanged. Saved cache settings override
-the defaults.
+CLAI2 enables prompt caching by default for every model, with the unified `Prompt Caching`
+setting (`cache`). It covers Claude on the Anthropic API, `claude-code:`, Amazon Bedrock and
+OpenRouter, Nova on Bedrock, OpenRouter's Gemini routes, and OpenAI's GPT-5.6 and later; providers
+that cache implicitly or not at all ignore it. Set it to `false` to turn caching off for a model, or
+to `1h` to keep the cache longer. Saved `anthropic_cache*` settings still apply and take precedence
+over it. These are CLI defaults only; plain Pydantic AI agents are unchanged.
 
 `/effort` shows the active model's configured reasoning effort and supported values.
 `/effort high` (or another listed value) saves it for that model; `/effort reset`

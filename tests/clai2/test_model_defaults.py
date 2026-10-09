@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from pydantic import JsonValue
 from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
 
@@ -45,10 +46,17 @@ def test_other_models_only_cache(model: str) -> None:
 
 
 @pytest.mark.parametrize(
-    'model', ['bedrock:us.anthropic.claude-sonnet-4-6', 'openrouter:anthropic/claude-sonnet-4.6', 'openai:gpt-5.6']
+    'model',
+    [
+        'anthropic:claude-sonnet-4-6',
+        'claude-code:claude-sonnet-4-6',
+        'bedrock:us.anthropic.claude-sonnet-4-6',
+        'openrouter:anthropic/claude-sonnet-4.6',
+        'openai:gpt-5.6',
+    ],
 )
 def test_unified_cache_default_can_be_overridden(tmp_path: Path, model: str) -> None:
-    """Models outside CLAI's native Anthropic providers cache through the unified setting, which the user can change."""
+    """Every model caches through the unified setting, which the user can change per model."""
     context, _ = make_context(tmp_path)
     assert (context.model_settings(model) or {}).get('cache') is True
     source = ModelSettingsSource(context.store, model)
@@ -66,41 +74,31 @@ def test_unified_cache_default_can_be_overridden(tmp_path: Path, model: str) -> 
 
 
 @pytest.mark.parametrize('provider', ['anthropic', 'gateway/anthropic', 'claude-code'])
-def test_native_anthropic_providers_hide_unified_cache(provider: str) -> None:
-    """The native `anthropic_cache*` settings take precedence there, so the unified one would have no effect."""
+def test_saved_anthropic_cache_settings_still_apply(tmp_path: Path, provider: str) -> None:
+    """Native Anthropic cache settings are no longer defaults, but saved ones still reach the run."""
+    context, _ = make_context(tmp_path)
     model = f'{provider}:claude-sonnet-4-6'
-    assert 'cache' not in model_options(model=model)
-    assert 'cache' not in model_defaults(model=model)
+    assert context.model_settings(model) == {'cache': True}
+    native = {'anthropic_cache': False, 'anthropic_cache_instructions': '1h', 'anthropic_cache_tool_definitions': '1h'}
+    source = ModelSettingsSource(context.store, model)
+    menu = FieldMenu(source, searchable=False)
+    for key in native:
+        row = menu.row_for(key)
+        assert row is not None
+        assert source.current(row) == '(not set)'
+    context.store.save_model_settings(model, native)
+    assert context.model_settings(model) == {'cache': True, **native}
 
 
 @pytest.mark.parametrize(
-    ('provider', 'ttl'),
-    [('anthropic', '5m'), ('gateway/anthropic', '5m'), ('claude-code', '1h'), ('claude-code@work', '1h')],
+    'saved',
+    [{}, {'anthropic_cache': False, 'anthropic_cache_instructions': '1h'}],
+    ids=['unified', 'saved-native'],
 )
-def test_anthropic_cache_defaults(tmp_path: Path, provider: str, ttl: str) -> None:
-    context, _ = make_context(tmp_path)
-    model = f'{provider}:claude-sonnet-4-6'
-    expected = {
-        'anthropic_cache': ttl,
-        'anthropic_cache_instructions': ttl,
-        'anthropic_cache_tool_definitions': ttl,
-    }
-    assert context.model_settings(model) == expected
-    assert context.store.model_settings(model) == {}
-    source = ModelSettingsSource(context.store, model)
-    menu = FieldMenu(source, searchable=False)
-    for key in expected:
-        row = menu.row_for(key)
-        assert row is not None
-        assert source.current(row) == ttl
-    context.store.save_model_settings(model, {key: False for key in expected})
-    assert context.model_settings(model) == {key: False for key in expected}
-
-
-@pytest.mark.parametrize('provider', ['anthropic', 'claude-code'])
 async def test_cache_defaults_reach_anthropic_request(
-    tmp_path: Path, provider: str, allow_model_requests: None
+    tmp_path: Path, saved: dict[str, JsonValue], allow_model_requests: None
 ) -> None:
+    from anthropic import omit as OMIT
     from anthropic.types.beta import BetaTextBlock, BetaUsage
 
     from pydantic_ai import Agent, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
@@ -109,6 +107,8 @@ async def test_cache_defaults_reach_anthropic_request(
     from tests.models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
     context, _ = make_context(tmp_path)
+    name = 'anthropic:claude-sonnet-4-6'
+    context.store.save_model_settings(name, saved)
     client = MockAnthropic.create_mock(
         completion_message([BetaTextBlock(type='text', text='Done')], BetaUsage(input_tokens=1, output_tokens=1))
     )
@@ -122,7 +122,7 @@ async def test_cache_defaults_reach_anthropic_request(
 
     await agent.run(
         'Continue',
-        model_settings=context.model_settings(f'{provider}:claude-sonnet-4-6'),
+        model_settings=context.model_settings(name),
         message_history=[
             ModelRequest(parts=[UserPromptPart('Start')]),
             ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='call')]),
@@ -130,10 +130,12 @@ async def test_cache_defaults_reach_anthropic_request(
         ],
     )
     request = get_mock_chat_completion_kwargs(client)[0]
-    expected = {'type': 'ephemeral', 'ttl': '1h' if provider == 'claude-code' else '5m'}
-    assert request['cache_control'] == expected
-    assert request['system'][-1]['cache_control'] == expected
-    assert request['tools'][-1]['cache_control'] == expected
+    if saved:
+        # A saved native setting takes precedence over the unified default.
+        assert request['cache_control'] is OMIT
+        assert request['system'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '1h'}
+    else:
+        assert request['cache_control']['type'] == 'ephemeral'
     assert model.resolve_cache_retention(None) is None  # Library defaults remain opt-in.
 
 
