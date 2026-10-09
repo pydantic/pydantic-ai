@@ -29,7 +29,6 @@ def project_identity(workspace: str) -> ProjectIdentity:
     try:
         if not path.exists():
             return replace(fallback, missing=True)
-        # Git for Windows emits UTF-8; POSIX Git preserves ref and path bytes for Python's locale decoder.
         root = _git_path(workspace=workspace, option='--show-toplevel')
         common = _git_path(workspace=workspace, option='--git-common-dir')
         common_path = Path(common).resolve()
@@ -37,6 +36,7 @@ def project_identity(workspace: str) -> ProjectIdentity:
             ['git', '-C', workspace, 'symbolic-ref', '--quiet', '--short', 'HEAD'],
             capture_output=True,
             text=True,
+            # Git for Windows emits UTF-8; POSIX Git preserves ref bytes for Python's locale decoder.
             encoding='utf-8' if sys.platform == 'win32' else None,
             timeout=2,
             check=False,
@@ -58,6 +58,7 @@ def _git_path(*, workspace: str, option: str) -> str:
         check=True,
         capture_output=True,
         text=True,
+        # Git for Windows emits UTF-8; POSIX Git preserves path bytes for Python's locale decoder.
         encoding='utf-8' if sys.platform == 'win32' else None,
         timeout=2,
     ).stdout.removesuffix('\n')
