@@ -23,8 +23,9 @@ from pydantic_graph._utils import get_traceparent
 from ._genai_prices import best_effort_price
 
 if TYPE_CHECKING:
+    from typing import Self
+
     from genai_prices.types import PriceCalculation
-    from typing_extensions import Self
 
     from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
     from pydantic_ai.models import AbstractModel, ModelRequestContext, ModelRequestParameters

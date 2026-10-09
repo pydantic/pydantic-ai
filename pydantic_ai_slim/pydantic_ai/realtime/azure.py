@@ -6,14 +6,14 @@ import warnings
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, Required, cast
 from urllib.parse import urlencode, urlparse, urlunparse
 
 from anyio.to_thread import run_sync
 from openai import AsyncOpenAI
 from openai.types.realtime.realtime_audio_config_output import VoiceID
 from pydantic import BaseModel
-from typing_extensions import Required, TypedDict
+from typing_extensions import TypedDict
 
 from ..exceptions import UserError
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, openai_model_profile

@@ -2,12 +2,16 @@
 
 from __future__ import annotations as _annotations
 
+import re
 from copy import deepcopy
 from typing import Any
 
 import pytest
 
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, Tool, UserError
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from ._inline_snapshot import snapshot
@@ -628,3 +632,222 @@ def test_inline_defs_recursive_ref_root_key_collides_with_a_def():
     assert set(result['$defs']) == {'Node', 'Node_root'}
     # The definition the root points at is intact, not overwritten by the root.
     assert result['$defs']['Node']['properties']['child'] == {'$ref': '#/$defs/Node'}
+
+
+ADDRESS_SCHEMA: dict[str, Any] = {
+    'type': 'object',
+    'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+    'required': ['street', 'city'],
+    'additionalProperties': False,
+}
+
+# The input schema the MCP TypeScript SDK sends for a zod v3 tool `{ from: Address, to: Address }`: its
+# `zod-to-json-schema` defaults point the reused subschema at its first occurrence instead of `$defs`.
+MCP_POINTER_REF_SCHEMA: dict[str, Any] = {
+    'type': 'object',
+    'properties': {'from': ADDRESS_SCHEMA, 'to': {'$ref': '#/properties/from'}},
+    'required': ['from', 'to'],
+    'additionalProperties': False,
+    '$schema': 'http://json-schema.org/draft-07/schema#',
+}
+
+
+@pytest.mark.parametrize(
+    'schema,expected',
+    [
+        pytest.param(
+            MCP_POINTER_REF_SCHEMA,
+            {**MCP_POINTER_REF_SCHEMA, 'properties': {'from': ADDRESS_SCHEMA, 'to': ADDRESS_SCHEMA}},
+            id='sibling-property',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {
+                    'list': {'type': 'array', 'items': ADDRESS_SCHEMA},
+                    'one': {'$ref': '#/properties/list/items', 'description': 'One address'},
+                },
+            },
+            {
+                'type': 'object',
+                'properties': {
+                    'list': {'type': 'array', 'items': ADDRESS_SCHEMA},
+                    'one': {**ADDRESS_SCHEMA, 'description': 'One address'},
+                },
+            },
+            id='array-items-with-sibling-keyword',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {'from': {'$ref': '#/definitions/Address'}},
+                'definitions': {'Address': ADDRESS_SCHEMA},
+            },
+            {
+                'type': 'object',
+                'properties': {'from': ADDRESS_SCHEMA},
+                'definitions': {'Address': ADDRESS_SCHEMA},
+            },
+            id='draft-07-definitions',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {
+                    'a/b~c': {'type': 'array', 'prefixItems': [{'type': 'integer'}, ADDRESS_SCHEMA]},
+                    'to': {'$ref': '#/properties/a~1b~0c/prefixItems/1'},
+                },
+            },
+            {
+                'type': 'object',
+                'properties': {
+                    'a/b~c': {'type': 'array', 'prefixItems': [{'type': 'integer'}, ADDRESS_SCHEMA]},
+                    'to': ADDRESS_SCHEMA,
+                },
+            },
+            id='escaped-tokens-and-list-index',
+        ),
+    ],
+)
+def test_inline_defs_resolves_json_pointer_refs(schema: dict[str, Any], expected: dict[str, Any]):
+    """A local JSON-pointer `$ref` (RFC 6901) is inlined like a `$defs` one.
+
+    Unit test: the pointer is resolved by the walker itself; a cassette would only pin one provider's
+    copy of the resulting payload.
+    """
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == expected
+
+
+@pytest.mark.parametrize(
+    'schema,ref',
+    [
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {'name': {'type': 'string'}, 'children': {'type': 'array', 'items': {'$ref': '#'}}},
+            },
+            '#',
+            id='root',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {
+                    'tree': {
+                        'type': 'object',
+                        'properties': {'children': {'type': 'array', 'items': {'$ref': '#/properties/tree'}}},
+                    }
+                },
+            },
+            '#/properties/tree',
+            id='ancestor',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {'tree': {'$ref': '#/definitions/Tree'}},
+                'definitions': {
+                    'Tree': {
+                        'type': 'object',
+                        'properties': {'children': {'type': 'array', 'items': {'$ref': '#/definitions/Tree'}}},
+                    }
+                },
+            },
+            '#/definitions/Tree',
+            id='draft-07-definitions',
+        ),
+    ],
+)
+def test_inline_defs_recursive_json_pointer_ref_raises(schema: dict[str, Any], ref: str):
+    """A recursive JSON pointer has no `$defs` name to keep it as a `$ref` under, so inlining refuses it.
+
+    Unit test: the walker raises before any request is built.
+    """
+    with pytest.raises(UserError, match=f'^Recursive JSON pointer `\\$ref` {re.escape(repr(ref))} '):
+        InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+
+@pytest.mark.parametrize(
+    'ref',
+    [
+        '#/properties/missing',
+        '#/required/9',
+        '#/properties/t/prefixItems/01',
+        '#/properties/t/prefixItems/\u0661',
+        '#/required/\u00b2',
+        pytest.param('#/properties/t/prefixItems/' + '1' * 4301, id='index-past-int-digit-limit'),
+        '#/required/0',
+        '#/$defs/Missing',
+    ],
+)
+def test_inline_defs_dangling_ref_raises(ref: str):
+    """A `$ref` that resolves to no schema object raises rather than inlining something else.
+
+    RFC 6901 array indexes are ASCII digits without a leading zero. Under a looser digit check, `01` and an
+    Arabic-Indic `1` would reach `prefixItems[1]`, and a superscript `2` passes `str.isdigit()` but crashes `int()`,
+    as does an index longer than Python's integer string conversion limit.
+    Unit test: the walker raises before any request is built.
+    """
+    schema = {
+        'type': 'object',
+        'properties': {
+            'a': {'type': 'string'},
+            't': {'type': 'array', 'prefixItems': [{'type': 'integer'}, {'type': 'string'}]},
+            'b': {'$ref': ref},
+        },
+        'required': ['a'],
+    }
+
+    with pytest.raises(
+        UserError, match=f'^Could not find \\$ref definition for {re.escape(ref.removeprefix("#/$defs/"))}$'
+    ):
+        InlineDefsJsonSchemaTransformer(schema).walk()
+
+
+def test_non_inlining_transformer_keeps_json_pointer_refs():
+    """Only the inlining path resolves JSON pointers; every other transformer passes the `$ref` through.
+
+    Unit test: pins that the walker leaves the schema as it was, which no single provider request shows.
+    """
+    assert _PassthroughTransformer(deepcopy(MCP_POINTER_REF_SCHEMA)).walk() == MCP_POINTER_REF_SCHEMA
+
+
+def test_json_pointer_ref_tool_with_inlining_profile():
+    """A tool defined from an MCP-shaped schema with a JSON-pointer `$ref` reaches an inlining model.
+
+    `FunctionModel` rather than VCR: the profiles that inline `$defs` (Meta, Qwen, Amazon) are served
+    by many providers, and the failure is in preparing the request, before any provider is involved.
+    """
+
+    def ship_order(**kwargs: Any) -> str:
+        return 'shipped'  # pragma: no cover
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.function_tools[0].parameters_json_schema == snapshot(
+            {
+                'type': 'object',
+                'properties': {
+                    'from': {
+                        'type': 'object',
+                        'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+                        'required': ['street', 'city'],
+                        'additionalProperties': False,
+                    },
+                    'to': {
+                        'type': 'object',
+                        'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+                        'required': ['street', 'city'],
+                        'additionalProperties': False,
+                    },
+                },
+                'required': ['from', 'to'],
+                'additionalProperties': False,
+                '$schema': 'http://json-schema.org/draft-07/schema#',
+            }
+        )
+        return ModelResponse(parts=[TextPart('done')])
+
+    tool = Tool.from_schema(ship_order, name='ship_order', description=None, json_schema=MCP_POINTER_REF_SCHEMA)
+    agent = Agent(FunctionModel(model_function, profile=meta_model_profile('llama-3.3-70b')), tools=[tool])
+
+    assert agent.run_sync('ship it').output == 'done'
