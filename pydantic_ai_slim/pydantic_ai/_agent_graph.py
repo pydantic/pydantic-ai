@@ -93,6 +93,7 @@ from .models._continuation import (
     merge_responses,
     report_continuation_segment,
 )
+from .models._request_timeout import ContinuationChain, use_continuation_chain
 from .models.fallback import start_request_deadline
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
@@ -1205,9 +1206,14 @@ async def model_request(
     # re-issue (`last_mode is None`) counts as strict, harmless since both ceilings allow ≥1.
     last_mode: MergeMode | None = None
     response = seed
-    # One `request_timeout` deadline covers the whole continuation chain, including the waits between segments.
+    # One `request_timeout` deadline covers the whole continuation chain, including the waits between segments. A
+    # `FallbackModel` starts one per model it tries instead, and carries the one of the model it picked on the chain.
     deadline = start_request_deadline(model, request_context.model_settings)
-    with set_current_run_context(run_context), deadline.enforce() if deadline is not None else nullcontext():
+    with (
+        set_current_run_context(run_context),
+        use_continuation_chain(ContinuationChain()),
+        deadline.enforce() if deadline is not None else nullcontext(),
+    ):
         while True:
             if response is None:
                 messages = base_messages

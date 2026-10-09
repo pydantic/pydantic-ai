@@ -8,12 +8,20 @@ the deadline without anything having to watch it.
 
 Under Temporal the clock is the workflow's, so the deadline is a durable workflow timer, and expiry cancels the
 in-flight model activity, which also ends its retries.
+
+A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] starts a deadline for each model it tries, so the
+agent graph starts none for it. When the model that answers suspends its response (Anthropic `pause_turn`, OpenAI
+background mode), the graph's continuation loop calls the `FallbackModel` again for each segment, pinned to that
+model. A [`ContinuationChain`][pydantic_ai.models._request_timeout.ContinuationChain] carries the pinned model's
+deadline from one segment to the next, so the chain stays one request to it: a segment that starts after the deadline,
+for example after a long wait between polls, times out at once, and the `FallbackModel` moves on to its next model.
 """
 
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator, Generator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TypeVar
 
@@ -59,3 +67,28 @@ class RequestDeadline:
                 except StopAsyncIteration:
                     return
             yield item
+
+
+@dataclass
+class ContinuationChain:
+    """The deadline of the model a continuation chain is pinned to, once a model that starts its own picked one."""
+
+    pinned: RequestDeadline | None = None
+
+
+_current_chain: ContextVar[ContinuationChain | None] = ContextVar('_current_continuation_chain', default=None)
+
+
+@contextmanager
+def use_continuation_chain(chain: ContinuationChain) -> Generator[None]:
+    """Make `chain` the continuation chain of the requests made inside."""
+    token = _current_chain.set(chain)
+    try:
+        yield
+    finally:
+        _current_chain.reset(token)
+
+
+def current_continuation_chain() -> ContinuationChain | None:
+    """The continuation chain of the request being made, if the agent graph is resolving one."""
+    return _current_chain.get()
