@@ -168,7 +168,6 @@ def _print_intro(
     details = agent._startup_banner_details(model, toolsets)  # pyright: ignore[reportPrivateUsage]
 
     try:
-        version_check = _version_check.version_check_enabled()
         banner = _display.render_banner(
             # A loaded agent doesn't always name itself, so fall back to how the user asked for it.
             name=agent.name or agent_path,
@@ -176,8 +175,8 @@ def _print_intro(
             output_type=agent.output_type,
             tools=details.tools,
             capabilities=details.capabilities,
-            updates=_version_check.cached_updates() if version_check else (),
-            version_check=version_check,
+            updates=_version_check.cached_updates(),
+            version_check=_version_check.version_check_enabled(),
             observability=not details.instrumented,
             # The console already knows how wide the terminal is, `COLUMNS` and all, and re-asks it
             # every time. Without one it answers 80 whether it read that off `COLUMNS` or had nothing
@@ -191,8 +190,8 @@ def _print_intro(
             # rather than re-highlighting or re-wrapping it; `list[str]` as an output type isn't markup.
             console.print(Text.from_ansi(banner), soft_wrap=True)
         console.file.write(capture.get())
-        if version_check:
-            _version_check.start_version_check()
+        # Guards itself: does nothing when the check is turned off or not yet due.
+        _version_check.start_version_check()
     except Exception:
         # Laying the banner out is inside the guard as well as writing it, the way the plain path
         # has it: `render_banner` reads an output type's own `repr` and the console's width, neither

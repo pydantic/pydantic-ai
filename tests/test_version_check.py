@@ -288,7 +288,7 @@ def test_do_not_track_false_values_allow_the_check(value: str, monkeypatch: pyte
     ('installed', 'latest', 'expected'),
     [
         pytest.param('2.45.1.dev13+abc', '2.45.2', [('pydantic-ai', '2.45.2')], id='dev-older'),
-        pytest.param('2.45.2.dev13+abc', '2.45.2', [], id='dev-same-release'),
+        pytest.param('2.45.2.dev13+abc', '2.45.2', [('pydantic-ai', '2.45.2')], id='dev-build-of-the-release'),
         pytest.param('2.45.1+local', '2.45.2', [('pydantic-ai', '2.45.2')], id='local-older'),
         pytest.param('2.46.0', '2.45.2', [], id='installed-newer'),
         pytest.param('2.46', '2.46.0', [], id='trailing-zero-is-the-same-release'),

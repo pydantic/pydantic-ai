@@ -358,15 +358,14 @@ def display_agent_banner(
         return
 
     try:
-        version_check = _version_check.version_check_enabled()
         banner = render_banner(
             name=name,
             model=model,
             output_type=output_type,
             tools=tools,
             capabilities=capabilities,
-            updates=_version_check.cached_updates() if version_check else (),
-            version_check=version_check,
+            updates=_version_check.cached_updates(),
+            version_check=_version_check.version_check_enabled(),
             # Nothing renders this one for us, so the conventions have to be honored here: colour
             # belongs to a terminal, and an agent reading `stderr` back would get the codes raw.
             color=is_terminal and 'NO_COLOR' not in os.environ,
@@ -374,8 +373,8 @@ def display_agent_banner(
         )
         # Written to the stream that was checked, rather than to whatever `sys.stderr` is by now.
         print(banner, file=stderr)
-        if version_check:
-            _version_check.start_version_check()
+        # Guards itself: does nothing when the check is turned off or not yet due.
+        _version_check.start_version_check()
     except Exception:
         # A banner is a courtesy, and a courtesy that fails is not worth an agent run. A terminal
         # whose encoding can't take the logo (`LC_ALL=C`) raises here, as does a `stderr` that has
