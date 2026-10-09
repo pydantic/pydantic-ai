@@ -577,7 +577,7 @@ def test_a_withdrawn_input_is_let_go() -> None:
 
 
 def test_a_repeated_or_replayed_call_is_recorded_once() -> None:
-    """xAI's resumption can repeat a call of a response still open, and replay items history already has."""
+    """A natively resumed conversation can repeat a call of a response still open, and replay items history has."""
     call = ToolCall('call_1', tool_name='lookup', args='{}', response_id='r1')
     session_core = feed(
         core(),
