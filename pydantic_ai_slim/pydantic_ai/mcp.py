@@ -972,8 +972,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             http_client: A pre-configured `httpx2.AsyncClient` (a legacy `httpx.AsyncClient` when
                 the installed fastmcp is 3) to use for HTTP transports — useful for self-signed
                 certificates or custom connection pooling. Mutually exclusive with `headers`.
-                The toolset never closes a user-supplied client, so the caller owns its lifecycle
-                and the client can reconnect across runs.
+                The toolset never closes a user-supplied client: the caller owns its lifecycle,
+                and the toolset can reconnect with it across runs.
 
         Raises:
             ValueError: If a pre-built `fastmcp.Client` is passed alongside any of the kwargs that

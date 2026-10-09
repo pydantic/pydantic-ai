@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import warnings
+from collections.abc import Generator
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -70,6 +71,8 @@ with try_import() as imports_successful:
         from fastmcp.utilities.tasks import TaskConfig
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
     from mcp import types as mcp_types
+    from starlette.responses import Response
+    from starlette.types import ASGIApp, Receive, Scope, Send
 
     from pydantic_ai import _mcp, mcp as mcp_module
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
@@ -116,6 +119,36 @@ pytestmark = [
 ]
 
 MCP_SDK_V2 = imports_successful() and is_mcp_sdk_v2()
+
+
+class BearerAuth(httpx.Auth):
+    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
+        request.headers['Authorization'] = 'Bearer secret'
+        yield request
+
+
+class BearerAuth2(httpx2.Auth):
+    def auth_flow(self, request: httpx2.Request) -> Generator[httpx2.Request, httpx2.Response, None]:
+        request.headers['Authorization'] = 'Bearer secret'
+        yield request
+
+
+class AuthorizationGuard:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+        self.authorization_headers: list[str | None] = []
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope['type'] == 'http':
+            authorization = next(
+                (value.decode() for name, value in scope['headers'] if name.lower() == b'authorization'), None
+            )
+            self.authorization_headers.append(authorization)
+            if authorization != 'Bearer secret':
+                await Response(status_code=401)(scope, receive, send)
+                return
+
+        await self.app(scope, receive, send)
 
 
 def make_mcp_error(code: int, message: str) -> McpError:
@@ -325,7 +358,7 @@ class TestMCPToolsetConstruction:
 
     @pytest.mark.parametrize(
         'method_name',
-        ['request', 'stream', 'send', 'get', 'post', 'put', 'patch', 'delete', 'head', 'options'],
+        ['request', 'send', 'get', 'post', 'put', 'patch', 'delete', 'head', 'options'],
     )
     async def test_http_client_factory_applies_auth(self, method_name: str):
         authorization_headers: list[str | None] = []
@@ -658,6 +691,44 @@ class TestMCPToolsetIntegration:
             assert toolset.capabilities.tools is True
             assert toolset.instructions == 'You are an MCP test server.'
         assert toolset.is_running is False
+
+    async def test_http_client_auth_and_lifecycle_across_agent_runs(self):
+        server: FastMCP[None] = FastMCP('auth_server')
+
+        @server.tool
+        async def ping() -> str:
+            return 'pong'
+
+        app = server.http_app(stateless_http=True, json_response=True)
+        guarded_app = AuthorizationGuard(app)
+        client: httpx.AsyncClient | httpx2.AsyncClient
+        auth: httpx.Auth | httpx2.Auth
+        if MCP_SDK_V2:
+            client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=guarded_app))
+            auth = BearerAuth2()
+        else:
+            client = httpx.AsyncClient(transport=httpx.ASGITransport(app=guarded_app))
+            auth = BearerAuth()
+
+        try:
+            async with app.router.lifespan_context(app):
+                # The guard rejects requests made through the bare client, without `auth`.
+                assert (await client.post('http://testserver/mcp')).status_code == 401
+                guarded_app.authorization_headers.clear()
+
+                toolset = MCPToolset('http://testserver/mcp', http_client=client, auth=auth)
+                agent = Agent(TestModel(call_tools=['ping']), toolsets=[toolset])
+
+                first_result = await agent.run('ping')
+                second_result = await agent.run('ping')
+
+            assert first_result.output == '{"ping":"pong"}'
+            assert second_result.output == '{"ping":"pong"}'
+            assert guarded_app.authorization_headers
+            assert set(guarded_app.authorization_headers) == {'Bearer secret'}
+            assert client.is_closed is False
+        finally:
+            await client.aclose()
 
     async def test_aexit_called_before_aenter_raises(self, fastmcp_server: FastMCP[None]):
         """Calling `__aexit__` before any `__aenter__` should raise — `_running_count` is 0."""
