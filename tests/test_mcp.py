@@ -25,6 +25,7 @@ from unittest.mock import AsyncMock
 
 import anyio
 import httpx
+import httpx2
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, ValidationError
@@ -193,7 +194,9 @@ toolset = MCPToolset(
     auth=httpx2.BasicAuth('user', 'pass'),
     http_client=client,
 )
-assert toolset.client.transport.httpx_client_factory() is client
+borrowed_client = toolset.client.transport.httpx_client_factory()
+assert borrowed_client is not client
+assert borrowed_client.is_closed is False
 
 assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), (
     'the MCP toolset imported httpx'
@@ -288,25 +291,84 @@ class TestMCPToolsetConstruction:
         assert isinstance(toolset.client.transport, StreamableHttpTransport)
         assert toolset.client.transport.headers == {'X-Key': 'foo'}
 
-    def test_http_client_kwarg_uses_factory(self):
+    async def test_http_client_kwarg_uses_factory(self):
         client = httpx.AsyncClient()
         toolset = MCPToolset('https://example.com/mcp', http_client=client)
         assert isinstance(toolset.client.transport, StreamableHttpTransport)
         assert toolset.client.transport.httpx_client_factory is not None
-        assert toolset.client.transport.httpx_client_factory() is client
+        borrowed_client = toolset.client.transport.httpx_client_factory()
+        assert borrowed_client is not client
         # FastMCP's StreamableHttpTransport calls the factory with `follow_redirects`, which the
         # mcp SDK's `McpHttpClientFactory` protocol doesn't declare; the factory must accept it.
         factory = _make_httpx_client_factory(client)
-        assert factory(follow_redirects=True) is client
+        assert factory(follow_redirects=True) is not client
 
-    def test_sse_url_with_http_client_uses_factory(self):
+        borrowed_clients = [factory(), factory()]
+        assert borrowed_clients[0] is not borrowed_clients[1]
+        for borrowed_client in borrowed_clients:
+            async with borrowed_client:
+                assert borrowed_client.is_closed is False
+            await borrowed_client.aclose()
+            assert client.is_closed is False
+
+        await client.aclose()
+
+    async def test_sse_url_with_http_client_uses_factory(self):
         client = httpx.AsyncClient()
         toolset = MCPToolset('https://example.com/sse', http_client=client)
         assert isinstance(toolset.client.transport, SSETransport)
         assert toolset.client.transport.httpx_client_factory is not None
-        assert toolset.client.transport.httpx_client_factory() is client
+        assert toolset.client.transport.httpx_client_factory() is not client
         factory = _make_httpx_client_factory(client)
-        assert factory(follow_redirects=True) is client
+        assert factory(follow_redirects=True) is not client
+        await client.aclose()
+
+    @pytest.mark.parametrize(
+        'method_name',
+        ['request', 'stream', 'send', 'get', 'post', 'put', 'patch', 'delete', 'head', 'options'],
+    )
+    async def test_http_client_factory_applies_auth(self, method_name: str):
+        authorization_headers: list[str | None] = []
+        httpx_module = cast(Any, httpx2 if MCP_SDK_V2 else httpx)
+
+        async def handle_request(request: Any) -> Any:
+            authorization_headers.append(request.headers.get('Authorization'))
+            return httpx_module.Response(200)
+
+        client = httpx_module.AsyncClient(transport=httpx_module.MockTransport(handle_request))
+        borrowed_client = _make_httpx_client_factory(client)(auth=httpx_module.BasicAuth('user', 'pass'))
+        url = 'https://example.com/mcp'
+
+        if method_name == 'request':
+            await borrowed_client.request('POST', url)
+        elif method_name == 'stream':
+            async with borrowed_client.stream('POST', url):
+                pass
+        elif method_name == 'send':
+            await borrowed_client.send(client.build_request('POST', url))
+        else:
+            await getattr(borrowed_client, method_name)(url)
+
+        assert authorization_headers == ['Basic dXNlcjpwYXNz']
+        await client.aclose()
+
+    async def test_http_client_factory_preserves_per_request_auth(self):
+        authorization_headers: list[str | None] = []
+        httpx_module = cast(Any, httpx2 if MCP_SDK_V2 else httpx)
+
+        async def handle_request(request: Any) -> Any:
+            authorization_headers.append(request.headers.get('Authorization'))
+            return httpx_module.Response(200)
+
+        client = httpx_module.AsyncClient(transport=httpx_module.MockTransport(handle_request))
+        borrowed_client = _make_httpx_client_factory(client)(auth=httpx_module.BasicAuth('user', 'pass'))
+
+        await borrowed_client.post('https://example.com/mcp', auth=httpx_module.BasicAuth('override', 'auth'))
+        without_factory_auth = _make_httpx_client_factory(client)()
+        await without_factory_auth.delete('https://example.com/mcp')
+
+        assert authorization_headers == ['Basic b3ZlcnJpZGU6YXV0aA==', None]
+        await client.aclose()
 
     def test_http_kwargs_with_non_url_input_raises(self):
         """HTTP-only kwargs (headers/auth/verify/http_client) must error out when the connection
