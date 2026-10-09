@@ -1,3 +1,7 @@
+---
+description: "Write custom Pydantic Evals evaluators for domain-specific logic, external integrations or specialized metrics by subclassing Evaluator and defining evaluate."
+---
+
 # Custom Evaluators
 
 Write custom evaluators for domain-specific logic, external integrations, or specialized metrics.
@@ -546,7 +550,7 @@ class ExecutablePython(Evaluator):
         import tempfile
 
         # Write code to temp file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
             f.write(ctx.output)
             temp_path = f.name
 
@@ -563,7 +567,7 @@ class ExecutablePython(Evaluator):
                     process.communicate(),
                     timeout=self.timeout_seconds,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 process.kill()
                 return EvaluationReason(
                     value=False,
@@ -801,7 +805,7 @@ class APIEvaluator(Evaluator):
                 self._call_api(ctx.output),
                 timeout=self.timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return False
 ```
 

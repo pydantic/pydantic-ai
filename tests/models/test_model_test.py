@@ -5,13 +5,13 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import re
-from datetime import timezone
+from datetime import UTC
 from typing import Annotated, Any, Literal
 
 import pytest
 from annotated_types import Ge, Gt, Le, Lt, MaxLen, MinLen
 from anyio import Event
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Discriminator, Field, Tag
 
 from pydantic_ai import (
     Agent,
@@ -23,8 +23,11 @@ from pydantic_ai import (
     ModelRetry,
     RetryPromptPart,
     RunContext,
+    StructuredDict,
     TextPart,
+    Tool,
     ToolCallPart,
+    ToolOutput,
     ToolReturn,
     ToolReturnPart,
     UserPromptPart,
@@ -59,7 +62,7 @@ def test_response_metadata_consistent_between_run_and_run_stream():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -184,7 +187,7 @@ def test_custom_output_args():
                 parts=[
                     UserPromptPart(
                         content='x',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -202,7 +205,7 @@ def test_custom_output_args():
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
                 provider_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -212,7 +215,7 @@ def test_custom_output_args():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -237,7 +240,7 @@ def test_custom_output_args_model():
                 parts=[
                     UserPromptPart(
                         content='x',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -255,7 +258,7 @@ def test_custom_output_args_model():
                 usage=RequestUsage(input_tokens=51, output_tokens=6),
                 model_name='test',
                 provider_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -265,7 +268,7 @@ def test_custom_output_args_model():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -286,7 +289,7 @@ def test_output_type():
                 parts=[
                     UserPromptPart(
                         content='x',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -304,7 +307,7 @@ def test_output_type():
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
                 provider_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -314,7 +317,7 @@ def test_output_type():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -344,7 +347,7 @@ def test_tool_retry():
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -354,7 +357,7 @@ def test_tool_retry():
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 provider_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -363,7 +366,7 @@ def test_tool_retry():
                     RetryPromptPart(
                         content='First call failed',
                         tool_name='my_ret',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                         tool_call_id=IsStr(),
                     )
                 ],
@@ -376,16 +379,12 @@ def test_tool_retry():
                 usage=RequestUsage(input_tokens=61, output_tokens=8),
                 model_name='test',
                 provider_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='my_ret', content='1', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
-                    )
-                ],
+                parts=[ToolReturnPart(tool_name='my_ret', content='1', tool_call_id=IsStr(), timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -395,7 +394,7 @@ def test_tool_retry():
                 usage=RequestUsage(input_tokens=62, output_tokens=12),
                 model_name='test',
                 provider_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -429,7 +428,6 @@ class AgentRunDeps:
     run_id: int
 
 
-@pytest.mark.anyio
 async def test_multiple_concurrent_tool_retries():
     class OutputModel(BaseModel):
         x: int
@@ -675,6 +673,114 @@ def test_falsy_const_tool_args() -> None:
     assert calls == snapshot([{'empty': '', 'flag': False, 'zero': 0}])
 
 
+def test_json_pointer_ref_tool_args() -> None:
+    """A local JSON-pointer `$ref` is followed like a `$defs` one when generating tool arguments.
+
+    The MCP TypeScript SDK sends this shape for a zod v3 tool `{ from: Address, to: Address }`: the reused
+    subschema points at its first occurrence instead of `$defs`.
+    """
+    address = {
+        'type': 'object',
+        'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+        'required': ['street', 'city'],
+        'additionalProperties': False,
+    }
+    calls: list[dict[str, Any]] = []
+
+    def ship_order(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'shipped'
+
+    tool = Tool.from_schema(
+        ship_order,
+        name='ship_order',
+        description=None,
+        json_schema={
+            'type': 'object',
+            'properties': {'from': address, 'to': {'$ref': '#/properties/from'}},
+            'required': ['from', 'to'],
+            'additionalProperties': False,
+        },
+    )
+
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot([{'from': {'street': 'a', 'city': 'a'}, 'to': {'street': 'a', 'city': 'a'}}])
+
+
+def test_list_form_items_tool_args() -> None:
+    """A tool schema spelling a tuple as a draft-7 `items` list gets one generated value per element, up to `maxItems`.
+
+    `zod-to-json-schema`, which the MCP TypeScript SDK uses for zod v3 tool schemas, emits this shape.
+    When the schema also has `prefixItems`, those are generated instead of the list.
+    """
+    calls: list[dict[str, Any]] = []
+
+    def pair_tool(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'pair': {'type': 'array', 'minItems': 2, 'maxItems': 2, 'items': [{'type': 'string'}, {'type': 'integer'}]},
+            'head': {'type': 'array', 'maxItems': 1, 'items': [{'type': 'string'}, {'type': 'integer'}]},
+            'prefixed': {
+                'type': 'array',
+                'prefixItems': [{'type': 'string'}],
+                'items': [{'type': 'integer'}, {'type': 'integer'}],
+            },
+        },
+        'required': ['pair', 'head', 'prefixed'],
+    }
+    tool = Tool.from_schema(pair_tool, name='pair_tool', description='Takes a pair.', json_schema=schema)
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot([{'pair': ['a', 0], 'head': ['a'], 'prefixed': ['a']}])
+
+
+def test_prefix_items_max_items_tool_args() -> None:
+    """`prefixItems` longer than `maxItems` is cut to `maxItems`, but never below `minItems`."""
+    calls: list[dict[str, Any]] = []
+
+    def head_tool(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'head': {'type': 'array', 'maxItems': 1, 'prefixItems': [{'type': 'string'}, {'type': 'integer'}]},
+            'floor': {
+                'type': 'array',
+                'minItems': 2,
+                'maxItems': 1,
+                'prefixItems': [{'type': 'string'}, {'type': 'integer'}],
+            },
+        },
+        'required': ['head', 'floor'],
+    }
+    tool = Tool.from_schema(head_tool, name='head_tool', description='Takes a head.', json_schema=schema)
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot([{'head': ['a'], 'floor': ['a', 0]}])
+
+
+def test_boolean_schema_tool_args() -> None:
+    """A `true` subschema, which constrains nothing, is generated like a schema without a `type`."""
+    calls: list[dict[str, Any]] = []
+
+    def any_tool(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema = {
+        'type': 'object',
+        'properties': {'anything': True, 'pair': {'type': 'array', 'items': [True, {'type': 'integer'}]}},
+        'required': ['anything', 'pair'],
+    }
+    tool = Tool.from_schema(any_tool, name='any_tool', description='Takes anything.', json_schema=schema)
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot([{'anything': 'a', 'pair': ['a', 0]}])
+
+
 @pytest.mark.parametrize(
     'content',
     [
@@ -726,3 +832,159 @@ def test_int_inclusive_upper_bound_reachable():
     assert generated_values(2.5, 5.5, list(range(4))) == [2.5, 3.5, 4.5, 2.5]
     assert generated_values(2.0, 5.5, list(range(5))) == [2.0, 3.0, 4.0, 5.0, 2.5]
     assert generated_values(0.0, 1e20, [10**20]) == [10**20]
+
+
+class Cat(BaseModel):
+    kind: Literal['cat']
+    name: str
+
+
+class Dog(BaseModel):
+    kind: Literal['dog']
+    breed: str
+
+
+Discriminated = Annotated[Cat | Dog, Field(discriminator='kind')]
+
+
+def test_tool_output_oneof_discriminated_union():
+    outputs = [
+        Agent(model=TestModel(seed=seed), output_type=ToolOutput(Discriminated)).run_sync('hello').output
+        for seed in (0, 1)
+    ]
+
+    assert outputs == snapshot([Cat(kind='cat', name='a'), Dog(kind='dog', breed='b')])
+
+
+def test_function_tool_oneof_discriminated_union_arg():
+    received: list[Cat | Dog] = []
+
+    agent = Agent(model=TestModel())
+
+    @agent.tool_plain
+    def pet_name(pet: Discriminated) -> str:
+        received.append(pet)
+        return pet.kind
+
+    agent.run_sync('hello')
+
+    assert received == snapshot([Cat(kind='cat', name='a')])
+
+
+class DefaultedCat(BaseModel):
+    kind: Literal['cat'] = 'cat'
+    color: Literal['black']
+
+
+class DefaultedDog(BaseModel):
+    kind: Literal['dog'] = 'dog'
+    breed: str
+
+
+def test_tool_output_oneof_discriminated_union_defaulted_tag():
+    """Pydantic leaves a defaulted tag out of `required`, but validation needs it to pick the member."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=ToolOutput(Annotated[DefaultedCat | DefaultedDog, Field(discriminator='kind')]),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot(DefaultedCat(color='black'))
+
+
+class WhiteCat(BaseModel):
+    kind: Literal['cat'] = 'cat'
+    color: Literal['white']
+
+
+def cat_color(cat: DefaultedCat | WhiteCat | dict[str, str]) -> str:
+    return cat['color'] if isinstance(cat, dict) else cat.color
+
+
+CatsByColor = Annotated[DefaultedCat | WhiteCat, Field(discriminator='color')]
+CatsByCallable = Annotated[
+    Annotated[DefaultedCat, Tag('black')] | Annotated[WhiteCat, Tag('white')], Discriminator(cat_color)
+]
+
+
+def test_tool_output_oneof_nested_discriminated_union_defaulted_tag():
+    """The outer tag must reach the member the inner union picks."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=ToolOutput(Annotated[CatsByColor | DefaultedDog, Field(discriminator='kind')]),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot(DefaultedCat(color='black'))
+
+
+def test_tool_output_oneof_nested_callable_discriminator_defaulted_tag():
+    """A callable `Discriminator` emits `oneOf` with no `discriminator` keyword, but still passes the outer tag on."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=ToolOutput(Annotated[CatsByCallable | DefaultedDog, Field(discriminator='kind')]),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot(DefaultedCat(color='black'))
+
+
+@pytest.mark.parametrize(
+    'discriminator', [pytest.param({}, id='absent'), pytest.param({'discriminator': 'value'}, id='swagger-2-string')]
+)
+def test_structured_dict_oneof_without_discriminator(discriminator: dict[str, str]):
+    """A `oneOf` without an OpenAPI `discriminator` object picks a member like `anyOf`."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=StructuredDict(
+            {
+                'type': 'object',
+                'properties': {'value': {'oneOf': [{'type': 'integer'}, {'type': 'string'}], **discriminator}},
+                'required': ['value'],
+            }
+        ),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot({'value': 0})
+
+
+def test_structured_dict_oneof_boolean_member():
+    """A boolean subschema in `oneOf` has no structure to generate from, so `TestModel` writes a character."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=StructuredDict(
+            {
+                'type': 'object',
+                'properties': {'value': {'oneOf': [True, {'type': 'integer'}]}},
+                'required': ['value'],
+            }
+        ),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot({'value': 'a'})
+
+
+def test_structured_dict_oneof_beside_type():
+    """A `oneOf` beside a `type` only narrows it, so the `type` drives generation."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=StructuredDict(
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'integer'}, 'b': {'type': 'string'}, 'c': {'type': 'string'}},
+                'required': ['a'],
+                'oneOf': [{'required': ['b']}, {'required': ['c']}],
+            }
+        ),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot({'a': 0})

@@ -1,3 +1,7 @@
+---
+description: "Integrate a new durable execution engine with Pydantic AI using the stable backend builder, routing model requests, tool calls and events through your engine."
+---
+
 # Building a durable execution backend
 
 Pydantic AI's durable execution builder lets an integration route model requests, tool discovery,
@@ -9,8 +13,8 @@ The complete implementations for [Temporal][pydantic_ai.durable_exec.temporal.Te
 [DBOS][pydantic_ai.durable_exec.dbos.DBOSDurability], and
 [Prefect][pydantic_ai.durable_exec.prefect.PrefectDurability] are useful references. The external
 [Restate](https://github.com/restatedev/sdk-python/tree/main/python/restate/ext/pydantic),
-[AWS Lambda](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/aws_lambda),
-and Absurd
+[AWS Lambda](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda),
+and [Absurd](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/absurd)
 integrations show the same public builder with JSON journals.
 
 ## Choose a backend tier

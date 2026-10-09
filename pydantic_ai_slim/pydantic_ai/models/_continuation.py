@@ -24,10 +24,11 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
-from contextlib import AbstractContextManager, nullcontext, suppress
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator
+from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from .. import _utils
@@ -45,7 +46,7 @@ from ..messages import (
 )
 from ..settings import ModelSettings
 from ..usage import RequestUsage
-from . import Model, StreamedResponse
+from . import Model, ModelRequestContext, StreamedResponse
 
 __all__ = [
     'MAX_BACKGROUND_POLLS',
@@ -54,6 +55,8 @@ __all__ = [
     'cancel_suspended_job',
     'merge_mode',
     'merge_responses',
+    'observe_continuation_segments',
+    'report_continuation_segment',
     '_ContinuationStreamedResponse',
 ]
 
@@ -114,7 +117,7 @@ MergeMode = Literal['replace-same-id', 'replace-new', 'accumulate']
 # Deterministic fallback for `timestamp` before any segment has streamed. This is
 # never reached in practice (a segment is always in flight or finalized by the time
 # `timestamp` is read), but keeps the loop free of `now_utc()` for durable replay.
-_FALLBACK_TIMESTAMP = datetime.fromtimestamp(0, tz=timezone.utc)
+_FALLBACK_TIMESTAMP = datetime.fromtimestamp(0, tz=UTC)
 
 
 def _has_replace_marker(response: ModelResponse) -> bool:
@@ -172,7 +175,8 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
     snapshot. Otherwise accumulate parts and usage, and use other fields from the new response.
 
     Either way, `provider_details` and `metadata` accumulate across the turn's segments (latest-wins)
-    so turn-scoped data a later segment omits isn't lost — see below.
+    so turn-scoped data a later segment omits isn't lost — see below — and `failed_attempts` are
+    concatenated.
     """
     mode = merge_mode(existing, new)
     if mode == 'replace-same-id':
@@ -202,6 +206,10 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
         merged = replace(merged, provider_details={**existing.provider_details, **(merged.provider_details or {})})
     if existing.metadata:
         merged = replace(merged, metadata={**existing.metadata, **(merged.metadata or {})})
+    # Attempts that failed before an earlier segment (e.g. the models a `FallbackModel` moved on from
+    # before the one that suspended) belong to the turn as a whole, so they are kept in order.
+    if existing.failed_attempts:
+        merged = replace(merged, failed_attempts=[*existing.failed_attempts, *(merged.failed_attempts or [])])
 
     # Pop the transient `replace_previous_response` marker now that it's been honored above, so it
     # doesn't persist into history where it would wrongly force a later legitimate `pause_turn`
@@ -234,6 +242,46 @@ async def cancel_suspended_job(model: Model, response: ModelResponse) -> None:
         pass
 
 
+_SegmentObserver = tuple[ModelRequestContext, Callable[[ModelResponse], None]]
+_segment_observers: ContextVar[tuple[_SegmentObserver, ...]] = ContextVar('continuation_segment_observers', default=())
+
+
+@contextmanager
+def observe_continuation_segments(
+    request_context: ModelRequestContext, observer: Callable[[ModelResponse], None]
+) -> Generator[None]:
+    """Call `observer` with every segment response of the model request made for `request_context`.
+
+    A continuation chain is merged into one response whose usage sums every segment's, as each segment
+    is a separately billed request. Some consumers need a single request's usage instead: prompt-cache
+    health judges the cache read of the final segment, whose prompt carries the whole prefix. The
+    observer is tied to its request, so a nested agent's requests made in the same context don't reach it.
+
+    Private for now: read by the `Instrumentation` capability and, together with `merge_responses`, by the
+    Pydantic AI Harness's `SpendLimits`, which pins this package's exact version.
+    """
+    token = _segment_observers.set((*_segment_observers.get(), (request_context, observer)))
+    try:
+        yield
+    finally:
+        _segment_observers.reset(token)
+
+
+def report_continuation_segment(
+    request_context: ModelRequestContext,
+    segment: ModelResponse,
+    observers: tuple[_SegmentObserver, ...] | None = None,
+) -> None:
+    """Pass one segment response of `request_context`'s request to the observers registered for it.
+
+    `observers` defaults to those of the current context; the streamed composite passes the ones it
+    captured when it was opened, as its segments are streamed from the consumer's task.
+    """
+    for owner, observer in _segment_observers.get() if observers is None else observers:
+        if owner is request_context:
+            observer(segment)
+
+
 @dataclass
 class _ContinuationStreamedResponse(StreamedResponse):
     """A [`StreamedResponse`][pydantic_ai.models.StreamedResponse] that stitches continuation segments into one stream.
@@ -264,9 +312,14 @@ class _ContinuationStreamedResponse(StreamedResponse):
     # in a separate task) so span updates driven by `get_current_span()` land on the right span even
     # though segments are opened lazily in the consumer task. Opaque to this module (no OTel coupling).
     segment_context: Callable[[], AbstractContextManager[Any]] = nullcontext
+    # The request whose segment observers (see `observe_continuation_segments`) see each segment response.
+    request_context: ModelRequestContext | None = None
 
     _merged_response: ModelResponse | None = field(default=None, init=False)
     _current_sub: StreamedResponse | None = field(default=None, init=False)
+    # Captured where the stream is opened, inside `wrap_model_request`, because segments are streamed
+    # from the consumer's task, which doesn't see that context. See `observe_continuation_segments`.
+    _observers: tuple[_SegmentObserver, ...] = field(default_factory=_segment_observers.get, init=False)
     _stopped: bool = field(default=False, init=False)
     # Set by `aclose()`: the consumer stopped iterating and the stream was torn down *without* a
     # `cancel()`/`close_stream()` (which would flip `_stopped`/`_cancelled` and cancel the server-side
@@ -433,6 +486,8 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 # Read `sub.get()` AFTER the `async with` exits so late-stamped metadata
                 # (e.g. a `FallbackModel` continuation pin) is captured.
                 sub_response = sub.get()
+                if self.request_context is not None:
+                    report_continuation_segment(self.request_context, sub_response, self._observers)
                 if response is None:
                     if sub_response.state == 'suspended':
                         self.finalize_response(sub_response)

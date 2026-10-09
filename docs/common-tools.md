@@ -1,3 +1,7 @@
+---
+description: "Add ready-made tools to a Pydantic AI agent, such as DuckDuckGo and Tavily web search and web fetch, implemented in Pydantic AI and runnable with any model."
+---
+
 # Common Tools
 
 Pydantic AI ships with common tools that extend your agent's capabilities.
@@ -233,7 +237,7 @@ Here are some recent papers about transformer architectures from arxiv.org:
     pip/uv-add "pydantic-ai-harness[exa]"
     ```
 
-    ```py {title="exa_search.py" test="skip" typecheck="skip - pydantic_ai_harness.exa is not in the pydantic-ai-harness version CI pins"}
+    ```py {title="exa_search.py" test="skip"}
     from pydantic_ai_harness.exa import ExaSearch
 
     from pydantic_ai import Agent

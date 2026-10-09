@@ -1,203 +1,259 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '640'
+      - "640"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Get me info about New York including its population
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: any
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_population
-        strict: true
-      - description: Information about a city.
-        input_schema:
-          properties:
-            city:
-              type: string
-            country:
-              type: string
-            population:
-              type: integer
-          required:
-          - city
-          - country
-          - population
-          type: object
-        name: final_result
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Get me info about New York including its population
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: any
+        tools:
+        - name: get_population
+          description: ""
+          input_schema:
+            type: object
+            properties:
+              city:
+                type: string
+            additionalProperties: false
+            required:
+            - city
+          strict: true
+        - name: final_result
+          description: Information about a city.
+          input_schema:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+              population:
+                type: integer
+            required:
+            - city
+            - country
+            - population
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '491'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
-      retry-after:
-      - '50'
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-1de3941a91aa8bb531c8046c5d63fd11-bb173b8b2f00375f-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - id: toolu_01UvLpDBkmE68NhdxhfZToRZ
-        input:
-          city: New York
-        name: get_population
-        type: tool_use
-      id: msg_01Ent8KjU61AdpwoAsSPoCvP
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 732
-        output_tokens: 39
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3f5bN6gyteeej3LGzN","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":732,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01XZ5rd6vEJcUQMwKEs4ARhB","name":"get_population","input":{},"caller":{"type":"direct"}}}
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"New "} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"York\"}"}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0            }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":732,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":39}         }
+
+        event: message_stop
+        data: {"type":"message_stop"           }
+
+  recorded_at: 2026-09-29T16:28:42.102701+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '918'
+      - "943"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Get me info about New York including its population
-          type: text
-        role: user
-      - content:
-        - id: toolu_01UvLpDBkmE68NhdxhfZToRZ
-          input:
-            city: New York
-          name: get_population
-          type: tool_use
-        role: assistant
-      - content:
-        - content: '8000000'
-          is_error: false
-          tool_use_id: toolu_01UvLpDBkmE68NhdxhfZToRZ
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: any
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_population
-        strict: true
-      - description: Information about a city.
-        input_schema:
-          properties:
-            city:
-              type: string
-            country:
-              type: string
-            population:
-              type: integer
-          required:
-          - city
-          - country
-          - population
-          type: object
-        name: final_result
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Get me info about New York including its population
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_01XZ5rd6vEJcUQMwKEs4ARhB
+            type: tool_use
+            name: get_population
+            input:
+              city: New York
+        - role: user
+          content:
+          - tool_use_id: toolu_01XZ5rd6vEJcUQMwKEs4ARhB
+            type: tool_result
+            content:
+            - text: "8000000"
+              type: text
+            is_error: false
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: any
+        tools:
+        - name: get_population
+          description: ""
+          input_schema:
+            type: object
+            properties:
+              city:
+                type: string
+            additionalProperties: false
+            required:
+            - city
+          strict: true
+        - name: final_result
+          description: Information about a city.
+          input_schema:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+              population:
+                type: integer
+            required:
+            - city
+            - country
+            - population
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '536'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
-      retry-after:
-      - '40'
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-b7af6be97c956dff55d3cee4c7afd94d-699106bf638017b6-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - id: toolu_01Vm6qu6McfGXthpRSSjQBrM
-        input:
-          city: New York
-          country: United States
-          population: 8000000
-        name: final_result
-        type: tool_use
-      id: msg_01Ep2qB6KLjptiMUTkqKmyq6
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 801
-        output_tokens: 76
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3fCEDYar7bGixEmDGu","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":801,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":7,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01HLBmUGyaeVK7mMqMte9XGs","name":"final_result","input":{},"caller":{"type":"direct"}}       }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"New "} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"York\""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"coun"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"try\": \""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"United "}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"States\""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"popu"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"lation\""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": 80000"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"00}"}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0          }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":801,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":76}      }
+
+        event: message_stop
+        data: {"type":"message_stop"        }
+
+  recorded_at: 2026-09-29T16:28:43.805994+00:00

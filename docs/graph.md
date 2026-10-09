@@ -1,3 +1,7 @@
+---
+description: "Model complex workflows as typed graphs and state machines with pydantic-graph, an async graph library for Python where nodes and edges come from type hints."
+---
+
 # Graphs
 
 !!! danger "Don't use a nail gun unless you need a nail gun"

@@ -1,18 +1,18 @@
 from __future__ import annotations as _annotations
 
-import io
+import base64
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from functools import cached_property
-from typing import Any, Literal, TypeAlias, TypeGuard, cast, overload
+from typing import Any, Literal, TypeAlias, TypeGuard, assert_never, cast, overload
 
+import httpx2
 import pydantic_core
 from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
-from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._http import to_httpx2_timeout
@@ -69,6 +69,7 @@ from ..native_tools._tool_search import (
     ToolSearchMatch,
     ToolSearchTool,
 )
+from ..output import StructuredOutputMode
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,
@@ -79,8 +80,9 @@ from ..profiles.anthropic import (
     resolve_anthropic_effort,
 )
 from ..providers import Provider, infer_provider
+from ..providers._bedrock_model_names import bedrock_claude_cache_retentions
 from ..providers.anthropic import AsyncAnthropicClient
-from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import CacheConfig, CacheRetention, CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from ..toolsets._tool_search import discovered_tool_names_in_order
 from . import (
@@ -97,7 +99,9 @@ from . import (
     get_user_agent,
 )
 from ._anthropic_containers import is_tool_result_only as _is_tool_result_only
-from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
+from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
+from ._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
+from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
     'compaction': 'stop',
@@ -142,6 +146,7 @@ def _append_revealed_tool_params(tools: list[BetaToolUnionParam], revealed_tool_
 
 try:
     from anthropic import (
+        DEFAULT_TIMEOUT,
         NOT_GIVEN,
         APIConnectionError,
         APIStatusError,
@@ -178,6 +183,7 @@ try:
         BetaContentBlock,
         BetaContentBlockParam,
         BetaContextManagementConfigParam,
+        BetaDiagnosticsParam,
         BetaDirectCaller,
         BetaFileDocumentSourceParam,
         BetaFileImageSourceParam,
@@ -284,6 +290,13 @@ except ImportError as _import_error:
 # legacy `AsyncAnthropicBedrock` InvokeModel API), so it's not in `_NON_AUTOMATIC_CACHING_CLIENTS`. Fast
 # mode is not available on any Bedrock transport, so it goes in `_FAST_MODE_UNSUPPORTED_CLIENTS`.
 _NON_AUTOMATIC_CACHING_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
+
+_CACHE_SETTINGS_KEYS = (
+    'anthropic_cache',
+    'anthropic_cache_instructions',
+    'anthropic_cache_tool_definitions',
+    'anthropic_cache_messages',
+)
 _FAST_MODE_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicBedrock,
     AsyncAnthropicBedrockMantle,
@@ -327,6 +340,14 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, Asy
 # excluded Bedrock and Vertex on the strength of a Bedrock test that used `claude-sonnet-5`, a model
 # that ignores the entry on *every* transport — which measured the model, not the transport.
 _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
+# Cache diagnostics are documented as Claude API only. Verified live: the Bedrock InvokeModel and Messages APIs
+# both reject the `diagnostics` field with a 400 ("Extra inputs are not permitted").
+_CACHE_DIAGNOSTICS_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
 
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
@@ -338,12 +359,59 @@ _ANTHROPIC_FILES_API_BETA = 'files-api-2025-04-14'
 _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
 
 
+# https://platform.claude.com/docs/en/api/errors#http-errors
+_ERROR_TYPE_STATUS_CODES = {
+    'invalid_request_error': 400,
+    'authentication_error': 401,
+    'billing_error': 402,
+    'permission_error': 403,
+    'not_found_error': 404,
+    'request_too_large': 413,
+    'rate_limit_error': 429,
+    'api_error': 500,
+    'timeout_error': 504,
+    'overloaded_error': 529,
+}
+
+
+def _error_status_code(error: APIStatusError) -> int:
+    """The HTTP status of an Anthropic error, including one reported in a stream after a 200 response.
+
+    An error event in a stream arrives after the response status was already 200, so the SDK raises it with that
+    status; the error `type` identifies the status the same error has on a non-streaming request.
+    """
+    if error.status_code >= 400:
+        return error.status_code
+    body = error.body
+    if _utils.is_str_dict(body) and _utils.is_str_dict(error_body := body.get('error')):
+        if isinstance(error_type := error_body.get('type'), str) and error_type in _ERROR_TYPE_STATUS_CODES:
+            return _ERROR_TYPE_STATUS_CODES[error_type]
+    return error.status_code
+
+
+def _is_expired_container_error(error: APIStatusError) -> bool:
+    """Whether Anthropic rejected a request because the container it reuses has expired.
+
+    Anthropic answers an expired container with a 404 `not_found_error`, and earlier with a 500.
+    """
+    status_code = _error_status_code(error)
+    if status_code == 500:
+        return True
+    body = error.body
+    return (
+        status_code == 404
+        and _utils.is_str_dict(body)
+        and _utils.is_str_dict(error_body := body.get('error'))
+        and str(error_body.get('message', '')).startswith('Container not found')
+    )
+
+
 @contextmanager
 def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> Generator[None]:
     try:
         yield
     except APIStatusError as e:
-        if (status_code := e.status_code) >= 400:
+        if (status_code := _error_status_code(e)) >= 400:
             body: object | None = e.body
             suggested_model_id = None
             if _utils.is_str_dict(body) and _utils.is_str_dict(error := body.get('error')):
@@ -411,8 +479,8 @@ AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 class AnthropicStaleThinkingBlockWarning(Warning):
     """Warning raised when Anthropic rejected a replayed thinking block and Pydantic AI retried without it.
 
-    Claude Fable 5.1 and Claude Opus 5.5 bind each thinking block to the conversation prefix that
-    produced it and reject a replay once that prefix changes — which a dynamic
+    Claude Fable 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Haiku 5.5 bind each thinking block to the
+    conversation prefix that produced it and reject a replay once that prefix changes — which a dynamic
     [instructions][pydantic_ai.Agent.instructions] function and a
     [filtered toolset](../toolsets.md#filtering-tools) both do by design. Anthropic enforces the
     check for accounts created on or after 2026-08-31; for older accounts it records the mismatch
@@ -497,6 +565,24 @@ class AnthropicModelSettings(ModelSettings, total=False):
     1 of Anthropic's 4 cache point slots; we automatically trim excess explicit breakpoints.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching
     for more information.
+    """
+
+    anthropic_cache_diagnostics: bool
+    """Request [cache diagnostics](https://platform.claude.com/docs/en/build-with-claude/cache-diagnostics) on every request.
+
+    When enabled, each request carries a `diagnostics` object naming the most recent Anthropic response in the
+    message history as `previous_message_id` (or `null` when there is none, which opts the request in so the next
+    one can be compared against it). Anthropic compares the two requests and reports where the prompt prefix
+    first diverged. The result is available in
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under the
+    `'cache_diagnostics'` key, as Anthropic's `diagnostics` object: `{'cache_miss_reason': {'type': ...,
+    'cache_missed_input_tokens': ...}}`, or `{'cache_miss_reason': None}` when the comparison was still running.
+    The key is absent when Anthropic found no divergence.
+
+    Diagnostics are free and don't affect caching, but Anthropic retains a short-lived fingerprint (hashes and
+    token counts, never prompt content) for each request that carries them, and HIPAA-enabled organizations have
+    requests using them rejected. They are only available on the Claude API, so the setting is ignored on Amazon
+    Bedrock, Google Cloud Vertex AI and Microsoft Foundry. Defaults to `False`.
     """
 
     anthropic_effort: AnthropicEffort | None
@@ -645,6 +731,60 @@ def _effective_thinking(
     return OMIT if isinstance(thinking, Omit) else dict(thinking)
 
 
+_DEFAULT_MAX_TOKENS = 16384
+"""The `max_tokens` sent when the request doesn't set one and the model's maximum output is unknown.
+
+It stays under the SDK's non-streaming limit (`_MAX_NON_STREAMING_TOKENS`).
+"""
+
+_MAX_NON_STREAMING_TOKENS = 21_333
+"""The largest `max_tokens` the Anthropic SDK sends without streaming with its default timeout.
+
+The SDK expects a response to take up to an hour per 128,000 tokens, and requires streaming past 10 minutes.
+"""
+
+_LEGACY_DEFAULT_MAX_TOKENS = 4096
+"""The default `max_tokens` for models that reject input plus `max_tokens` beyond the context window."""
+
+_MIN_TOKENS_AFTER_THINKING_BUDGET = 4096
+"""The room the default `max_tokens` leaves beyond an extended thinking `budget_tokens`."""
+
+_AnthropicEventStream: TypeAlias = _utils.PeekableAsyncStream[
+    BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]
+]
+"""A streamed response whose first event has been read, so an error that stops it is raised before it's processed."""
+
+
+def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
+    """The `max_tokens` to send when the request doesn't set one.
+
+    That's the model's maximum output, so responses are only cut off at the model's limit. Above about 21,000 tokens
+    the request is streamed behind the scenes (see `_messages_create`). Models that reject input
+    plus `max_tokens` beyond the context window keep a lower default, so conversations close to the window still fit.
+    Extended thinking's `budget_tokens` counts toward `max_tokens`, and Anthropic rejects a request whose `max_tokens`
+    isn't greater than the budget, so a large budget raises a lower default to leave room for the answer.
+    """
+    if profile.get('anthropic_rejects_max_tokens_beyond_context_window', False):
+        default = _LEGACY_DEFAULT_MAX_TOKENS
+    else:
+        default = profile.get('anthropic_max_output_tokens') or _DEFAULT_MAX_TOKENS
+    wire_thinking: dict[str, object] = {} if isinstance(thinking, Omit) else thinking
+    budget = wire_thinking.get('budget_tokens') if wire_thinking.get('type') == 'enabled' else None
+    return max(default, (budget if isinstance(budget, int) else 0) + _MIN_TOKENS_AFTER_THINKING_BUDGET)
+
+
+def _can_add_drop_block(thinking: dict[str, object] | Omit) -> bool:
+    """Whether a request may add `drop_block` to its wire `thinking` object.
+
+    Not when the caller set a `block_binding` of their own, and not for a thinking type other than
+    `adaptive`, since Anthropic accepts `block_binding` only alongside adaptive thinking. A missing
+    type counts as adaptive, which is what `_drop_stale_thinking_blocks` fills in.
+    """
+    return isinstance(thinking, Omit) or (
+        'block_binding' not in thinking and thinking.get('type', 'adaptive') == 'adaptive'
+    )
+
+
 def _is_stale_thinking_block_error(
     profile: ModelProfile,
     thinking: dict[str, object] | Omit,
@@ -654,11 +794,12 @@ def _is_stale_thinking_block_error(
 
     Scoped to models that bind and to requests that set no `block_binding` of their own, through the
     typed `thinking` config or through `extra_body`: an explicit `'error'` is a caller asking to
-    fail, and an explicit `'drop_block'` cannot produce this error.
+    fail, and an explicit `'drop_block'` cannot produce this error. A thinking type other than
+    `adaptive` is out too; see `_can_add_drop_block`.
     """
     if error.status_code != 400 or not profile.get('anthropic_binds_thinking_blocks', False):
         return False
-    if not isinstance(thinking, Omit) and 'block_binding' in thinking:
+    if not _can_add_drop_block(thinking):
         return False
     body: object | None = error.body
     return (
@@ -673,13 +814,14 @@ def _drop_stale_thinking_blocks(thinking: dict[str, object] | Omit) -> dict[str,
     """The `thinking` object for the retried request, carrying the caller's own config plus the drop.
 
     A binding model emits thinking blocks whether or not the request configured thinking, so the
-    retry usually has no `thinking` object for the binding to ride in — and the API accepts one
-    holding `block_binding` alone, which the SDK's discriminated union cannot express. Rather than
-    split the two cases, the retry always sends the whole object through `extra_body`, which reaches
-    the same JSON key without needing a `type` the caller never asked for.
+    retry usually has no `thinking` object for the binding to ride in, and an `extra_body` one may
+    carry no `type`. Claude Sonnet 5.5 and Haiku 5.5 reject a `thinking` object without a `type`, and every binding
+    model thinks adaptively when none is given, so `'adaptive'` fills the gap without changing what
+    the caller asked for. The retry sends the whole object through `extra_body`, since the SDK's
+    discriminated union has no typed home for `block_binding` on every config shape.
     """
     configured: dict[str, object] = {} if isinstance(thinking, Omit) else thinking
-    return {**configured, 'block_binding': _ANTHROPIC_DROP_STALE_THINKING_BLOCKS}
+    return {'type': 'adaptive', **configured, 'block_binding': _ANTHROPIC_DROP_STALE_THINKING_BLOCKS}
 
 
 def _history_dropped_stale_thinking_blocks(
@@ -736,7 +878,7 @@ def _thinking_with_stale_block_history(
     """Resolve request parameters that keep a prior request-local drop active for this history."""
     keep_dropping = (
         profile.get('anthropic_binds_thinking_blocks', False)
-        and (isinstance(effective_thinking, Omit) or 'block_binding' not in effective_thinking)
+        and _can_add_drop_block(effective_thinking)
         and _history_dropped_stale_thinking_blocks(
             messages,
             compaction_boundary=compaction_boundary,
@@ -877,15 +1019,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """The model name."""
         return self._model_name
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve the longest retention requested by active Anthropic cache settings."""
-        settings = merge_model_settings(self.settings, model_settings) or {}
-        return self._max_prompt_cache_retention(
-            settings.get('anthropic_cache'),
-            settings.get('anthropic_cache_instructions'),
-            settings.get('anthropic_cache_tool_definitions'),
-            settings.get('anthropic_cache_messages'),
-        )
+    def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
+        return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
+
+    def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
+        # Mirrors `prepare_request` precedence: when any explicit `anthropic_cache*` setting is present, the
+        # unified value contributes nothing, since it also adds nothing to the request.
+        if self._has_provider_cache_settings(merged_settings):
+            settings = cast(AnthropicModelSettings, merged_settings)
+            return (
+                settings.get('anthropic_cache'),
+                settings.get('anthropic_cache_instructions'),
+                settings.get('anthropic_cache_tool_definitions'),
+                settings.get('anthropic_cache_messages'),
+            )
+        return super()._effective_cache_settings(merged_settings)
 
     @property
     def system(self) -> str:
@@ -928,8 +1076,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS),
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
+                # The Bedrock and Vertex SDK clients don't support the top-level automatic caching parameter,
+                # so the unified `cache` setting places breakpoints there instead.
+                supports_auto_cache=_profile.get('supports_auto_cache', False)
+                and not isinstance(client, _NON_AUTOMATIC_CACHING_CLIENTS),
             ),
         )
+        if isinstance(client, AsyncAnthropicBedrock):
+            # AWS grants the 1-hour cache TTL to only a subset of Claude models, matching `BedrockConverseModel`.
+            _profile = merge_profile(
+                _profile,
+                AnthropicModelProfile(supported_cache_retentions=bedrock_claude_cache_retentions(self._model_name)),
+            )
         return cast(AnthropicModelProfile, _profile)
 
     @property
@@ -960,22 +1118,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
+        # A non-streaming request's transport errors reach us as the SDK's `APIConnectionError`, but a stream's don't.
         try:
             response = await self._messages_create(messages, False, model_settings, model_request_parameters)
-            return self._process_response(response, model_request_parameters, model_settings)
-        except ValueError as e:
-            if 'Streaming is required' in str(e):
-                # Anthropic SDK requires streaming for high max_tokens; fall back transparently
-                # https://github.com/anthropics/anthropic-sdk-python/blob/49d639a671cb0ac30c767e8e1e68fdd5925205d5/src/anthropic/_base_client.py#L726
-                stream = await self._messages_create(messages, True, model_settings, model_request_parameters)
-                async with stream:
-                    streamed_response = await self._process_streamed_response(
-                        stream, model_request_parameters, model_settings
-                    )
-                    async for _ in streamed_response:
-                        pass
-                    return streamed_response.get()
-            raise  # pragma: no cover
+            if isinstance(response, BetaMessage):
+                return self._process_response(response, model_request_parameters, model_settings)
+            # The request was streamed behind the scenes, see `_messages_create`.
+            async with response.source:
+                streamed_response = await self._process_streamed_response(
+                    response, model_request_parameters, model_settings
+                )
+                async for _ in streamed_response:
+                    pass
+        except httpx2.TransportError as e:
+            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+        return streamed_response.get()
 
     async def count_tokens(
         self,
@@ -1010,8 +1167,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, model_settings, model_request_parameters)
-        async with response:
+        async with response.source:
             yield await self._process_streamed_response(response, model_request_parameters, model_settings)
+
+    def _request_thinks(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        return _request_thinking_type(self.profile, model_settings, model_request_parameters) is not None
+
+    def _default_structured_output_mode(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> StructuredOutputMode:
+        # Extended thinking rejects the forced tool choice Tool Output relies on.
+        if (
+            model_request_parameters.output_tools
+            and _request_thinking_type(self.profile, model_settings, model_request_parameters) == 'enabled'
+        ):
+            return 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
+        return super()._default_structured_output_mode(model_settings, model_request_parameters)
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -1030,49 +1203,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
             )
 
-        supports_adaptive_thinking = profile.get('anthropic_supports_adaptive_thinking', False)
-        supports_forced_tool_choice = profile.get('anthropic_supports_forced_tool_choice', True)
-        thinking_type = _effective_thinking_type(
-            merged.get('anthropic_thinking'),
-            merged.get('thinking'),
-            supports_adaptive_thinking=supports_adaptive_thinking,
-        )
-        # Tool Output resolves to a forced `tool_choice`, which Anthropic rejects alongside extended
-        # thinking. Adaptive thinking is accepted — but only on models that accept forcing at all;
-        # on the rest, Tool Output could only degrade to a soft `tool_choice='auto'` the model may
-        # ignore, so they keep switching away from it whenever a thinking setting is configured.
-        thinking_blocks_output_tools = thinking_type == 'enabled' or (
-            thinking_type == 'adaptive' and not supports_forced_tool_choice
-        )
-
-        if model_request_parameters.output_tools and thinking_blocks_output_tools:
-            supports_json_schema_output = profile.get('supports_json_schema_output', False)
-            model_request_parameters = model_request_parameters.with_default_output_mode(
-                'native' if supports_json_schema_output else 'prompted'
-            )
-            if (
-                model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
-            ):  # pragma: no branch
-                # This would result in `tool_choice=required`, which isn't available here.
-                suggested_output_type = 'NativeOutput' if supports_json_schema_output else 'PromptedOutput'
-                remedy = f'Use `output_type={suggested_output_type}(...)` instead.'
-                if thinking_type == 'adaptive':
-                    raise UserError(
-                        f'{self.model_name!r} does not support output tools when a thinking setting is '
-                        f'configured, because it rejects the forced tool choice they require. {remedy}'
-                    )
-                if supports_adaptive_thinking:
-                    remedy += " Alternatively, `anthropic_thinking={'type': 'adaptive'}` supports output tools."
-                raise UserError(
-                    f'Anthropic does not support extended thinking and output tools at the same time. {remedy}'
-                )
-
-        # Resolve 'auto' to the profile default here (a no-op if already resolved above) so the
-        # strict-forcing check below also applies when native mode is reached via the profile default
-        # rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would otherwise only
-        # resolve it after `customize_request_parameters()` has already transformed the schema.
+        # Resolve 'auto' here so the strict-forcing check below also applies when native mode is reached
+        # via the default rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would
+        # otherwise only resolve it after `customize_request_parameters()` has already transformed the schema.
         model_request_parameters = model_request_parameters.with_default_output_mode(
-            self.profile.get('default_structured_output_mode', 'tool')
+            self._default_structured_output_mode(merged, model_request_parameters)
         )
 
         if model_request_parameters.output_mode == 'native':
@@ -1090,6 +1225,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
             prepared_settings = filtered or None
+        # Explicit `anthropic_cache*` settings take precedence over the unified `cache` setting.
+        if (cache := model_request_parameters.cache) and not any(
+            key in (prepared_settings or {}) for key in _CACHE_SETTINGS_KEYS
+        ):
+            prepared_settings = self._translate_cache(cast(AnthropicModelSettings, prepared_settings or {}), cache)
         return prepared_settings, model_request_parameters
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
@@ -1121,6 +1261,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if anthropic_thinking := model_settings.get('anthropic_thinking'):
             return anthropic_thinking
         thinking = model_request_parameters.thinking
+        if thinking is False and self.profile.get('thinking_enabled_by_default', False):
+            # Omitting `thinking` leaves it on for these models. `Model.prepare_request` has already dropped
+            # `False` for models that can't turn thinking off.
+            return {'type': 'disabled'}
         if thinking is None or thinking is False:
             return OMIT  # type: ignore[return-value]
         if self.profile.get('anthropic_supports_adaptive_thinking', False):
@@ -1134,7 +1278,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         stream: Literal[True],
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncStream[BetaRawMessageStreamEvent]:
+    ) -> _AnthropicEventStream:
         pass
 
     @overload
@@ -1144,7 +1288,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         stream: Literal[False],
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> BetaMessage:
+    ) -> BetaMessage | _AnthropicEventStream:
         pass
 
     async def _messages_create(
@@ -1153,11 +1297,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         stream: bool,
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
+    ) -> BetaMessage | _AnthropicEventStream:
         """Calls the Anthropic API to create a message.
 
         This is the last step before sending the request to the API.
         Most preprocessing has happened in `prepare_request()`.
+
+        A non-streaming request is streamed anyway when the SDK requires it for its `max_tokens`, so its response
+        can be a stream too.
         """
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
         # entries are then appended in history order; Anthropic excludes them from its cache key.
@@ -1175,6 +1322,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
         self._apply_explicit_message_caching(model_settings, anthropic_messages)
+        # The API rejects automatic caching when the last block's explicit breakpoint has a different TTL, and
+        # ignores it when the TTL is the same, since both mark the same breakpoint. The explicit one wins.
+        auto_cache_control = None if _last_cacheable_block_has_cache_control(anthropic_messages) else auto_cache_control
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
@@ -1206,38 +1356,72 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             thinking: BetaThinkingConfigParam | Omit,
             betas: set[str],
             thinking_override: dict[str, object] | None,
-        ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
-            return await self.client.beta.messages.create(
-                max_tokens=model_settings.get('max_tokens', 4096),
-                system=system_prompt or OMIT,
-                messages=anthropic_messages,
-                model=self._model_name,
-                tools=tools or OMIT,
-                tool_choice=tool_choice or OMIT,
-                mcp_servers=mcp_servers or OMIT,
-                output_config=output_config or OMIT,
-                betas=sorted(betas) or OMIT,
-                stream=stream,
-                cache_control=auto_cache_control or OMIT,
-                thinking=thinking,
-                stop_sequences=model_settings.get('stop_sequences', OMIT),
-                timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
-                metadata=model_settings.get('anthropic_metadata', OMIT),
-                context_management=context_management or OMIT,
-                container=container_param or OMIT,
-                service_tier=_resolve_anthropic_service_tier(model_settings),
-                speed=self._effective_speed(model_settings, anthropic_profile),
-                extra_headers=extra_headers,
-                extra_body=_build_extra_body(model_settings, thinking_override),
-            )
+        ) -> BetaMessage | _AnthropicEventStream:
+            max_tokens = model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile))
+
+            async def send(stream: bool) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
+                return await self.client.beta.messages.create(
+                    max_tokens=max_tokens,
+                    system=system_prompt or OMIT,
+                    messages=anthropic_messages,
+                    model=self._model_name,
+                    tools=tools or OMIT,
+                    tool_choice=tool_choice or OMIT,
+                    mcp_servers=mcp_servers or OMIT,
+                    output_config=output_config or OMIT,
+                    betas=sorted(betas) or OMIT,
+                    stream=stream,
+                    cache_control=auto_cache_control or OMIT,
+                    thinking=thinking,
+                    stop_sequences=model_settings.get('stop_sequences', OMIT),
+                    timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
+                    metadata=model_settings.get('anthropic_metadata', OMIT),
+                    context_management=context_management or OMIT,
+                    container=container_param or OMIT,
+                    service_tier=_resolve_anthropic_service_tier(model_settings),
+                    speed=self._effective_speed(model_settings, anthropic_profile),
+                    diagnostics=self._cache_diagnostics(messages, model_settings),
+                    extra_headers=extra_headers,
+                    extra_body=_build_extra_body(model_settings, thinking_override),
+                )
+
+            async def open_stream() -> _AnthropicEventStream:
+                raw_stream = cast(AsyncStream[BetaRawMessageStreamEvent], await send(True))
+                event_stream: _AnthropicEventStream = _utils.PeekableAsyncStream(raw_stream)
+                try:
+                    # An error that stops the response, like an expired container, arrives as the first event,
+                    # so peek it here to reach the retries below.
+                    await event_stream.peek()
+                except BaseException:
+                    await raw_stream.close()
+                    raise
+                return event_stream
+
+            if stream:
+                return await open_stream()
+            # The SDK refuses a non-streaming request it expects to take over 10 minutes, but only with its default
+            # timeout. A default `max_tokens` above that limit is the model's maximum output, so stream it when a
+            # custom timeout is set too, rather than hold one connection open for the whole response.
+            if (
+                'max_tokens' not in model_settings
+                and max_tokens > _MAX_NON_STREAMING_TOKENS
+                and ('timeout' in model_settings or self.client.timeout != DEFAULT_TIMEOUT)
+            ):
+                return await open_stream()
+            try:
+                return cast(BetaMessage, await send(False))
+            except ValueError as e:
+                if 'Streaming is required' not in str(e):
+                    raise
+                return await open_stream()
 
         retry_container = container
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await create(container, initial_thinking, initial_betas, initial_thinking_override)
             except APIStatusError as error:
                 if (
-                    error.status_code == 500
+                    _is_expired_container_error(error)
                     and container_from_history
                     and any(
                         is_str_dict(block) and block['type'] == 'container_upload'
@@ -1411,6 +1595,27 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             self.client, _FAST_MODE_UNSUPPORTED_CLIENTS
         )
 
+    def _cache_diagnostics(
+        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
+    ) -> BetaDiagnosticsParam | Omit:
+        """Build the `diagnostics` request field when `anthropic_cache_diagnostics` is enabled.
+
+        The comparison baseline is the most recent response from this provider. Anthropic rejects an id that
+        doesn't start with `msg_` with a 400, so a response from an Anthropic-compatible endpoint that issues other
+        ids (OpenRouter's `gen-...`, for example) opts in without a baseline instead.
+        """
+        if not model_settings.get('anthropic_cache_diagnostics') or isinstance(
+            self.client, _CACHE_DIAGNOSTICS_UNSUPPORTED_CLIENTS
+        ):
+            return OMIT
+        previous_message_id: str | None = None
+        for message in reversed(messages):
+            if isinstance(message, ModelResponse) and message.provider_name == self.system:
+                if (response_id := message.provider_response_id) and response_id.startswith('msg_'):
+                    previous_message_id = response_id
+                break
+        return BetaDiagnosticsParam(previous_message_id=previous_message_id)
+
     def _get_container(
         self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
     ) -> tuple[BetaContainerParams | str | None, bool]:
@@ -1500,6 +1705,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
         self._apply_explicit_message_caching(model_settings, anthropic_messages)
+        # The API rejects automatic caching when the last block's explicit breakpoint has a different TTL, and
+        # ignores it when the TTL is the same, since both mark the same breakpoint. The explicit one wins.
+        auto_cache_control = None if _last_cacheable_block_has_cache_control(anthropic_messages) else auto_cache_control
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
@@ -1544,7 +1752,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     self._model_name,
                     system=system_prompt or OMIT,
                     messages=anthropic_messages,
-                    max_tokens=model_settings.get('max_tokens', 4096),
+                    max_tokens=model_settings.get(
+                        'max_tokens', _default_max_tokens(effective_thinking, anthropic_profile)
+                    ),
                     tools=tools or OMIT,
                     tool_choice=tool_choice or OMIT,
                     mcp_servers=mcp_servers or OMIT,
@@ -1577,7 +1787,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 extra_body=extra_body,
             )
 
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await count(initial_thinking, initial_betas, initial_thinking_override)
             except APIStatusError as error:
@@ -1688,6 +1898,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if response.input_transformations:
             provider_details = provider_details or {}
             provider_details['input_transformations'] = _report_input_transformations(response.input_transformations)
+        if response.diagnostics is not None:
+            provider_details = provider_details or {}
+            provider_details['cache_diagnostics'] = response.diagnostics.model_dump(mode='json')
 
         return ModelResponse(
             parts=items,
@@ -1728,17 +1941,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     async def _process_streamed_response(
         self,
-        response: AsyncStream[BetaRawMessageStreamEvent],
+        response: _AnthropicEventStream,
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
-    ) -> StreamedResponse:
-        peekable_response: _utils.PeekableAsyncStream[
-            BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]
-        ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
-            first_chunk = await peekable_response.peek()
+    ) -> AnthropicStreamedResponse:
+        first_chunk = await response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
         assert isinstance(first_chunk, BetaRawMessageStartEvent)
 
@@ -1752,7 +1961,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return AnthropicStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=model_name,
-            _response=peekable_response,
+            _response=response,
             _provider_name=self._provider.name,
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
@@ -1934,8 +2143,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """
         tool_defs = model_request_parameters.declared_tool_defs
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        supports_forced_tool_choice = self.profile.get('anthropic_supports_forced_tool_choice', True)
-        supports_adaptive_thinking = self.profile.get('anthropic_supports_adaptive_thinking', False)
 
         tool_choice: BetaToolChoiceParam
 
@@ -1943,24 +2150,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # tool_choice = {'type': resolved_tool_choice}`: pyright can't narrow this properly
             tool_choice = {'type': 'auto'} if resolved_tool_choice == 'auto' else {'type': 'none'}
         elif resolved_tool_choice == 'required':
-            supports = _support_tool_forcing(
-                model_settings,
-                model_request_parameters,
-                resolved_tool_choice,
-                "tool_choice='required'",
-                supports_forced_tool_choice=supports_forced_tool_choice,
-                supports_adaptive_thinking=supports_adaptive_thinking,
-            )
+            supports = _support_tool_forcing(self.model_name, self.profile, model_settings, model_request_parameters)
             tool_choice = {'type': 'any'} if supports else {'type': 'auto'}
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            supports = _support_tool_forcing(
-                model_settings,
-                model_request_parameters,
-                resolved_tool_choice,
-                supports_forced_tool_choice=supports_forced_tool_choice,
-                supports_adaptive_thinking=supports_adaptive_thinking,
-            )
+            supports = _support_tool_forcing(self.model_name, self.profile, model_settings, model_request_parameters)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 if supports:
                     tool_choice = {'type': 'tool', 'name': next(iter(tool_names))}
@@ -2617,69 +2811,39 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> None:
         """Limit the number of cache points in the request to Anthropic's maximum.
 
-        Anthropic enforces a maximum of 4 cache points per request. This method ensures
-        compliance by counting existing cache points and removing excess ones from messages.
-
-        When automatic_caching is enabled, the server-applied breakpoint uses 1 of the 4
-        available slots, so the budget for explicit breakpoints is reduced to 3.
-
-        Strategy:
-        1. Count cache points in system_prompt (can be multiple if list of blocks)
-        2. Count cache points in tools (can be in any position, not just last)
-        3. Raise UserError if system + tools already exceed the budget
-        4. Calculate remaining budget for message cache points
-        5. Traverse messages from newest to oldest, keeping the most recent cache points
-           within the remaining budget
-        6. Remove excess cache points from older messages to stay within limit
-
-        Cache point priority (always preserved):
-        - System prompt cache points
-        - Tool definition cache points
-        - Message cache points (newest first, oldest removed if needed)
+        System prompt and tool definition cache points always take priority; excess message
+        cache points are removed oldest-first. When automatic caching is enabled, the
+        server-applied breakpoint uses 1 of the available slots, reducing the budget for
+        explicit breakpoints by one.
 
         Raises:
             UserError: If system_prompt and tools combined already exceed the budget.
                       This indicates a configuration error that cannot be auto-fixed.
         """
-        MAX_CACHE_POINTS = 3 if automatic_caching else 4
-
-        # Count existing cache points in system prompt
-        used_cache_points = (
+        # Anthropic enforces a maximum of 4 cache points per request.
+        max_points = 4 - (1 if automatic_caching else 0)
+        reserved = (
             sum(1 for block in system_prompt if 'cache_control' in cast(dict[str, Any], block))
             if isinstance(system_prompt, list)
             else 0
         )
+        # cache_control can be in the middle of the tools list if builtin tools are added after.
+        reserved += sum(1 for tool in tools if 'cache_control' in tool)
 
-        # Count existing cache points in tools (any tool may have cache_control)
-        # Note: cache_control can be in the middle of tools list if builtin tools are added after
-        for tool in tools:
-            if 'cache_control' in tool:
-                used_cache_points += 1
-
-        # Calculate remaining cache points budget for messages
-        remaining_budget = MAX_CACHE_POINTS - used_cache_points
-        if remaining_budget < 0:  # pragma: no cover
-            raise UserError(
-                f'Too many cache points for Anthropic request. '
-                f'System prompt and tool definitions already use {used_cache_points} cache points, '
-                f'which exceeds the maximum of {MAX_CACHE_POINTS}.'
-            )
-        # Remove excess cache points from messages (newest to oldest)
-        for message in reversed(anthropic_messages):
-            content = message['content']
-            if isinstance(content, str):  # pragma: no cover
-                continue
-
-            # Process content blocks in reverse order (newest first)
-            for block in reversed(cast(list[BetaContentBlockParam], content)):
-                block_dict = cast(dict[str, Any], block)
-
-                if 'cache_control' in block_dict:
-                    if remaining_budget > 0:
-                        remaining_budget -= 1
-                    else:
-                        # Exceeded limit, remove this cache point
-                        del block_dict['cache_control']
+        message_blocks = (
+            cast('dict[str, Any]', block)
+            for message in reversed(anthropic_messages)
+            if not isinstance(message['content'], str)
+            for block in reversed(cast('list[BetaContentBlockParam]', message['content']))
+        )
+        for block_dict in excess_cache_points(
+            message_blocks,
+            max_points=max_points,
+            reserved=reserved,
+            is_cache_point=lambda block: 'cache_control' in block,
+            description='Anthropic request',
+        ):
+            del block_dict['cache_control']
 
     def _build_cache_control(self, ttl: Literal['5m', '1h'] = '5m') -> BetaCacheControlEphemeralParam:
         """Build a cache control dict with the given TTL.
@@ -2691,6 +2855,29 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             A cache control dict with the specified TTL.
         """
         return BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
+
+    def _translate_cache(
+        self, model_settings: AnthropicModelSettings, cache: Literal[True] | CacheRetention | CacheConfig
+    ) -> AnthropicModelSettings:
+        """Map the unified `cache` setting onto Anthropic cache settings.
+
+        Only called when no explicit `anthropic_cache*` setting is present (those take
+        precedence in `prepare_request`). The static instructions and tool definitions always get
+        breakpoints, since Anthropic only reads cache entries written at a breakpoint and a new
+        conversation can only share that prefix. The conversation is cached with automatic caching
+        where the client supports it, and with a breakpoint on its last block on Bedrock and Vertex.
+        """
+        retention, messages = split_cache_setting(cache)
+        ttl: Literal['5m', '1h'] = retention if retention in ('5m', '1h') else '5m'
+        translated = model_settings.copy()
+        translated['anthropic_cache_instructions'] = ttl
+        translated['anthropic_cache_tool_definitions'] = ttl
+        if messages:
+            if self.profile.get('supports_auto_cache', False):
+                translated['anthropic_cache'] = ttl
+            else:
+                translated['anthropic_cache_messages'] = ttl
+        return translated
 
     def _build_automatic_cache_control(
         self, model_settings: AnthropicModelSettings
@@ -2762,14 +2949,32 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Apply per-block `cache_control` to the last content block of the last message.
 
         If the last block already has `cache_control` (e.g. from an explicit `CachePoint`),
-        it is left unchanged to preserve the user's chosen TTL.
+        it is left unchanged to preserve the user's chosen TTL. On Bedrock, when the previous
+        request's breakpoint is further back than the lookback reaches (a wide fan-out of parallel
+        tool calls), the end of that request gets a breakpoint too. The Claude API collapses runs
+        of tool blocks into one position, so it doesn't need one.
 
         Assumes `anthropic_messages` is non-empty.
         """
-        last_message = anthropic_messages[-1]
-        content = last_message['content']
+        if isinstance(self.client, AsyncAnthropicBedrock):
+            previous_tail = previous_tail_needing_breakpoint(
+                [message['role'] for message in anthropic_messages],
+                [
+                    1
+                    if isinstance(content := message['content'], str)
+                    else len(cast(list[BetaContentBlockParam], content))
+                    for message in anthropic_messages
+                ],
+            )
+            if previous_tail is not None:
+                self._add_message_cache_control(anthropic_messages[previous_tail], ttl)
+        self._add_message_cache_control(anthropic_messages[-1], ttl)
+
+    def _add_message_cache_control(self, message: BetaMessageParam, ttl: Literal['5m', '1h']) -> None:
+        """Add `cache_control` to the last cacheable content block of `message`, unless it already has one."""
+        content = message['content']
         if isinstance(content, str):  # pragma: no cover
-            last_message['content'] = [
+            message['content'] = [
                 BetaTextBlockParam(
                     type='text',
                     text=content,
@@ -2809,13 +3014,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _map_binary_data(data: bytes, media_type: str) -> BetaImageBlockParam | BetaRequestDocumentBlockParam:
         if media_type.startswith('image/'):
             return BetaImageBlockParam(
-                source={'data': io.BytesIO(data), 'media_type': media_type, 'type': 'base64'},  # pyright: ignore[reportArgumentType]
+                source={'data': base64.b64encode(data).decode(), 'media_type': media_type, 'type': 'base64'},  # pyright: ignore[reportArgumentType]
                 type='image',
             )
         elif media_type == 'application/pdf':
             return BetaRequestDocumentBlockParam(
                 source=BetaBase64PDFSourceParam(
-                    data=io.BytesIO(data),
+                    data=base64.b64encode(data).decode(),
                     media_type='application/pdf',
                     type='base64',
                 ),
@@ -2951,7 +3156,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
         if effort is not None:
-            self._validate_effort_vs_disabled_thinking(effort, model_settings)
+            # Validate what reaches the wire, where a caller's `extra_body` thinking wins.
+            self._validate_effort_vs_disabled_thinking(
+                effort,
+                _effective_thinking(model_settings, self._translate_thinking(model_settings, model_request_parameters)),
+            )
 
         task_budget = self._get_task_budget(model_settings)
 
@@ -2968,11 +3177,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return config
 
     def _validate_effort_vs_disabled_thinking(
-        self, effort: AnthropicEffort, model_settings: AnthropicModelSettings
+        self, effort: AnthropicEffort, thinking: dict[str, object] | Omit
     ) -> None:
         """Reject `xhigh`/`max` effort combined with explicitly disabled thinking.
 
-        Claude Opus 5 caps effort at `high` once thinking is disabled, while Claude Opus 4.8 accepts
+        Claude Opus 5 and Haiku 5.5 cap effort at `high` once thinking is disabled, while Claude Opus 4.8 accepts
         every effort level in that combination. Fail fast with a helpful message rather than letting
         the API return an opaque 400.
         """
@@ -2980,12 +3189,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return
         if not self.profile.get('anthropic_disallows_top_effort_when_thinking_disabled', False):
             return
-        thinking = model_settings.get('anthropic_thinking')
-        if thinking is None or thinking.get('type') != 'disabled':
+        if isinstance(thinking, Omit) or thinking.get('type') != 'disabled':
             return
         raise UserError(
-            f'Model {self.model_name!r} does not support `anthropic_effort={effort!r}` while '
-            "`anthropic_thinking={'type': 'disabled'}`. Use an effort of 'high' or below, or enable thinking."
+            f'Model {self.model_name!r} does not support `anthropic_effort={effort!r}` while thinking is '
+            "disabled (`thinking=False` or `anthropic_thinking={'type': 'disabled'}`). "
+            "Use an effort of 'high' or below, or enable thinking."
         )
 
     def _get_task_budget(self, model_settings: AnthropicModelSettings) -> AnthropicTaskBudget | None:
@@ -3113,6 +3322,17 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
         if isinstance((value := getattr(response_usage, key, None)), int):
             details[key] = value
 
+    # One-hour cache writes are billed at a higher rate than five-minute ones (see
+    # <https://platform.claude.com/docs/en/about-claude/pricing>). The rest of
+    # `cache_creation_input_tokens` is priced at the five-minute rate, so the one-hour count is all pricing needs.
+    # In streaming, only the start event carries the split, so it's kept in `details` to survive the merge.
+    if (
+        isinstance(response_usage, BetaUsage)
+        and response_usage.cache_creation is not None
+        and (ephemeral_1h_input_tokens := response_usage.cache_creation.ephemeral_1h_input_tokens)
+    ):
+        details['ephemeral_1h_input_tokens'] = ephemeral_1h_input_tokens
+
     # Anthropic bills thinking tokens inside `output_tokens`, so this is a readable subset of the
     # output total rather than an additive one, matching `reasoning_tokens` on OpenAI and
     # `thoughts_tokens` on Google.
@@ -3145,6 +3365,10 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
         for key in _COMPACTION_TOKEN_KEYS:
             if compaction_total := sum(getattr(it, key) for it in compaction_iterations):
                 details[f'compaction_{key}'] = compaction_total
+        if compaction_ephemeral_1h_input_tokens := sum(
+            it.cache_creation.ephemeral_1h_input_tokens for it in compaction_iterations if it.cache_creation is not None
+        ):
+            details['compaction_ephemeral_1h_input_tokens'] = compaction_ephemeral_1h_input_tokens
 
     if advisor_iterations:
         details['advisor_iterations'] = len(advisor_iterations)
@@ -3183,6 +3407,17 @@ def _map_usage(
     # In streaming, usage appears in different events.
     # The values are cumulative, meaning new values should replace existing ones entirely.
     details = (existing_usage.details if existing_usage else {}) | _extract_usage_details(response_usage)
+    # The one-hour count is capped at the total it's part of: after a compaction iteration's cache write, the final
+    # event resets `cache_creation_input_tokens` without resending the split, so the start event's one-hour count
+    # would otherwise survive, both in streamed usage and in a message accumulated from a stream. This assumes a
+    # stale split can only overshoot the total.
+    if 'ephemeral_1h_input_tokens' in details:
+        if ephemeral_1h_input_tokens := min(
+            details['ephemeral_1h_input_tokens'], details.get('cache_creation_input_tokens', 0)
+        ):
+            details['ephemeral_1h_input_tokens'] = ephemeral_1h_input_tokens
+        else:
+            del details['ephemeral_1h_input_tokens']
 
     # Anthropic reports top-level tokens excluding compaction iteration usage; add the
     # compaction totals back in so the extracted `RequestUsage` reflects the real request cost.
@@ -3194,6 +3429,12 @@ def _map_usage(
     # genai-prices reads the web search count from Anthropic's nested wire shape and maps it to `web_searches`.
     if web_search_requests := details.get('web_search_requests'):
         usage_for_extraction['server_tool_use'] = {'web_search_requests': web_search_requests}
+    # Likewise the one-hour cache write count, which it maps to `cache_write_1h_tokens`. Compaction iterations write
+    # to the cache with the request's TTL, so their one-hour writes are summed back in like the totals above.
+    if ephemeral_1h_input_tokens := details.get('ephemeral_1h_input_tokens', 0) + details.get(
+        'compaction_ephemeral_1h_input_tokens', 0
+    ):
+        usage_for_extraction['cache_creation'] = {'ephemeral_1h_input_tokens': ephemeral_1h_input_tokens}
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
@@ -3217,7 +3458,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Anthropic models."""
 
     _model_name: AnthropicModelName
-    _response: _utils.PeekableAsyncStream[BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]]
+    _response: _AnthropicEventStream
     _provider_name: str
     _model_id_namespace: str
     _provider_url: str
@@ -3230,7 +3471,7 @@ class AnthropicStreamedResponse(StreamedResponse):
             ignored_server_tool_use_indices: set[int] = set()
 
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
-            async for event in self._response:
+            async for event in MapStreamDecodeErrors(self._response, self._model_name):
                 if isinstance(event, BetaRawMessageStartEvent):
                     if event.message is None:  # pyright: ignore[reportUnnecessaryComparison]
                         # See `_map_usage`: Bedrock emits type-less chunks the SDK constructs
@@ -3250,6 +3491,10 @@ class AnthropicStreamedResponse(StreamedResponse):
                         self.provider_details['input_transformations'] = _report_input_transformations(
                             event.message.input_transformations
                         )
+                    # Diagnostics are only reported on the opening message.
+                    if event.message.diagnostics is not None:
+                        self.provider_details = self.provider_details or {}
+                        self.provider_details['cache_diagnostics'] = event.message.diagnostics.model_dump(mode='json')
 
                 elif isinstance(event, BetaRawContentBlockStartEvent):
                     current_block = event.content_block
@@ -3293,14 +3538,15 @@ class AnthropicStreamedResponse(StreamedResponse):
                             continue
                         call_part = _map_server_tool_use_block(current_block, self.provider_name)
                         builtin_tool_calls[call_part.tool_call_id] = call_part
-                        # In streaming, the block's `input` is empty at start and arrives via
+                        # In streaming, the block's `input` is usually empty at start and arrives via
                         # subsequent `BetaInputJSONDelta` events. Emit with `args=None` so the
                         # accumulating JSON deltas can attach as a string; the
-                        # `BetaRawContentBlockStopEvent` handler below normalizes the final
-                        # value back to the canonical part shape (matching non-streaming).
+                        # `BetaRawContentBlockStopEvent` handler below normalizes a tool search's final
+                        # value back to the canonical part shape (matching non-streaming). A server tool
+                        # call made from code execution carries its whole input here, without deltas.
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index,
-                            part=replace(call_part, args=None),
+                            part=call_part if current_block.input else replace(call_part, args=None),
                         )
                     elif isinstance(current_block, BetaWebSearchToolResultBlock):
                         yield self._parts_manager.handle_part(
@@ -3312,7 +3558,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                             vendor_part_id=event.index,
                             part=_map_tool_search_tool_result_block(current_block, self.provider_name),
                         )
-                    elif isinstance(current_block, BetaCodeExecutionToolResultBlock):  # pragma: no cover
+                    elif isinstance(current_block, BetaCodeExecutionToolResultBlock):
                         # Legacy code execution responses used this bare `code_execution_tool_result` shape.
                         # Current code execution tool versions emit the named bash/text-editor blocks below.
                         yield self._parts_manager.handle_part(
@@ -4117,67 +4363,89 @@ def _map_mcp_server_result_block(
 def _effective_thinking_type(
     anthropic_thinking: BetaThinkingConfigParam | None,
     unified_thinking: ThinkingLevel | None,
-    *,
-    supports_adaptive_thinking: bool,
+    profile: AnthropicModelProfile,
 ) -> Literal['enabled', 'adaptive'] | None:
-    """Resolve the effective Anthropic thinking type for the output-tool and tool-forcing guards.
+    """Resolve whether a request will think, and how, for the output-mode and tool-forcing decisions.
 
-    Extended thinking (`{'type': 'enabled'}`) is incompatible with forced tool use and Tool Output;
-    adaptive thinking is compatible with both. Unified thinking maps to `adaptive` when the profile
-    advertises it and to `enabled` otherwise — the same mapping `_translate_thinking` uses to build
-    the wire payload. Returns `'enabled'`, `'adaptive'`, or `None` when thinking is off.
+    Extended thinking (`{'type': 'enabled'}`) rejects a forced `tool_choice`; adaptive thinking accepts it, but
+    the model then answers without thinking. Unified thinking maps to `adaptive` when the profile advertises it
+    and to `enabled` otherwise, the same mapping `_translate_thinking` uses to build the wire payload. With no
+    thinking setting, models that think by default resolve to `adaptive`, as does `thinking=False` on a model
+    that can't turn thinking off. Returns `None` when the request won't think.
     """
     if anthropic_thinking:
         thinking_type = anthropic_thinking.get('type')
         return thinking_type if thinking_type in ('enabled', 'adaptive') else None
     if unified_thinking:
-        return 'adaptive' if supports_adaptive_thinking else 'enabled'
-    return None
+        return 'adaptive' if profile.get('anthropic_supports_adaptive_thinking', False) else 'enabled'
+    if unified_thinking is False and not profile.get('thinking_always_enabled', False):
+        return None
+    return 'adaptive' if profile.get('thinking_enabled_by_default', False) else None
+
+
+def _request_thinking_type(
+    profile: AnthropicModelProfile,
+    model_settings: ModelSettings | None,
+    model_request_parameters: ModelRequestParameters,
+) -> Literal['enabled', 'adaptive'] | None:
+    """`_effective_thinking_type` for a request, before or after `Model.prepare_request` runs.
+
+    `params.thinking` is checked first since `Model.prepare_request` moves unified `thinking` from `model_settings`
+    into it, but `AnthropicModel.prepare_request` also asks before that happens.
+    """
+    anthropic_settings = cast(AnthropicModelSettings, model_settings or {})
+    unified_thinking = model_request_parameters.thinking
+    if unified_thinking is None:
+        unified_thinking = anthropic_settings.get('thinking')
+    return _effective_thinking_type(anthropic_settings.get('anthropic_thinking'), unified_thinking, profile)
 
 
 def _support_tool_forcing(
+    model_name: str,
+    profile: AnthropicModelProfile,
     model_settings: AnthropicModelSettings,
     model_request_parameters: ModelRequestParameters,
-    resolved_tool_choice: ResolvedToolChoice,
-    context: str = 'forcing specific tools',
-    *,
-    supports_forced_tool_choice: bool = True,
-    supports_adaptive_thinking: bool = False,
 ) -> bool:
-    """A forced `tool_choice` ('required'/specific tool) isn't always compatible with Anthropic.
+    """Whether to send a forced `tool_choice` ('any'/specific tool), raising if explicitly requested but unavailable.
 
-    Extended thinking rejects forcing (adaptive thinking does not), and some models
-    (Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5) reject it unconditionally.
-    We only raise an error if the user explicitly set a forcing value; a forcing value that came
-    from the `tool_choice` resolution logic falls back softly to 'auto'.
+    On top of the profile's forcing flags, extended thinking rejects forcing, and adaptive thinking accepts it
+    but answers without thinking, so only an explicit forcing `tool_choice` is sent then.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
     """
-    # `params.thinking` is checked too since Model.prepare_request strips unified `thinking` from
-    # model_settings into params.thinking before the tool-choice helpers run.
-    thinking_type = _effective_thinking_type(
-        model_settings.get('anthropic_thinking'),
-        model_request_parameters.thinking or model_settings.get('thinking'),
-        supports_adaptive_thinking=supports_adaptive_thinking,
+    thinking_type = _request_thinking_type(profile, model_settings, model_request_parameters)
+    unavailable_reason = tool_forcing_unavailable_reason(
+        profile,
+        thinking=thinking_type is not None,
+        thinking_remedy="Disable thinking with `thinking=False` or `anthropic_thinking={'type': 'disabled'}`",
+    )
+    if unavailable_reason is None and thinking_type == 'enabled':
+        unavailable_reason = (
+            "Extended thinking doesn't support forcing tool use. Disable thinking or use `tool_choice='auto'`."
+        )
+        if profile.get('anthropic_supports_adaptive_thinking', False):
+            unavailable_reason += " Alternatively, `anthropic_thinking={'type': 'adaptive'}` supports forcing."
+    return support_tool_forcing(
+        model_name,
+        model_settings,
+        unavailable_reason,
+        disables_thinking=thinking_type == 'adaptive' and profile.get('forced_tool_choice_disables_thinking', False),
     )
 
-    if supports_forced_tool_choice and thinking_type != 'enabled':
-        return True
 
-    explicit_choice = model_settings.get('tool_choice')
-    if explicit_choice == 'required' or isinstance(explicit_choice, list):
-        if not supports_forced_tool_choice:
-            raise UserError(f"Anthropic does not support {context} for this model. Use `tool_choice='auto'`.")
-        adaptive_hint = (
-            " Alternatively, `anthropic_thinking={'type': 'adaptive'}` supports forcing."
-            if supports_adaptive_thinking
-            else ''
-        )
-        raise UserError(
-            f'Anthropic does not support {context} with extended thinking. '
-            f"Disable thinking or use `tool_choice='auto'`.{adaptive_hint}"
-        )
+def _last_cacheable_block_has_cache_control(anthropic_messages: list[BetaMessageParam]) -> bool:
+    """Whether the block automatic caching would put its breakpoint on already carries an explicit `cache_control`.
 
-    if resolved_tool_choice == 'required' or isinstance(resolved_tool_choice, tuple):
-        return False
-
-    return True
+    That's the last cacheable block of the last message, the same one `anthropic_cache_messages` targets.
+    https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+    """
+    content = anthropic_messages[-1]['content'] if anthropic_messages else ''
+    blocks = [] if isinstance(content, str) else cast(list[dict[str, Any]], content)
+    last = next(
+        (
+            block
+            for block in reversed(blocks)
+            if 'cache_control' in block or block['type'] in _ANTHROPIC_CACHEABLE_PARAM_TYPES
+        ),
+        None,
+    )
+    return last is not None and 'cache_control' in last

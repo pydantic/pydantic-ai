@@ -112,7 +112,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='fastmcp not installed'),
-    pytest.mark.anyio,
 ]
 
 MCP_SDK_V2 = imports_successful() and is_mcp_sdk_v2()
@@ -620,6 +619,31 @@ class TestMCPToolsetIntegration:
             assert {'echo', 'add', 'boom'} <= set(tools_first)
             # Second call should hit the cache (covers the cached-return branch).
             assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
+
+    async def test_get_tools_hides_app_only_tools(self, run_context: RunContext):
+        """MCP Apps (SEP-1865) tools whose `_meta.ui.visibility` leaves out `"model"` are hidden from the model."""
+        server: FastMCP[None] = FastMCP('apps_server')
+
+        @server.tool(meta={'ui': {'visibility': ['app']}})
+        async def save_checkpoint() -> None:
+            """Saves the view state; only the UI calls this."""
+
+        @server.tool(meta={'ui': {'visibility': []}})
+        async def hidden_everywhere() -> None:
+            """Visible to neither the model nor the UI."""
+
+        @server.tool(meta={'ui': {'visibility': ['app', 'model']}})
+        async def create_view() -> None:
+            """Opens the view; both the model and the UI call this."""
+
+        @server.tool(meta={'ui': {'resourceUri': 'ui://view'}})
+        async def read_me() -> None:
+            """Carries UI metadata without a `visibility`."""
+
+        toolset = MCPToolset(server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+        assert sorted(tools) == snapshot(['create_view', 'read_me'])
 
     async def test_tool_annotations_keep_the_wire_spelling(
         self, fastmcp_server: FastMCP[None], run_context: RunContext

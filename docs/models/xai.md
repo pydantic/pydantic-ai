@@ -1,3 +1,7 @@
+---
+description: "Use xAI Grok models with Pydantic AI: configure the provider and use image generation, X search, file attachments, reasoning effort and multi-agent models."
+---
+
 # xAI
 
 ## Install
@@ -30,6 +34,9 @@ from pydantic_ai import Agent
 agent = Agent('xai:grok-4.3')
 ...
 ```
+
+!!! tip
+    For voice agents, use Grok Voice with a [realtime session](../realtime/xai.md) instead.
 
 Or initialise the model directly:
 
@@ -76,7 +83,30 @@ agent = Agent(model)
 
 `api_host` is the hostname of the xAI API server (the SDK connects over gRPC), and `timeout` is the default timeout in seconds applied to every request the client makes. Unlike other providers, the xAI SDK does not support per-request timeouts, so [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] is not supported and has no effect. Both options are omitted when left unset, so the SDK's own defaults apply.
 
-You can also attach gRPC `metadata` to every request the client makes. The canonical use is xAI prompt-cache sticky routing, which pins a conversation to a cache node via an `x-grok-conv-id` so repeated prefixes are served from cache instead of reprocessed:
+Or with a custom `xai_sdk.AsyncClient`:
+
+```python
+from xai_sdk import AsyncClient
+
+from pydantic_ai import Agent
+from pydantic_ai.models.xai import XaiModel
+from pydantic_ai.providers.xai import XaiProvider
+
+
+async def main():
+    async with AsyncClient(api_key='your-api-key') as xai_client:
+        model = XaiModel('grok-4.3', provider=XaiProvider(xai_client=xai_client))
+        agent = Agent(model)
+        result = await agent.run('What is the capital of France?')
+        print(result.output)
+        #> The capital of France is Paris.
+```
+
+A client you pass as `xai_client` is yours to close, for example with `async with`; Pydantic AI never closes it. Its gRPC channel binds to the event loop it was created in, so create the client inside the event loop that uses it, as above.
+
+## Cache sticky routing {#cache-sticky-routing}
+
+You can attach gRPC `metadata` to every request the provider's client makes. The canonical use is xAI prompt-cache sticky routing, which pins a conversation to a cache node via an `x-grok-conv-id` so repeated prefixes are served from cache instead of reprocessed:
 
 ```python
 from pydantic_ai import Agent
@@ -94,7 +124,9 @@ agent = Agent(model)
 
 `metadata` is a sequence of `(key, value)` string tuples forwarded verbatim to the underlying `xai_sdk.AsyncClient`, so the xAI SDK's own documentation on [maximizing cache hits](https://docs.x.ai/developers/advanced-api-usage/prompt-caching/maximizing-cache-hits) applies. Because it is client-scoped, it applies to *every* request made through the provider — a provider configured with a fixed `x-grok-conv-id` must not be shared between unrelated conversations, or those conversations will collide on the same cache node. Use a separate provider per conversation when the metadata is conversation-specific. Like `api_host` and `timeout`, it is omitted when left unset and ignored when a custom `xai_sdk.AsyncClient` is passed.
 
-Or with a custom `xai_sdk.AsyncClient`:
+## SDK retries {#sdk-retries}
+
+The `xai_sdk.AsyncClient` turns on gRPC's own retries: a request that fails with `UNAVAILABLE` is attempted up to 5 times, with a backoff between 0.1 and 1 second. gRPC also transparently retries an attempt that never reached the server. These retries happen inside the gRPC channel, so Pydantic AI can't see or count them. To keep the retry policy in your own code, pass a client with gRPC retries disabled:
 
 ```python
 from xai_sdk import AsyncClient
@@ -103,12 +135,17 @@ from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModel
 from pydantic_ai.providers.xai import XaiProvider
 
-xai_client = AsyncClient(api_key='your-api-key')
-provider = XaiProvider(xai_client=xai_client)
-model = XaiModel('grok-4.3', provider=provider)
-agent = Agent(model)
-...
+
+async def main():
+    async with AsyncClient(api_key='your-api-key', channel_options=[('grpc.enable_retries', 0)]) as xai_client:
+        model = XaiModel('grok-4.3', provider=XaiProvider(xai_client=xai_client))
+        agent = Agent(model)
+        result = await agent.run('What is the capital of France?')
+        print(result.output)
+        #> The capital of France is Paris.
 ```
+
+See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.
 
 ## Image generation
 

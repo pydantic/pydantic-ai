@@ -1,3 +1,7 @@
+---
+description: "Make Pydantic AI agents durable with Temporal, running model requests and tool calls as activities so agents recover from crashes and resume long-running work."
+---
+
 # Durable Execution with Temporal
 
 [Temporal](https://temporal.io) is a popular [durable execution](https://docs.temporal.io/evaluate/understanding-temporal#durable-execution) platform that's natively supported by Pydantic AI.
@@ -152,7 +156,7 @@ async def main():
 5. `agent.run()` works as usual; inside the workflow, model requests, tool calls, and MCP server communication are routed through Temporal activities.
 6. We connect to the Temporal server which keeps track of workflow and activity execution.
 7. This assumes the Temporal server is [running locally](https://github.com/temporalio/temporal#download-and-start-temporal-server-locally).
-8. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] tells Temporal to use Pydantic for serialization and deserialization, and automatically registers activities for agents listed in `__pydantic_ai_agents__`. Activity retry policies treat [`UserError`][pydantic_ai.exceptions.UserError], `PydanticUserError`, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], and [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] as non-retryable, along with Temporal's own over-limit-payload failure types, `PayloadsTooLarge` and (before `temporalio` 1.31) `PayloadSizeError` (see [Large Payloads](#large-payloads)), while the worker registers `UserError`, `PydanticUserError`, [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], and `UnsupportedEventLoopError` as `workflow_failure_exception_types`.
+8. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] tells Temporal to use Pydantic for serialization and deserialization, and automatically registers activities for agents listed in `__pydantic_ai_agents__`. Activity retry policies treat [`UserError`][pydantic_ai.exceptions.UserError], `PydanticUserError`, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], and [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] as non-retryable, along with Temporal's own over-limit-payload failure types, `PayloadsTooLarge` and (before `temporalio` 1.31) `PayloadSizeError` (see [Large Payloads](#large-payloads)), and the workspace errors `WorkspaceTimeoutError`, `WorkspaceOutputLimitError`, `WorkspaceReadOnlyError` and `WorkspaceUnavailableError`, while the worker registers `UserError`, `PydanticUserError`, [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], `UnsupportedEventLoopError`, and [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] as `workflow_failure_exception_types`.
 9. We start the worker that will listen on the specified task queue and run workflows and activities. In a real world application, this might be run in a separate service.
 10. We call on the server to execute the workflow on a worker that's listening on the specified task queue.
 
@@ -232,9 +236,27 @@ If you need one or more of these attributes to be available inside activities, y
 
 The activity's `RunContext` is rebuilt from the serialized payload, so its fields are copies: mutating them inside an activity does not affect the run. In particular, `usage` is a snapshot of the run's usage at the time the activity was scheduled. If a tool [delegates to another agent](../multi-agent-applications.md#agent-delegation) with `usage=ctx.usage`, the delegate's tokens and requests stay behind in the activity: they're missing from the parent run's [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] and are never charged against its [usage limits](../agent.md#usage-limits). To account for delegate usage, carry it yourself: return the delegate's [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] from the tool, or record it in an external store your `deps` can reach. Temporal loses these mutations unconditionally. [DBOS](dbos.md) and [Prefect](prefect.md) pass the live `RunContext` into their in-process durable units, so mutations do accrue while a step or task body actually runs — but they're lost there too whenever the body doesn't run because its recorded result is replayed (DBOS workflow recovery) or reused (a Prefect task cache hit), which makes the same code account differently from one run to the next. Don't rely on the in-process engines' behavior; a return channel that works for all three is under discussion in [pydantic-ai#6886](https://github.com/pydantic/pydantic-ai/issues/6886).
 
+If you don't pass `run_id` or `conversation_id` to [`Agent.run()`][pydantic_ai.agent.Agent.run] in a workflow, the defaults are derived from the workflow run rather than generated at random, so they stay the same when Temporal replays the workflow on another worker, and every activity of the run sees the same IDs as the run's result. Workflows started before Pydantic AI derived these defaults for agents without a workspace keep random IDs, so that their histories replay unchanged.
+
 A tool's [`prepare`](../tools-advanced.md#tool-prepare) function is not affected by these limitations: for tools in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] (including those defined on the agent itself), it runs in workflow code with the complete `RunContext`, once per run step like outside a workflow. The tool definition it returns is sent to the tool-call activity, which uses it as-is, so the tool the model saw is the tool that runs, down to its [`timeout`](../tools-advanced.md#tool-timeout). Tools from a `DynamicToolset` are the exception: as the toolset is re-resolved inside activities, their `prepare` functions run there as well and see the limited `RunContext`.
 
 A `native=` factory on [`XSearch`][pydantic_ai.capabilities.XSearch] or [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] is resolved twice, on either side of the boundary: once in workflow code to configure the native tool, and again inside the fallback subagent's tool-call activity, where it sees the limited `RunContext`. Read `ctx.deps` there, not `ctx.messages`.
+
+### Workspaces
+
+Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent, and use `ctx.workspace` as in any run: in a tool it is rebuilt inside the activity and calls the provider directly, and in workflow code (capability hooks, output functions, `result.workspace`) each call runs as an activity. Because an activity can run on any worker:
+
+- Construct every worker's agent with the same workspace capabilities as the workflow's.
+- In a custom [`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace], read only `deps` and the [run context fields listed above](#agent-run-context-and-dependencies).
+- Move large files inside a tool: a workflow-side call carries the file in the activity payload, which counts against the [payload size limit](#large-payloads).
+- With `LocalWorkspace`, give every worker the directory at the same absolute path, on shared storage.
+
+Adding a workspace to an agent changes its workflows' history, so drain in-flight workflows first or
+deploy the change with Temporal worker versioning or on a new task queue.
+
+Temporal stores workflow-side workspace call arguments (commands, `env=`, file contents) in history.
+Keep secrets in the workspace capability's `env=` or use them inside a tool rather than passing
+secrets as workflow-side arguments; use a [payload codec](#large-payloads) to protect history.
 
 ### Capabilities at Runtime
 
@@ -690,6 +712,10 @@ When using Temporal, it's recommended to not use [transport retries](../retries.
 
 You can customize Temporal's retry policy using [activity configuration](#activity-configuration).
 
+An exception a tool raises reaches workflow code as Temporal's `ActivityError`, with the original exception's class name in `cause.type`.
+
+A model error is different: with [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] a model request raises, such as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], reaches workflow code as itself, with its fields, rather than as an `ActivityError`. A field value that isn't JSON-serializable, like an unusual response body, crosses as its string form. This applies to Pydantic AI's own error classes: a subclass you define still arrives as an `ActivityError`. That's what lets `on_model_request_error` hooks and other workflow-side code that handles model errors work the same with and without Temporal. Temporal still retries the failed activity according to its retry policy before the error reaches the workflow, and the original `ActivityError` is the rebuilt error's `__cause__`.
+
 ## Observability with Logfire
 
 Temporal generates telemetry events and metrics for each workflow and activity execution, and Pydantic AI generates events for each agent run, model request and tool call. These can be sent to [Pydantic Logfire](../logfire.md) to get a complete picture of what's happening in your application.
@@ -709,9 +735,13 @@ async def main():
     )
 ```
 
-By default, the `LogfirePlugin` will instrument Temporal (including metrics) and Pydantic AI and send all data to Logfire. Temporal metrics are exported every 60 seconds. You can change the interval by passing a `datetime.timedelta` as `metric_periodicity` to the `LogfirePlugin` constructor.
+By default, the `LogfirePlugin` will instrument Temporal (including metrics) and Pydantic AI and send all data to Logfire. Its tracing is replay-safe, so replaying workflow history does not emit duplicate spans; span and trace IDs come from Temporal's deterministic ID generator. The plugin makes Logfire's tracer provider replay-safe when you create a Temporal client, worker, or replayer, so configure Logfire before creating them: calling `logfire.configure()` afterwards turns replay-safety off again until you create another client, worker, or replayer. Temporal metrics are exported every 60 seconds. You can change the interval by passing a `datetime.timedelta` as `metric_periodicity` to the `LogfirePlugin` constructor.
 
-If your application already called `logfire.configure()` itself, the plugin keeps that configuration instead of replacing it, so your scrubbing options, exporters, sampling, and console settings are left alone. To customize Logfire configuration and instrumentation, you can pass a `setup_logfire` function to the `LogfirePlugin` constructor and return a custom `Logfire` instance (i.e. the result of `logfire.configure()`).
+If your application already called `logfire.configure()` itself, the plugin keeps that configuration instead of replacing it, so your scrubbing options, exporters, sampling, and console settings are left alone. To customize Logfire configuration and instrumentation, you can pass a `setup_logfire` function to the `LogfirePlugin` constructor and return a custom `Logfire` instance (i.e. the result of `logfire.configure()`). The plugin still makes the instance it returns replay-safe, and calls your function only once so that a `logfire.configure()` inside it doesn't reset Logfire on every client and worker. Your function controls Pydantic AI instrumentation, so the plugin doesn't instrument Pydantic AI for you.
+
+Replay-safe tracing relies on Temporal's replay-safe tracer provider, which Temporal still marks experimental. If it causes problems in your setup, pass `replay_safe=False` to the `LogfirePlugin` constructor to trace through Logfire's regular tracer provider instead; replays then emit duplicate spans again, and a `setup_logfire` function is called on every client connect.
+
+A [decision model](../models/decision.md)'s [`decide` spans](../logfire.md#decision-model-spans) are recorded inside the model activity only when the worker can see the agent's own instrumentation: `Agent.instrument_all()` (which the `LogfirePlugin` sets up), `agent.instrument`, or an `Instrumentation` capability on the agent. A run instrumented only through `agent.run(..., capabilities=[Instrumentation(...)])` gets no `decide` spans.
 
 To disable sending Temporal metrics to Logfire, pass `metrics=False` to the `LogfirePlugin` constructor. This also lets you supply your own [`Runtime`](https://python.temporal.io/temporalio.runtime.Runtime.html) to `Client.connect()` when you need to configure other Temporal telemetry options; the plugin will still configure tracing.
 

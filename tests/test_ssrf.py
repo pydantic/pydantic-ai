@@ -36,8 +36,6 @@ from pydantic_ai._ssrf import (
     validate_url_protocol,
 )
 
-pytestmark = [pytest.mark.anyio]
-
 
 @pytest.fixture
 def mock_dns(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
@@ -1633,7 +1631,7 @@ class TestSafeDownload:
 
         await safe_download('https://example.com/file.txt', timeout=60)
 
-        mock_ssrf_client.assert_called_once_with(timeout=60)
+        mock_ssrf_client.assert_called_once_with(timeout=httpx2.Timeout(60, connect=5))
 
     async def test_default_timeout(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         mock_response = AsyncMock()
@@ -1648,7 +1646,7 @@ class TestSafeDownload:
 
         await safe_download('https://example.com/file.txt')
 
-        mock_ssrf_client.assert_called_once_with(timeout=_DEFAULT_TIMEOUT)
+        mock_ssrf_client.assert_called_once_with(timeout=httpx2.Timeout(_DEFAULT_TIMEOUT, connect=5))
 
     async def test_safe_download_closes_http_client(self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> None:
         """`safe_download` closes the HTTP client it creates, even on success.

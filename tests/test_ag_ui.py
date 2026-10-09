@@ -10,7 +10,7 @@ import uuid
 import warnings
 from collections.abc import AsyncIterator, MutableMapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -169,7 +169,6 @@ with try_import() as interrupts_imports_successful:
 
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='ag-ui-protocol not installed'),
 ]
 
@@ -752,6 +751,68 @@ async def test_run_stream_error_closes_open_tool_call() -> None:
             'RUN_ERROR',
         ]
     )
+
+
+async def test_ag_ui_id_only_tool_call_delta_emits_no_args_fragment() -> None:
+    """An ID-only `DeltaToolCall` streams no argument bytes, so it must not contribute a `'null'` fragment."""
+    calls: list[int] = []
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='f', json_args='{"x":', tool_call_id='c')}
+            yield {0: DeltaToolCall(tool_call_id='c')}  # ID-only update: no `args_delta`
+            yield {0: DeltaToolCall(json_args='1}')}
+        else:
+            yield 'Done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def f(x: int) -> str:
+        calls.append(x)
+        return 'ok'
+
+    run_input = create_input(UserMessage(id='msg_1', content='Hello'))
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    events = [json.loads(event.removeprefix('data: ')) async for event in adapter.encode_stream(adapter.run_stream())]
+
+    args_fragments: list[str] = [event['delta'] for event in events if event['type'] == 'TOOL_CALL_ARGS']
+    assert args_fragments == snapshot(['{"x":', '1}'])
+    assert json.loads(''.join(args_fragments)) == {'x': 1}
+    assert calls == [1]
+
+
+async def test_ag_ui_null_string_args_delta_preserved_verbatim() -> None:
+    """A genuine `'null'` `args_delta` string must be emitted verbatim: the skip is `is None`, not falsiness."""
+    calls: list[int | None] = []
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='f', json_args='{"x":', tool_call_id='c')}
+            yield {0: DeltaToolCall(tool_call_id='c', json_args='null')}
+            yield {0: DeltaToolCall(json_args='}')}
+        else:
+            yield 'Done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def f(x: int | None) -> str:
+        calls.append(x)
+        return 'ok'
+
+    run_input = create_input(UserMessage(id='msg_1', content='Hello'))
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    events = [json.loads(event.removeprefix('data: ')) async for event in adapter.encode_stream(adapter.run_stream())]
+
+    args_fragments: list[str] = [event['delta'] for event in events if event['type'] == 'TOOL_CALL_ARGS']
+    assert args_fragments == snapshot(['{"x":', 'null', '}'])
+    assert json.loads(''.join(args_fragments)) == {'x': None}
+    assert calls == [None]
 
 
 async def test_multiple_messages() -> None:
@@ -3606,8 +3667,8 @@ async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropi
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user is asking what 1+1 equals and wants a one-word reply. The answer is 2, which is one word.',
-                        signature='EooCCkYICxgCKkDYW6Ka+Mo73ZE34HVijmFbdV6QH/iRdv+3WuisH3pR8D5aSFASMBsF1F1bZRQFQXuM0+G4H83czthKvHqdqWriEgwB0eJaWoXZWU18NKoaDMH4nN8ZwJ6W9DnYLyIwrdTWmfc5QTqDr8gye3/yrPpV2YPeZnUBoHBLOGl8MUaC6SuGmxcm8rGqf2s+P+ZtKnJPJJzQiTrvPcEkF3ij22w3bXC9yoyZCyJVPcibR2ZZpLYF/UOoZ+BRBs0FCdm/QFXUUe8W1tcQ/ZQgBaW44LTcdzwOSP5hJb25UrPiGWuTytGMxIr7QyG7INpVbmm8JRBIIEzj3gs2zlxdbl17yZ/yZXcYAQ==',
+                        content='The user is asking what 1+1 equals and wants a one-word reply. The answer is 2, which is already one word.',
+                        signature='EugCCpsBCBIYAipAEijLuVAABW9LRAYvFjQbE09TtIrHF5VwsIaboIszy5qf1oQm3bz20z8beoMdftvpGBtCsk4PHXgRL+OA02NkqDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBx8/v1QYSDNGAO3eE/8kUPK1lyBoMs+3kCkMb3jdyPqk9IjCRSLXDvjp4AGUNRQfvMaSRhIOk5SCIQPAl18tGjpAgxZc1vRNGAz73zF5vYJPCqjEqeht/m5DKYaW3Z2mZeMxXxDoATqLyQLoD2CkhISdx4LiYAMN7KRsJY8q+V8BqI/pCszuVGL83xCF5QZ1nLH+Wlz7286+LNOaJYeju2LPEqfUWFjsGx3Bha7BNhQl6qMXyqrM8eCrcpIL6M1ldOIkv3Htj9bijZy/BXzZjGAE=',
                         provider_name='anthropic',
                     ),
                     TextPart(content='Two'),
@@ -5582,7 +5643,7 @@ async def test_tool_call_start_args_are_emitted_raw():
             index=1,
             part=ToolCallPart(
                 tool_name='whole',
-                args={'query': 'hello', 'when': datetime(2025, 1, 1, tzinfo=timezone.utc)},
+                args={'query': 'hello', 'when': datetime(2025, 1, 1, tzinfo=UTC)},
                 tool_call_id='call_2',
             ),
             previous_part_kind='tool-call',
@@ -5659,7 +5720,7 @@ async def test_tool_call_delta_dict_args_are_serialized_compactly():
                 args_delta={
                     'type': 'search',
                     'query': 'weather',
-                    'when': datetime(2025, 1, 1, tzinfo=timezone.utc),
+                    'when': datetime(2025, 1, 1, tzinfo=UTC),
                 },
                 tool_call_id='call_1',
             ),
@@ -6968,6 +7029,66 @@ def test_dump_messages_multimodal_url() -> None:
             }
         ]
     )
+
+
+@requires_ag_ui('0.1.15')
+def test_dump_messages_extensionless_url_round_trips() -> None:
+    """A URL whose media type can't be inferred dumps an empty `mime_type` instead of raising.
+
+    The typed multimodal content types name the kind themselves, so the image comes back an image
+    ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/img')])])
+    ]
+    result = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.15')
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in result] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'source': {'type': 'url', 'value': 'https://example.com/img', 'mime_type': ''},
+                        'type': 'image',
+                    }
+                ],
+            }
+        ]
+    )
+
+    reloaded = AGUIAdapter.load_messages(result)
+    assert list(iter_message_parts(reloaded, ModelRequest, UserPromptPart)) == snapshot(
+        [UserPromptPart(content=[ImageUrl(url='https://example.com/img')], timestamp=IsDatetime())]
+    )
+    # `ImageUrl.__eq__` ignores the media type, so pin the whole dumped message rather than the part.
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in AGUIAdapter.dump_messages(reloaded)] == [
+        m.model_dump(exclude={'id'}, exclude_none=True) for m in result
+    ]
+
+
+def test_dump_messages_legacy_extensionless_url_loads_as_document() -> None:
+    """Before typed multimodal input, a URL with no media type loses its kind, but not its ability to dump.
+
+    `BinaryInputContent` has nowhere to carry the original kind, and its `mime_type` — empty here — is
+    what the kind is read back from, so the image returns as the catch-all `DocumentUrl`. It is still a
+    URL part that dumps ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/img')])])
+    ]
+    result = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.10')
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in result] == snapshot(
+        [{'role': 'user', 'content': [{'type': 'binary', 'url': 'https://example.com/img', 'mime_type': ''}]}]
+    )
+
+    reloaded = AGUIAdapter.load_messages(result)
+    assert list(iter_message_parts(reloaded, ModelRequest, UserPromptPart)) == snapshot(
+        [UserPromptPart(content=[DocumentUrl(url='https://example.com/img')], timestamp=IsDatetime())]
+    )
+    redumped = AGUIAdapter.dump_messages(reloaded, ag_ui_version='0.1.10')
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in redumped] == [
+        m.model_dump(exclude={'id'}, exclude_none=True) for m in result
+    ]
 
 
 def test_dump_messages_legacy_binary_content() -> None:

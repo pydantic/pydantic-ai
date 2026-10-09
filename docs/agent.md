@@ -1,3 +1,7 @@
+---
+description: "Create and run Pydantic AI agents: run, run_sync, streaming and step-by-step iteration, plus instructions, model settings, usage limits and cancellation."
+---
+
 ## Introduction
 
 Agents are Pydantic AI's primary interface for interacting with LLMs.
@@ -30,7 +34,7 @@ roulette_agent = Agent(  # (1)!
     'openai:gpt-5.2',
     deps_type=int,
     output_type=bool,
-    system_prompt=(
+    instructions=(
         'Use the `roulette_wheel` function to see if the '
         'customer has won based on the number they provide.'
     ),
@@ -61,6 +65,9 @@ print(result.output)
 
 !!! tip "Agents are designed for reuse, like FastAPI Apps"
     You can instantiate one agent and use it globally throughout your application, as you would a small [FastAPI][fastapi.FastAPI] app or an [APIRouter][fastapi.APIRouter], or dynamically create as many agents as you want. Both are valid and supported ways to use agents.
+
+!!! tip "Add prompt caching to your agents"
+    Pass `capabilities=[Caching()]` (the [`Caching`][pydantic_ai.capabilities.Caching] capability) to your agents. Several providers, including Anthropic, cache nothing unless the request asks them to, so without it every request pays full price for the instructions, tools and conversation. See [Caching](capabilities/caching.md) for what it costs and when to cache only the stable prefix instead.
 
 ## Running Agents
 
@@ -158,7 +165,7 @@ from pydantic_ai import (
 
 weather_agent = Agent(
     'openai:gpt-5.2',
-    system_prompt='Providing a weather forecast at the locations the user provides.',
+    instructions='Providing a weather forecast at the locations the user provides.',
 )
 
 
@@ -593,7 +600,7 @@ Once the run finishes, `agent_run.result` becomes an [`AgentRunResult`][pydantic
 
 Here is an example of streaming an agent run in combination with `async for` iteration:
 
-```python {title="streaming_iter.py"}
+```python {title="streaming_iter.py" noqa="C901"}
 import asyncio
 from dataclasses import dataclass
 from datetime import date
@@ -627,7 +634,7 @@ weather_agent = Agent[WeatherService, str](
     'openai:gpt-5.2',
     deps_type=WeatherService,
     output_type=str,  # We'll produce a final answer as plain text
-    system_prompt='Providing a weather forecast at the locations the user provides.',
+    instructions='Providing a weather forecast at the locations the user provides.',
 )
 
 
@@ -838,7 +845,7 @@ async def main():
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
-On Python 3.10, asyncio recreates `CancelledError` across an `await task` boundary, but chains the original exception -- carrying the attached run state -- via `__context__`, which `from_cancellation()` traverses. The chain is attached only to the first `await` of the cancelled task, so later awaits of the same task see an unchained exception; [`capture_run_messages()`][pydantic_ai.agent.capture_run_messages] is the fallback when only history is needed.
+Pressing Ctrl-C during [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] or [`agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] cancels the run too: catch the `KeyboardInterrupt` and pass it to `from_cancellation()` to recover the run state.
 
 When consuming [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], the yielded [`AgentRunEvents`][pydantic_ai.agent.AgentRunEvents] handle offers a first-party alternative that needs no task juggling: [`AgentRunEvents.cancel()`][pydantic_ai.agent.AgentRunEvents.cancel] is safe to call from another task (e.g. a UI's "stop" handler) and surfaces as `RunCancelled` on continued iteration:
 
@@ -931,7 +938,10 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
     - **Your application** decides to stop the run, through one of the dedicated cancellation methods. Pydantic AI issued that cancellation itself, so it can consume it before asyncio interprets it and raise `RunCancelled` instead: the run ends with an ordinary, catchable application error.
     - **The asyncio environment** cancels the task the run happens to be on: `asyncio.Task.cancel()`, `asyncio.timeout()` expiring, a [`TaskGroup`][asyncio.TaskGroup] tearing down after a sibling failed, a server shutting down, workflow cancellation under [durable execution](durable_execution/overview.md). All of these deliver the very same `CancelledError` signal, so Pydantic AI cannot tell a stop button from a timeout -- and the exception's type is load-bearing for everything built on it: `asyncio.timeout()` only produces `TimeoutError`, a `TaskGroup` only treats the task as cleanly cancelled, and Temporal only ends the workflow as *Cancelled* if `CancelledError` itself keeps propagating. Raising `RunCancelled` in its place would silently break each of those. So the run state is *attached to* the propagating `CancelledError` for [`from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation], rather than replacing it.
 
-Cancellation is terminal: capability hooks may observe it and clean up, but cannot recover the run to success — on Python 3.11+ this holds even if user code absorbs the delivered cancellation; on Python 3.10 it is best-effort. When first-party and external cancellation race, external cancellation wins. On Python 3.10, that race cannot be distinguished, so first-party cancellation wins instead.
+Cancellation is terminal: capability hooks may observe it and clean up, but cannot recover the run to success even if user code absorbs the delivered cancellation. When first-party and external cancellation race, external cancellation normally wins.
+
+!!! warning "Calling `Task.uncancel()` can interfere with cancellation attribution"
+    If user code catches a first-party cancellation and calls `Task.uncancel()`, an external cancellation arriving before the next run step can be consumed as first-party cancellation and surface as `RunCancelled`. This existing limitation is tracked in [#7240](https://github.com/pydantic/pydantic-ai/issues/7240).
 
 For fine-grained control over the agent graph, call [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] on the handle returned by [`agent.iter()`][pydantic_ai.agent.Agent.iter]:
 
@@ -1054,7 +1064,7 @@ except UsageLimitExceeded as e:
     """
 ```
 
-Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling:
+Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling. The request count, [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests], counts the model responses the agent acts on, one per turn of the agent loop, rather than every request sent to the provider: attempts a [fallback model](models/overview.md#fallback-model) moved on from, the continuation requests that complete a turn a provider paused (Anthropic `pause_turn`, OpenAI background mode), and [provider SDK and transport retries](retries.md#retry-multiplication) aren't counted. The tokens and cost of a response a fallback model rejected, and of continuation requests, still count towards the token and cost limits.
 
 ```py
 from typing_extensions import TypedDict
@@ -1074,7 +1084,7 @@ agent = Agent(
     'anthropic:claude-sonnet-4-6',
     retries={'tools': 3},
     output_type=NeverOutputType,
-    system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
+    instructions='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
 )
 
 
@@ -1177,7 +1187,7 @@ except UsageLimitExceeded as e:
 Like `output_tokens_limit`, this is checked after each response, since a response's output cost isn't known until it arrives. Setting `count_tokens_before_request=True` additionally prices the counted input tokens and rejects the request up front when that lower bound alone exceeds the limit.
 
 !!! note
-    Cost is best-effort: it's `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for, including models released after your install unless you [keep prices up to date](#keeping-model-prices-up-to-date). With a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], a run that could not be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] rather than being silently unconstrained; an unexpected pricing failure emits [`CostCalculationFailedWarning`][pydantic_ai.exceptions.CostCalculationFailedWarning]. Don't rely on `cost_limit` as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
+    Cost is best-effort: it's `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for, including models released after your install unless you [keep prices up to date](#keeping-model-prices-up-to-date). With a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], a run that could not be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] rather than being silently unconstrained; an unexpected pricing failure emits [`CostCalculationFailedWarning`][pydantic_ai.exceptions.CostCalculationFailedWarning]. Usage extraction is also best-effort, and an unexpected extraction failure emits [`UsageExtractionFailedWarning`][pydantic_ai.exceptions.UsageExtractionFailedWarning]. Don't rely on `cost_limit` as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
 
 #### Model (Run) Settings
 
@@ -1386,16 +1396,16 @@ result1 = agent.run_sync('Who was Albert Einstein?')
 print(result1.output)
 #> Albert Einstein was a German-born theoretical physicist.
 
-# Second run, passing previous messages
+# Second run, continuing the first one's conversation
 result2 = agent.run_sync(
     'What was his most famous equation?',
-    message_history=result1.new_messages(),  # (1)!
+    conversation=result1.conversation,  # (1)!
 )
 print(result2.output)
 #> Albert Einstein's most famous equation is (E = mc^2).
 ```
 
-1. Continue the conversation; without `message_history` the model would not know who "his" was referring to.
+1. Continue the conversation; without it the model would not know who "his" was referring to. A [`Conversation`][pydantic_ai.conversation.Conversation] carries the messages along with the running usage and the conversation ID, and is what to [store](persistence.md#storing-a-conversation-yourself) between requests. Passing `message_history=result1.all_messages()` instead carries only the messages; see [Messages and chat history](message-history.md).
 
 _(This example is complete, it can be run "as is")_
 
@@ -1432,7 +1442,7 @@ agent = Agent(
 )
 
 
-@agent.system_prompt
+@agent.instructions
 def add_user_name(ctx: RunContext[str]) -> str:  # (2)!
     return f"The user's name is {ctx.deps}."
 
@@ -1453,7 +1463,7 @@ Running `mypy` on this will give the following output:
 
 ```bash
 ➤ uv run mypy type_mistakes.py
-type_mistakes.py:18: error: Argument 1 to "system_prompt" of "Agent" has incompatible type "Callable[[RunContext[str]], str]"; expected "Callable[[RunContext[User]], str]"  [arg-type]
+type_mistakes.py:18: error: Argument 1 to "instructions" of "Agent" has incompatible type "Callable[[RunContext[str]], str]"; expected "Callable[[RunContext[User]], str | None]"  [arg-type]
 type_mistakes.py:28: error: Argument 1 to "foobar" has incompatible type "bool"; expected "bytes"  [arg-type]
 Found 2 errors in 1 file (checked 1 source file)
 ```

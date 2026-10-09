@@ -1,3 +1,7 @@
+---
+description: "Connect Pydantic AI agents to MCP servers over Streamable HTTP, SSE or stdio, load them from config, and use sampling, elicitation, resources and auth."
+---
+
 # Client
 
 Pydantic AI can act as an [MCP client](https://modelcontextprotocol.io/quickstart/client), connecting to MCP servers to use their tools as part of an agent run. The [`MCPToolset`][pydantic_ai.mcp.MCPToolset] [toolset](../toolsets.md) wraps the [FastMCP Client](https://gofastmcp.com/clients/) and works with both local (stdio) and remote (Streamable HTTP, SSE) MCP servers.
@@ -366,6 +370,8 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 MCP tools can include metadata that provides additional information about the tool's characteristics, which can be useful when [filtering tools][pydantic_ai.toolsets.FilteredToolset]. The `meta` and `annotations` fields can be found on the `metadata` dict on the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] object that's passed to filter functions, and the tool's output schema (if any) is available as the `return_schema` field.
 
 [`MCPToolset`][pydantic_ai.mcp.MCPToolset] additionally exposes a `task: bool` flag indicating whether the toolset will use [task-augmented execution](#background-tasks) for the tool. For tools where task support is optional, this reflects the `prefer_tasks` setting.
+
+Tools with an [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) `_meta.ui.visibility` that leaves out `"model"` are not exposed to the model, since the server meant them only for its own UI.
 
 ## Background tasks
 

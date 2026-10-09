@@ -12,9 +12,9 @@ These tools are deprecated and will be removed in v3. Use the `ExaSearch` capabi
 
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
-from typing_extensions import Any, TypedDict, deprecated
+from typing_extensions import TypedDict, deprecated
 
 from pydantic_ai import FunctionToolset
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -456,7 +456,7 @@ class ExaToolset(FunctionToolset):
     Deprecated in favor of the [`ExaSearch`](https://pydantic.dev/docs/ai/harness/exa-search/)
     capability in the Pydantic AI Harness:
 
-    ```python {test="skip" typecheck="skip - pydantic_ai_harness.exa is not in the pydantic-ai-harness version CI pins"}
+    ```python {test="skip"}
     from pydantic_ai_harness.exa import ExaSearch
 
     from pydantic_ai import Agent

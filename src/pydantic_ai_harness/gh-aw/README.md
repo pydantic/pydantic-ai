@@ -1,0 +1,366 @@
+# The `pydantic-ai` engine for GitHub Agentic Workflows
+
+`pydantic.md` in this directory is the engine definition that
+[GitHub Agentic Workflows](https://github.com/github/gh-aw) (gh-aw) uses for its
+`pydantic-ai` engine. It is what gh-aw consumes, read from this repository's `main`
+branch: there is no separate published copy, and a merge here reaches every workflow
+that recompiles afterwards.
+
+A workflow has to write the `imports:` line itself. gh-aw's engine catalog maps
+the `pydantic-ai` id to this path, but only to suggest it: naming the engine
+without the import fails to compile with a tip carrying the line to add.
+
+The engine runs [CLAI 2](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2)
+with the harness's `Coder` composition by default, in a `LocalWorkspace` on the checkout,
+providing filesystem access and unrestricted shell commands inside the sandbox, plus the
+gh-aw gateway's MCP tools. Shell commands get the step's environment minus provider credential variables
+(`OPENAI_*`, `ANTHROPIC_*` and the like).
+
+## Quick start
+
+```yaml
+---
+on:
+  issues:
+    types: [opened]
+permissions:
+  contents: read
+imports:
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
+engine:
+  id: pydantic-ai
+  model: copilot/claude-sonnet-4-5
+---
+
+# Triage
+
+Read the issue and summarize what changed.
+```
+
+To freeze the definition instead, import a commit SHA that contains this file, or a
+release tag of this repository cut after the harness moved into it; gh-aw
+resolves the ref at compile time, so `@main` re-resolves on every recompile while a
+tag or SHA does not. The ref has to be one that carries the file: older tags
+predate the move, so an import naming one has nothing to fetch. The two
+pins are separate: the ref decides which definition compiles, and `engine.version`
+inside it decides which harness release runs. A workflow's own `engine: version:`
+overrides the package version the definition pins, because gh-aw applies the
+imported definition's version only when the workflow left it empty
+(`applyEngineImportDefaults` in `pkg/workflow/compiler_orchestrator_engine.go`).
+
+`model` is required and must be `provider/model`. gh-aw accepts `copilot`,
+`anthropic`, `openai` and `codex` as the provider segment; it selects which backend
+of the AWF api-proxy serves the request. The proxy holds the credentials, so a
+workflow supplies none. `anthropic/` is served over the Anthropic Messages API,
+because that backend forwards the request path to `api.anthropic.com` unchanged and
+does not translate Chat Completions into Messages; the other three are
+OpenAI-shaped and use Chat Completions.
+
+## What actually runs
+
+The engine creates a generated module with a private wrapper around either the harness's
+`Coder` composition or the agent selected by `PAI_AGENT`. It resolves an import target or
+JSON/YAML spec once, retaining import tracebacks. CLAI 2 runs the wrapper with `-a`,
+`engine.model` as `-m <provider:model>`, and the prompt with `-p`. The engine installs
+`pydantic-clai2==0.54.0`, `pydantic-ai-harness==0.54.0`, and
+`pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0`; the explicit provider extras keep
+Anthropic and OpenAI model support available. Gateway MCP tools are attached
+through Pydantic AI's public dynamic toolset interface, preserving the agent's existing
+tools. gh-aw writes the MCP server configuration outside the checkout and mounts it
+read-only inside the sandbox; repository-controlled files cannot select an MCP server
+that runs with the gateway's credentials.
+
+The headless runner streams model responses so their typed events can be recorded in the
+canonical session. The engine subscribes to typed core events through the public
+`Agent.on_event` API. The inline parser selects their framed JSONL records from captured
+engine stdio, and the gh-aw runtime bootstrap writes the canonical stream to
+`agent-session.jsonl`: `session.init`,
+`user.message`, `assistant.message`, `assistant.reasoning`, `tool.execution_start`,
+`tool.execution_complete`, and `session.result`. The result includes reported usage when
+available; startup failures still record status without usage when none is available. Errors
+and tool calls still pending at interruption are represented as observed. If finalizing the
+recording fails, the launcher reports the error on stderr, preserves the CLI exit status,
+and attempts a status-only result. The engine does not synthesize tool IDs, completions,
+or turn counts. A compatible gh-aw conclusion also collects usage and `aw_session.jsonl`,
+including gateway and safe-output activity.
+
+## Running your own agent
+
+`PAI_AGENT` in `engine.env` selects an agent your repository defines in place of the
+default coder composition. It accepts a `module:variable` or dotted `MODULE.ATTRIBUTE`
+import target, or a `.yml`, `.yaml` or `.json` agent spec file.
+
+```yaml
+---
+on:
+  issues:
+    types: [opened]
+permissions:
+  contents: read
+imports:
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
+engine:
+  id: pydantic-ai
+  model: copilot/claude-sonnet-4-5
+  env:
+    PAI_AGENT: my_agent:agent
+steps:
+  - name: Install the agent's dependencies
+    run: python3 -P -m pip install --quiet --user --disable-pip-version-check httpx
+---
+
+# Triage
+
+Read the issue and summarize what changed.
+```
+
+`my_agent.py` lives at the root of your repository:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent(name='triage', instructions='Answer briefly.')
+```
+
+Some details to know.
+
+- **A private wrapper module resolves the agent.** The engine writes it in every mode: the
+  default composition, an imported `PAI_AGENT`, or a spec. For an imported target, the
+  framework packages load before the wrapper adds the checkout to `sys.path` while
+  resolving `PAI_AGENT`. Gateway tools and recording apply in every mode.
+- **Dependencies go in a workflow-level `steps:` block.** Those steps run on the
+  host runner, after gh-aw's `Setup Python` and before both the engine's install
+  step and the agent, so a `--user` install lands in the same `$HOME/.local` the
+  sandbox exposes and belongs to the same interpreter (`compiler_yaml_main_job.go`
+  emits `generateRuntimeAndWorkspaceSetupSteps` before
+  `generateEngineInstallAndPreAgentSteps`). `-P` keeps the checkout off `sys.path`
+  for the install itself.
+- **Gateway tools are added to the agent.** The engine attaches them through a public
+  dynamic toolset, preserving the tools and capabilities already on the configured agent.
+- **The workflow selects the model.** The engine applies `engine.model` to the run, so
+  configure the model in the workflow rather than relying on the target's model setting.
+- **Endpoint and provider handling are unchanged.** `PAI_BASE_URL`, `/reflect`
+  discovery and the `provider/` prefix behave exactly as they do for the coder
+  agent, described below.
+
+A `module:variable` target is imported once, so module-level work runs once too. An
+agent that fails to import or is not an `Agent` fails the step with the Python
+traceback. Spec files use the same `PAI_AGENT` setting.
+
+The target does not have to live in the repository. The harness exports assembled
+agents as importable variables, so `PAI_AGENT: pydantic_ai_harness.researcher:researcher_agent`
+runs `Researcher` with no agent code in the repository at all, given a `steps:` block
+installing the `researcher` extra. `pydantic_ai_harness.coder:coder_agent` names the
+default composition explicitly.
+
+The engine installs the dependencies needed to parse a spec. A `.yml`, `.yaml` or `.json`
+spec covers instructions plus built-in capabilities, and gateway tools are attached to it
+in the same way as to an imported agent. The workflow selects the model. A spec cannot
+name a harness capability or define a Python function tool; use a module for either.
+
+## Observability
+
+The engine instruments the agent whenever gh-aw supplies an OTLP endpoint. A workflow
+turns that on with `observability.otlp`, plus an allowlist entry for the backend's host,
+because the egress firewall otherwise drops the export:
+
+```yaml
+network:
+  allowed:
+    - logfire-us.pydantic.dev
+observability:
+  otlp:
+    endpoint:
+      - url: https://logfire-us.pydantic.dev
+        headers:
+          Authorization: ${{ secrets.LOGFIRE_TOKEN }}
+```
+
+gh-aw injects `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`,
+`OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` and `TRACEPARENT` into the workflow
+environment when, and only when, an endpoint is configured, and workflow-level environment
+reaches both the pre-agent step and the agent container. The endpoint variable is what the
+engine keys on: with it set, the install step adds `logfire` and the launcher calls
+`logfire.configure()` and `logfire.instrument_pydantic_ai()` before importing the agent
+target, then attaches the W3C context from `TRACEPARENT`. With it unset, neither happens
+and the install costs nothing.
+
+These choices are not defaults, and each is load-bearing.
+
+- **`send_to_logfire="if-token-present"`.** The default requires a `LOGFIRE_TOKEN` in the
+  environment and raises without one. The credential here is a header value gh-aw holds,
+  not an environment variable, so the export is driven by the endpoint alone and works
+  against any backend. A token that does reach the agent's environment adds Logfire as a
+  second destination rather than replacing the endpoint, prompts and completions included;
+  gh-aw strips `${{ secrets.* }}` out of `engine.env`, so that takes a workflow putting one
+  in its own `env:` or a `steps:` block.
+- **Private `config_dir` and `data_dir`.** Both point to a mode-0700 temporary directory
+  under `/tmp`, outside the checkout even if `TMPDIR` points into it. This prevents
+  checkout `pyproject.toml` settings and `.logfire/logfire_credentials.json` from selecting
+  a telemetry destination. Explicit directory arguments also override `LOGFIRE_CONFIG_DIR`
+  and `LOGFIRE_CREDENTIALS_DIR`; `LOGFIRE_TOKEN` in the environment remains supported.
+  The directory stays alive through the process and is removed at interpreter shutdown,
+  after exporter shutdown handlers run.
+- **`console=False`.** logfire's console exporter writes every span to stderr. Keeping it
+  off prevents spans and their content from entering captured engine stdio.
+- **The `TRACEPARENT` attach, with `distributed_tracing=True`.** gh-aw sets the variable for
+  behavior-defined engines (`applyTraceContextEnvToMap` in
+  `pkg/workflow/behavior_defined_engine.go`) so that an engine can nest its spans under the
+  workflow run's span, but neither logfire nor the OpenTelemetry SDK reads it from the
+  environment. Without the attach each run produces a second, unrelated trace. The flag is
+  what marks the propagated context as deliberate; logfire warns on every run without it,
+  because extracting incoming context is usually accidental.
+- **`OTEL_METRICS_EXPORTER` and `OTEL_LOGS_EXPORTER` default to `none`.** logfire's OTLP
+  setup is per signal, so an endpoint alone also builds metrics and logs exporters that POST
+  to `/v1/metrics` and `/v1/logs`. A traces-only backend answers `404`, and the step log then
+  carries `Failed to export metrics batch code: 404` once per export while the run still
+  succeeds. These are the standard OpenTelemetry switches rather than a logfire argument, so
+  a workflow that has a backend for those signals can set either one back to `otlp`.
+
+The engine contributes no resource attributes of its own. `OTEL_RESOURCE_ATTRIBUTES`
+already carries `gh-aw.engine.id` (`pydantic-ai`), `gh-aw.workflow.name`,
+`gh-aw.repository`, `gh-aw.run.id` and `github.run_id`, and `logfire.configure()` merges
+the variable into the resource, so `gh-aw.engine.id` is the filter that finds runs of this
+engine in a backend. The configuration line the engine logs gains an `otlp=` segment while
+this is active, carrying the endpoint's origin only: userinfo and query parameters are
+credentials, and a run log is not a private place to put one.
+
+A `PAI_AGENT` module that calls `logfire.configure()` itself runs after the engine's call
+and replaces it, whole rather than argument by argument, so it has to restate the three
+settings above: `send_to_logfire="if-token-present"` or it raises, `console=False` or spans
+appear in captured engine stdio, and `distributed_tracing=True` or it warns on every run.
+The context attached from `TRACEPARENT` survives the reconfiguration. Reconfiguration must also
+supply private `config_dir` and `data_dir` values with process-lifetime cleanup; omitting
+these re-enables checkout configuration and credentials. Such a module also has
+to install `logfire` through the workflow's own `steps:` if it imports it on runs that
+configure no endpoint.
+
+## gh-aw compatibility
+
+This definition requires gh-aw [v0.91.1](https://github.com/github/gh-aw/releases/tag/v0.91.1)
+or a newer compatible release for canonical session records and merged usage that match
+the unified-session schema. Install the pinned extension with:
+
+```bash
+gh extension install github/gh-aw --pin v0.91.1
+```
+
+The default stable release is below this runtime floor. Existing workflows must be
+recompiled with a compatible gh-aw pin and have their generated lockfile committed.
+Installing a newer `gh aw` CLI locally does not alter an already committed lockfile or
+the runtime it selects.
+
+The workflow summary is the canonical success/failure report. Categorical summary labels
+for specific MCP failures and maximum-turn outcomes are removed; MCP startup and
+request-limit errors retain their CLAI 2 diagnostics and nonzero exit status.
+
+## Pointing the engine at your own endpoint
+
+`PAI_BASE_URL` in `engine.env` sends requests to any endpoint that speaks the
+OpenAI **Chat Completions** API, instead of the AWF api-proxy. The engine skips
+`/reflect` discovery and uses the URL verbatim.
+
+```yaml
+engine:
+  id: pydantic-ai
+  model: openai/<model-id>
+  env:
+    PAI_BASE_URL: https://your-endpoint.example.com/v1
+network:
+  allowed:
+    - your-endpoint.example.com
+```
+
+Three things to get right:
+
+- **The URL is used verbatim.** The client posts to `<PAI_BASE_URL>/chat/completions`,
+  so include whatever path prefix the endpoint expects, usually `/v1`.
+- **Add the host to `network.allowed`.** The agent runs behind an egress firewall
+  that denies everything else.
+- **Keep the `provider/` prefix on `model`.** gh-aw requires it and only accepts its
+  four known providers, but the engine strips it before calling the endpoint. Write
+  `openai/<model-id>`, and `<model-id>` is what goes upstream. `openai` here means
+  "OpenAI-compatible", not OpenAI the company. `PAI_BASE_URL` keeps Chat Completions
+  whichever prefix is written, `anthropic/` included: it names an endpoint of that
+  shape by definition.
+
+`PAI_BASE_URL` is a variable of this engine's own rather than `OPENAI_BASE_URL`,
+because gh-aw sets `OPENAI_BASE_URL` itself, pointing at the proxy. It is always
+present, so it cannot express a choice.
+
+### Credentials, and why there is no `PAI_API_KEY`
+
+gh-aw keeps repository secrets out of the agent sandbox. Any `engine.env` value
+containing `${{ secrets.* }}` is stripped from the agent's environment
+(`awf --exclude-env`), and the compiler rejects the workflow rather than letting you
+believe otherwise. That is deliberate: for the proxy-backed providers, credentials
+live in the proxy, outside the agent, and the agent sends a placeholder bearer token
+it cannot leak.
+
+The same rule applies here, so this engine has no key setting. Two consequences:
+
+**Endpoints that need no credential from the agent work directly.** A self-hosted
+OpenAI-compatible server, a local model runner, or an internal gateway that
+authenticates by network position rather than by token:
+
+```yaml
+engine:
+  id: pydantic-ai
+  model: openai/qwen3-coder
+  env:
+    PAI_BASE_URL: http://models.internal.example.com/v1
+network:
+  allowed:
+    - models.internal.example.com
+```
+
+**Keyed providers are reached through a gateway you run.** For a commercial
+endpoint that requires an API key (MiniMax, Together, Fireworks and the like), point
+`PAI_BASE_URL` at a service you control that holds the key and forwards upstream:
+
+```
+agent (placeholder bearer)  ->  your gateway (adds the real key)  ->  provider
+```
+
+The gateway is yours to deploy and is out of scope for this repository. What matters
+here is the shape: the credential lives on the far side of the sandbox boundary, the
+same place gh-aw already keeps them. There is no configuration in this engine that
+puts a provider key in the agent's hands, and adding one is not possible without a
+change to gh-aw.
+
+## Troubleshooting
+
+Only mechanisms that have been checked against a compiled workflow are listed.
+
+**The request never leaves, or fails to connect.** The host is missing from
+`network.allowed`. The agent's egress is default-deny, and `PAI_BASE_URL` does not
+open a hole on its own.
+
+**404 from the endpoint.** The base path is wrong. The client appends
+`/chat/completions`, so `https://host/v1` produces `https://host/v1/chat/completions`.
+An endpoint documented as `https://host/v1/chat/completions` should be given as
+`https://host/v1`.
+
+**401 or 403 from the endpoint.** It wanted a credential. The agent sent the
+placeholder bearer token, which is all it has. Put a gateway in front that adds the
+real key, per the section above.
+
+**`engine.model is required ... must use provider/model format` at compile time.**
+The `provider/` prefix is missing. gh-aw validates it before the engine ever runs,
+even when `PAI_BASE_URL` makes the provider irrelevant.
+
+**`strict mode: secrets detected in 'engine.env'` at compile time.** A secret was
+put in `engine.env`. It would have been removed from the agent's environment anyway;
+see the credentials section.
+
+## Changing this file
+
+`pydantic.md` is the published artifact, and merging to `main` is what ships it:
+every consumer importing `@main` picks the change up the next time they recompile.
+Consumers pinned to a tag or a SHA stay where they are until they move the ref.
+
+A harness release does not move the engine. `engine.version` is an ordinary line in
+the file, so a new release reaches consumers only once a pull request bumps it --
+and lint refuses a pin that is not on PyPI, so that pull request is green only after
+the release is published. The release workflow opens an issue when the harness
+version it just published and the pinned version differ.

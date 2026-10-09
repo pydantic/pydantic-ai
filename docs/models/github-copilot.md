@@ -1,9 +1,10 @@
+---
+description: "Use Claude, Gemini, GPT and Kimi models from your GitHub Copilot subscription with Pydantic AI, with device login, plan-dependent model IDs and thinking."
+---
+
 # GitHub Copilot
 
 [GitHub Copilot](https://docs.github.com/en/copilot) serves Anthropic, OpenAI, Google, xAI and MoonshotAI models, metered in AI credits drawn from your Copilot subscription at published per-model token rates. Pydantic AI talks to Copilot's OpenAI-compatible Chat Completions API, which reaches only the ids Copilot exposes there: Claude, Gemini and Kimi ids and `gpt-5.4` at the time of writing, while every xAI Grok id and most other GPT ids are served on the Responses API alone and are out of reach until Pydantic AI speaks it. See [Model ids depend on your plan](#model-ids-depend-on-your-plan) to check yours.
-
-!!! note "This is not GitHub Models"
-    [`GitHubProvider`][pydantic_ai.providers.github.GitHubProvider] and the `github:` prefix served [GitHub Models](openai.md#github-models), which was retired in July 2026. Copilot is a different API with a different host, its own model ids, and its own credentials.
 
 ## Install
 
@@ -189,4 +190,4 @@ agent = Agent(model)
 
 Copilot's Responses (`/responses`) and Messages (`/v1/messages`) APIs and realtime are not implemented. Neither are embeddings, but because `github-copilot` counts as an OpenAI-chat-compatible provider, `Embedder('github-copilot:...')` still builds an [`OpenAIEmbeddingModel`](../embeddings.md) rather than raising — it points at the gateway's `/embeddings`, which answers `400`. Cost and context-window data are also unavailable: [genai-prices](https://github.com/pydantic/genai-prices) gained a `github-copilot` entry in [genai-prices#683](https://github.com/pydantic/genai-prices/pull/683), but no published release carries it yet.
 
-Copilot's Claude ids inherit Anthropic's sampling restriction. On Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, Fable 5 and Mythos 5 — and on any id whose name starts with one of those — `temperature` and `top_p` are dropped from the request rather than forwarded, silently, exactly as they are when you reach the same models through the [Anthropic API](anthropic.md). Only those two keys go: `top_k` has no Chat Completions equivalent to drop, and a `temperature` you pass in `extra_body`, or any `openai_*` setting, is still sent. Every other id — `claude-haiku-4.5` among them — forwards both unchanged.
+Copilot's Claude ids inherit Anthropic's sampling restriction. On Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, Fable 5, Mythos 5, and Haiku 5.5 — and on any id whose name starts with one of those — `temperature` and `top_p` are dropped from the request rather than forwarded, silently, exactly as they are when you reach the same models through the [Anthropic API](anthropic.md). Only those two keys go: `top_k` has no Chat Completions equivalent to drop, and a `temperature` you pass in `extra_body`, or any `openai_*` setting, is still sent. Every other id — `claude-haiku-4.5` among them — forwards both unchanged.

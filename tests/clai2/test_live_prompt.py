@@ -1,0 +1,817 @@
+"""Exercise native editor state and ownership without a prompt-toolkit renderer."""
+
+import asyncio
+import io
+import signal
+import sys
+from collections.abc import AsyncGenerator, Callable, Iterator
+from contextlib import asynccontextmanager
+from pathlib import Path
+from threading import Event as ThreadEvent
+
+import anyio
+import pytest
+from anyio.to_thread import run_sync as in_worker
+from PIL import Image
+from prompt_toolkit.application import create_app_session
+from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.input import PipeInput, create_pipe_input
+from prompt_toolkit.output import DummyOutput
+from rich.console import Console
+from rich.text import Text
+from termflow.ansi import make_clipboard_copy
+from termflow.tui.completion import Completion
+
+from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart
+from pydantic_ai.messages import BinaryContent
+from pydantic_clai2 import StreamRenderer
+from pydantic_clai2.commands import Command, Commands
+from pydantic_clai2.ui.prompt.image_input import ImageInput
+from pydantic_clai2.ui.prompt.interrupts import Interrupts
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptWakeup
+from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
+from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, MODES_ON, WHEEL_ROWS
+from pydantic_clai2.ui.rendering import theme
+from tests.clai2.surface_terminal import SurfaceTerminal
+
+
+@asynccontextmanager
+async def editor(*, output: io.StringIO | None = None) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
+    output = output if output is not None else io.StringIO()
+    console = Console(file=output, force_terminal=True, width=80, height=24)
+    commands = Commands()
+    commands.register(Command(name='help', description='Help', handler=lambda args: 'help'))
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(5):
+        live = LivePrompt(
+            console=console,
+            commands=commands,
+            history=InMemoryHistory(),
+            images=ImageInput(),
+            interrupts=Interrupts(),
+            toolbar=lambda: [('', 'ready')],
+            clock=lambda: 0,
+        )
+        async with live.opened():
+            yield live, pipe, output
+        assert console.file is output
+        value = output.getvalue()
+        assert value.rindex(LEAVE) > value.rindex(ENTER), 'the editor returns the main screen'
+        assert value.rindex(MODES_OFF) > value.rindex(MODES_ON)
+
+
+async def test_long_paste_submission_and_history() -> None:
+    async with editor() as (live, pipe, _):
+        text = '\n'.join(f'line {index}' for index in range(5))
+        live.feed('paste', text)
+        frame = Text.from_ansi('\n'.join(live.frame())).plain
+        assert '[paste 5 lines]' in frame
+        assert 'line 4' not in frame
+        pipe.send_text('\r')
+        assert await live.read() == text
+        assert live.history.get_strings() == [text]
+        assert live.buffer.display() == ('', 0)
+        live.feed('up')
+        assert live.buffer.text == text
+        live.feed('ctrl-c')
+        with pytest.raises(KeyboardInterrupt):
+            await live.read()
+        assert live.buffer.display() == ('', 0)
+
+
+async def test_input_queue_and_controls() -> None:
+    async with editor() as (live, pipe, _):
+        pipe.send_text('  \rfirst\rsecond\r')
+        assert await live.read() == 'first'
+        assert await live.read() == 'second'
+        pipe.send_text('discard\x03')
+        with pytest.raises(KeyboardInterrupt):
+            await live.read()
+        assert live.buffer.text == ''
+        pipe.send_text('keep\x01\x04\r')
+        assert await live.read() == 'eep'
+        pipe.send_text('\x04')
+        with pytest.raises(EOFError):
+            await live.read()
+
+
+@pytest.mark.parametrize(
+    'sequence',
+    ['\x1b\x7f', '\x1b\x08', '\x1b[27;3;127~', '\x1b[27;3;8~', '\x1b[127;3u', '\x1b[8;3u'],
+)
+async def test_option_backspace_deletes_word_before_cursor(sequence: str) -> None:
+    async with editor() as (live, pipe, _):
+        pipe.send_text('one two three' + '\x1b[D' * 6 + sequence + '\r')
+        assert await live.read() == 'one  three'
+        pipe.send_text('one\x1b[13;2utwo' + sequence + 'three\r')
+        assert await live.read() == 'one\nthree'
+
+
+async def test_completed_and_partial_output_never_repaint_editor() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal) as (live, _, _):
+        live.buffer.replace('retained draft')
+        live.paint()
+        editor_rows = terminal.lines()[-4:]
+        start = len(terminal.getvalue())
+        for chunk in ('streaming ', 'partial', '\n', 'next line\n'):
+            live.console.file.write(chunk)
+            live.console.file.flush()
+        live.output.refresh()
+        update = terminal.getvalue()[start:]
+        assert 'retained draft' not in update and '\x1b[2J' not in update
+        assert terminal.lines()[:2] == ['streaming partial', 'next line']
+        assert terminal.lines()[-4:] == editor_rows
+        assert live.buffer.text == 'retained draft'
+        start = len(terminal.getvalue())
+        live.paint()
+        assert terminal.getvalue()[start:] == ''
+
+
+@pytest.mark.parametrize('thinking', [False, True])
+async def test_real_termflow_writes_do_not_clear_input(thinking: bool) -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal) as (live, _, output):
+        live.buffer.replace('retained draft')
+        live.paint()
+        start = len(output.getvalue())
+        renderer = StreamRenderer(live.console, stop_loading=lambda: None)
+        part = ThinkingPart(content='A thinking burst') if thinking else TextPart(content='A response burst\n')
+        await renderer.on_stream_event(PartStartEvent(index=0, part=part))
+        await renderer.finish()
+        live.output.refresh()
+        assert live.buffer.text == 'retained draft'
+        text = output.getvalue()[start:]
+        # Only changed cells are sent, so read the screen rather than the bytes.
+        assert ('Thinking A thinking burst' if thinking else 'A response burst') in terminal.lines()[0]
+        assert 'retained draft' not in text
+        for forbidden in ('\x1b[J', '\x1b[2K', '\x1b[?25h', '┌', '└'):
+            assert forbidden not in text
+
+
+async def test_menu_suspension_preserves_draft_and_output() -> None:
+    async with editor() as (live, _, output):
+        live.buffer.replace('draft')
+        live.paint()
+        live.output.write('partial')
+        async with live.suspended():
+            start = len(output.getvalue())
+            live.paint()
+            assert output.getvalue()[start:] == ''
+            async with live.suspended():
+                live.console.print('menu output')
+                live.output.refresh()
+                assert 'menu output' in output.getvalue()
+            assert live.buffer.text == 'draft'
+        assert 'draft' in Text.from_ansi(output.getvalue()).plain
+
+
+@pytest.mark.parametrize('menu', [False, True])
+async def test_outer_cancellation_releases_terminal_and_tasks(menu: bool) -> None:
+    before = asyncio.all_tasks()
+    with anyio.CancelScope() as scope:
+        async with editor() as (live, _, _):
+            if menu:
+                async with live.suspended():
+                    scope.cancel()
+                    await anyio.sleep_forever()
+            else:
+                scope.cancel()
+                await anyio.sleep_forever()
+    assert scope.cancelled_caught
+    assert asyncio.all_tasks() <= before
+
+
+@pytest.mark.parametrize('key', ['\x03', '\x1b'])
+async def test_interrupt_targets_work_and_preserves_draft(key: str) -> None:
+    async with editor() as (live, pipe, _):
+        started, done = anyio.Event(), anyio.Event()
+
+        async def operation() -> None:
+            started.set()
+            await anyio.sleep_forever()
+
+        async def run() -> None:
+            assert not await live.interrupts.run(operation())
+            done.set()
+
+        live.buffer.replace('retained draft')
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            await started.wait()
+            assert any('Working ⠋' in Text.from_ansi(row).plain for row in live.frame())
+            pipe.send_text(key)
+            await done.wait()
+        assert not any('Working' in row for row in live.frame())
+        assert live.buffer.text == 'retained draft'
+
+
+async def test_ctrl_l_clears_the_screen_but_keeps_the_draft_and_queue() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal) as (live, pipe, _):
+        live.console.print('earlier output')
+        live.submit('queued')
+        live.buffer.replace('draft')
+        live.paint()
+        assert 'earlier output' in terminal.lines()
+        pipe.send_text('\x0c!\r')
+        assert await live.read() == 'queued'
+        assert await live.read() == 'draft!'
+        live.output.refresh()
+        assert 'earlier output' not in terminal.lines()
+        assert not live.output.transcript.printed(width=80)
+
+
+async def test_ctrl_l_during_a_turn_keeps_the_streaming_response() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal) as (live, _, _):
+        started, release = anyio.Event(), anyio.Event()
+
+        async def operation() -> None:
+            renderer = StreamRenderer(live.console, stop_loading=lambda: None)
+            await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='first half')))
+            started.set()
+            await release.wait()
+            await renderer.on_stream_event(PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' second half')))
+            await renderer.finish()
+
+        live.console.print('earlier output')
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(live.interrupts.run, operation())
+            await started.wait()
+            live.feed('ctrl-l')
+            release.set()
+        live.output.refresh()
+        assert 'earlier output' not in terminal.lines()
+        assert terminal.lines()[0] == 'first half second half'
+
+
+async def test_closed_input_reports_eof() -> None:
+    async with editor() as (live, pipe, _):
+        pipe.close()
+        with pytest.raises(EOFError):
+            await live.read()
+
+
+async def test_paste_is_atomic_and_alt_word_editing_works() -> None:
+    async with editor() as (live, pipe, _):
+        pipe.send_text('\x1b[200~one\ntwo\x1b[201~\x1bbX\r')
+        assert await live.read() == 'Xone\ntwo'
+        assert live.buffer.text == ''
+
+
+async def test_image_paste_and_failure_notice(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with editor() as (live, _, _):
+        image = BinaryContent(data=b'png', media_type='image/png')
+        monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.clipboard_images', lambda: [image])
+        live.feed('alt-v')
+        assert live.images.resolve(live.buffer.text) == ('', [image])
+
+        def fail() -> list[BinaryContent]:
+            raise ValueError('clipboard unavailable')
+
+        monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.clipboard_images', fail)
+        live.feed('ctrl-v')
+        assert 'clipboard unavailable' in live.images.notice
+        live.feed('paste', 'plain\r\ntext')
+        assert live.buffer.text.endswith('plain\ntext')
+
+
+async def test_queue_labels_and_small_terminal() -> None:
+    async with editor() as (live, _, _):
+        for text in ('/tmp/shot.png', '/help'):
+            live.buffer.replace(text)
+            live.accept()
+        frame = '\n'.join(Text.from_ansi(row).plain for row in live.frame())
+        assert 'Follow-up: /tmp/shot.png' in frame
+        assert 'Command: /help' in frame
+        assert await live.read() == '/tmp/shot.png'
+        assert await live.read() == '/help'
+        live.console.size = (3, 3)
+        assert len(live.frame()) == 1
+
+
+async def test_completion_acceptance_and_cycling() -> None:
+    ready = anyio.Event()
+
+    class Output(io.StringIO):
+        def write(self, text: str) -> int:
+            if 'Hello command' in text:
+                ready.set()
+            return super().write(text)
+
+    async with editor(output=Output()) as (live, pipe, _):
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        pipe.send_text('/he')
+        await ready.wait()
+        # `/help` starts highlighted, so one Tab moves to `/hello`.
+        pipe.send_text('\t\r\r')
+        assert await live.read() == '/hello'
+        ready = anyio.Event()
+        pipe.send_text('/ell')
+        await ready.wait()
+        pipe.send_text('\t\r')
+        assert await live.read() == '/hello'
+        live.feed('tab')
+        live.feed('backtab')
+        live.feed('escape')
+
+
+async def test_literal_paths_attach_images_and_queue_is_bounded(tmp_path: Path) -> None:
+    path = tmp_path / 'shot.png'
+    Image.new('RGB', (2, 2)).save(path)
+    async with editor() as (live, _, _):
+        live.feed('paste', str(path))
+        caption, images = live.images.resolve(live.buffer.text)
+        assert caption == '' and len(images) == 1
+        for i in range(10):
+            live.submit(f'message {i}')
+        rows = '\n'.join(Text.from_ansi(row).plain for row in live.frame())
+        assert '+6 more queued' in rows
+        assert 'queued: 10' in rows
+
+
+async def test_history_search_and_multiline_submission() -> None:
+    async with editor() as (live, pipe, _):
+        pipe.send_text('history entry\r')
+        assert await live.read() == 'history entry'
+        pipe.send_text('\x12history\r\r')
+        assert await live.read() == 'history entry'
+        pipe.send_text('first\x1b[13;2usecond\r')
+        assert await live.read() == 'first\nsecond'
+
+
+async def test_footer_warning_and_control_bytes_are_safe() -> None:
+    async with editor() as (live, _, _):
+        live.toolbar = lambda: [(theme.WARNING, 'warning\x1b[2J')]
+        footer = live.frame()[-1]
+        assert theme.sgr(theme.WARNING) in footer
+        assert '\x1b[2J' not in footer
+        assert r'\x1b[2J' in footer
+
+
+@pytest.mark.parametrize('colorterm', ['', 'truecolor'])
+@pytest.mark.parametrize('width', [10, 80])
+async def test_spinner_uses_tool_accent_without_coloring_border(
+    monkeypatch: pytest.MonkeyPatch, colorterm: str, width: int
+) -> None:
+    monkeypatch.setenv('COLORTERM', colorterm)
+    async with editor() as (live, _, _):
+        live.console.size = (width, 24)
+
+        async def operation() -> None:
+            top = live.frame()[0]
+            plain = Text.from_ansi(top).plain
+            assert len(plain) == width
+            if '⠋' in plain:
+                assert f'{theme.sgr(theme.ACCENT)}⠋\x1b[0m{theme.sgr(theme.MUTED)}' in top
+            else:
+                assert theme.sgr(theme.ACCENT) not in top
+            border_style = Text.from_ansi(top).get_style_at_offset(live.console, len(plain) - 1)
+            assert not border_style.bold
+
+        assert await live.interrupts.run(operation())
+        assert theme.sgr(theme.ACCENT) not in live.frame()[0]
+
+
+@pytest.mark.parametrize('dismiss', [False, True])
+async def test_completion_refresh_keeps_popup_without_selecting_stale_results(
+    monkeypatch: pytest.MonkeyPatch, dismiss: bool
+) -> None:
+    held = False
+    started, release, finished = anyio.Event(), anyio.Event(), anyio.Event()
+
+    async def compute(self: CompletionWorker, operation: Callable[[], list[Completion]]) -> list[Completion]:
+        if held:
+            started.set()
+            await release.wait()
+        result = operation()
+        finished.set()
+        return result
+
+    monkeypatch.setattr(CompletionWorker, 'run', compute)
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal) as (live, pipe, _):
+        live.commands.register(Command(name='hello', description='Hello', handler=lambda args: 'hello'))
+        live.output.write('transcript tail\n')
+        pipe.send_text('/')
+        await finished.wait()
+        assert any('/help' in row for row in live.frame())
+        height = len(live.frame())
+        history = terminal.history.copy()
+        held = True
+        finished = anyio.Event()
+        pipe.send_text('h')
+        await started.wait()
+        assert len(live.frame()) == height
+        assert any('/help' in row for row in live.frame())
+        live.feed('tab')
+        live.feed('down')
+        assert live.buffer.text == '/h'
+        assert all('\x1b[7m' not in row for row in live.frame()[-3:-1])
+        if dismiss:
+            live.feed('escape')
+        release.set()
+        await finished.wait()
+        assert terminal.history == history
+        if dismiss:
+            assert not any('/help' in row for row in live.frame())
+        else:
+            assert len(live.frame()) == height
+            live.feed('enter')
+            assert live.buffer.text == '/help'
+
+
+async def test_suggestions_expand_the_prompt_box() -> None:
+    ready = anyio.Event()
+
+    class Output(io.StringIO):
+        def write(self, text: str) -> int:
+            if 'Hello command' in text:
+                ready.set()
+            return super().write(text)
+
+    async with editor(output=Output()) as (live, pipe, _):
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        pipe.send_text('/he')
+        await ready.wait()
+        plain = [Text.from_ansi(row).plain for row in live.frame()]
+        dashes = [index for index, row in enumerate(plain) if row and set(row) == {'─'}]
+        top, bottom = dashes[0], dashes[-1]
+        inside = plain[top + 1 : bottom]
+        assert inside[0].startswith('/he')
+        assert inside[1].startswith('/help Help')
+        assert inside[2].startswith('/hello Hello command')
+        assert all('│' not in row and not row.startswith('>') for row in inside)
+        assert all('help' not in row for row in plain[bottom + 1 :])
+        assert highlighted(live) == ['/help Help']
+        live.feed('down')
+        frame = live.frame()
+        selected = next(row for row in frame if 'hello' in row and '\x1b[7m' in row)
+        assert selected.startswith('\x1b[7m') and selected.endswith('\x1b[0m')
+
+
+async def test_completion_iteration_is_bounded_before_materializing() -> None:
+    ready = anyio.Event()
+    produced: list[int] = []
+
+    class Output(io.StringIO):
+        def write(self, text: str) -> int:
+            if 'candidate0' in text:
+                ready.set()
+            return super().write(text)
+
+    def candidates(args: list[str]) -> Iterator[str]:
+        for index in range(100):
+            produced.append(index)
+            yield f'candidate{index}'
+        raise AssertionError('completion consumed beyond its bound')  # pragma: no cover
+
+    async with editor(output=Output()) as (live, pipe, _):
+        live.commands.register(
+            Command(name='many', description='Many candidates', handler=lambda args: '', complete=candidates)
+        )
+        pipe.send_text('/many ')
+        await ready.wait()
+        assert produced == list(range(100))
+        async with live.suspended():
+            assert live.buffer.text == '/many '
+
+
+async def test_recalled_history_gets_completions_and_completed_draft_survives_navigation() -> None:
+    ready = anyio.Event()
+
+    class Output(io.StringIO):
+        def write(self, text: str) -> int:
+            if '/help' in text:
+                ready.set()
+            return super().write(text)
+
+    async with editor(output=Output()) as (live, pipe, _):
+        live.buffer.history = ['/he']
+        live.buffer.replace('original draft')
+        pipe.send_text('\x1b[A')
+        await ready.wait()
+        live.feed('tab')
+        assert live.buffer.text == '/help'
+        live.feed('escape')
+        live.feed('up')
+        assert live.buffer.text == '/he'
+        live.feed('down')
+        assert live.buffer.text == '/help'
+
+
+async def popup_shows(live: LivePrompt, text: str) -> None:
+    """Wait for the completion worker to publish a popup row containing `text`."""
+    while text not in Text.from_ansi('\n'.join(live.frame())).plain:
+        await anyio.sleep(0.01)
+
+
+def highlighted(live: LivePrompt) -> list[str]:
+    """The plain text of highlighted suggestion rows."""
+    return [Text.from_ansi(row).plain.strip() for row in live.frame() if row.startswith('\x1b[7m')]
+
+
+async def best_match_shows(live: LivePrompt, text: str) -> None:
+    """Wait for the completion worker to highlight the suggestion `text`."""
+    while not any(row.startswith(text) for row in highlighted(live)):
+        await anyio.sleep(0.01)
+
+
+async def test_typing_a_command_name_highlights_its_best_match() -> None:
+    async with editor() as (live, pipe, _):
+        live.commands.register(
+            Command(name='shelp', description='Substring', handler=lambda args: '', complete=lambda args: ('one',))
+        )
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        pipe.send_text('/hel')
+        # Names starting with the fragment rank above a substring match registered earlier.
+        await popup_shows(live, 'Substring')
+        rows = [Text.from_ansi(row).plain for row in live.frame()]
+        assert [row.split()[0] for row in rows if row.startswith(('/help', '/hello', '/shelp'))] == [
+            '/help',
+            '/hello',
+            '/shelp',
+        ]
+        await best_match_shows(live, '/help ')
+        # Enter takes the highlighted match without Tab; once it is typed in full, Enter runs it.
+        live.feed('enter')
+        assert live.buffer.text == '/help'
+        await best_match_shows(live, '/help ')
+        live.feed('enter')
+        assert await live.read() == '/help'
+        # Argument suggestions keep their provider's order, so none is highlighted and Enter submits.
+        pipe.send_text('/shelp ')
+        await popup_shows(live, 'one')
+        assert highlighted(live) == []
+        live.feed('enter')
+        assert await live.read() == '/shelp'
+
+
+async def test_history_walk_keeps_arrows_through_recalled_commands() -> None:
+    async with editor() as (live, _, _):
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        live.buffer.history = ['oldest', '/he', 'newest']
+        live.buffer.replace('draft')
+        live.feed('up')
+        live.feed('up')
+        assert live.buffer.text == '/he'
+        await popup_shows(live, 'Hello command')
+        live.feed('up')
+        assert live.buffer.text == 'oldest'
+        live.feed('down')
+        await popup_shows(live, 'Hello command')
+        live.feed('down')
+        assert live.buffer.text == 'newest'
+        live.feed('down')
+        assert live.buffer.text == 'draft'
+
+
+async def test_tab_hands_arrows_to_popup_during_history_walk() -> None:
+    async with editor() as (live, _, _):
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        live.buffer.history = ['oldest', '/he']
+        live.feed('up')
+        await popup_shows(live, 'Hello command')
+        # Escape closes the popup without ending the walk, and Tab looks the suggestions up again.
+        live.feed('escape')
+        live.feed('tab')
+        await popup_shows(live, 'Hello command')
+        live.feed('tab')
+        live.feed('down')
+        live.feed('up')
+        live.feed('up')
+        live.feed('enter')
+        assert live.buffer.text == '/hello'
+        live.feed('up')
+        assert live.buffer.text == '/he'
+
+
+async def test_typed_command_prefix_arrows_cycle_popup() -> None:
+    async with editor() as (live, pipe, _):
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        live.buffer.history = ['older']
+        pipe.send_text('/he')
+        await popup_shows(live, 'Hello command')
+        live.feed('up')
+        live.feed('enter')
+        assert live.buffer.text == '/hello'
+        live.feed('escape')
+        live.feed('up')
+        assert live.buffer.text == 'older'
+
+
+@pytest.mark.parametrize('menu', [False, True])
+async def test_blocked_completion_does_not_hold_terminal_ownership(menu: bool) -> None:
+    started = anyio.Event()
+    release, finished = ThreadEvent(), ThreadEvent()
+    output = io.StringIO()
+    loop = asyncio.get_running_loop()
+
+    def blocked(args: list[str]) -> list[str]:
+        loop.call_soon_threadsafe(started.set)
+        try:
+            assert release.wait(timeout=5)
+            return ['late result']
+        finally:
+            finished.set()
+
+    try:
+        async with editor(output=output) as (live, pipe, _):
+            live.commands.register(
+                Command(name='blocked', description='Blocked', handler=lambda args: '', complete=blocked)
+            )
+            pipe.send_text('/blocked ')
+            await started.wait()
+            if menu:
+                async with live.suspended():
+                    assert not finished.is_set()
+                    assert live.buffer.text == '/blocked '
+                    live.commands.unregister(['blocked'])
+        assert not finished.is_set()
+        assert output.getvalue().endswith(LEAVE)
+        before = output.getvalue()
+    finally:
+        release.set()
+        assert await in_worker(finished.wait, 5)
+    assert output.getvalue() == before
+
+
+async def test_completion_exception_is_reported_without_ending_editor() -> None:
+    failed, recovered = anyio.Event(), anyio.Event()
+
+    class Output(io.StringIO):
+        def write(self, text: str) -> int:
+            if 'Completion unavailable' in text:
+                failed.set()
+            if '/help' in text:
+                recovered.set()
+            return super().write(text)
+
+    def broken(args: list[str]) -> list[str]:
+        raise RuntimeError('broken provider')
+
+    async with editor(output=Output()) as (live, pipe, _):
+        live.commands.register(Command(name='broken', description='Broken', handler=lambda args: '', complete=broken))
+        pipe.send_text('/broken ')
+        await failed.wait()
+        assert live.buffer.text == '/broken '
+        assert any('broken provider' in row for row in live.frame())
+        pipe.send_text('\x15/he')
+        await recovered.wait()
+        live.feed('tab')
+        assert live.buffer.text == '/help'
+        assert not any('Completion unavailable' in row for row in live.frame())
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='SIGWINCH is POSIX-only')
+async def test_live_resize_signal_schedules_viewport_clear_without_losing_draft() -> None:
+    cleared = anyio.Event()
+
+    class Output(io.StringIO):
+        def write(self, text: str) -> int:
+            if '\x1b[2J' in text:
+                cleared.set()
+            return super().write(text)
+
+    async with editor(output=Output()) as (live, _, _):
+        live.buffer.replace('retained during resize signal')
+        live.paint()
+        signal.raise_signal(signal.SIGWINCH)
+        await cleared.wait()
+        assert live.buffer.text == 'retained during resize signal'
+
+
+async def test_automated_wake_preserves_draft_and_prioritizes_user_input() -> None:
+    async with editor() as (live, _, _):
+        live.buffer.replace('unfinished pirate hamster prompt')
+        live.buffer.cursor = 9
+        live.wake()
+        live.wake()
+        live.submit('user follow-up')
+        assert await live.read() == 'user follow-up'
+        with pytest.raises(PromptWakeup):
+            await live.read()
+        assert live.buffer.display() == ('unfinished pirate hamster prompt', 9)
+        assert live.history.get_strings() == []
+        assert live.queued_messages == ()
+        with anyio.move_on_after(0) as waiting:
+            await live.read()
+        assert waiting.cancelled_caught
+        live.submit(EOFError())
+        with pytest.raises(EOFError):
+            await live.read()
+
+
+@pytest.mark.parametrize('wake', [False, True])
+async def test_removing_queued_prompt_does_not_discard_pending_wake(wake: bool) -> None:
+    async with editor() as (live, _, _):
+        live.feed('paste', 'remove me')
+        live.feed('enter')
+        if wake:
+            live.wake()
+        live.feed('up')
+        live.buffer.replace('')
+        live.feed('enter')
+        assert live.queued_messages == ()
+        if wake:
+            with pytest.raises(PromptWakeup):
+                await live.read()
+        else:
+            with anyio.move_on_after(0) as waiting:
+                await live.read()
+            assert waiting.cancelled_caught
+
+
+async def test_page_keys_and_wheel_scroll_the_transcript_without_touching_the_draft() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal) as (live, _pipe, _):
+        for index in range(60):
+            live.output.write(f'line {index}\n')
+        live.buffer.replace('draft')
+        live.notice = 'kept notice'
+        live.paint()
+        newest = terminal.lines()[0]
+        live.feed('pageup')
+        assert live.output.view.anchor is not None
+        assert terminal.lines()[0] != newest
+        assert live.buffer.text == 'draft' and live.notice == 'kept notice'
+        paged = terminal.lines()[0]
+        live.feed('mouse', '\x1b[<0;10;5M')  # A click scrolls nothing.
+        assert terminal.lines()[0] == paged
+        live.feed('mouse', '\x1b[<68;10;5M')  # Shift+wheel up.
+        assert terminal.lines()[0] == f'line {int(paged.split()[1]) - WHEEL_ROWS}'
+        live.feed('mouse', 'not a mouse report')
+        live.feed('pagedown')
+        live.feed('pagedown')
+        assert live.output.view.anchor is None
+        live.feed('pageup')
+        live.feed('enter')
+        assert await live.read() == 'draft'
+        assert live.output.view.anchor is None, 'submitting returns to the newest output'
+
+
+async def test_wheel_reports_arrive_through_the_decoder() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal) as (live, pipe, _):
+        for index in range(60):
+            live.output.write(f'line {index}\n')
+        live.paint()
+        pipe.send_text('\x1b[<64;10;5M')
+        with anyio.fail_after(2):
+            while live.output.view.anchor is None:
+                await anyio.sleep(0.01)
+        pipe.send_text('\x1b[6~')
+        with anyio.fail_after(2):
+            while live.output.view.anchor is not None:  # pyright: ignore[reportUnnecessaryComparison] -- changed by input
+                await anyio.sleep(0.01)
+
+
+async def test_a_mouse_drag_copies_the_transcript_without_touching_the_draft() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal) as (live, pipe, _):
+        live.output.write('copy this line\n')
+        live.buffer.replace('draft')
+        live.paint()
+        pipe.send_text('\x1b[<0;1;1M\x1b[<32;9;1M\x1b[<0;9;1m')
+        with anyio.fail_after(2):
+            while not live.notice:
+                await anyio.sleep(0.01)
+        assert live.notice == 'Copied the selection to the clipboard.'
+        assert make_clipboard_copy('copy this') in terminal.getvalue()
+        assert live.buffer.text == 'draft'
+        live.feed('x')
+        assert live.notice == '', 'the next key clears the notice'
+
+
+async def test_steering_returns_the_transcript_to_the_newest_output() -> None:
+    steered: list[str] = []
+
+    def steer(text: str) -> bool:
+        steered.append(text)
+        return True
+
+    async with editor() as (live, _, _):
+        live.steer = steer
+        for index in range(60):
+            live.output.write(f'line {index}\n')
+        live.paint()
+        # The draft steers.
+        live.feed('pageup')
+        assert live.output.view.anchor is not None
+        live.buffer.replace('steer the draft')
+        live.feed('alt-enter')
+        assert live.output.view.anchor is None
+        # A queued prompt steers.
+        live.buffer.replace('steer the queue')
+        live.feed('enter')
+        live.feed('pageup')
+        live.feed('alt-enter')
+        assert live.output.view.anchor is None
+        # A command never steers, so the view stays where the user scrolled.
+        live.buffer.replace('/help')
+        live.feed('enter')
+        live.feed('pageup')
+        live.feed('alt-enter')
+        assert live.output.view.anchor is not None
+        assert await live.read() == '/help'
+    assert steered == ['steer the draft', 'steer the queue']

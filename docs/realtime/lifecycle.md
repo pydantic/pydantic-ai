@@ -1,3 +1,7 @@
+---
+description: "Manage a Pydantic AI realtime session's connection: reconnect after drops and session limits, hang up on idle timeouts, and handle realtime errors."
+---
+
 # Connection lifecycle
 
 A realtime model uses one persistent provider connection. Your backend owns that session and the
@@ -36,9 +40,9 @@ ends the session, including from [a tool that hangs up](tools.md#ending-the-sess
 ## Connection and handshake
 
 The connection is opened when the `session()` context is entered, and the shared
-`handshake_timeout` setting (default 30 seconds) bounds how long the session waits for each
-realtime protocol handshake event on providers with an explicit handshake (OpenAI, Azure OpenAI,
-and xAI). A handshake that times out raises
+`handshake_timeout` setting (default 30 seconds) bounds how long the session waits for the
+provider handshake: each handshake event on OpenAI, Azure OpenAI, and xAI, and the whole session
+setup on Gemini. A handshake that times out raises
 [`RealtimeError`][pydantic_ai.realtime.RealtimeError]; a rejected WebSocket upgrade raises
 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] (see [Errors](#errors)).
 
@@ -64,11 +68,19 @@ realtime = agent.realtime(
 session, preventing an endpoint that repeatedly accepts and closes connections from redialing
 forever.
 
+While the policy is replacing a dropped connection, an audio chunk sent with
+[`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] is dropped instead of raising, so
+a microphone capture task survives the reconnect (live audio is no use once late). Other sends made
+during the reconnect still raise [`RealtimeError`][pydantic_ai.realtime.RealtimeError]. A reconnect
+in the middle of an utterance commits only the audio sent after it, so with push-to-talk, prompt the
+user to repeat themselves on
+[`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent].
+
 Without a policy, an unexpected provider close raises
 [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from the session iterator.
 
 On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) the same policy applies to an
-unexpected drop, but a *clean* close is treated as the browser hanging up: the sideband is a control
+unexpected drop (except on GPT-Live, whose sideband is not reconnected), but a *clean* close is treated as the browser hanging up: the sideband is a control
 channel, so a normal close ends iteration without a session error or reconnect attempt even when a
 `reconnect` policy is set. The close frame alone can't distinguish a hangup from a
 WebSocket-terminating proxy closing the sideband cleanly mid-call (a restart or graceful rotation),
@@ -77,28 +89,44 @@ connections at the infrastructure layer rather than relying on the `reconnect` p
 
 ### State restoration
 
-OpenAI and Azure OpenAI have no cross-connection server state, so Pydantic AI replays local message
-history into the new session. Prior transcript turns survive; in-flight audio does not.
+On OpenAI, Azure OpenAI, and xAI, Pydantic AI replays local message history into the new session.
+Prior transcript turns survive; in-flight audio does not. GPT-Live does the same by default, or forks a
+session stored with `openai_live_store=True`, so the new session has the whole conversation on OpenAI's
+side.
 
-Gemini and xAI use native in-process session resumption, enabled automatically when a `reconnect`
+Replay sends text, not audio, so a spoken user turn with no transcript (input transcription is off,
+or its transcript never arrived) replays as the text `[The user spoke; no transcript is available.]`.
+The new session then sees that the user said something before each answer, rather than an answer
+out of nowhere. The marker is only sent to the provider: the session's
+[message history](history.md) keeps the turn as the [`SpeechPart`][pydantic_ai.messages.SpeechPart]
+it was.
+
+Gemini uses native in-process session resumption, enabled automatically when a `reconnect`
 policy is present (an explicit `google_enable_session_resumption=False` alongside a policy raises
 [`UserError`][pydantic_ai.exceptions.UserError] instead of silently losing the conversation); see
-the [Gemini resumption settings](gemini.md#session-resumption). Their handles live only in memory
+the [Gemini resumption settings](gemini.md#session-resumption). Its handles live only in memory
 and cannot be persisted for another process.
 
 [`RealtimeSessionReconnectEvent.state_restored`][pydantic_ai.realtime.RealtimeSessionReconnectEvent.state_restored]
 reports whether the reconnect carried the conversation through without cutting a turn off.
 
-How a reply the drop caught in flight is handled depends on the mechanism. Under native resumption
-(xAI) the recorded response simply stays open: output on the new connection continues it, the turn
-completes with the response terminal as usual, and `state_restored` stays `True`. Gemini reports
+How a reply the drop caught in flight is handled depends on the mechanism. Gemini reports
 `True` once the server has issued a resumption handle (shortly after connect; a drop before that
 reports `False` and cancels running tools) but closes the cut reply as an interrupted response
 (keeping any partial transcript in history) before the
 [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] and stays
-quiet until the next input.
+quiet until the next input. Gemini issues no handle while a tool call is running, so a resumed
+session never has a call still running at the drop, and never answers its result. Such a call is
+cancelled with an interrupted return, like a call Gemini cancels itself, the resumed session is told
+the call was interrupted, and `state_restored` is `False`. Gemini 2.5 also withholds handles while it
+works on a turn, so a typed turn not yet followed by a handle after its reply is missing from the
+resumed session too: the turn stays in history, `state_restored` is `False`, and you can send it again.
+When its reply hadn't started and no spoken reply was in progress,
+[`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] also stops waiting for it.
+A turn typed while the model was answering speech can't be told apart from that spoken reply, so
+`wait_for_reply()` may keep waiting for it, and the reconnect may report `state_restored=True`.
 
-Local replay (OpenAI, Azure OpenAI) restores only the finalized turns, so a reply in flight when the
+Local replay (OpenAI, Azure OpenAI, xAI) restores only the finalized turns, so a reply in flight when the
 socket dropped cannot continue. The session settles it before emitting the event — the partial reply
 becomes an interrupted response, running tool calls get cancelled returns, and the turn ends so queued
 messages waiting for the boundary still flush — and `state_restored` is `False` to say the turn was
@@ -114,7 +142,7 @@ those limits. Exact limits and provider behavior can change, so provider pages a
 - [OpenAI session behavior](openai.md#feature-support-and-limitations)
 - [Azure OpenAI session behavior](azure.md#feature-support-and-limitations)
 - [Gemini session resumption](gemini.md#session-resumption)
-- [xAI native session resumption](xai.md#session-resumption)
+- [xAI session behavior](xai.md#feature-support-and-limitations)
 
 Gemini sends `GoAway` shortly before its cap but Pydantic AI currently reconnects only after the
 connection drops, so a long call can briefly drop mid-turn.
@@ -127,12 +155,14 @@ button, or [a tool](tools.md#ending-the-session-from-a-tool) — await
 completion even if that task is cancelled while it waits, and both a concurrent `close()` and the
 `async with` exit wait for the same teardown, so the session is fully closed by the time the block
 is left. While the session is being iterated the loop ends, leaving the `async with` block does not
-raise, and [`session.result`][pydantic_ai.realtime.RealtimeSession.result] is settled.
+raise, and [`session.result`][pydantic_ai.realtime.RealtimeSession.result] is settled. On a
+[WebRTC sideband](deployment.md#browser-webrtc-server-sideband), `close()` only detaches from the
+browser's call; [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] ends it.
 
 For external policy such as an idle timeout or maximum call duration, run a watchdog task that calls
 `close()`:
 
-```python
+```python {test="skip - the watchdog sleeps for the whole call budget"}
 import asyncio
 
 from pydantic_ai import Agent
@@ -175,7 +205,7 @@ Realtime sessions use the standard Pydantic AI exception hierarchy:
 | Exception | Raised when |
 | --- | --- |
 | [`UserError`][pydantic_ai.exceptions.UserError] | The application requests an unsupported operation, passes incompatible settings, lacks credentials, or misuses the session. |
-| [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] | The provider rejects the WebSocket upgrade with an HTTP status; Gemini also maps WebSocket close codes such as `1007` and `1008` to `status_code`, while OpenAI-protocol providers use `RealtimeError` for an in-handshake rejection. |
+| [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] | The provider rejects the WebSocket upgrade with an HTTP status. A provider that accepts the upgrade and then closes the socket during the handshake (Gemini's `1007` for a rejected config, for example) raises `RealtimeError` instead, since a WebSocket close code isn't an HTTP status. |
 | [`RealtimeError`][pydantic_ai.realtime.RealtimeError] | The connection fails, times out, closes unexpectedly, returns an invalid frame, or exhausts reconnect attempts. |
 | [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | A configured [usage limit](observability.md#usage-and-limits) is exceeded. |
 
@@ -187,6 +217,15 @@ Recoverable failures arrive as events: [`RealtimeSessionErrorEvent`][pydantic_ai
 for provider operations and
 [`RealtimeInputTranscriptionErrorEvent`][pydantic_ai.realtime.RealtimeInputTranscriptionErrorEvent] for one failed
 user transcription. The session remains usable after either event.
+
+A `RealtimeSessionErrorEvent` can be the provider refusing something you sent: OpenAI Realtime refuses
+a text longer than 256,000 characters, for example. When the error identifies the refused input, as
+OpenAI-protocol providers do by echoing the client event's id for a malformed or oversized one, the
+session takes back what the send assumed, the way it does when the send itself raises: refused content
+is removed from history, and a refused request for a response stops
+[`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] waiting for it. An error
+that doesn't identify an input changes neither, because the reply can still come: on OpenAI and xAI,
+a request for a response sent after a refused item is still answered.
 
 Failures surface from the responsible call where possible; a failed `send_audio()` raises there.
 Receive-loop and tool failures are raised from `async for` while the event stream is being

@@ -3,9 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from types import EllipsisType
-from typing import Literal, cast
-
-from typing_extensions import assert_never
+from typing import Literal, assert_never, cast
 
 from pydantic_ai.exceptions import ModelAPIError
 
@@ -433,6 +431,9 @@ def _map_usage(response: V2ChatResponse, provider: str, provider_url: str, model
                     tokens[key] = int(value)
         if isinstance(cached_tokens := usage_data.get('cached_tokens'), int | float):
             usage_data['cached_tokens'] = int(cached_tokens)
+
+        if not tokens and not cached_tokens:
+            return usage.RequestUsage(details=details)
 
         return usage.RequestUsage.extract(
             dict(model=model, usage=usage_data),

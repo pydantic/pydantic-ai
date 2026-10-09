@@ -1,3 +1,7 @@
+---
+description: "Send images, audio, video, PDFs and other documents to a Pydantic AI agent by URL, as binary content, or as files uploaded to a provider's Files API."
+---
+
 # Multimodal Input
 
 Alongside text, agents can accept image, audio, video, and document input, as long as the model supports it.
@@ -144,7 +148,7 @@ Support for file URLs varies depending on type and provider:
 
 | Model | Send URL directly | Download and send bytes | Unsupported |
 |-------|-------------------|-------------------------|-------------|
-| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl` | `VideoUrl`. `DocumentUrl` [not supported with `AzureProvider`](models/openai.md#using-azure-with-the-responses-api) or [`AlibabaProvider`](models/openai.md#alibaba-cloud-model-studio-dashscope) |
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl` | `VideoUrl`. `DocumentUrl` [not supported with `AzureProvider`](models/azure.md#using-azure-with-the-responses-api) or [`AlibabaProvider`](models/compatible-apis.md#alibaba-cloud-model-studio-dashscope) |
 | [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | — | `VideoUrl` |
 | [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl` |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Google Cloud) | All URL types | — | — |

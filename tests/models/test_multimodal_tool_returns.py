@@ -18,11 +18,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from itertools import count
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from typing_extensions import assert_never
 
 from pydantic_ai import Agent, BinaryContent, BinaryImage
 from pydantic_ai.exceptions import ModelHTTPError, UserError
@@ -86,7 +85,6 @@ with try_import() as huggingface_available:
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -307,6 +305,8 @@ def is_provider_available(provider: ProviderName) -> bool:
 
 
 IMAGE_URL = 'https://www.gstatic.com/webp/gallery3/1.png'
+# Anthropic fetches image URLs server-side and honors robots.txt, which disallows `IMAGE_URL`'s host.
+ANTHROPIC_IMAGE_URL = 'https://iili.io/3Hs4FMg.png'
 DOCUMENT_URL = 'https://pdfobject.com/pdf/sample.pdf'
 AUDIO_URL = 'https://download.samplelib.com/mp3/sample-3s.mp3'
 VIDEO_URL = 'https://www.w3schools.com/html/mov_bbb.mp4'
@@ -422,6 +422,12 @@ UPLOADED_FILE_CASSETTE_PATTERNS: dict[tuple[ProviderName, FileType], str | tuple
 }
 
 
+def create_url_content(provider: ProviderName, file_type: FileType, content_source: ContentSource) -> Any:
+    if (provider, file_type, content_source) == ('anthropic', 'image', 'url'):
+        return ImageUrl(url=ANTHROPIC_IMAGE_URL)
+    return URL_FACTORIES[(file_type, content_source)]()
+
+
 def get_cassette_pattern(
     provider: ProviderName, file_type: FileType, content_source: ContentSource
 ) -> str | tuple[str, ...] | None:
@@ -430,6 +436,8 @@ def get_cassette_pattern(
         return UPLOADED_FILE_CASSETTE_PATTERNS.get((provider, file_type))
     if provider == 'xai':
         return XAI_CASSETTE_PATTERNS.get((file_type, content_source))
+    if (provider, file_type, content_source) == ('anthropic', 'image', 'url'):
+        return ANTHROPIC_IMAGE_URL
     return CASSETTE_PATTERNS.get((file_type, content_source))
 
 
@@ -605,7 +613,7 @@ async def test_multimodal_tool_return_matrix(
     elif content_source == 'binary':
         content = binary_contents[file_type]
     else:
-        content = URL_FACTORIES[(file_type, content_source)]()
+        content = create_url_content(provider, file_type, content_source)
 
     agent = Agent(model)
 
@@ -710,7 +718,7 @@ async def test_model_sees_multiple_images(
 
     model = create_model(provider, api_keys, bedrock_provider, xai_provider, vertex_provider)
     kiwi_image = image_content
-    url_image = URL_FACTORIES[('image', 'url')]()
+    url_image = create_url_content(provider, 'image', 'url')
 
     agent = Agent(model)
 
@@ -725,7 +733,7 @@ async def test_model_sees_multiple_images(
     assert 'kiwi' in result.output.lower(), f'Model should identify kiwi fruit, got: {result.output}'
     image_support = SUPPORT_MATRIX[(provider, 'image')]
     cassette_ctx.verify_contains(('/9j/', '_9j_'))
-    cassette_ctx.verify_contains(('UklGR', 'iVBOR', IMAGE_URL))
+    cassette_ctx.verify_contains(('UklGR', 'iVBOR', url_image.url))
     if image_support == 'as_user_content':
         cassette_ctx.verify_contains('See file')
 

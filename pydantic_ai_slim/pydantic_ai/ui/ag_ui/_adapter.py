@@ -13,10 +13,10 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
+    assert_never,
 )
 
 from pydantic import ValidationError
-from typing_extensions import assert_never
 
 from ... import ExternalToolset, ToolDefinition
 from ..._utils import is_str_dict
@@ -218,7 +218,11 @@ def _user_content_to_input(
             from ._multimodal import media_url_to_multimodal
 
             return media_url_to_multimodal(item)
-        return BinaryInputContent(type='binary', url=item.url, mime_type=item.media_type or '')
+        try:
+            mime_type = item.media_type
+        except ValueError:
+            mime_type = ''  # reloads as no media type
+        return BinaryInputContent(type='binary', url=item.url, mime_type=mime_type)
     elif isinstance(item, BinaryContent):
         if use_multimodal:
             from ._multimodal import binary_to_multimodal

@@ -7,9 +7,9 @@ from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Sequence
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, assert_never, cast
 
-from typing_extensions import TypeVar, assert_never
+from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import EventStreamBuffer
 from pydantic_ai._utils import cancel_and_drain
@@ -642,6 +642,14 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         (e.g. `ToolDenied`, `ModelRetry`) short-circuits inside `_call_tool`, so no validation is
         needed — the event is emitted without args-validity.
         """
+        # Function calls and their results/executions are matched back by `tool_call_id`, so duplicate
+        # ids would make the binding ambiguous (last write wins). Fail closed before any call in this batch executes.
+        # Batches bind independently (each has its own `validated_calls`), so an id repeated across the batches
+        # `'graceful'` splits at an output call still binds each call to its own tool.
+        if duplicate_ids := _duplicate_tool_call_ids(calls):
+            raise exceptions.UnexpectedModelBehavior(
+                f'Function tool calls must have unique `tool_call_id` values; duplicate `tool_call_id`s: {duplicate_ids}'
+            )
         for call in calls:
             deferred_result = self.calls_to_run_results.get(call.tool_call_id)
             if deferred_result is not None and not isinstance(deferred_result, ToolApproved):
@@ -801,6 +809,18 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
         deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
+        def record_result(
+            result: tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None], index: int
+        ) -> _messages.FunctionToolResultEvent:
+            tool_parts, tool_user_content = result
+            tool_parts_by_index[index] = tool_parts
+            if tool_user_content:
+                user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
+
+            tool_part = tool_parts[0]
+            assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
+            return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
+
         async def handle_call_or_result(
             coro_or_task: Awaitable[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]]
             | asyncio.Task[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]],
@@ -817,13 +837,25 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 deferred_calls_by_index[index] = 'unapproved'
                 deferred_metadata_by_index[index] = e.metadata
             else:
-                tool_parts_by_index[index] = tool_parts
-                if tool_user_content:
-                    user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
+                return record_result((tool_parts, tool_user_content), index)
 
-                tool_part = tool_parts[0]
-                assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
-                return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
+        def record_completed_results(
+            tasks_by_index: dict[
+                int, asyncio.Task[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]]
+            ],
+        ) -> None:
+            for index, task in tasks_by_index.items():
+                if (
+                    task.done()
+                    and not task.cancelled()
+                    and task.exception() is None
+                    and index not in tool_parts_by_index
+                ):
+                    # A tool that finished before a sibling raised or the run was cancelled keeps
+                    # its return in the interrupted request, so resuming from that history doesn't
+                    # re-run it. Under `parallel_ordered_events` such results haven't been settled
+                    # yet; no result event is emitted for them, so event order is unchanged.
+                    record_result(task.result(), index)
 
         def call_tool(
             index: int,
@@ -880,6 +912,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                                 yield event
                 except asyncio.CancelledError as e:
                     await cancel_and_drain(*tasks_by_index.values(), msg=e.args[0] if len(e.args) != 0 else None)
+                    record_completed_results(tasks_by_index)
                     raise
                 except BaseException:
                     # Cancel any still-running sibling tasks so they don't become
@@ -887,6 +920,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     # (e.g. RuntimeError, ConnectionError) propagates out of
                     # handle_call_or_result().
                     await cancel_and_drain(*tasks_by_index.values())
+                    record_completed_results(tasks_by_index)
                     raise
         finally:
             # Populate output_parts even on exception so partial tool returns surface

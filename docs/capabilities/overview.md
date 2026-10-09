@@ -1,3 +1,7 @@
+---
+description: "Bundle tools, instructions, model settings and hooks into reusable Pydantic AI capabilities, and browse the built-in capabilities you can add to any agent."
+---
+
 # Capabilities
 
 A capability is a reusable, composable unit of agent behavior. Instead of threading multiple arguments through your `Agent` constructor — [instructions](../agent.md#instructions) here, [model settings](../agent.md#model-run-settings) there, a [toolset](../toolsets.md) somewhere else, a [history processor](../message-history.md#processing-message-history) on yet another parameter — you can bundle related behavior into a single capability and pass it via the [`capabilities`][pydantic_ai.agent.Agent.__init__] parameter.
@@ -33,9 +37,14 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 
 | Capability | Package | What it does |
 |---|---|---|
+| [Local Workspace](../workspace.md) | Core | Gives your tools `ctx.workspace` to run commands and edit files on this machine; adds no tools itself; no isolation |
 | [FileSystem](https://pydantic.dev/docs/ai/harness/filesystem/) | Harness | Read, write, edit, search files under a root; path-traversal and symlink safe, secrets read-only |
 | [Shell](https://pydantic.dev/docs/ai/harness/shell/) | Harness | Command execution with allowlists, denylists, timeouts, and credential-stripping |
 | [Modal Sandbox](https://pydantic.dev/docs/ai/harness/modal-sandbox/) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
+| [E2B Sandbox](https://pydantic.dev/docs/ai/harness/e2b-sandbox/) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
+| [Sprites Sandbox](https://pydantic.dev/docs/ai/harness/sprites-sandbox/) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
+| [SSH Workspace](https://pydantic.dev/docs/ai/harness/ssh-workspace/) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
+| [Bubblewrap Sandbox](https://pydantic.dev/docs/ai/harness/bubblewrap-sandbox/) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) sandbox on that workspace's host |
 
 ### Tools & native abilities {#tools-native-abilities}
 
@@ -49,6 +58,17 @@ Connections to systems outside the agent's workspace, and abilities the provider
 | [StackOne](https://pydantic.dev/docs/ai/harness/stackone/) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
 | [LocalStack](https://pydantic.dev/docs/ai/harness/localstack/) | Harness | An emulated AWS environment with AWS CLI tools |
 | [Macroscope](https://pydantic.dev/docs/ai/harness/macroscope/) | Harness | Run a local [Macroscope](https://docs.macroscope.com/cli) code review and hand the findings to the agent |
+| [Day AI](https://pydantic.dev/docs/ai/harness/day-ai/) | Harness | Search and update CRM records and read meeting context through [Day AI](https://day.ai)'s hosted MCP server |
+| [GitHub](https://pydantic.dev/docs/ai/harness/github/) | Harness | Read and change repositories, issues, and pull requests through GitHub's hosted MCP server |
+| [Google Workspace](https://pydantic.dev/docs/ai/harness/google-workspace/) | Harness | Use Gmail, Calendar, Drive, Docs, and Sheets through Google's hosted MCP servers |
+| [Grain](https://pydantic.dev/docs/ai/harness/grain/) | Harness | Search and read meetings, transcripts, and notes through [Grain](https://grain.com)'s hosted MCP server |
+| [Linear](https://pydantic.dev/docs/ai/harness/linear/) | Harness | Read and update issues, projects, and comments through Linear's hosted MCP server |
+| [Logfire MCP](https://pydantic.dev/docs/ai/harness/logfire-mcp/) | Harness | Query traces and telemetry and manage projects through the hosted [Logfire](https://pydantic.dev/logfire) MCP server |
+| [Notion](https://pydantic.dev/docs/ai/harness/notion/) | Harness | Search and edit pages in a Notion workspace through Notion's hosted MCP server |
+| [Ordinal](https://pydantic.dev/docs/ai/harness/ordinal/) | Harness | Draft, schedule, and analyze social posts through [Ordinal](https://www.tryordinal.com)'s hosted MCP server |
+| [PostHog](https://pydantic.dev/docs/ai/harness/posthog/) | Harness | Query product analytics and manage feature flags, experiments, and dashboards through PostHog's hosted MCP server |
+| [Pylon](https://pydantic.dev/docs/ai/harness/pylon/) | Harness | Work with support issues, accounts, and contacts through [Pylon](https://www.usepylon.com)'s hosted MCP server |
+| [Slack](https://pydantic.dev/docs/ai/harness/slack/) | Harness | Read and send messages, browse channels, and edit canvases through Slack's hosted MCP server |
 
 ### Web & research {#web-research}
 
@@ -87,6 +107,7 @@ How the agent spends its context window: the difference between an agent that de
 |---|---|---|
 | [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) | Harness | The model writes one Python script that calls many tools inside a [Monty](https://github.com/pydantic/monty) sandbox: one round-trip instead of N, and intermediate results never enter the context window |
 | [Tool Search](tool-search.md) | Core | Load tool definitions on demand instead of carrying hundreds in every prompt |
+| [Caching](caching.md) | Core | Provider-adaptive prompt caching of tools, instructions and the conversation, at a configurable retention |
 | [Compaction](compaction.md) | Core | Provider-native compaction on OpenAI and Anthropic; the provider summarizes history server-side |
 | [Compaction](https://pydantic.dev/docs/ai/harness/compaction/) | Harness | Model-agnostic strategies: tool-result clearing, sliding-window trimming, LLM summarization, tiered; all window-relative, with live usage reporting |
 | [Tool Output Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/) | Harness | Truncate, spill to a queryable file, or summarize oversized tool returns at the source |
@@ -94,7 +115,7 @@ How the agent spends its context window: the difference between an agent that de
 
 ### Knowledge & memory {#knowledge-memory}
 
-What the agent knows and remembers, loaded when relevant instead of carried in every prompt. [Storage](../storage.md) covers how these sit next to the conversation history itself, which is an agent's memory of the run it is in.
+What the agent knows and remembers, loaded when relevant instead of carried in every prompt. [Persistence](../persistence.md) covers how these sit next to the conversation history itself, which is an agent's memory of the run it is in.
 
 | Capability | Package | What it does |
 |---|---|---|
@@ -123,7 +144,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Capability Creation](https://pydantic.dev/docs/ai/harness/capability-creation/) | Harness | The agent writes, validates, and persists *new capabilities* during a run, loaded on the next run: self-extension with typed, inspectable units instead of arbitrary code |
+| [Capability Creation](https://pydantic.dev/docs/ai/harness/capability-creation/) | Harness | The agent writes, validates, and persists *new capabilities* during a run; the host loads them into a later run via `store.load_active()` and `capabilities=` |
 
 ### Execution runtime
 
@@ -133,6 +154,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 |---|---|---|
 | [Durable execution](../durable_execution/overview.md) | Core | Runs that survive restarts and failures on [Temporal](../durable_execution/temporal.md), [DBOS](../durable_execution/dbos.md), or [Prefect](../durable_execution/prefect.md), with [Restate](../durable_execution/restate.md), [Kitaru](../durable_execution/kitaru.md), and [Airflow](../durable_execution/airflow.md) integrations |
 | [AWS Lambda durability](https://pydantic.dev/docs/ai/harness/aws-lambda/) | Harness | Checkpoint model requests and tool calls into AWS Lambda durable function steps |
+| [Absurd durability](https://pydantic.dev/docs/ai/harness/absurd/) | Harness | Checkpoint model requests, MCP calls, and tool calls into Absurd steps on PostgreSQL |
 | [Step Persistence](https://pydantic.dev/docs/ai/harness/step-persistence/) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
 | [Instrumentation](instrumentation.md) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |
 | [Managed Prompt](https://pydantic.dev/docs/ai/harness/managed-prompt/) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt; version and roll out without redeploying |

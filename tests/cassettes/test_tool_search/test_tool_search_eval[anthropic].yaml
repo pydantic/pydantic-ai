@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -8,828 +11,196 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1269'
+      - "2045"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the current exchange rate from USD to EUR?
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the current weather for a city.
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What is the current exchange rate from USD to EUR?
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
                 type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
-    uri: https://api.anthropic.com/v1/messages?beta=true
+            required:
+            - city
+            type: object
+        - name: get_exchange_rate
+          description: Look up the current exchange rate between two currencies.
+          input_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          defer_loading: true
+        - name: stock_lookup
+          description: Look up stock price by ticker symbol.
+          input_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          defer_loading: true
+        - name: mortgage_calculator
+          description: Calculate monthly mortgage payment for a home loan.
+          input_schema:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '791'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-21ac14bfee14c48d587b1219d220fdcc-1bd6de812e8c0136-01
+      - 00-8c5cc67c1136d97b1e7c87fe42ce5fbb-d9722b5ad4274ba9-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - text: I'll search for a tool that can help with currency exchange rates.
-        type: text
-      - caller:
-          type: direct
-        id: toolu_01TJFmX2n49mEqVYj7CJcXzg
-        input:
-          queries:
-          - currency exchange rate
-          - USD EUR conversion
-          - foreign exchange
-          - currency converter
-        name: search_tools
-        type: tool_use
-      id: msg_011mnZKuruSGN8iEG6BVRGcd
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 761
-        output_tokens: 85
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '2234'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the current exchange rate from USD to EUR?
-          type: text
-        role: user
-      - content:
-        - text: I'll search for a tool that can help with currency exchange rates.
-          type: text
-        - id: toolu_01TJFmX2n49mEqVYj7CJcXzg
-          input:
-            queries:
-            - currency exchange rate
-            - USD EUR conversion
-            - foreign exchange
-            - currency converter
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '{"discovered_tools":[{"name":"get_exchange_rate","description":"Look up the current exchange rate between
-              two currencies."}]}'
-            type: text
-          is_error: false
-          tool_use_id: toolu_01TJFmX2n49mEqVYj7CJcXzg
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the current weather for a city.
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-      - defer_loading: true
-        description: Look up the current exchange rate between two currencies.
-        input_schema:
-          additionalProperties: false
-          properties:
-            from_currency:
-              type: string
-            to_currency:
-              type: string
-          required:
-          - from_currency
-          - to_currency
-          type: object
-        name: get_exchange_rate
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '775'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-ef4e6cb9b3a2ed849da0e4dd92652c11-83b1ac314ecf9b4d-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      content:
-      - text: Great! I found a tool to get exchange rates. Let me get the current USD to EUR exchange rate for you.
-        type: text
-      - caller:
-          type: direct
-        id: toolu_01AkhyaNEd3ZiaheHj6DiYEv
-        input:
-          from_currency: USD
-          to_currency: EUR
-        name: get_exchange_rate
-        type: tool_use
-      id: msg_012s6SETeMh4JLon7grYLie2
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 887
-        output_tokens: 101
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '2732'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the current exchange rate from USD to EUR?
-          type: text
-        role: user
-      - content:
-        - text: I'll search for a tool that can help with currency exchange rates.
-          type: text
-        - id: toolu_01TJFmX2n49mEqVYj7CJcXzg
-          input:
-            queries:
-            - currency exchange rate
-            - USD EUR conversion
-            - foreign exchange
-            - currency converter
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '{"discovered_tools":[{"name":"get_exchange_rate","description":"Look up the current exchange rate between
-              two currencies."}]}'
-            type: text
-          is_error: false
-          tool_use_id: toolu_01TJFmX2n49mEqVYj7CJcXzg
-          type: tool_result
-        role: user
-      - content:
-        - text: Great! I found a tool to get exchange rates. Let me get the current USD to EUR exchange rate for you.
-          type: text
-        - id: toolu_01AkhyaNEd3ZiaheHj6DiYEv
-          input:
-            from_currency: USD
-            to_currency: EUR
-          name: get_exchange_rate
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: 1 USD = 0.92 EUR
-            type: text
-          is_error: false
-          tool_use_id: toolu_01AkhyaNEd3ZiaheHj6DiYEv
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the current weather for a city.
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-      - defer_loading: true
-        description: Look up the current exchange rate between two currencies.
-        input_schema:
-          additionalProperties: false
-          properties:
-            from_currency:
-              type: string
-            to_currency:
-              type: string
-          required:
-          - from_currency
-          - to_currency
-          type: object
-        name: get_exchange_rate
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '611'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-c1dcaa99ab9f968dc5045e802aefe4c8-a0ece04279361eba-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      content:
-      - text: The current exchange rate is **1 USD = 0.92 EUR**. This means that one US Dollar is worth approximately 0.92
-          Euros.
-        type: text
-      id: msg_01Va2DMnqhqNTeKUbnMY45T1
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 1010
-        output_tokens: 38
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '1260'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the current stock price for AAPL?
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the current weather for a city.
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '776'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-c1a6358662e0e93dcf9f348570fb15ce-170c533f20f12e03-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      content:
-      - text: I'll search for a tool that can help me get stock price information.
-        type: text
-      - caller:
-          type: direct
-        id: toolu_01STyXG2KReZkuFAiSBAFWLd
-        input:
-          queries:
-          - stock price
-          - AAPL
-          - ticker symbol
-          - market data
-          - financial data
-        name: search_tools
-        type: tool_use
-      id: msg_014jHpimf8m9zkHkfNjMRM2F
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 762
-        output_tokens: 90
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '2096'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the current stock price for AAPL?
-          type: text
-        role: user
-      - content:
-        - text: I'll search for a tool that can help me get stock price information.
-          type: text
-        - id: toolu_01STyXG2KReZkuFAiSBAFWLd
-          input:
-            queries:
-            - stock price
-            - AAPL
-            - ticker symbol
-            - market data
-            - financial data
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '{"discovered_tools":[{"name":"stock_lookup","description":"Look up stock price by ticker symbol."}]}'
-            type: text
-          is_error: false
-          tool_use_id: toolu_01STyXG2KReZkuFAiSBAFWLd
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the current weather for a city.
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-      - defer_loading: true
-        description: Look up stock price by ticker symbol.
-        input_schema:
-          additionalProperties: false
-          properties:
-            symbol:
-              type: string
-          required:
-          - symbol
-          type: object
-        name: stock_lookup
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '731'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-3cfc08fe36730139e4bc4226e7ef5cf9-6b7dd273baef72d8-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      content:
-      - text: Great! I found a tool to look up stock prices. Let me get the current stock price for AAPL.
-        type: text
-      - caller:
-          type: direct
-        id: toolu_014b9i18P8JdeixyRCGWwgBa
-        input:
-          ticker: AAPL
-        name: stock_lookup
-        type: tool_use
-      id: msg_01A7oMUDcYf9dj3XYKC8QjHR
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 889
-        output_tokens: 82
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '2910'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the current stock price for AAPL?
-          type: text
-        role: user
-      - content:
-        - text: I'll search for a tool that can help me get stock price information.
-          type: text
-        - id: toolu_01STyXG2KReZkuFAiSBAFWLd
-          input:
-            queries:
-            - stock price
-            - AAPL
-            - ticker symbol
-            - market data
-            - financial data
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '{"discovered_tools":[{"name":"stock_lookup","description":"Look up stock price by ticker symbol."}]}'
-            type: text
-          is_error: false
-          tool_use_id: toolu_01STyXG2KReZkuFAiSBAFWLd
-          type: tool_result
-        role: user
-      - content:
-        - text: Great! I found a tool to look up stock prices. Let me get the current stock price for AAPL.
-          type: text
-        - id: toolu_014b9i18P8JdeixyRCGWwgBa
-          input:
-            ticker: AAPL
-          name: stock_lookup
-          type: tool_use
-        role: assistant
-      - content:
-        - content: |-
-            2 validation errors:
-            ```json
-            [
-              {
-                "type": "missing",
-                "loc": [
-                  "symbol"
-                ],
-                "msg": "Field required",
-                "input": {
-                  "ticker": "AAPL"
-                }
-              },
-              {
-                "type": "extra_forbidden",
-                "loc": [
-                  "ticker"
-                ],
-                "msg": "Extra inputs are not permitted",
-                "input": "AAPL"
-              }
-            ]
-            ```
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3joUNoVGRbQsci97bt","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":749,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null} }
 
-            Fix the errors and try again.
-          is_error: true
-          tool_use_id: toolu_014b9i18P8JdeixyRCGWwgBa
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the current weather for a city.
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-      - defer_loading: true
-        description: Look up stock price by ticker symbol.
-        input_schema:
-          additionalProperties: false
-          properties:
-            symbol:
-              type: string
-          required:
-          - symbol
-          type: object
-        name: stock_lookup
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '720'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-1a7c1ababeb53acafced1ea76ee42e95-7a799c35fd998b32-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      content:
-      - text: Let me correct that - the parameter should be "symbol" instead of "ticker".
-        type: text
-      - caller:
-          type: direct
-        id: toolu_01GgM32pcJgjKXqUgpjs9XFT
-        input:
-          symbol: AAPL
-        name: stock_lookup
-        type: tool_use
-      id: msg_0117MwzgaLGTZ9VgoKdRaUti
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 1122
-        output_tokens: 74
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll search"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for a"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" tool"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" that can help with"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" currency exchange rates."}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01H4NWPp7dGuHyBCSeJVZDfQ","name":"search_tools","input":{},"caller":{"type":"direct"}}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"queri"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"es\": [\""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"exchang"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"e rate\""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":",\"curre"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ncy con"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"version"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\",\"USD "}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"EUR\",\"f"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"orex\"]}"}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1            }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":749,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":82}     }
+
+        event: message_stop
+        data: {"type":"message_stop"          }
+
+  recorded_at: 2026-09-29T16:29:46.283699+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -838,186 +209,217 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3356'
+      - "2513"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the current stock price for AAPL?
-          type: text
-        role: user
-      - content:
-        - text: I'll search for a tool that can help me get stock price information.
-          type: text
-        - id: toolu_01STyXG2KReZkuFAiSBAFWLd
-          input:
-            queries:
-            - stock price
-            - AAPL
-            - ticker symbol
-            - market data
-            - financial data
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '{"discovered_tools":[{"name":"stock_lookup","description":"Look up stock price by ticker symbol."}]}'
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What is the current exchange rate from USD to EUR?
             type: text
-          is_error: false
-          tool_use_id: toolu_01STyXG2KReZkuFAiSBAFWLd
-          type: tool_result
-        role: user
-      - content:
-        - text: Great! I found a tool to look up stock prices. Let me get the current stock price for AAPL.
-          type: text
-        - id: toolu_014b9i18P8JdeixyRCGWwgBa
-          input:
-            ticker: AAPL
-          name: stock_lookup
-          type: tool_use
-        role: assistant
-      - content:
-        - content: |-
-            2 validation errors:
-            ```json
-            [
-              {
-                "type": "missing",
-                "loc": [
-                  "symbol"
-                ],
-                "msg": "Field required",
-                "input": {
-                  "ticker": "AAPL"
-                }
-              },
-              {
-                "type": "extra_forbidden",
-                "loc": [
-                  "ticker"
-                ],
-                "msg": "Extra inputs are not permitted",
-                "input": "AAPL"
-              }
-            ]
-            ```
-
-            Fix the errors and try again.
-          is_error: true
-          tool_use_id: toolu_014b9i18P8JdeixyRCGWwgBa
-          type: tool_result
-        role: user
-      - content:
-        - text: Let me correct that - the parameter should be "symbol" instead of "ticker".
-          type: text
-        - id: toolu_01GgM32pcJgjKXqUgpjs9XFT
-          input:
-            symbol: AAPL
-          name: stock_lookup
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: 'Stock AAPL: $150.00'
+        - role: assistant
+          content:
+          - text: I'll search for a tool that can help with currency exchange rates.
             type: text
-          is_error: false
-          tool_use_id: toolu_01GgM32pcJgjKXqUgpjs9XFT
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the current weather for a city.
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-      - defer_loading: true
-        description: Look up stock price by ticker symbol.
-        input_schema:
-          additionalProperties: false
-          properties:
-            symbol:
-              type: string
-          required:
-          - symbol
-          type: object
-        name: stock_lookup
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
+          - id: toolu_01H4NWPp7dGuHyBCSeJVZDfQ
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - exchange rate
+              - currency conversion
+              - USD EUR
+              - forex
+        - role: user
+          content:
+          - tool_use_id: toolu_01H4NWPp7dGuHyBCSeJVZDfQ
+            type: tool_result
+            content:
+            - tool_name: get_exchange_rate
+              type: tool_reference
+            is_error: false
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
                 type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
-    uri: https://api.anthropic.com/v1/messages?beta=true
+            required:
+            - city
+            type: object
+        - name: stock_lookup
+          description: Look up stock price by ticker symbol.
+          input_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          defer_loading: true
+        - name: mortgage_calculator
+          description: Calculate monthly mortgage payment for a home loan.
+          input_schema:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+        - name: get_exchange_rate
+          description: Look up the current exchange rate between two currencies.
+          input_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          defer_loading: true
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '557'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-baad238eee9b0bdc58717fdf7cd830dc-820472d29a9ff18b-01
+      - 00-f4b6f4771f2da950ff0e64f04c6a2183-387c9266f37c7cc5-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - text: The current stock price for AAPL (Apple Inc.) is **$150.00**.
-        type: text
-      id: msg_013RuCXSvnQ3pJH7E3HEnr24
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 1218
-        output_tokens: 23
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3jvb1S8vHhKy5eTVPw","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":939,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null} }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}               }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Great"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"! I found a tool"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" get exchange"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" rates. Let me look"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" up the current USD"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to EUR exchange rate for you."}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01Cfb5E6DB6J4ZJnQVbWf5G9","name":"get_exchange_rate","input":{},"caller":{"type":"direct"}}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"from_"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"currenc"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"y\": \"US"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"D\""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":", \"to_c"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"urrency"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\": \"EUR"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"}"}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":939,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":102}           }
+
+        event: message_stop
+        data: {"type":"message_stop"         }
+
+  recorded_at: 2026-09-29T16:29:48.000301+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -1026,466 +428,1660 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1261'
+      - "2983"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Translate 'hello, how are you?' to French.
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the current weather for a city.
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '762'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-59f12920e9e2314e1237fae4e4c662c7-48d52e695a15bdad-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
+    body:
+      type: json
       content:
-      - text: I need to search for a translation tool to help you translate text to French.
-        type: text
-      - caller:
-          type: direct
-        id: toolu_01DQcPyBm9AKWFQPiMHmiih8
-        input:
-          queries:
-          - translate
-          - translation
-          - French
-          - language
-        name: search_tools
-        type: tool_use
-      id: msg_011m28CJj6KgU4Rvx7bqPDnj
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 763
-        output_tokens: 81
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '1838'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Translate 'hello, how are you?' to French.
-          type: text
-        role: user
-      - content:
-        - text: I need to search for a translation tool to help you translate text to French.
-          type: text
-        - id: toolu_01DQcPyBm9AKWFQPiMHmiih8
-          input:
-            queries:
-            - translate
-            - translation
-            - French
-            - language
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '{"discovered_tools":[],"message":"No matching tools found. The tools you need may not be available."}'
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What is the current exchange rate from USD to EUR?
             type: text
-          is_error: false
-          tool_use_id: toolu_01DQcPyBm9AKWFQPiMHmiih8
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the current weather for a city.
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '978'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-3d417103a018b03c3fb28f7cd2adf496-fc9c7c7b99ebcf3e-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      content:
-      - text: |-
-          I don't have access to a translation tool, but I can help you with this common phrase:
-
-          **"Hello, how are you?"** in French is:
-          - **"Bonjour, comment allez-vous?"** (formal)
-          - **"Salut, comment vas-tu?"** (informal)
-
-          The first version uses the formal "vous" form, which is appropriate for strangers, people older than you, or in professional settings. The second uses the informal "tu" form, which is used with friends, family, or people your age in casual settings.
-        type: text
-      id: msg_01MLjArZxbbr2CAgz88SZJdp
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 879
-        output_tokens: 128
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '1271'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Book a flight from New York to London for next week.
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the current weather for a city.
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '818'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-f168b72b3a6c6a3a6384d68448328950-6b5cded97003c291-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      content:
-      - text: I don't currently have access to a flight booking tool. Let me search for one that can help you book flights.
-        type: text
-      - caller:
-          type: direct
-        id: toolu_01N1Pb6Br63jCppZdWpq4v8p
-        input:
-          queries:
-          - book flight
-          - flight booking
-          - airline reservation
-          - travel booking
-        name: search_tools
-        type: tool_use
-      id: msg_01MHFGbVFNxysE2yz2faMTXz
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 762
-        output_tokens: 93
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '1904'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Book a flight from New York to London for next week.
-          type: text
-        role: user
-      - content:
-        - text: I don't currently have access to a flight booking tool. Let me search for one that can help you book flights.
-          type: text
-        - id: toolu_01N1Pb6Br63jCppZdWpq4v8p
-          input:
-            queries:
-            - book flight
-            - flight booking
-            - airline reservation
-            - travel booking
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '{"discovered_tools":[],"message":"No matching tools found. The tools you need may not be available."}'
+        - role: assistant
+          content:
+          - text: I'll search for a tool that can help with currency exchange rates.
             type: text
-          is_error: false
-          tool_use_id: toolu_01N1Pb6Br63jCppZdWpq4v8p
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the current weather for a city.
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
+          - id: toolu_01H4NWPp7dGuHyBCSeJVZDfQ
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - exchange rate
+              - currency conversion
+              - USD EUR
+              - forex
+        - role: user
+          content:
+          - tool_use_id: toolu_01H4NWPp7dGuHyBCSeJVZDfQ
+            type: tool_result
+            content:
+            - tool_name: get_exchange_rate
+              type: tool_reference
+            is_error: false
+        - role: assistant
+          content:
+          - text: >-
+              Great! I found a tool to get exchange rates. Let me look up the current USD to
+              EUR exchange rate for you.
+            type: text
+          - id: toolu_01Cfb5E6DB6J4ZJnQVbWf5G9
+            type: tool_use
+            name: get_exchange_rate
+            input:
+              from_currency: USD
+              to_currency: EUR
+        - role: user
+          content:
+          - tool_use_id: toolu_01Cfb5E6DB6J4ZJnQVbWf5G9
+            type: tool_result
+            content:
+            - text: 1 USD = 0.92 EUR
+              type: text
+            is_error: false
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
                 type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
-    uri: https://api.anthropic.com/v1/messages?beta=true
+            required:
+            - city
+            type: object
+        - name: stock_lookup
+          description: Look up stock price by ticker symbol.
+          input_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          defer_loading: true
+        - name: mortgage_calculator
+          description: Calculate monthly mortgage payment for a home loan.
+          input_schema:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+        - name: get_exchange_rate
+          description: Look up the current exchange rate between two currencies.
+          input_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          defer_loading: true
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '935'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-338707f2ac6d4823f051c311374c5ffd-bf8f535c7f7156c0-01
+      - 00-f0cb26082650165795f593edeaf9cd84-b7e391705640b24c-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3k3raVPozSE7q8svKx","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1063,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}           }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" current exchange rate from USD to EUR is"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"1 USD = 0.92"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" EUR**"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". "} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nThis means that "}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"1 US"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Dollar"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is equal"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to 0.92 "}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Euros."}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0              }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1063,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":46}        }
+
+        event: message_stop
+        data: {"type":"message_stop"               }
+
+  recorded_at: 2026-09-29T16:29:49.656747+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2036"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
       content:
-      - text: |-
-          I apologize, but I don't have access to a flight booking tool. I'm unable to book flights from New York to London for you.
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What is the current stock price for AAPL?
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - name: get_exchange_rate
+          description: Look up the current exchange rate between two currencies.
+          input_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          defer_loading: true
+        - name: stock_lookup
+          description: Look up stock price by ticker symbol.
+          input_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          defer_loading: true
+        - name: mortgage_calculator
+          description: Calculate monthly mortgage payment for a home loan.
+          input_schema:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-43b6e719a3223450eca5f40f40cbfd46-102c907619817a5a-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3kAzwB7jwV1vxALNRY","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":750,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}          }
 
-          To book your flight, you would need to:
-          1. Use an airline's website directly (like British Airways, Delta, American Airlines, Virgin Atlantic, etc.)
-          2. Use a travel booking platform (like Expedia, Kayak, Google Flights, Skyscanner, etc.)
-          3. Contact a travel agent
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}        }
 
-          Is there anything else I can help you with?
-        type: text
-      id: msg_014bYWLzp8XqjndRHkzQkZ5p
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 890
-        output_tokens: 115
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll search for a"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" tool"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" that"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" can help"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" me get"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" stock"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" price"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" information."}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01MHxc8fCjLk3ww14PN1npb7","name":"search_tools","input":{},"caller":{"type":"direct"}}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"queri"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"es\": [\""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"stock p"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"rice\",\""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"AAPL\",\""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"market "}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"data\",\""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ticker\""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":",\"equit"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"y price"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"]}"}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1   }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":750,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":89}         }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-09-29T16:29:51.869697+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2504"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What is the current stock price for AAPL?
+            type: text
+        - role: assistant
+          content:
+          - text: I'll search for a tool that can help me get stock price information.
+            type: text
+          - id: toolu_01MHxc8fCjLk3ww14PN1npb7
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - stock price
+              - AAPL
+              - market data
+              - ticker
+              - equity price
+        - role: user
+          content:
+          - tool_use_id: toolu_01MHxc8fCjLk3ww14PN1npb7
+            type: tool_result
+            content:
+            - tool_name: stock_lookup
+              type: tool_reference
+            is_error: false
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - name: get_exchange_rate
+          description: Look up the current exchange rate between two currencies.
+          input_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          defer_loading: true
+        - name: mortgage_calculator
+          description: Calculate monthly mortgage payment for a home loan.
+          input_schema:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+        - name: stock_lookup
+          description: Look up stock price by ticker symbol.
+          input_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-ccf8397b6f72598676f28fa459b65c1b-da134fc8a49058bf-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3kLUD74MpgWNcQ8Qcs","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":922,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}             }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Great"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"! I found a"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" stock"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" lookup"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" tool. Let"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" me get"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the current stock price for AA"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"PL."}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01251yjfDKxUx8zpTi28zQSv","name":"stock_lookup","input":{},"caller":{"type":"direct"}}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"symbo"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"l\": \"AA"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"PL\"}"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1             }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":922,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":79}            }
+
+        event: message_stop
+        data: {"type":"message_stop"           }
+
+  recorded_at: 2026-09-29T16:29:53.808616+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2921"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What is the current stock price for AAPL?
+            type: text
+        - role: assistant
+          content:
+          - text: I'll search for a tool that can help me get stock price information.
+            type: text
+          - id: toolu_01MHxc8fCjLk3ww14PN1npb7
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - stock price
+              - AAPL
+              - market data
+              - ticker
+              - equity price
+        - role: user
+          content:
+          - tool_use_id: toolu_01MHxc8fCjLk3ww14PN1npb7
+            type: tool_result
+            content:
+            - tool_name: stock_lookup
+              type: tool_reference
+            is_error: false
+        - role: assistant
+          content:
+          - text: Great! I found a stock lookup tool. Let me get the current stock price for AAPL.
+            type: text
+          - id: toolu_01251yjfDKxUx8zpTi28zQSv
+            type: tool_use
+            name: stock_lookup
+            input:
+              symbol: AAPL
+        - role: user
+          content:
+          - tool_use_id: toolu_01251yjfDKxUx8zpTi28zQSv
+            type: tool_result
+            content:
+            - text: "Stock AAPL: $150.00"
+              type: text
+            is_error: false
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - name: get_exchange_rate
+          description: Look up the current exchange rate between two currencies.
+          input_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          defer_loading: true
+        - name: mortgage_calculator
+          description: Calculate monthly mortgage payment for a home loan.
+          input_schema:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+        - name: stock_lookup
+          description: Look up stock price by ticker symbol.
+          input_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-8204059fd30d6c7b569c771833dc3054-87e293278fb95f8b-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3kUmH2o79NPqWByrxe","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1023,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" current"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" stock price for AAPL ("}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Apple Inc.) is **"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"$150.00**."}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0    }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1023,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":23} }
+
+        event: message_stop
+        data: {"type":"message_stop"    }
+
+  recorded_at: 2026-09-29T16:29:55.170580+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2037"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Translate 'hello, how are you?' to French.
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - name: get_exchange_rate
+          description: Look up the current exchange rate between two currencies.
+          input_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          defer_loading: true
+        - name: stock_lookup
+          description: Look up stock price by ticker symbol.
+          input_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          defer_loading: true
+        - name: mortgage_calculator
+          description: Calculate monthly mortgage payment for a home loan.
+          input_schema:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-eed3f3110a1f0d7c7e523602b484a3cd-6cb7614b7672387f-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3kaWZ9ir99MFsix6Ff","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":751,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}     }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I don"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'t have access"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to a"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" translation tool in"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" my"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" current set"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of available"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" functions"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". However"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", I can help you with this"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" translation"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" directly"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n**"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello, how are you?\""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" in French is"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \"Bonjour, comment al"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lez-vous?\"**\n\nOr"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" more"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" inform"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ally:"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Salut, comment ça va?\""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**\n\n-"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Bonjour\" ="}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Hello"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ("}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"formal"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"/standard"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" greeting"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":")\n- \""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Sal"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ut\" = Hi"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"/Hello (informal)"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- \"Comment al"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lez-vous?\" = How are you"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"? (formal)\n- \"Comment"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ça va?\" = How are you"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"? (informal)"}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":751,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":138}           }
+
+        event: message_stop
+        data: {"type":"message_stop"       }
+
+  recorded_at: 2026-09-29T16:29:58.776330+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2047"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Book a flight from New York to London for next week.
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - name: get_exchange_rate
+          description: Look up the current exchange rate between two currencies.
+          input_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          defer_loading: true
+        - name: stock_lookup
+          description: Look up stock price by ticker symbol.
+          input_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          defer_loading: true
+        - name: mortgage_calculator
+          description: Calculate monthly mortgage payment for a home loan.
+          input_schema:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-de0d69bd4b866fcdd0bf794731e5a1a8-27f4c868fddcbc37-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3kr6fmZHdYusYP1uAe","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":750,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I don"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'t have access to a"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" flight"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" booking tool"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"."}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" The only"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" tools"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" currently"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" available to me are:\n\n1."}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **get"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"_weather** - for"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" checking"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" weather in"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a city\n2. **search_"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"tools** - for finding"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" other"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" available"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" tools"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nLet"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" me search"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" see if there are any flight booking"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" tools available:"}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01BLmsJ3XEXsTUMRKkdM2yo1","name":"search_tools","input":{},"caller":{"type":"direct"}}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"queri"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"es\": [\""}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"book fl"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ight\",\""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"flight "} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"booking"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\",\"airl"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ine res"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ervatio"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"n\",\"tra"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"vel boo"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"king\"]}"}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1         }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":750,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":133}     }
+
+        event: message_stop
+        data: {"type":"message_stop"            }
+
+  recorded_at: 2026-09-29T16:30:01.825078+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2772"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Book a flight from New York to London for next week.
+            type: text
+        - role: assistant
+          content:
+          - text: |-
+              I don't have access to a flight booking tool. The only tools currently available to me are:
+
+              1. **get_weather** - for checking weather in a city
+              2. **search_tools** - for finding other available tools
+
+              Let me search to see if there are any flight booking tools available:
+            type: text
+          - id: toolu_01BLmsJ3XEXsTUMRKkdM2yo1
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - book flight
+              - flight booking
+              - airline reservation
+              - travel booking
+        - role: user
+          content:
+          - tool_use_id: toolu_01BLmsJ3XEXsTUMRKkdM2yo1
+            type: tool_result
+            content:
+            - text: No matching tools found. The tools you need may not be available.
+              type: text
+            is_error: false
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - name: get_exchange_rate
+          description: Look up the current exchange rate between two currencies.
+          input_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          defer_loading: true
+        - name: stock_lookup
+          description: Look up stock price by ticker symbol.
+          input_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          defer_loading: true
+        - name: mortgage_calculator
+          description: Calculate monthly mortgage payment for a home loan.
+          input_schema:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-8811ccb1bdac53c909ff124300ddc4c2-e7209f57d9003cff-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3m4rsRuGaVHYzXPspN","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":908,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}        }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Unfortunately"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", I don"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'t have access"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to any"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" flight booking tools. To"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" book a flight from New York to London"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" next week, you"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" would need to:"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n1. **Use"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a flight booking website"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" or"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" app"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** such"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" as:\n   -"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Airline"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" websites (British"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Airways, American Airlines, Delta, United"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", etc.)\n   - Travel booking"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" platforms (Exp"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"edia, Kayak, Google"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Flights,"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Skyscanner,"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" etc.)"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n2. **Contact"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" travel agent** who can help you book"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the flight\n\n3. **Call"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" airlines"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" directly** to make"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" reservation\n\nWould"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" you like me to help you with"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" anything"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" else,"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" such as checking"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the weather in"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" New"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" York or London"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" your"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" trip planning"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"?"}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0         }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":908,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":149}       }
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+  recorded_at: 2026-09-29T16:30:05.213759+00:00

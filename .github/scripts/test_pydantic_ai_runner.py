@@ -13,9 +13,12 @@ Run:  uv run --with pytest pytest .github/scripts/test_pydantic_ai_runner.py
 """
 
 import asyncio
+import importlib
+import inspect
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -24,9 +27,13 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, cast
 
+import httpx2
 import pytest
 import yaml
+from anthropic import AsyncAnthropic, RateLimitError
+from pydantic import TypeAdapter
 from pytest import LogCaptureFixture
+from tenacity import stop_after_attempt, wait_none
 
 # `.github/scripts/` isn't on sys.path by default — the shim package lives
 # there. The runtime equivalent is the PEP-723 launcher script
@@ -45,10 +52,28 @@ from pydantic_ai_gh_aw_shim import (
     shared,
 )
 
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
+from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import Model as _Model
-from pydantic_ai.tools import RunContext
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.tools import RunContext, ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, PrefixedToolset
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 # The exact argv shape gh-aw's claude_harness.cjs passes, prompt appended last.
 GHAW_ARGV = [
@@ -364,8 +389,6 @@ async def _toolset_names(
     name list. The filtered toolset reports its tools through
     `.get_tools(ctx)`, so we drive it with a minimal RunContext.
     """
-    from pydantic_ai.usage import RunUsage
-
     toolset = shim.select_claude_code_toolset(allowed, permission_mode, task=task)
     ctx = RunContext(
         deps=None,
@@ -380,8 +403,6 @@ async def _toolset_names(
 
 
 def test_select_claude_code_toolset_no_allowlist_keeps_all():
-    import asyncio
-
     names = asyncio.run(_toolset_names(None, None, task=shim.task))
     # task=shim.task adds "Task" alongside the base callables. Order is
     # insertion order from `_BASE_TOOLS` + the appended Task entry.
@@ -389,23 +410,17 @@ def test_select_claude_code_toolset_no_allowlist_keeps_all():
 
 
 def test_select_claude_code_toolset_enforces_allowlist():
-    import asyncio
-
     names = asyncio.run(_toolset_names(frozenset({'Bash', 'Read', 'mcp__safeoutputs'}), None))
     assert names == ['Bash', 'Read']
 
 
 def test_plan_mode_withholds_mutating_tools():
-    import asyncio
-
     names = set(asyncio.run(_toolset_names(None, 'plan')))
     assert names.isdisjoint(pkg.MUTATING_TOOLS)
     assert 'Read' in names and 'Grep' in names and 'Glob' in names
 
 
 def test_plan_mode_and_allowlist_compose():
-    import asyncio
-
     names = asyncio.run(_toolset_names(frozenset({'Bash', 'Read'}), 'plan'))
     assert names == ['Read']  # Bash dropped by plan mode
 
@@ -434,8 +449,7 @@ def test_harness_backed_tools_are_async_and_pin_the_remaining_gaps():
 
     The harness-backed tools delegate to pydantic-ai-harness and are async:
     `Bash`/`Read`/`Write`/`Edit`/`Grep`/`Glob`/`LS` to `FileSystemToolset` /
-    `ShellToolset`, and `TodoWrite` to the experimental `planning` capability's
-    `write_plan` (experimental is acceptable; the warning is silenced at import).
+    `ShellToolset`, and `TodoWrite` to the `planning` capability's `render_plan`.
 
     The remaining tools have no harness equivalent and stay sync:
 
@@ -469,27 +483,40 @@ def test_harness_backed_tools_are_async_and_pin_the_remaining_gaps():
     assert harness_backed.isdisjoint(hand_rolled)
     assert harness_backed | hand_rolled == set(pkg.CLAUDE_CODE_TOOL_NAMES) == set(fn_by_name)
     for name in harness_backed:
-        assert asyncio.iscoroutinefunction(fn_by_name[name]), f'{name} should be harness-backed (async)'
+        assert inspect.iscoroutinefunction(fn_by_name[name]), f'{name} should be harness-backed (async)'
     for name in hand_rolled:
-        assert not asyncio.iscoroutinefunction(fn_by_name[name]), f'{name} has no stable harness equivalent (sync)'
+        assert not inspect.iscoroutinefunction(fn_by_name[name]), f'{name} has no stable harness equivalent (sync)'
 
 
 # --------------------------------------------------------------------------- #
 # Claude Code tool behavior
 # --------------------------------------------------------------------------- #
+def _ctx() -> RunContext[object]:
+    """A run context on the live `GITHUB_WORKSPACE`, the workspace `local_workspace()` gives the shim's agents."""
+    from pydantic_ai.usage import RunUsage
+    from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
+
+    return RunContext(
+        deps=None,
+        model=cast(_Model[Any], None),
+        usage=RunUsage(),
+        workspace=Workspace(LocalWorkspaceBackend(shared.workspace())),
+    )
+
+
 def test_file_tools_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # The harness-backed Read/Write/Edit are contained to the workspace root.
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     f = tmp_path / 'sub' / 'note.txt'
     # Write creates the missing parent directory, mirroring Claude's `Write`.
-    assert 'Wrote' in asyncio.run(pkg.write_file(str(f), 'hello\nworld\n'))
-    body = asyncio.run(pkg.read_file(str(f)))
+    assert 'Wrote' in asyncio.run(pkg.write_file(_ctx(), str(f), 'hello\nworld\n'))
+    body = asyncio.run(pkg.read_file(_ctx(), str(f)))
     assert 'hello' in body and 'world' in body
-    assert 'Edited' in asyncio.run(pkg.edit_file(str(f), 'world', 'there'))
-    assert 'there' in asyncio.run(pkg.read_file(str(f)))
-    assert 'note.txt' in asyncio.run(pkg.list_dir(str(tmp_path / 'sub')))
+    assert 'Edited' in asyncio.run(pkg.edit_file(_ctx(), str(f), 'world', 'there'))
+    assert 'there' in asyncio.run(pkg.read_file(_ctx(), str(f)))
+    assert 'note.txt' in asyncio.run(pkg.list_dir(_ctx(), str(tmp_path / 'sub')))
     # The harness requires a unique match; a missing string comes back as an error.
-    miss = asyncio.run(pkg.edit_file(str(f), 'absent', 'x'))
+    miss = asyncio.run(pkg.edit_file(_ctx(), str(f), 'absent', 'x'))
     assert miss.startswith('error:') and 'not found' in miss
 
 
@@ -498,7 +525,7 @@ def test_read_file_offset_and_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     f = tmp_path / 'n.txt'
     f.write_text('l1\nl2\nl3\nl4\n', encoding='utf-8')
     # Claude's 1-based offset=2 maps to the harness 0-based offset; limit=2.
-    out = asyncio.run(pkg.read_file(str(f), offset=2, limit=2))
+    out = asyncio.run(pkg.read_file(_ctx(), str(f), offset=2, limit=2))
     assert 'l2' in out and 'l3' in out
     assert 'l1' not in out and 'l4' not in out
 
@@ -510,11 +537,11 @@ def test_read_continuation_hint_uses_one_based_offset(tmp_path: Path, monkeypatc
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     f = tmp_path / 'big.txt'
     f.write_text('\n'.join(f'L{i}' for i in range(1, 4)) + '\n', encoding='utf-8')  # L1..L3
-    first = asyncio.run(pkg.read_file(str(f), limit=2))  # reads L1,L2 + a continuation hint
+    first = asyncio.run(pkg.read_file(_ctx(), str(f), limit=2))  # reads L1,L2 + a continuation hint
     assert 'Use offset=3 to continue reading.' in first  # harness emits 2 (0-based); bumped to 3
     assert 'Use offset=2 to continue reading.' not in first
     # Following the (1-based) hint continues at L3 with no duplicated boundary line.
-    nxt = asyncio.run(pkg.read_file(str(f), offset=3, limit=2))
+    nxt = asyncio.run(pkg.read_file(_ctx(), str(f), offset=3, limit=2))
     assert 'L3' in nxt and 'L2' not in nxt
 
 
@@ -525,7 +552,7 @@ def test_read_limit_zero_behaves_like_omitted_limit(tmp_path: Path, monkeypatch:
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     f = tmp_path / 'f.txt'
     f.write_text('one\ntwo\nthree\n', encoding='utf-8')
-    out = asyncio.run(pkg.read_file(str(f), offset=1, limit=0))
+    out = asyncio.run(pkg.read_file(_ctx(), str(f), offset=1, limit=0))
     assert 'one' in out and 'three' in out
     assert 'to continue reading' not in out  # whole short file fit; no looping hint
 
@@ -537,11 +564,11 @@ def test_harness_backed_tools_surface_oserror_as_error(tmp_path: Path, monkeypat
     # of letting it escape and abort the whole agent run.
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     long_path = 'a' * 10_000
-    assert asyncio.run(pkg.read_file(long_path)).startswith('error:')
-    assert asyncio.run(pkg.edit_file(long_path, 'x', 'y')).startswith('error:')
-    assert asyncio.run(pkg.list_dir(long_path)).startswith('error:')
-    assert asyncio.run(pkg.glob_search('*.py', long_path)).startswith('error:')
-    assert asyncio.run(pkg.grep('x', long_path)).startswith('error:')
+    assert asyncio.run(pkg.read_file(_ctx(), long_path)).startswith('error:')
+    assert asyncio.run(pkg.edit_file(_ctx(), long_path, 'x', 'y')).startswith('error:')
+    assert asyncio.run(pkg.list_dir(_ctx(), long_path)).startswith('error:')
+    assert asyncio.run(pkg.glob_search(_ctx(), '*.py', long_path)).startswith('error:')
+    assert asyncio.run(pkg.grep(_ctx(), 'x', long_path)).startswith('error:')
 
 
 def test_read_large_chunk_keeps_accurate_continuation_offset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -549,14 +576,12 @@ def test_read_large_chunk_keeps_accurate_continuation_offset(tmp_path: Path, mon
     # keeps the head -- so a chunk over the char cap (common for long-lined files)
     # would lose the hint entirely. The adapter truncates on a whole-line boundary
     # and re-advertises the exact 1-based offset of the first dropped line.
-    import re
-
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     f = tmp_path / 'big.txt'
     # Zero-padded line ids (distinct from the harness's space-padded line numbers)
     # plus long padding so the chunk blows well past the char cap.
     f.write_text('\n'.join(f'{i:06d}' + 'x' * 200 for i in range(1, 2001)) + '\n', encoding='utf-8')
-    out = asyncio.run(pkg.read_file(str(f)))
+    out = asyncio.run(pkg.read_file(_ctx(), str(f)))
     assert len(out) <= shared.MAX_TOOL_OUTPUT + 256  # bounded by the output cap
     m = re.search(r'Use offset=(\d+) to continue reading', out)
     assert m, 'continuation hint must survive char-budget truncation'
@@ -565,7 +590,7 @@ def test_read_large_chunk_keeps_accurate_continuation_offset(tmp_path: Path, mon
     # line nxt is not (no off-by-one, no gap).
     assert f'{nxt - 1:06d}x' in out and f'{nxt:06d}x' not in out
     # Following the offset continues exactly at line nxt.
-    cont = asyncio.run(pkg.read_file(str(f), offset=nxt))
+    cont = asyncio.run(pkg.read_file(_ctx(), str(f), offset=nxt))
     assert f'{nxt:06d}x' in cont
 
 
@@ -577,7 +602,7 @@ def test_read_does_not_rewrite_hint_text_in_file_contents(tmp_path: Path, monkey
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     f = tmp_path / 'doc.txt'
     f.write_text('... (4 more lines. Use offset=7 to continue reading.)\n', encoding='utf-8')
-    out = asyncio.run(pkg.read_file(str(f)))  # short file: not truncated, no real hint added
+    out = asyncio.run(pkg.read_file(_ctx(), str(f)))  # short file: not truncated, no real hint added
     assert 'Use offset=7 to continue reading.' in out  # content preserved verbatim
     assert 'Use offset=8' not in out
 
@@ -588,7 +613,7 @@ def test_edit_file_replace_all(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     f = tmp_path / 'r.txt'
     f.write_text('a a a', encoding='utf-8')
-    asyncio.run(pkg.edit_file(str(f), 'a', 'b', replace_all=True))
+    asyncio.run(pkg.edit_file(_ctx(), str(f), 'a', 'b', replace_all=True))
     assert f.read_text(encoding='utf-8') == 'b b b'
 
 
@@ -601,13 +626,13 @@ def test_edit_replace_all_is_contained_to_the_workspace(tmp_path: Path, monkeypa
     outside = tmp_path / 'outside.txt'
     outside.write_text('a a a', encoding='utf-8')
     monkeypatch.setenv('GITHUB_WORKSPACE', str(workspace))
-    out = asyncio.run(pkg.edit_file(str(outside), 'a', 'b', replace_all=True))
+    out = asyncio.run(pkg.edit_file(_ctx(), str(outside), 'a', 'b', replace_all=True))
     assert out.startswith('error:')
     assert outside.read_text(encoding='utf-8') == 'a a a'  # untouched
 
 
 def test_bash_tool():
-    out = asyncio.run(pkg.bash('echo hello-from-bash'))
+    out = asyncio.run(pkg.bash(_ctx(), 'echo hello-from-bash'))
     assert 'hello-from-bash' in out
 
 
@@ -615,8 +640,23 @@ def test_bash_timeout_is_surfaced_as_error():
     # The harness *returns* a `[Command timed out ...]` sentinel rather than
     # raising; the adapter must wrap it as an `error:` string (as the old tool
     # did) so the model doesn't read a timeout as a successful, empty result.
-    out = asyncio.run(pkg.bash('sleep 5', timeout=1))
+    out = asyncio.run(pkg.bash(_ctx(), 'sleep 5', timeout=1))
     assert out.startswith('error:') and 'timed out' in out
+
+
+def test_bash_timeout_after_partial_output_is_an_error():
+    # The timeout sentinel is the *last* line, after whatever the command printed.
+    out = asyncio.run(pkg.bash(_ctx(), 'echo partial; sleep 5', timeout=1))
+    assert out.startswith('error:') and 'timed out' in out
+
+
+def test_bash_output_is_capped_keeping_the_tail():
+    # The harness caps output only at its own tool dispatch; called directly, the
+    # adapter caps it, keeping the tail where errors and the exit code land.
+    out = asyncio.run(pkg.bash(_ctx(), f"{sys.executable} -c \"print('x' * 60000); print('THE-END')\""))
+    assert out.startswith('[... output truncated')
+    assert out.rstrip().endswith('THE-END')
+    assert len(out) <= shared.MAX_TOOL_OUTPUT + 100
 
 
 def test_bash_subprocess_startup_failure_is_an_error_not_a_crash(monkeypatch: pytest.MonkeyPatch):
@@ -624,7 +664,7 @@ def test_bash_subprocess_startup_failure_is_an_error_not_a_crash(monkeypatch: py
     # subprocess startup fails -- e.g. the workspace cwd doesn't exist. That must
     # come back as an `error:` string instead of aborting the whole agent run.
     monkeypatch.setenv('GITHUB_WORKSPACE', '/definitely/not/a/workspace/xyz')
-    out = asyncio.run(pkg.bash('echo hi', timeout=1))
+    out = asyncio.run(pkg.bash(_ctx(), 'echo hi', timeout=1))
     assert out.startswith('error:')
 
 
@@ -638,11 +678,11 @@ def test_grep_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # exit-1 ("nothing matched") to the harness's own `No matches found.` sentinel.
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     (tmp_path / 'a.txt').write_text('alpha\nNEEDLE here\n', encoding='utf-8')
-    assert 'a.txt:2:NEEDLE here' in asyncio.run(pkg.grep('NEEDLE', '.'))
-    assert asyncio.run(pkg.grep('ZZZNOPE', '.')) == 'No matches found.'
+    assert 'a.txt:2:NEEDLE here' in asyncio.run(pkg.grep(_ctx(), 'NEEDLE', '.'))
+    assert asyncio.run(pkg.grep(_ctx(), 'ZZZNOPE', '.')) == 'No matches found.'
     # An empty path normalizes to the workspace root rather than reaching `rg`
     # as an empty argument (which would error).
-    assert 'a.txt:2:NEEDLE here' in asyncio.run(pkg.grep('NEEDLE', ''))
+    assert 'a.txt:2:NEEDLE here' in asyncio.run(pkg.grep(_ctx(), 'NEEDLE', ''))
 
 
 def test_grep_bad_pattern_is_an_error_not_a_match(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -651,7 +691,7 @@ def test_grep_bad_pattern_is_an_error_not_a_match(tmp_path: Path, monkeypatch: p
     # rather than being mistaken for a match (the `[stdout]`-prefix sniff bug).
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     (tmp_path / 'a.txt').write_text('alpha\n', encoding='utf-8')
-    out = asyncio.run(pkg.grep('(', '.'))
+    out = asyncio.run(pkg.grep(_ctx(), '(', '.'))
     assert out.startswith('error:')
 
 
@@ -662,7 +702,7 @@ def test_grep_path_is_contained_to_the_workspace(tmp_path: Path, monkeypatch: py
     workspace.mkdir()
     (tmp_path / 'secret.txt').write_text('TOPSECRET\n', encoding='utf-8')
     monkeypatch.setenv('GITHUB_WORKSPACE', str(workspace))
-    out = asyncio.run(pkg.grep('TOPSECRET', '..'))
+    out = asyncio.run(pkg.grep(_ctx(), 'TOPSECRET', '..'))
     assert out.startswith('error:')
     assert 'TOPSECRET' not in out
 
@@ -671,7 +711,6 @@ def test_grep_large_match_set_is_not_misreported_as_error(tmp_path: Path, monkey
     # A match set larger than the harness output cap is tail-truncated, which
     # elides the `[stdout]` header and prepends a truncation marker. The adapter
     # must still return it as matches, not as an error.
-    import importlib
 
     # `pkg.grep` is the re-exported callable; reach the module to patch its deps.
     grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
@@ -679,17 +718,16 @@ def test_grep_large_match_set_is_not_misreported_as_error(tmp_path: Path, monkey
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))  # empty workspace: no context blocks
     truncated = f'{grep_mod._TRUNCATION_PREFIX}, showing last 50000 chars]\nsrc/a.py:1:hit\nsrc/b.py:2:hit\n'
 
-    class _FakeShell:
-        async def run_command(self, command: str, *, timeout_seconds: float) -> str:
-            return truncated
+    async def _fake_run_shell(ctx: RunContext[object], command: str, *, timeout_seconds: float) -> str:
+        return truncated
 
     class _FakeFs:
-        async def file_info(self, path: str) -> str:
+        async def file_info(self, path: str, *, workspace: object) -> str:
             return 'ok'
 
-    monkeypatch.setattr(grep_mod, 'shell', lambda: _FakeShell())
+    monkeypatch.setattr(grep_mod, 'run_shell', _fake_run_shell)
     monkeypatch.setattr(grep_mod, 'filesystem', lambda: _FakeFs())
-    out = asyncio.run(grep_mod.grep('hit', '.'))
+    out = asyncio.run(grep_mod.grep(_ctx(), 'hit', '.'))
     assert not out.startswith('error:')
     assert 'src/a.py:1:hit' in out and 'src/b.py:2:hit' in out
     assert grep_mod._TRUNCATION_PREFIX not in out
@@ -701,7 +739,7 @@ def test_glob_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     (tmp_path / 'x').mkdir()
     (tmp_path / 'x' / 'a.py').write_text('', encoding='utf-8')
     (tmp_path / 'x' / 'b.txt').write_text('', encoding='utf-8')
-    res = asyncio.run(pkg.glob_search('**/*.py', '.'))
+    res = asyncio.run(pkg.glob_search(_ctx(), '**/*.py', '.'))
     assert 'x/a.py' in res and 'b.txt' not in res
 
 
@@ -709,8 +747,13 @@ def test_glob_outside_base_is_handled(tmp_path: Path, monkeypatch: pytest.Monkey
     # An absolute glob pattern can't resolve under the workspace root; the
     # adapter rejects it up front.
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
-    out = asyncio.run(pkg.glob_search('/etc/*', '.'))
+    out = asyncio.run(pkg.glob_search(_ctx(), '/etc/*', '.'))
     assert out.startswith('error:')
+
+
+def test_glob_missing_search_path_is_an_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    assert asyncio.run(pkg.glob_search(_ctx(), '*.py', 'nope')).startswith('error:')
 
 
 def test_ls_and_glob_surface_dotfiles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -720,9 +763,9 @@ def test_ls_and_glob_surface_dotfiles(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     (tmp_path / '.github' / 'workflows').mkdir(parents=True)
     (tmp_path / '.github' / 'workflows' / 'ci.yml').write_text('', encoding='utf-8')
-    assert '.github/' in asyncio.run(pkg.list_dir('.'))
-    assert 'workflows/' in asyncio.run(pkg.list_dir('.github'))
-    assert '.github/workflows/ci.yml' in asyncio.run(pkg.glob_search('.github/**/*.yml', '.'))
+    assert '.github/' in asyncio.run(pkg.list_dir(_ctx(), '.'))
+    assert 'workflows/' in asyncio.run(pkg.list_dir(_ctx(), '.github'))
+    assert '.github/workflows/ci.yml' in asyncio.run(pkg.glob_search(_ctx(), '.github/**/*.yml', '.'))
 
 
 def test_ls_and_glob_paths_are_contained_to_the_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -732,8 +775,8 @@ def test_ls_and_glob_paths_are_contained_to_the_workspace(tmp_path: Path, monkey
     workspace.mkdir()
     (tmp_path / 'secret.txt').write_text('TOPSECRET\n', encoding='utf-8')
     monkeypatch.setenv('GITHUB_WORKSPACE', str(workspace))
-    ls_out = asyncio.run(pkg.list_dir('..'))
-    glob_out = asyncio.run(pkg.glob_search('*.txt', '..'))
+    ls_out = asyncio.run(pkg.list_dir(_ctx(), '..'))
+    glob_out = asyncio.run(pkg.glob_search(_ctx(), '*.txt', '..'))
     assert ls_out.startswith('error:') and 'secret.txt' not in ls_out
     assert glob_out.startswith('error:') and 'secret.txt' not in glob_out
 
@@ -746,8 +789,8 @@ def test_glob_reports_matched_symlink_not_its_target(tmp_path: Path, monkeypatch
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     (tmp_path / 'AGENTS.md').write_text('x', encoding='utf-8')
     (tmp_path / 'CLAUDE.md').symlink_to('AGENTS.md')
-    assert asyncio.run(pkg.glob_search('CLAUDE.md', '.')).splitlines()[-1] == 'CLAUDE.md'
-    both = asyncio.run(pkg.glob_search('*.md', '.'))
+    assert asyncio.run(pkg.glob_search(_ctx(), 'CLAUDE.md', '.')).splitlines()[-1] == 'CLAUDE.md'
+    both = asyncio.run(pkg.glob_search(_ctx(), '*.md', '.'))
     assert 'AGENTS.md' in both and 'CLAUDE.md' in both
 
 
@@ -760,8 +803,8 @@ def test_glob_pattern_cannot_escape_via_dotdot_or_symlink(tmp_path: Path, monkey
     (tmp_path / 'secret.txt').write_text('TOPSECRET\n', encoding='utf-8')
     (workspace / 'link').symlink_to(tmp_path)  # symlink that climbs out of the workspace
     monkeypatch.setenv('GITHUB_WORKSPACE', str(workspace))
-    via_dotdot = asyncio.run(pkg.glob_search('../secret.txt', '.'))
-    via_symlink = asyncio.run(pkg.glob_search('link/*.txt', '.'))
+    via_dotdot = asyncio.run(pkg.glob_search(_ctx(), '../secret.txt', '.'))
+    via_symlink = asyncio.run(pkg.glob_search(_ctx(), 'link/*.txt', '.'))
     assert 'secret.txt' not in via_dotdot
     assert 'secret.txt' not in via_symlink
 
@@ -786,11 +829,7 @@ def test_multi_edit_replace_all(tmp_path: Path):
 
 
 def test_web_fetch_only_enabled_on_real_anthropic(monkeypatch: pytest.MonkeyPatch):
-    """`web_fetch_20250910` is an Anthropic-server-side tool; compat
-    endpoints (MiniMax etc.) reject it with HTTP 400. The capability is
-    gated by `ANTHROPIC_BASE_URL`."""
-    from pydantic_ai.capabilities import NativeTool
-
+    """`web_fetch_20250910` is Anthropic-specific; compatible endpoints may not support it."""
     monkeypatch.delenv('ANTHROPIC_BASE_URL', raising=False)
     caps = shim._anthropic_native_capabilities()  # pyright: ignore[reportPrivateUsage]
     assert len(caps) == 1 and isinstance(caps[0], NativeTool)
@@ -804,7 +843,7 @@ def test_web_fetch_only_enabled_on_real_anthropic(monkeypatch: pytest.MonkeyPatc
 
 def test_todo_write_renders_plan_via_harness():
     # TodoWrite maps Claude's todo schema onto the harness `planning` capability
-    # and returns its `write_plan` rendering (a checklist with a progress line).
+    # and returns its `render_plan` checklist (with a progress line).
     out = asyncio.run(pkg.todo_write([{'content': 'do x', 'status': 'in_progress', 'activeForm': 'doing x'}]))
     assert 'do x' in out and '[~]' in out and '(0/1 completed)' in out
     # A completed step shows as done; an unknown status falls back to pending.
@@ -813,10 +852,12 @@ def test_todo_write_renders_plan_via_harness():
             [
                 {'content': 'a', 'status': 'completed', 'activeForm': ''},
                 {'content': 'b', 'status': 'bogus', 'activeForm': ''},
+                # `blocked` is a harness status Claude's schema doesn't have.
+                {'content': 'c', 'status': 'blocked', 'activeForm': ''},
             ]
         )
     )
-    assert '[x] a' in out2 and '[ ] b' in out2 and '(1/2 completed)' in out2
+    assert '[x] a' in out2 and '[ ] b' in out2 and '[ ] c' in out2 and '(1/3 completed)' in out2
 
 
 def test_exit_plan_mode_returns_ack():
@@ -824,8 +865,6 @@ def test_exit_plan_mode_returns_ack():
 
 
 def test_plan_mode_keeps_new_readonly_tools_drops_multiedit():
-    import asyncio
-
     # Note: WebFetch is an Anthropic server-side capability (not in the callable list).
     names = set(asyncio.run(_toolset_names(None, 'plan')))
     assert 'MultiEdit' not in names  # mutating
@@ -835,13 +874,50 @@ def test_plan_mode_keeps_new_readonly_tools_drops_multiedit():
 @pytest.mark.parametrize(
     ('workflow', 'expected_limit'),
     [
-        ('Pydantic AI Attention Triage', 25),
-        ('Other Pydantic AI workflow', 200),
+        ('Pydantic AI Attention Triage', 50),
+        ('Other Pydantic AI workflow', 400),
     ],
 )
-def test_request_limit_is_bounded_by_workflow(workflow: str, expected_limit: int, monkeypatch: pytest.MonkeyPatch):
+def test_run_uses_workflow_request_limit(workflow: str, expected_limit: int, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
     assert shim.run_request_limit() == expected_limit
+    passed_limits: list[int | None] = []
+
+    class _Agent:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def output_validator(self, _validator: object) -> None:
+            pass
+
+        async def __aenter__(self) -> object:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            pass
+
+        async def run(self, _prompt: str, *, usage_limits: UsageLimits, usage: RunUsage) -> None:
+            passed_limits.append(usage_limits.request_limit)
+            raise RuntimeError('stop after capturing the run limit')
+
+    monkeypatch.setattr(shim, 'Agent', _Agent)
+
+    def _ignore_emit(_obj: dict[str, object]) -> None:
+        pass
+
+    monkeypatch.setattr(shim, 'emit', _ignore_emit)
+    rc = asyncio.run(
+        shim.run(
+            prompt='test',
+            model=TestModel(),
+            label='test-model',
+            claude_code_toolset=shim.select_claude_code_toolset(None, None, task=None),
+            mcp_servers=[],
+            session_id='request-limit',
+        )
+    )
+    assert rc == 1
+    assert passed_limits == [expected_limit]
 
 
 def test_instructions_encourage_parallel_tool_calls():
@@ -851,11 +927,6 @@ def test_instructions_encourage_parallel_tool_calls():
 
 def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch: pytest.MonkeyPatch):
     """Workflow prompt rides in the system instruction; user message is RUN_TRIGGER."""
-    import asyncio
-
-    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
-
     seen_instructions: list[str] = []
     received: list[ModelMessage] = []
     emitted: list[dict[str, object]] = []
@@ -899,6 +970,186 @@ def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch: pytest.M
     assert sentinel not in user_text
 
 
+def _safe_outputs_toolset(sink: Path) -> AbstractToolset[object]:
+    """Stand-in for gh-aw's safe-outputs MCP server, which appends each output to `GH_AW_SAFE_OUTPUTS`."""
+    toolset: FunctionToolset[object] = FunctionToolset()
+
+    @toolset.tool_plain
+    def noop(message: str) -> str:
+        with sink.open('a', encoding='utf-8') as f:
+            f.write(json.dumps({'type': 'noop', 'message': message}) + '\n')
+        return 'ok'
+
+    @toolset.tool_plain
+    def probe() -> str:
+        return 'nothing new'
+
+    return toolset
+
+
+def _run_shim(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse], sink: Path) -> int:
+    """Run the shim on a `FunctionModel` that streams each response `respond` returns."""
+
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
+        response = respond(messages, info)
+        for index, part in enumerate(response.parts):
+            if isinstance(part, TextPart):
+                yield part.content
+            else:
+                assert isinstance(part, ToolCallPart)
+                yield {index: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+
+    return asyncio.run(
+        shim.run(
+            prompt='review the PR',
+            model=FunctionModel(respond, stream_function=_stream),
+            label='test-model',
+            claude_code_toolset=shim.select_claude_code_toolset(None, None, task=shim.task),
+            mcp_servers=[_safe_outputs_toolset(sink)],
+            session_id='test-session',
+        )
+    )
+
+
+def test_run_sends_the_model_back_when_it_stops_before_any_safe_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    retries: list[str] = []
+
+    def _respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        retries.extend(str(p.content) for m in messages[-1:] for p in m.parts if isinstance(p, RetryPromptPart))
+        if not retries:
+            return ModelResponse(parts=[TextPart('Now let me analyze the key concerns.')])
+        if not sink.exists():
+            return ModelResponse(parts=[ToolCallPart('noop', {'message': 'nothing to flag'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    assert _run_shim(_respond, sink) == 0
+    assert retries == [
+        'You ended your turn without emitting a safe output, so nothing has been posted. '
+        'Continue the task and finish by calling the safe-output tool it ends with, '
+        'or `noop` if there is nothing to report.'
+    ]
+    assert any(e.get('type') == 'result' and e.get('subtype') == 'success' for e in emitted)
+
+
+def test_run_fails_when_the_model_never_emits_a_safe_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    requests = 0
+
+    def _respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        return ModelResponse(parts=[TextPart('Let me look further.')])
+
+    assert _run_shim(_respond, sink) == 1
+    assert requests == shim.NO_SAFE_OUTPUT_RETRIES + 1
+    assert any(e.get('type') == 'result' and e.get('is_error') is True for e in emitted)
+
+
+def test_run_succeeds_when_the_safe_output_takes_the_last_request(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'run_request_limit', lambda: 20)
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    narrated = False
+
+    def _respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal narrated
+        if shim.REQUEST_BUDGET_NOTICE not in (info.instructions or ''):
+            return ModelResponse(parts=[ToolCallPart('probe', {})])
+        if not narrated:
+            # Spends request 19 of 20 narrating, so the retry's `noop` takes the last one.
+            narrated = True
+            return ModelResponse(parts=[TextPart('Let me wrap up.')])
+        return ModelResponse(parts=[ToolCallPart('noop', {'message': 'out of budget'})])
+
+    assert _run_shim(_respond, sink) == 0
+    assert sink.exists()
+    results = [e for e in emitted if e.get('type') == 'result']
+    assert [(r.get('is_error'), r.get('result')) for r in results] == [
+        (False, 'request limit reached after the safe output was emitted')
+    ]
+
+
+def test_run_warns_the_model_when_the_request_budget_is_nearly_spent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'run_request_limit', lambda: 20)
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    warned: list[bool] = []
+
+    def _respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        warned.append(shim.REQUEST_BUDGET_NOTICE in (info.instructions or ''))
+        if sink.exists():
+            return ModelResponse(parts=[TextPart('done')])
+        if warned[-1]:
+            return ModelResponse(parts=[ToolCallPart('noop', {'message': 'out of budget'})])
+        return ModelResponse(parts=[ToolCallPart('probe', {})])
+
+    # With a limit of 20 the last tenth is 2 requests: one to emit the safe output,
+    # one to end the run.
+    assert _run_shim(_respond, sink) == 0
+    assert warned == [False] * 18 + [True, True]
+
+
+@pytest.mark.parametrize('parallel_tasks', [1, 2])
+def test_run_caps_subagents_so_the_budget_notice_still_fires(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, parallel_tasks: int
+):
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    monkeypatch.setattr(shim, 'run_request_limit', lambda: 20)
+    monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    sub_requests = 0
+    warned: list[bool] = []
+
+    def _respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal sub_requests
+        instructions = info.instructions or ''
+        if shim.SUBAGENT_INSTRUCTIONS in instructions:
+            # A sub-agent that never finishes on its own.
+            sub_requests += 1
+            return ModelResponse(parts=[ToolCallPart('Glob', {'pattern': '*'})])
+        warned.append(shim.REQUEST_BUDGET_NOTICE in instructions)
+        if sink.exists():
+            return ModelResponse(parts=[TextPart('done')])
+        if warned[-1]:
+            return ModelResponse(parts=[ToolCallPart('noop', {'message': 'out of budget'})])
+        return ModelResponse(
+            parts=[
+                ToolCallPart('Task', {'description': f'scan {i}', 'prompt': 'scan everything'})
+                for i in range(parallel_tasks)
+            ]
+        )
+
+    # Of the 20 requests, the last 2 are the parent's; the first sub-agent gets what is
+    # left after the parent's first one, instead of `SUBAGENT_REQUEST_LIMIT` (75), and a
+    # parallel second one is refused rather than granted the same headroom.
+    assert _run_shim(_respond, sink) == 0
+    assert sub_requests == 17
+    assert warned == [False, True, True]
+    assert shim._subagent_requests_in_flight == 0  # pyright: ignore[reportPrivateUsage]
+
+
+def test_task_refuses_to_spawn_inside_the_final_tenth():
+    class _Ctx:
+        model = None
+        usage = RunUsage(requests=18)
+        usage_limits = UsageLimits(request_limit=20)
+
+    out = asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'x', 'y'))
+    assert out == 'error: the request budget is nearly spent; finish the task from what you already have'
+
+
 def test_read_only_subagent_tools_are_non_mutating_and_exclude_task():
     assert pkg.READ_ONLY_SUBAGENT_TOOLS.isdisjoint(pkg.MUTATING_TOOLS)
     assert 'Task' not in pkg.READ_ONLY_SUBAGENT_TOOLS  # no recursion
@@ -911,16 +1162,34 @@ def test_task_registered_via_build_claude_code_toolset():
     appended dynamically by `build_claude_code_toolset(task=...)` only for the
     parent (sub-agents pass `task=None` so they can't recurse).
     """
-    import asyncio
-
     parent_names = asyncio.run(_toolset_names(None, None, task=shim.task))
     sub_names = asyncio.run(_toolset_names(None, None, task=None))
     assert 'Task' in parent_names
     assert 'Task' not in sub_names
 
 
-def test_subagent_request_limit_is_a_constant():
-    assert shim.SUBAGENT_REQUEST_LIMIT == 75
+def test_subagent_without_parent_budget_is_limited_to_configured_default(monkeypatch: pytest.MonkeyPatch):
+    """A delegate without inherited headroom gets the configured 150-request cap, merged once."""
+    calls = 0
+
+    async def _stream(_messages: list[ModelMessage], _info: AgentInfo):
+        nonlocal calls
+        calls += 1
+        yield {0: DeltaToolCall(name='Glob', json_args='{"pattern": "*"}')}
+
+    monkeypatch.setenv('GITHUB_WORKSPACE', '.')
+    parent_usage = RunUsage()
+
+    ctx = RunContext[object](
+        deps=object(),
+        model=FunctionModel(stream_function=_stream),
+        usage=parent_usage,
+        usage_limits=None,
+    )
+    out = asyncio.run(shim.task(ctx, 'exhaust budget', 'keep searching'))
+    assert out.startswith('error: sub-agent failed:')
+    assert calls == 150
+    assert parent_usage.requests == 150
 
 
 @pytest.mark.parametrize('disable_task', [False, True])
@@ -1000,13 +1269,15 @@ def test_runner_drops_dynamic_workflow_dependencies():
 
 
 def test_runner_resolves_pydantic_ai_from_the_workspace():
-    """The shim's code is this checkout, so its library must be too — see #6998, #7103."""
+    """The shim's code is this checkout, so its libraries must be too — see #6998, #7103."""
     runner = (Path(__file__).parent / 'pydantic-ai-runner').read_text(encoding='utf-8')
     assert '# [tool.uv.sources]' in runner
-    assert '# pydantic-ai-slim = { path = "../../pydantic_ai_slim" }' in runner
+    assert '# pydantic-ai-slim = { path = "../../pydantic_ai_slim", editable = true }' in runner
+    assert '# pydantic-ai-harness = { path = "../../src/pydantic_ai_harness", editable = true }' in runner
 
     lock = (Path(__file__).parent / 'pydantic-ai-runner.lock').read_text(encoding='utf-8')
-    assert 'directory = "../../pydantic_ai_slim"' in lock
+    assert 'source = { editable = "../../pydantic_ai_slim" }' in lock
+    assert 'source = { editable = "../../src/pydantic_ai_harness" }' in lock
 
 
 def test_compiled_workflows_pin_retry_policy():
@@ -1020,12 +1291,6 @@ def test_compiled_workflows_pin_retry_policy():
 def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch: pytest.MonkeyPatch):
     # The Task tool spawns a sub-Agent on ctx.model with the read-only tool
     # set, runs the given prompt, and returns the sub-agent's output.
-    import asyncio
-
-    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
-    from pydantic_ai.usage import RunUsage
-
     seen_instructions: list[str] = []
     received_messages: list[ModelMessage] = []
     received_tool_names: set[str] = set()
@@ -1050,6 +1315,7 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch: pyte
     class _Ctx:
         model = FunctionModel(_respond, stream_function=_stream)
         usage = parent_usage
+        usage_limits = None
 
     out = asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'scan models/openai.py', 'find tool_call_id bugs'))
     assert out == 'SUB: investigated'
@@ -1121,7 +1387,7 @@ def test_read_file_prepends_context(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     (tmp_path / 'AGENTS.md').write_text('repo rules', encoding='utf-8')
     (tmp_path / 'f.txt').write_text('file body', encoding='utf-8')
     shared.reset_context_state()
-    out = asyncio.run(pkg.read_file('f.txt'))
+    out = asyncio.run(pkg.read_file(_ctx(), 'f.txt'))
     assert 'context: AGENTS.md' in out and 'repo rules' in out and 'file body' in out
 
 
@@ -1137,8 +1403,6 @@ def test_compaction_thresholds_are_sane():
 
 
 def test_history_size_chars_sums_all_part_content():
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-
     msgs: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='hello')]),  # 5
         ModelRequest(parts=[UserPromptPart(content='x' * 20)]),  # 20
@@ -1147,10 +1411,6 @@ def test_history_size_chars_sums_all_part_content():
 
 
 def test_compact_history_no_op_below_char_budget(monkeypatch: pytest.MonkeyPatch):
-    import asyncio
-
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-
     # Many tiny messages — total chars stays well below the default 80k budget.
     msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'm{i}')]) for i in range(100)]
 
@@ -1164,12 +1424,6 @@ def test_compact_history_no_op_below_char_budget(monkeypatch: pytest.MonkeyPatch
 def test_compact_history_summarises_with_fresh_usage_then_merges():
     """Summariser uses a fresh `RunUsage` (so request_limit doesn't trip on the
     parent's running total) and the parent usage absorbs its cost after."""
-    import asyncio
-
-    from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
-    from pydantic_ai.models.function import FunctionModel
-    from pydantic_ai.usage import RunUsage
-
     big = 'x' * 50_000
     msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'm{i} {big}')]) for i in range(13)]
 
@@ -1200,15 +1454,6 @@ def test_trim_dedupes_superseded_reads_and_truncates_large_results():
     the LLM: superseded `Read` returns become a one-line marker, oversized
     returns are head/tail-truncated, and the last KEEP_RECENT messages are
     left untouched."""
-    from pydantic_ai.messages import (
-        ModelMessage,
-        ModelRequest,
-        ModelResponse,
-        ToolCallPart,
-        ToolReturnPart,
-        UserPromptPart,
-    )
-
     big = 'X' * 20_000
     # Three Read calls for the same file: only the last is current; the first
     # two should be marked superseded.
@@ -1257,15 +1502,6 @@ def test_trim_preserves_distinct_read_slices_of_same_file():
     `Read` of the same file with no slice (or a different slice). The
     dedup key is the full `(file_path, offset, limit)` tuple, so distinct
     slices stay distinct — only an exact-args re-read is superseded."""
-    from pydantic_ai.messages import (
-        ModelMessage,
-        ModelRequest,
-        ModelResponse,
-        ToolCallPart,
-        ToolReturnPart,
-        UserPromptPart,
-    )
-
     big = 'Y' * 20_000
     msgs: list[ModelMessage] = [
         # Slice 1 of foo.py — distinct content.
@@ -1318,15 +1554,6 @@ def test_trim_preserves_distinct_read_slices_of_same_file():
 
 def test_trim_logs_substitution_counts_only_when_changes_fired(caplog: LogCaptureFixture):
     """Trim logs once when it substitutes; silent on a no-op pass."""
-    from pydantic_ai.messages import (
-        ModelMessage,
-        ModelRequest,
-        ModelResponse,
-        ToolCallPart,
-        ToolReturnPart,
-        UserPromptPart,
-    )
-
     tiny_msgs: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content=f'm{i}')]) for i in range(shim.COMPACTION_KEEP_RECENT + 5)
     ]
@@ -1355,17 +1582,6 @@ def test_trim_logs_substitution_counts_only_when_changes_fired(caplog: LogCaptur
 
 def test_compact_history_uses_trim_alone_when_sufficient(monkeypatch: pytest.MonkeyPatch):
     """Trim alone is enough — the LLM summariser must not fire."""
-    import asyncio
-
-    from pydantic_ai.messages import (
-        ModelMessage,
-        ModelRequest,
-        ModelResponse,
-        ToolCallPart,
-        ToolReturnPart,
-        UserPromptPart,
-    )
-
     # 13 messages: a couple of huge superseded reads, then KEEP_RECENT trivial
     # tail messages. The dedup pass should crush the size.
     big = 'Y' * 60_000
@@ -1394,11 +1610,6 @@ def test_compact_history_uses_trim_alone_when_sufficient(monkeypatch: pytest.Mon
 
 
 def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch: pytest.MonkeyPatch):
-    import asyncio
-
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-    from pydantic_ai.models.test import TestModel
-
     # Same size-driven setup as the previous test — 13 big msgs > trigger.
     big = 'x' * 50_000
     msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'm{i} {big}')]) for i in range(13)]
@@ -1411,8 +1622,6 @@ def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch: pytest
             raise RuntimeError('boom')
 
     monkeypatch.setattr(shim, 'Agent', _FailingAgent)
-
-    from pydantic_ai.usage import RunUsage
 
     class _Ctx:
         model = TestModel()
@@ -1427,11 +1636,6 @@ def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch: pyte
     """A second compaction round whose summary fails (or doesn't fit) must
     keep the earlier round's `[compacted history]` block. Dropping it would
     silently forget the entire run's prior work."""
-    import asyncio
-
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-    from pydantic_ai.models.test import TestModel
-
     big = 'x' * 50_000
     prior_synthetic = ModelRequest(parts=[UserPromptPart(content='[compacted history]\nearlier summary')])
     msgs: list[ModelMessage] = [
@@ -1448,8 +1652,6 @@ def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch: pyte
 
     monkeypatch.setattr(shim, 'Agent', _FailingAgent)
 
-    from pydantic_ai.usage import RunUsage
-
     class _Ctx:
         model = TestModel()
         usage = RunUsage()
@@ -1461,10 +1663,6 @@ def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch: pyte
 
 
 def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch: pytest.MonkeyPatch):
-    import asyncio
-
-    from pydantic_ai.models.test import TestModel
-
     class _FailingAgent:
         def __init__(self, *a: object, **k: object) -> None:
             pass
@@ -1474,11 +1672,10 @@ def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(shim, 'Agent', _FailingAgent)
 
-    from pydantic_ai.usage import RunUsage
-
     class _Ctx:
         model = TestModel()
         usage = RunUsage()
+        usage_limits = None
 
     out = asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'x', 'y'))
     assert out == 'error: sub-agent failed: downstream model exploded'
@@ -1486,12 +1683,6 @@ def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch: pytest.Monke
 
 def test_task_isolates_attach_context_dedupe_set_from_parent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Sub-agents start with a fresh AGENTS.md seen-set, not the parent's."""
-    import asyncio
-
-    from pydantic_ai.messages import ModelResponse, TextPart
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
-    from pydantic_ai.usage import RunUsage
-
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     (tmp_path / 'AGENTS.md').write_text('# parent-touched guidance', encoding='utf-8')
     (tmp_path / 'f.txt').write_text('parent file', encoding='utf-8')
@@ -1510,6 +1701,7 @@ def test_task_isolates_attach_context_dedupe_set_from_parent(monkeypatch: pytest
     class _Ctx:
         model = FunctionModel(_respond, stream_function=_stream)
         usage = RunUsage()
+        usage_limits = None
 
     asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'sub', 'work'))
 
@@ -1526,14 +1718,6 @@ def test_stream_events_emits_tool_use_and_tool_result_lines():
     """`_stream_events` is the live emitter that turns pydantic-ai events into
     Claude-shape stream-json on stdout — the surface gh-aw's log parser
     reads. Drive it with synthetic events and assert the wire shape."""
-    import asyncio
-
-    from pydantic_ai.messages import (
-        FunctionToolCallEvent,
-        FunctionToolResultEvent,
-        ToolCallPart,
-        ToolReturnPart,
-    )
 
     async def _events():
         yield FunctionToolCallEvent(
@@ -1569,10 +1753,6 @@ def test_stream_events_truncates_long_tool_results():
     """Result content over `MAX_LIVE_TOOL_RESULT_CHARS` is truncated for the
     stream-json view (the model's view is unaffected — this handler is
     observation-only)."""
-    import asyncio
-
-    from pydantic_ai.messages import FunctionToolResultEvent, ToolReturnPart
-
     huge = 'A' * 5000
 
     async def _events():
@@ -1594,9 +1774,6 @@ def test_stream_events_tags_retry_prompt_as_error():
     """`ToolResultEvent.part` is `ToolReturnPart | RetryPromptPart`. A retry
     means tool-call validation failed — gh-aw must see `is_error=True` so it
     doesn't read it as a successful result."""
-    import asyncio
-
-    from pydantic_ai.messages import FunctionToolResultEvent, RetryPromptPart, ToolReturnPart
 
     async def _events():
         yield FunctionToolResultEvent(
@@ -1620,13 +1797,13 @@ def test_stream_events_tags_retry_prompt_as_error():
 # --------------------------------------------------------------------------- #
 def test_read_missing_file_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
-    out = asyncio.run(pkg.read_file(str(tmp_path / 'nope.txt')))
+    out = asyncio.run(pkg.read_file(_ctx(), str(tmp_path / 'nope.txt')))
     assert out.startswith('error:')
 
 
 def test_edit_missing_file_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
-    out = asyncio.run(pkg.edit_file(str(tmp_path / 'missing.txt'), 'old', 'new'))
+    out = asyncio.run(pkg.edit_file(_ctx(), str(tmp_path / 'missing.txt'), 'old', 'new'))
     assert out.startswith('error:')
 
 
@@ -1637,7 +1814,7 @@ def test_multi_edit_missing_file_returns_error(tmp_path: Path):
 
 def test_list_dir_missing_path_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
-    out = asyncio.run(pkg.list_dir(str(tmp_path / 'nope')))
+    out = asyncio.run(pkg.list_dir(_ctx(), str(tmp_path / 'nope')))
     assert out.startswith('error:')
 
 
@@ -1646,7 +1823,7 @@ def test_write_to_existing_parent_succeeds_otherwise_creates(tmp_path: Path, mon
     # calls `create_directory` first, so nested writes still succeed.
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     nested = tmp_path / 'a' / 'b' / 'c.txt'
-    assert 'Wrote' in asyncio.run(pkg.write_file(str(nested), 'ok'))
+    assert 'Wrote' in asyncio.run(pkg.write_file(_ctx(), str(nested), 'ok'))
     assert nested.read_text(encoding='utf-8') == 'ok'
 
 
@@ -1657,7 +1834,7 @@ def test_write_under_a_file_path_returns_error_not_crash(tmp_path: Path, monkeyp
     # string, not escape and abort the whole agent run.
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     (tmp_path / 'afile').write_text('x', encoding='utf-8')
-    out = asyncio.run(pkg.write_file(str(tmp_path / 'afile' / 'inner.txt'), 'data'))
+    out = asyncio.run(pkg.write_file(_ctx(), str(tmp_path / 'afile' / 'inner.txt'), 'data'))
     assert out.startswith('error:')
 
 
@@ -1723,13 +1900,169 @@ def test_build_model_applies_llm_timeout_and_retries(monkeypatch: pytest.MonkeyP
     assert client.max_retries == shim._LLM_MAX_RETRIES  # pyright: ignore[reportPrivateUsage]
 
 
+_MESSAGE_RESPONSE = {
+    'id': 'msg_1',
+    'type': 'message',
+    'role': 'assistant',
+    'model': 'MiniMax-M3',
+    'content': [{'type': 'text', 'text': 'ok'}],
+    'stop_reason': 'end_turn',
+    'stop_sequence': None,
+    'usage': {'input_tokens': 1, 'output_tokens': 1},
+}
+_RATE_LIMITED_RESPONSE = {
+    'type': 'error',
+    'error': {'type': 'rate_limit_error', 'message': 'Token Plan rate limit reached (2062)'},
+}
+
+
+def _rate_limited_client(rate_limited_responses: int, calls: list[int]) -> AsyncAnthropic:
+    """An `AsyncAnthropic` client whose first requests receive a retryable 429."""
+
+    def _handle(_request: httpx2.Request) -> httpx2.Response:
+        calls.append(1)
+        if len(calls) <= rate_limited_responses:
+            return httpx2.Response(429, json=_RATE_LIMITED_RESPONSE)
+        return httpx2.Response(200, json=_MESSAGE_RESPONSE)
+
+    transport = shim.rate_limit_retry_transport(httpx2.MockTransport(_handle))
+    transport.config['wait'] = wait_none()
+    transport.config['stop'] = stop_after_attempt(4)
+    # The shim's own SDK retry count, so a test also sees any SDK retries stacked on top.
+    return AsyncAnthropic(
+        api_key='x',
+        max_retries=shim._LLM_MAX_RETRIES,  # pyright: ignore[reportPrivateUsage]
+        http_client=httpx2.AsyncClient(transport=transport),
+    )
+
+
+def test_rate_limit_retry_transport_rides_out_a_429_burst():
+    calls: list[int] = []
+    client = _rate_limited_client(rate_limited_responses=3, calls=calls)
+    message = asyncio.run(
+        client.messages.create(model='MiniMax-M3', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}])
+    )
+    assert message.content[0].type == 'text'
+    assert len(calls) == 4
+
+
+def test_rate_limit_retry_transport_hands_the_last_429_to_the_sdk():
+    calls: list[int] = []
+    client = _rate_limited_client(rate_limited_responses=99, calls=calls)
+    with pytest.raises(RateLimitError, match='Token Plan rate limit reached'):
+        asyncio.run(
+            client.messages.create(model='MiniMax-M3', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}])
+        )
+    assert len(calls) == 4
+
+
+@pytest.mark.parametrize(
+    'error_code',
+    [
+        '1308',
+        '1309',
+        '1310',
+        '1316',
+        '1317',
+        '1318',
+        '1319',
+        '1320',
+        '1321',
+        pytest.param(1316, id='numeric-1316'),
+    ],
+)
+def test_rate_limit_retry_transport_does_not_retry_plan_quota_exhaustion(error_code: str | int):
+    calls: list[int] = []
+    quota_response: dict[str, object] = {'error': {'code': error_code, 'message': 'Usage limit reached'}}
+
+    def _handle(_request: httpx2.Request) -> httpx2.Response:
+        calls.append(1)
+        return httpx2.Response(
+            429,
+            headers={'content-type': 'application/json'},
+            stream=httpx2.ByteStream(json.dumps(quota_response).encode()),
+        )
+
+    transport = shim.rate_limit_retry_transport(httpx2.MockTransport(_handle))
+    transport.config['wait'] = wait_none()
+    transport.config['stop'] = stop_after_attempt(4)
+    client = AsyncAnthropic(
+        api_key='x',
+        max_retries=shim._LLM_MAX_RETRIES,  # pyright: ignore[reportPrivateUsage]
+        http_client=httpx2.AsyncClient(transport=transport),
+    )
+
+    async def _request() -> None:
+        async with client:
+            with pytest.raises(RateLimitError) as exc_info:
+                await client.messages.create(
+                    model='glm-5.3-flash', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}]
+                )
+            assert exc_info.value.body == quota_response
+
+    asyncio.run(_request())
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    'error_body',
+    [
+        pytest.param(json.dumps({'error': {'code': '1302', 'message': 'Rate limited'}}).encode(), id='rate-limit-1302'),
+        pytest.param(
+            json.dumps({'error': {'code': '1305', 'message': 'Temporarily overloaded'}}).encode(), id='overloaded-1305'
+        ),
+        pytest.param(json.dumps({'error': {'code': '9999', 'message': 'Unknown'}}).encode(), id='unknown-code'),
+        pytest.param(
+            json.dumps({'error': {'code': '9' * 5000, 'message': 'Unknown'}}).encode(), id='large-numeric-code'
+        ),
+        pytest.param(b'{invalid json', id='malformed-json'),
+    ],
+)
+def test_rate_limit_retry_transport_retries_transient_unknown_and_malformed_429s(error_body: bytes):
+    calls: list[int] = []
+
+    def _handle(_request: httpx2.Request) -> httpx2.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx2.Response(
+                429,
+                headers={'content-type': 'application/json'},
+                stream=httpx2.ByteStream(error_body),
+            )
+        return httpx2.Response(200, json=_MESSAGE_RESPONSE)
+
+    transport = shim.rate_limit_retry_transport(httpx2.MockTransport(_handle))
+    transport.config['wait'] = wait_none()
+    transport.config['stop'] = stop_after_attempt(4)
+    client = AsyncAnthropic(
+        api_key='x',
+        max_retries=shim._LLM_MAX_RETRIES,  # pyright: ignore[reportPrivateUsage]
+        http_client=httpx2.AsyncClient(transport=transport),
+    )
+
+    async def _request() -> None:
+        async with client:
+            message = await client.messages.create(
+                model='glm-5.3-flash', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}]
+            )
+            assert message.content[0].type == 'text'
+            assert message.content[0].text == 'ok'
+
+    asyncio.run(_request())
+    assert len(calls) == 2
+
+
 def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.MonkeyPatch):
-    async def _hang(*_a: object, **_kw: object) -> int:
+    async def _hang(*_a: object, **kw: object) -> int:
+        usage = kw['usage']
+        assert isinstance(usage, RunUsage)
+        usage.incr(RunUsage(requests=2, input_tokens=11, output_tokens=4, cache_read_tokens=3))
         await asyncio.sleep(9999)
         return 0
 
     monkeypatch.setattr(shim, 'run', _hang)
     monkeypatch.setattr(shim, '_run_timeout_secs', lambda: 0.01)
+    monkeypatch.delenv('PYDANTIC_AI_RUN_ATTEMPT', raising=False)
     buf = io.StringIO()
     with redirect_stdout(buf):
         rc = asyncio.run(
@@ -1741,6 +2074,49 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
     obj = json.loads(buf.getvalue().strip())
     assert obj['type'] == 'result' and obj['is_error'] is True
     assert 'timed out' in obj['result']
+    assert obj['usage']['input_tokens'] == 11
+    assert obj['usage']['output_tokens'] == 4
+    assert obj['usage']['cache_read_input_tokens'] == 3
+    assert obj['num_turns'] == 2
+    assert obj['provider_health']['failure']['kind'] == 'timeout'
+    assert obj['provider_health']['run_attempt'] is None
+
+
+@pytest.mark.parametrize('outcome', ['success', 'error', 'timeout'])
+def test_run_with_timeout_closes_anthropic_client(outcome: str, monkeypatch: pytest.MonkeyPatch):
+    client = AsyncAnthropic(api_key='test')
+    model = AnthropicModel('test-model', provider=AnthropicProvider(anthropic_client=client))
+
+    async def _fake_run(*_args: object, **_kwargs: object) -> int:
+        if outcome == 'error':
+            raise RuntimeError('test failure')
+        if outcome == 'timeout':
+            await asyncio.Event().wait()
+        return 0
+
+    monkeypatch.setattr(shim, 'run', _fake_run)
+    monkeypatch.setattr(shim, '_run_timeout_secs', lambda: 0.01 if outcome == 'timeout' else 1)
+    with redirect_stdout(io.StringIO()):
+        rc = asyncio.run(
+            shim._run_with_timeout(  # pyright: ignore[reportPrivateUsage]
+                'p', model, 'lbl', FunctionToolset[object](), [], 'sess-test'
+            )
+        )
+    assert rc == (0 if outcome == 'success' else 1)
+    assert client.is_closed
+
+
+@pytest.mark.parametrize('attempt', [None, '', 'not-an-int', '0', '-2'])
+def test_emit_result_uses_null_for_invalid_run_attempt(attempt: str | None, monkeypatch: pytest.MonkeyPatch):
+    if attempt is None:
+        monkeypatch.delenv('PYDANTIC_AI_RUN_ATTEMPT', raising=False)
+    else:
+        monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', attempt)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        shim.emit_result('failed', usage=None, session_id='invalid-attempt', is_error=True)
+    result = json.loads(buf.getvalue().strip())
+    assert result['provider_health']['run_attempt'] is None
 
 
 # Both names the budget can come from. `PYDANTIC_AI_JOB_TIMEOUT_MINUTES` is the one that
@@ -1836,8 +2212,6 @@ def test_mcp_tools_use_claude_code_wire_format(tmp_path: Path):
     gh-aw's `mcp__<server>__<tool>` allow-list entry — the same name Claude
     Code uses on the wire and that Claude was trained to call. With matching
     names the allow-list filter becomes a literal containment check."""
-    from pydantic_ai.toolsets import PrefixedToolset
-
     servers = shim.build_mcp_servers(shim.Args(mcp_config=str(_mcp_cfg(tmp_path))))
     prefixed = [s for s in servers if isinstance(s, PrefixedToolset)]
     assert len(prefixed) == 2
@@ -1864,8 +2238,6 @@ def _mcp_error(message: str) -> McpError:
 
 
 def _error_hook_ctx() -> RunContext[None]:
-    from pydantic_ai.usage import RunUsage
-
     return RunContext(
         deps=None,
         model=cast(_Model[Any], None),
@@ -1884,9 +2256,6 @@ def test_mcp_protocol_error_message_recognizes_only_mcp_errors():
 
 
 def test_recover_mcp_tool_errors_returns_error_string_instead_of_crashing():
-    from pydantic_ai.messages import ToolCallPart
-    from pydantic_ai.tools import ToolDefinition
-
     cap = shim._RecoverMCPToolErrors()  # pyright: ignore[reportPrivateUsage]
     call = ToolCallPart(tool_name='mcp__safeoutputs__submit_pull_request_review', args={}, tool_call_id='c1')
     out = asyncio.run(
@@ -1902,9 +2271,6 @@ def test_recover_mcp_tool_errors_returns_error_string_instead_of_crashing():
 
 
 def test_recover_mcp_tool_errors_reraises_non_mcp_errors():
-    from pydantic_ai.messages import ToolCallPart
-    from pydantic_ai.tools import ToolDefinition
-
     cap = shim._RecoverMCPToolErrors()  # pyright: ignore[reportPrivateUsage]
     call = ToolCallPart(tool_name='Bash', args={}, tool_call_id='c2')
     with pytest.raises(RuntimeError, match='boom'):
@@ -1916,8 +2282,6 @@ def test_recover_mcp_tool_errors_reraises_non_mcp_errors():
 
 
 def test_mcp_allow_predicate_server_wildcard_vs_specific():
-    from pydantic_ai.tools import ToolDefinition
-
     # The model-visible tool name is Claude Code's wire form
     # `mcp__<server>__<tool>` (see `_apply_claude_mcp_prefix`), identical to
     # gh-aw's allow-list entries — so the predicate is a literal containment
@@ -1940,7 +2304,8 @@ def test_mcp_allow_predicate_server_wildcard_vs_specific():
 # --------------------------------------------------------------------------- #
 # stream-json schema & structured-error guarantee
 # --------------------------------------------------------------------------- #
-def test_emit_result_matches_claude_stream_json_schema():
+def test_emit_result_matches_claude_stream_json_schema(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '3')
     buf = io.StringIO()
     with redirect_stdout(buf):
         shim.emit_result('answer', usage=None, session_id='run-1')
@@ -1949,6 +2314,8 @@ def test_emit_result_matches_claude_stream_json_schema():
     assert obj['subtype'] == 'success'
     assert obj['is_error'] is False
     assert obj['result'] == 'answer'
+    assert obj['provider_health']['run_attempt'] == 3
+    assert 'failure' not in obj['provider_health']
     for k in ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'):
         assert k in obj['usage']
 
@@ -1969,6 +2336,83 @@ def test_emit_result_error_subtype():
     assert obj['subtype'] == 'error' and obj['is_error'] is True
 
 
+@pytest.mark.parametrize(
+    ('error', 'expected_kind', 'expected_status'),
+    [
+        (ModelHTTPError(401, 'test-model', {'error': {'type': 'authentication_error'}}), 'authentication', 401),
+        (ModelHTTPError(403, 'test-model', {'error': {'type': 'permission_error'}}), 'authentication', 403),
+        (ModelHTTPError(429, 'test-model', {'error': {'type': 'rate_limit_error'}}), 'rate_limit', 429),
+        (ModelHTTPError(402, 'test-model', {'error': {'type': 'payment_required_error'}}), 'other', 402),
+        (UsageLimitExceeded('request limit'), 'request_limit', None),
+        (RuntimeError('provider returned a 402'), 'other', None),
+    ],
+)
+def test_failure_metadata_classifies_typed_errors(
+    error: BaseException, expected_kind: str, expected_status: int | None
+):
+    details = shim._failure_details(error)  # pyright: ignore[reportPrivateUsage]
+    assert details['kind'] == expected_kind
+    assert details.get('http_status') == expected_status
+
+
+def test_run_preserves_partial_usage_on_failure_after_model_activity(monkeypatch: pytest.MonkeyPatch):
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', '/path/that/does/not/exist')
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI CI Review')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'pr-123')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'pull_request')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '2')
+    calls = 0
+
+    def _respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[TextPart('still working')])
+        raise ModelHTTPError(429, 'MiniMax-M3', {'error': {'type': 'rate_limit_error', 'message': 'private detail'}})
+
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
+        response = _respond(messages, info)
+        for index, part in enumerate(response.parts):
+            if isinstance(part, TextPart):
+                yield part.content
+            else:
+                assert isinstance(part, ToolCallPart)
+                yield {index: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+
+    rc = asyncio.run(
+        shim.run(
+            prompt='review',
+            model=FunctionModel(_respond, stream_function=_stream),
+            label='test-model',
+            claude_code_toolset=shim.select_claude_code_toolset(None, None, task=None),
+            mcp_servers=[],
+            session_id='usage-failure',
+            usage=RunUsage(cache_read_tokens=4, cache_write_tokens=2),
+        )
+    )
+    result = next(event for event in emitted if event.get('type') == 'result')
+    assert rc == 1
+    assert result['is_error'] is True
+    typed_token_usage = TypeAdapter(dict[str, int]).validate_python(result['usage'])
+    input_tokens = typed_token_usage['input_tokens']
+    output_tokens = typed_token_usage['output_tokens']
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert typed_token_usage.get('cache_creation_input_tokens') == 2
+    assert typed_token_usage.get('cache_read_input_tokens') == 4
+    assert TypeAdapter(int).validate_python(result['num_turns']) > 0
+    assert result['provider_health'] == {
+        'workflow': 'Pydantic AI CI Review',
+        'task_key': 'pr-123',
+        'trigger_event': 'pull_request',
+        'run_attempt': 2,
+        'failure': {'kind': 'rate_limit', 'http_status': 429},
+    }
+    assert 'private detail' not in json.dumps(result['provider_health'])
+
+
 def test_emit_result_reads_usage_attributes():
     class U:
         input_tokens = 22
@@ -1976,11 +2420,9 @@ def test_emit_result_reads_usage_attributes():
         cache_write_tokens = 5
         cache_read_tokens = 7
 
-    from pydantic_ai.usage import RunUsage as _RunUsage
-
     buf = io.StringIO()
     with redirect_stdout(buf):
-        shim.emit_result('x', usage=cast(_RunUsage, U()), session_id='s')
+        shim.emit_result('x', usage=cast(RunUsage, U()), session_id='s')
     usage = json.loads(buf.getvalue().strip())['usage']
     assert usage['input_tokens'] == 22
     assert usage['output_tokens'] == 292
@@ -2006,6 +2448,7 @@ def test_main_emits_structured_error_on_startup_failure(monkeypatch: pytest.Monk
         raise RuntimeError('kaboom')
 
     monkeypatch.setattr(shim, 'build_model', boom)
+    monkeypatch.delenv('PYDANTIC_AI_RUN_ATTEMPT', raising=False)
     monkeypatch.setattr(sys, 'argv', ['pydantic-ai-runner', '--print', 'hello'])
     buf = io.StringIO()
     with redirect_stdout(buf):
@@ -2015,6 +2458,9 @@ def test_main_emits_structured_error_on_startup_failure(monkeypatch: pytest.Monk
     assert obj['is_error'] is True
     assert 'shim startup failed' in obj['result']
     assert 'kaboom' in obj['result']
+    assert obj['usage']['input_tokens'] == 0
+    assert obj['provider_health']['failure']['kind'] == 'other'
+    assert obj['provider_health']['run_attempt'] is None
 
 
 def test_main_emits_structured_error_on_argparse_rejection(monkeypatch: pytest.MonkeyPatch):
@@ -2034,21 +2480,34 @@ def test_main_emits_structured_error_on_argparse_rejection(monkeypatch: pytest.M
     not os.environ.get('GH_AW_SHIM_LIVE_API_KEY'),
     reason='set GH_AW_SHIM_LIVE_API_KEY/_BASE_URL/_MODEL to run the live test',
 )
-def test_live_anthropic_compatible_endpoint(monkeypatch: pytest.MonkeyPatch):
-    """End-to-end against a real Anthropic-shape endpoint (api.anthropic.com,
-    MiniMax's /anthropic, etc.). Verifies the shim+endpoint integration —
-    not the model's instruction-following.
-    """
+def test_live_anthropic_compatible_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Verify streamed tool execution and a local safe-output sink against a live Anthropic-shape endpoint."""
     monkeypatch.setenv('ANTHROPIC_API_KEY', os.environ['GH_AW_SHIM_LIVE_API_KEY'])
     monkeypatch.setenv(
         'ANTHROPIC_BASE_URL',
         os.environ.get('GH_AW_SHIM_LIVE_BASE_URL', 'https://api.anthropic.com'),
     )
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+
+    def build_safe_output_toolsets(_args: shim.Args) -> list[AbstractToolset[object]]:
+        return [PrefixedToolset(_safe_outputs_toolset(sink), prefix='mcp__safeoutputs_')]
+
+    monkeypatch.setattr(
+        shim,
+        'build_mcp_servers',
+        build_safe_output_toolsets,
+    )
     model = os.environ.get('GH_AW_SHIM_LIVE_MODEL', 'claude-sonnet-4-6')
     argv = list(GHAW_ARGV)
     i = argv.index('--mcp-config')
     del argv[i : i + 2]  # no MCP gateway outside a gh-aw run
-    argv += ['--model', model, 'Say hi.']
+    argv += [
+        '--model',
+        model,
+        'Call `mcp__safeoutputs__noop` exactly once with the message '
+        '`live Anthropic-compatible runner tool call verified`, then finish.',
+    ]
     monkeypatch.setattr(sys, 'argv', ['pydantic-ai-runner', *argv])
     buf = io.StringIO()
     with redirect_stdout(buf):
@@ -2058,6 +2517,25 @@ def test_live_anthropic_compatible_endpoint(monkeypatch: pytest.MonkeyPatch):
     result = next(x for x in lines if x['type'] == 'result')
     assert result['is_error'] is False
     assert result['result']
+    assert sink.exists()
+    assert [json.loads(line) for line in sink.read_text(encoding='utf-8').splitlines()] == [
+        {'type': 'noop', 'message': 'live Anthropic-compatible runner tool call verified'}
+    ]
+    tool_events: list[dict[str, object]] = [
+        event
+        for line in lines
+        if line.get('type') == 'assistant'
+        and isinstance(line.get('message'), dict)
+        and isinstance(line['message'].get('content'), list)
+        for event in line['message']['content']
+        if event.get('type') == 'tool_use'
+    ]
+    assert len(tool_events) == 1
+    assert tool_events[0]['name'] == 'mcp__safeoutputs__noop'
+    assert any(
+        line.get('type') == 'user' and any(event.get('type') == 'tool_result' for event in line['message']['content'])
+        for line in lines
+    )
     # `input_tokens > 0` proves the prompt round-tripped; `output_tokens > 0`
     # proves the model actually responded.
     assert result['usage']['input_tokens'] > 0
