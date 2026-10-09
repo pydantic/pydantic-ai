@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import json
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -22,6 +22,7 @@ from pydantic_ai import (
     FinalResultEvent,
     ImageUrl,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelOverloadedError,
     ModelRequest,
@@ -725,6 +726,41 @@ def test_model_connection_error(allow_model_requests: None) -> None:
         agent.run_sync('hello')
     assert exc_info.value.model_name == 'llama-3.3-70b-versatile'
     assert 'Connection to https://api.groq.com timed out' in str(exc_info.value.message)
+
+
+async def test_stream_transport_error_mid_stream(allow_model_requests: None) -> None:
+    """A connection that breaks off mid-stream surfaces as `ModelAPIError`, not the raw `httpx` error.
+
+    The SDK wraps transport failures in `APIConnectionError` only until the response starts, and a cassette can't
+    replay a broken-off connection, so a mock transport raises it.
+    """
+    chunk = {
+        'id': '1',
+        'object': 'chat.completion.chunk',
+        'created': 0,
+        'model': 'llama-3.3-70b-versatile',
+        'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': 'Hello'}, 'finish_reason': None}],
+    }
+
+    class StreamBreakingOff(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield f'data: {json.dumps(chunk)}\n\n'.encode()
+            raise httpx.RemoteProtocolError('peer closed connection without sending complete message body')
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={'content-type': 'text/event-stream'}, stream=StreamBreakingOff())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        provider = GroqProvider(api_key='test-key', base_url='http://localhost', http_client=http_client)
+        agent = Agent(GroqModel('llama-3.3-70b-versatile', provider=provider))
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == 'read'
+    assert exc_info.value.message == 'peer closed connection without sending complete message body'
+    assert isinstance(exc_info.value.__cause__, httpx.RemoteProtocolError)
 
 
 _STREAM_ERROR_SSE_CHUNK = (

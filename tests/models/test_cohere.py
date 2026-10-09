@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, cast
 
+import httpx
 import pytest
 
 from pydantic_ai import (
@@ -19,6 +20,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    ModelTimeoutError,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -645,6 +647,24 @@ def test_model_non_http_error(allow_model_requests: None) -> None:
     with pytest.raises(ModelAPIError) as exc_info:
         agent.run_sync('hello')
     assert exc_info.value.model_name == 'command-r'
+
+
+async def test_model_transport_error(allow_model_requests: None) -> None:
+    """`cohere` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout('timed out', request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        cohere_client = AsyncClientV2(api_key='test-key', base_url='http://localhost', httpx_client=http_client)
+        agent = Agent(CohereModel('command-r', provider=CohereProvider(cohere_client=cohere_client)))
+        with pytest.raises(ModelAPIError) as exc_info:
+            await agent.run('hello')
+
+    assert type(exc_info.value) is ModelTimeoutError
+    assert exc_info.value.phase == 'read'
+    assert exc_info.value.message == 'timed out'
+    assert isinstance(exc_info.value.__cause__, httpx.ReadTimeout)
 
 
 @pytest.mark.vcr()

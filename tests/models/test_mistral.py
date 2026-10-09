@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -38,7 +38,14 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelConnectionError,
+    ModelHTTPError,
+    ModelRetry,
+    TransportPhase,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.settings import ThinkingLevel
@@ -3016,6 +3023,74 @@ async def test_uploaded_file_input(allow_model_requests: None):
 
     with pytest.raises(NotImplementedError, match='UploadedFile is not supported in Mistral user prompts'):
         await agent.run(['hello', UploadedFile(file_id='file-123', provider_name='anthropic')])
+
+
+class _StreamBreakingOff(httpx2.AsyncByteStream):
+    """A response body that sends `first` and then breaks off with `error`."""
+
+    def __init__(self, first: bytes, error: Exception):
+        self.first = first
+        self.error = error
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self.first
+        raise self.error
+
+
+_TEXT_CHUNK = {
+    'id': '1',
+    'object': 'chat.completion.chunk',
+    'created': 0,
+    'model': 'mistral-small-latest',
+    'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': 'Hello'}, 'finish_reason': None}],
+}
+
+
+def _connect_error(request: httpx2.Request) -> httpx2.Response:
+    raise httpx2.ConnectError('connection refused', request=request)
+
+
+def _stream_breaking_off(request: httpx2.Request) -> httpx2.Response:
+    return httpx2.Response(
+        200,
+        headers={'content-type': 'text/event-stream'},
+        stream=_StreamBreakingOff(
+            f'data: {json.dumps(_TEXT_CHUNK)}\n\n'.encode(), httpx2.ReadError('connection reset')
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ('handler', 'stream', 'message', 'cause', 'phase'),
+    [
+        pytest.param(_connect_error, False, 'connection refused', httpx2.ConnectError, 'connect', id='connect'),
+        pytest.param(_connect_error, True, 'connection refused', httpx2.ConnectError, 'connect', id='stream-connect'),
+        pytest.param(_stream_breaking_off, True, 'connection reset', httpx2.ReadError, 'read', id='mid-stream'),
+    ],
+)
+async def test_model_transport_error(
+    allow_model_requests: None,
+    handler: Callable[[httpx2.Request], httpx2.Response],
+    stream: bool,
+    message: str,
+    cause: type[Exception],
+    phase: TransportPhase,
+) -> None:
+    """`mistralai` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        provider = MistralProvider(api_key='test-key', http_client=http_client, base_url='http://localhost')
+        agent = Agent(MistralModel('mistral-small-latest', provider=provider))
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with agent.run_stream('hello') as result:
+                    await result.get_output()
+            else:
+                await agent.run('hello')
+
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == phase
+    assert exc_info.value.message == message
+    assert isinstance(exc_info.value.__cause__, cause)
 
 
 def test_model_status_error(allow_model_requests: None) -> None:

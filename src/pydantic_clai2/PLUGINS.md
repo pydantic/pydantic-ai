@@ -338,6 +338,23 @@ are recorded with their exception and traceback through this same instance. This
 observability plugin loaded are included. Disabling observability stops this reporting;
 the existing terminal messages remain.
 
+Other errors CLAI shows and then carries on from are recorded the same way, as `error` logs
+with their exception and traceback, also without `ui_events`:
+
+- A failed turn, from `TurnEnd.error`, under the session root. An error that left the agent
+  run is already recorded on the run's span, so this covers failures before or around it,
+  such as a model provider with no login or a failing `on_turn_start`.
+- A failed slash command, such as an HTTP error from `/update`, under the command's span
+  when `ui_events` is on and the session root otherwise. A usage error (`ValueError` or
+  `UserError`, including settings a plugin rejects on `/plugins add`) is expected, so it is
+  not recorded; with `ui_events` on, the command's span notes its type.
+- A plugin handler that fails without stopping CLAI (`on_turn_end`, `on_session_end`,
+  `on_plugin_load_failed`), with the plugin's name.
+
+The exception message and traceback get Logfire's normal scrubbing. They can quote a prompt
+or a pasted secret, so with `include_content: false` these records, and startup load
+failures, keep only the exception's type in their `exception` event, as agent spans do.
+
 Credentials are read from `LOGFIRE_TOKEN` or the SDK's `logfire_credentials.json`
 in `$XDG_CONFIG_HOME/pydantic-clai2/logfire/`, defaulting to
 `~/.config/pydantic-clai2/logfire/`. SDK configuration is read only from that user

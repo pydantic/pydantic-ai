@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, assert_never, cast
 
+import httpx2
 import pydantic_core
 from pydantic import JsonValue
 
@@ -68,6 +69,7 @@ from . import (
     get_user_agent,
 )
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from mistralai.client import Mistral
@@ -145,6 +147,10 @@ def _map_api_errors(model_name: str) -> Generator[None]:
                 provider_error_type=error_type if isinstance(error_type, str) else None,
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except httpx2.TransportError as e:
+        # `mistralai` doesn't wrap connection errors and timeouts in its own exceptions.
+        timeout = isinstance(e, httpx2.TimeoutException)
+        raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
 
 
 LatestMistralModelNames = Literal[

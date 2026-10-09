@@ -18,8 +18,11 @@ import pytest
 from cassetter import Cassette
 from httpx import Timeout
 from httpx2 import (
+    AsyncByteStream as HTTPX2AsyncByteStream,
     AsyncClient as HTTPX2AsyncClient,
+    ConnectError as HTTPX2ConnectError,
     MockTransport as HTTPX2MockTransport,
+    ReadError as HTTPX2ReadError,
     Request as HTTPX2Request,
     Response as HTTPX2Response,
 )
@@ -66,6 +69,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelRetry,
     UnexpectedModelBehavior,
@@ -5368,6 +5372,71 @@ async def test_google_stream_api_error_before_first_chunk_is_wrapped(allow_model
     assert exc_info.value.body == error_response
     assert isinstance(exc_info.value.__cause__, errors.ClientError)
     assert len(requests) == 1
+
+
+class _HTTPX2StreamBreakingOff(HTTPX2AsyncByteStream):
+    """A response body that sends `first` and then breaks off with `error`."""
+
+    def __init__(self, first: bytes, error: Exception):
+        self.first = first
+        self.error = error
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self.first
+        raise self.error
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_google_connect_error_is_wrapped(allow_model_requests: None, stream: bool):
+    """`google.genai` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        raise HTTPX2ConnectError('connection refused', request=request)
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with Agent(model).run_stream('test'):
+                    pass  # pragma: no cover
+            else:
+                await Agent(model).run('test')
+
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == 'connect'
+    assert exc_info.value.message == 'connection refused'
+    assert isinstance(exc_info.value.__cause__, HTTPX2ConnectError)
+
+
+async def test_google_stream_read_error_mid_stream_is_wrapped(allow_model_requests: None):
+    """A connection that breaks off mid-stream surfaces as `ModelAPIError`, not the raw `httpx2` error."""
+    chunk = {'candidates': [{'content': {'role': 'model', 'parts': [{'text': 'Hello'}]}, 'index': 0}]}
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        return HTTPX2Response(
+            200,
+            headers={'content-type': 'text/event-stream'},
+            stream=_HTTPX2StreamBreakingOff(
+                f'data: {json.dumps(chunk)}\r\n\r\n'.encode(), HTTPX2ReadError('connection reset')
+            ),
+        )
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with Agent(model).run_stream('test') as result:
+                await result.get_output()
+
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == 'read'
+    assert exc_info.value.message == 'connection reset'
+    assert isinstance(exc_info.value.__cause__, HTTPX2ReadError)
 
 
 async def test_google_count_tokens_api_error_is_wrapped(allow_model_requests: None):

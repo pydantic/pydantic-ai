@@ -50,6 +50,7 @@ from . import (
     check_allow_model_requests,
 )
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from cohere import (
@@ -77,6 +78,10 @@ except ImportError as _import_error:
         'Please install `cohere` to use the Cohere model, '
         'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
     ) from _import_error
+
+# Below the guard on purpose: `cohere` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
 
 LatestCohereModelNames = Literal[
     'c4ai-aya-expanse-32b',
@@ -223,6 +228,11 @@ class CohereModel(Model[AsyncClientV2]):
                     status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
                 ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+        except httpx.TransportError as e:
+            # `cohere` doesn't wrap connection errors and timeouts in its own exceptions.
+            timeout = isinstance(e, httpx.TimeoutException)
+            message = transport_error_message(e)
+            raise _model_errors.connection_error(self.model_name, message, e, timeout=timeout) from e
 
     def _get_tool_choice(
         self,

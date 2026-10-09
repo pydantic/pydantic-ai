@@ -377,7 +377,7 @@ class SessionCore:
             self._user_speaking = False
         elif isinstance(item, ConversationItemCreated):
             if item.replayed:
-                # A resumed conversation's replay of what history already has (xAI): nothing in it is new.
+                # A natively resumed conversation's replay of what history already has: nothing in it is new.
                 if item.item_id is not None:
                     self._replayed_items.add(item.item_id)
                 if item.tool_call_id is not None:
