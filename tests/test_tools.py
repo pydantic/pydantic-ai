@@ -305,6 +305,54 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
     )
 
 
+def google_style_docstring_keyword_args(query: str, *, limit: int = 5) -> str:  # pragma: no cover
+    """Search the index.
+
+    Args:
+        query: The search query.
+
+    Keyword Args:
+        limit: The maximum number of results.
+    """
+    return query
+
+
+def numpy_style_docstring_other_parameters(query: str, limit: int = 5) -> str:  # pragma: no cover
+    """Search the index.
+
+    Parameters
+    ----------
+    query : str
+        The search query.
+
+    Other Parameters
+    ----------------
+    limit : int
+        The maximum number of results.
+    """
+    return query
+
+
+@pytest.mark.parametrize('tool', [google_style_docstring_keyword_args, numpy_style_docstring_other_parameters])
+def test_docstring_other_parameter_sections(tool: Callable[..., str]):
+    agent = Agent(FunctionModel(get_json_schema))
+    agent.tool_plain(require_parameter_descriptions=True)(tool)
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.output)
+    assert json_schema['parameters_json_schema'] == snapshot(
+        {
+            'properties': {
+                'query': {'description': 'The search query.', 'type': 'string'},
+                'limit': {'default': 5, 'description': 'The maximum number of results.', 'type': 'integer'},
+            },
+            'required': ['query'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+
+
 def test_google_style_with_returns():
     agent = Agent(FunctionModel(get_json_schema))
 
