@@ -381,6 +381,14 @@ _ERROR_TYPE_STATUS_CODES = {
 }
 
 
+def _with_max_retries(client: AsyncAnthropicClient, model_settings: ModelSettings) -> AsyncAnthropicClient:
+    """The client to send one request with, carrying `ModelSettings['max_retries']` when it's set."""
+    # `AsyncAnthropicBedrock.with_options()` doesn't copy `aws_profile`, so its copy would sign requests with
+    # the default AWS credential chain instead of the profile the client was built with.
+    carry_over = {'aws_profile': client.aws_profile} if isinstance(client, AsyncAnthropicBedrock) else None
+    return with_max_retries(client, model_settings, carry_over=carry_over)
+
+
 def _error_status_code(error: APIStatusError) -> int:
     """The HTTP status of an Anthropic error, including one reported in a stream after a 200 response.
 
@@ -1359,7 +1367,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 compaction_boundary=compaction_boundary,
             )
         )
-        client = with_max_retries(self.client, model_settings)
+        client = _with_max_retries(self.client, model_settings)
 
         async def create(
             container_param: BetaContainerParams | str | None,
@@ -1744,7 +1752,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 include_count_tokens_recovery=True,
             )
         )
-        client = with_max_retries(self.client, model_settings)
+        client = _with_max_retries(self.client, model_settings)
 
         async def count(
             thinking: BetaThinkingConfigParam | Omit,

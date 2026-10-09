@@ -54,6 +54,7 @@ import textwrap
 import types
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal, cast
 
 import httpx
@@ -998,3 +999,39 @@ def test_max_retries_supported_by_list_matches_the_attempts():
     """`max_retries` is listed for exactly the models whose attempt count it changes."""
     forwarded = {name for case in RETRY_CASES if case.forwards_max_retries for name in case.names}
     assert set(SUPPORTED_BY_LISTS['max_retries']) == forwarded
+
+
+@pytest.mark.skipif(not anthropic_available() or not bedrock_available(), reason='anthropic or bedrock not installed')
+async def test_max_retries_keeps_the_bedrock_client_aws_profile(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """`AsyncAnthropicBedrock.with_options()` drops `aws_profile`, so the retrying copy must be handed it back."""
+    credentials = tmp_path / 'credentials'
+    credentials.write_text('[probe-profile]\naws_access_key_id = AKIAPROBEPROFILE\naws_secret_access_key = probe\n')
+    monkeypatch.setenv('AWS_SHARED_CREDENTIALS_FILE', str(credentials))
+    monkeypatch.setenv('AWS_CONFIG_FILE', str(tmp_path / 'config'))
+    monkeypatch.setenv('AWS_EC2_METADATA_DISABLED', 'true')
+    for name in (
+        'AWS_ACCESS_KEY_ID',
+        'AWS_SECRET_ACCESS_KEY',
+        'AWS_SESSION_TOKEN',
+        'AWS_PROFILE',
+        'AWS_BEARER_TOKEN_BEDROCK',
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    authorizations: list[str] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        authorizations.append(request.headers['authorization'])
+        return httpx2.Response(RETRYABLE_STATUS, json={'message': 'probe'}, headers=RETRY_NOW_HEADERS)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
+        bedrock = AsyncAnthropicBedrock(aws_profile='probe-profile', aws_region='us-east-1', http_client=client)
+        model = AnthropicModel(
+            'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=AnthropicProvider(anthropic_client=bedrock)
+        )
+        await run_probe_request(model, {'max_retries': 1})
+
+    assert len(authorizations) == 2
+    assert all('Credential=AKIAPROBEPROFILE/' in authorization for authorization in authorizations)
