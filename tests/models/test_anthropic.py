@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import json
 import os
 import re
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -2052,8 +2052,9 @@ async def test_unified_cache_uses_automatic_caching(
     assert completion_kwargs['cache_control'] == cache_control
     assert completion_kwargs['system'][-1]['cache_control'] == cache_control
     assert completion_kwargs['tools'][-1]['cache_control'] == cache_control
+    # The `CachePoint` defaults to five minutes, but comes before the automatic breakpoint, so it gets its TTL.
     assert [block.get('cache_control') for block in completion_kwargs['messages'][-1]['content']] == [
-        {'type': 'ephemeral', 'ttl': '5m'},
+        cache_control,
         None,
     ]
 
@@ -2151,6 +2152,126 @@ async def test_automatic_caching_yields_to_explicit_breakpoint_on_last_block(
         'type': 'ephemeral',
         'ttl': cache_point_ttl,
     }
+
+
+def _cache_breakpoint_ttls(kwargs: Mapping[str, Any]) -> list[str]:
+    """The TTL of every breakpoint in a mocked request, in the order Anthropic processes them: tools, system,
+    messages, then the top-level automatic breakpoint, which lands on the last cacheable block."""
+    blocks = [
+        block for section in ('tools', 'system') if isinstance(kwargs[section], list) for block in kwargs[section]
+    ]
+    for wire_message in kwargs['messages']:
+        blocks.extend(wire_message['content'])
+    ttls = [block['cache_control']['ttl'] for block in blocks if 'cache_control' in block]
+    if kwargs['cache_control'] is not OMIT:
+        ttls.append(f'{kwargs["cache_control"]["ttl"]} (automatic)')
+    return ttls
+
+
+@pytest.mark.parametrize(
+    ('settings', 'cache_point_ttl', 'expected_ttls'),
+    [
+        # Plain dicts: parameters are built at collection time, also on installs without `anthropic`.
+        pytest.param(
+            {'anthropic_cache_tool_definitions': '5m', 'anthropic_cache_instructions': True},
+            '1h',
+            ['1h', '1h', '1h'],
+            id='explicit-5m-before-cache-point-1h',
+        ),
+        pytest.param(
+            {'anthropic_cache': '1h', 'anthropic_cache_instructions': '5m'},
+            '5m',
+            ['1h', '1h', '1h (automatic)'],
+            id='explicit-5m-before-automatic-1h',
+        ),
+        pytest.param(
+            {'cache': '1h'},
+            '5m',
+            ['1h', '1h', '1h', '1h (automatic)'],
+            id='unified-1h-after-cache-point-5m',
+        ),
+        pytest.param(
+            {'anthropic_cache': True, 'anthropic_cache_tool_definitions': '1h', 'anthropic_cache_instructions': '5m'},
+            '1h',
+            ['1h', '1h', '1h', '5m (automatic)'],
+            id='shorter-after-longer-unchanged',
+        ),
+    ],
+)
+async def test_earlier_cache_breakpoints_raised_to_later_longer_ttl(
+    allow_model_requests: None,
+    settings: dict[str, Any],
+    cache_point_ttl: Literal['5m', '1h'],
+    expected_ttls: list[str],
+):
+    """A five-minute breakpoint before a one-hour one is raised to an hour, since Anthropic rejects a request where
+    "a ttl='1h' cache_control block must not come after a ttl='5m' cache_control block". A later five-minute
+    breakpoint stays as it is. `test_anthropic_cache_earlier_breakpoint_raised_to_later_longer_ttl` shows the API
+    accepting the raised request."""
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, instructions='System instructions.', model_settings=cast(AnthropicModelSettings, settings))
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    await agent.run(['Some context', CachePoint(ttl=cache_point_ttl), 'Question'])
+
+    assert _cache_breakpoint_ttls(get_mock_chat_completion_kwargs(mock_client)[0]) == expected_ttls
+
+
+async def test_earlier_cache_breakpoints_raised_in_count_tokens(allow_model_requests: None):
+    """The `count_tokens` request is built like the real one, so its breakpoints are raised the same way."""
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        model,
+        instructions='System instructions.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions='5m'),
+    )
+
+    await agent.run(
+        ['Some context', CachePoint(ttl='1h'), 'Question'],
+        usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True),
+    )
+
+    count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert _cache_breakpoint_ttls(count_tokens_kwargs) == ['1h', '1h']
+    assert _cache_breakpoint_ttls(create_kwargs) == ['1h', '1h']
+
+
+@pytest.mark.parametrize(
+    ('client_cls', 'expected_ttls'),
+    [
+        # Bedrock and Vertex don't take the top-level `cache_control`, so it goes on the last block instead.
+        pytest.param(AsyncAnthropicBedrock, ['1h', '1h'], id='bedrock'),
+        pytest.param(AsyncAnthropicVertex, ['1h', '1h'], id='vertex'),
+        pytest.param(AsyncAnthropicFoundry, ['1h', '1h (automatic)'], id='foundry'),
+    ],
+)
+async def test_earlier_cache_breakpoints_raised_on_non_direct_clients(
+    allow_model_requests: None, client_cls: type[Any], expected_ttls: list[str]
+):
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MagicMock()
+    mock_client.timeout = DEFAULT_TIMEOUT
+    mock_client.__class__ = client_cls
+    mock_client.base_url = 'https://example.com'
+    mock_client.beta.messages.create = AsyncMock(return_value=c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        model,
+        instructions='System instructions.',
+        model_settings=AnthropicModelSettings(anthropic_cache='1h', anthropic_cache_instructions='5m'),
+    )
+
+    await agent.run('Hello')
+
+    create_kwargs = mock_client.beta.messages.create.call_args.kwargs
+    assert _cache_breakpoint_ttls(create_kwargs) == expected_ttls
 
 
 async def test_unified_cache_stable_prefix_only(allow_model_requests: None):
@@ -14118,6 +14239,51 @@ async def test_anthropic_cache_write_ttl_pricing(
 
     response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.usage == expected_usage
+
+
+@pytest.mark.vcr()
+async def test_anthropic_cache_earlier_breakpoint_raised_to_later_longer_ttl(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """A five-minute breakpoint before a one-hour one is raised to an hour, since Anthropic requires "Cache entries
+    with longer TTL must appear before shorter TTLs"
+    (https://platform.claude.com/docs/en/build-with-claude/prompt-caching) and rejects the request otherwise.
+    """
+    model = anthropic_model('claude-sonnet-4-6', capture=True)
+    agent = Agent(
+        model,
+        instructions='You are a concise Python assistant. ' + 'Answer questions about Python concisely. ' * 300,
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions='5m'),
+    )
+
+    result = await agent.run(
+        ['Some context about Python. ' * 300, CachePoint(ttl='1h'), 'Name one Python web framework, in one word.']
+    )
+
+    body = request_capture.body('/v1/messages')
+    assert cache_breakpoints(body) == snapshot((None, ['system[0]', 'messages[0].content[0]']))
+    (system_block,) = json_objects(body['system'])
+    cached_context = content_blocks(body, 'text')[0]
+    assert [system_block['cache_control'], cached_context['cache_control']] == snapshot(
+        [{'type': 'ephemeral', 'ttl': '1h'}, {'type': 'ephemeral', 'ttl': '1h'}]
+    )
+    assert result.usage == snapshot(
+        RunUsage(
+            details={
+                'input_tokens': 13,
+                'output_tokens': 4,
+                'cache_creation_input_tokens': 3913,
+                'cache_read_input_tokens': 0,
+                'ephemeral_1h_input_tokens': 3913,
+            },
+            cache_write_1h_tokens=3913,
+            cache_write_tokens=3913,
+            input_tokens=3926,
+            output_tokens=4,
+            cost=Decimal('0.023577'),
+            requests=1,
+        )
+    )
 
 
 @pytest.mark.vcr()

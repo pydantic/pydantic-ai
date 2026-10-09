@@ -1418,6 +1418,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         profile = self.profile
 
         openai_messages = await self._map_messages(messages, model_request_parameters, model_settings=model_settings)
+        self._finalize_cache_breakpoints(tools, openai_messages)
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
@@ -1766,6 +1767,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if model_settings.get('openai_continuous_usage_stats'):
             options['continuous_usage_stats'] = True
         return cast(chat.ChatCompletionStreamOptionsParam, options)
+
+    def _finalize_cache_breakpoints(
+        self, tools: list[chat.ChatCompletionToolParam], openai_messages: list[chat.ChatCompletionMessageParam]
+    ) -> None:
+        """Hook for subclasses to adjust cache breakpoints once the tools and messages are both mapped."""
 
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         for tool in model_request_parameters.native_tools:

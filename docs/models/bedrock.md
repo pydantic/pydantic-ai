@@ -168,6 +168,8 @@ Beyond that, Pydantic AI provides four provider-specific ways to use prompt cach
 3. **Cache Tool Definitions**: Set [`BedrockModelSettings.bedrock_cache_tool_definitions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly.
 4. **Cache All Messages**: Set [`BedrockModelSettings.bedrock_cache_messages`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_messages] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly to automatically cache the last user message.
 
+Anthropic models reject a request where a one-hour cache point comes after a five-minute one (cache points are processed in tools, then system, then messages order), so when a one-hour cache point follows five-minute ones, those earlier cache points are raised to one hour.
+
 !!! note "Minimum Token Threshold"
     AWS only serves cached content once a segment crosses the provider-specific minimum token thresholds (see the [Bedrock prompt caching docs](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html)). Short prompts or tool definitions below those limits will bypass the cache, so don't expect savings for tiny payloads.
 

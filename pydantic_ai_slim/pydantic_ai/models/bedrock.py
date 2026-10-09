@@ -83,7 +83,12 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
-from pydantic_ai.models._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
+from pydantic_ai.models._prompt_cache import (
+    excess_cache_points,
+    previous_tail_needing_breakpoint,
+    raise_earlier_cache_ttls,
+    split_cache_setting,
+)
 from pydantic_ai.models._tool_choice import (
     FORCING_UNSUPPORTED_REASON,
     resolve_tool_choice,
@@ -950,6 +955,7 @@ class BedrockConverseModel(Model[BaseClient]):
             converse['toolConfig'] = tool_config
         tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
+        _raise_earlier_cache_ttls(system_prompt, bedrock_messages, tools)
         if additional_model_requests_fields := self._build_additional_model_request_fields(
             settings, model_request_parameters
         ):
@@ -1159,6 +1165,7 @@ class BedrockConverseModel(Model[BaseClient]):
 
         tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
+        _raise_earlier_cache_ttls(system_prompt, bedrock_messages, tools)
 
         if output_config := self._native_output_format(model_request_parameters):
             params['outputConfig'] = output_config
@@ -2139,3 +2146,23 @@ def _support_tool_forcing(
         unavailable_reason,
         disables_thinking=thinking_type == 'adaptive' and profile.get('forced_tool_choice_disables_thinking', False),
     )
+
+
+def _raise_earlier_cache_ttls(
+    system_prompt: list[SystemContentBlockTypeDef],
+    bedrock_messages: list[MessageUnionTypeDef],
+    tools: list[ToolTypeDef],
+) -> None:
+    """Raise each cache point's TTL to the longest TTL of a cache point after it, as Bedrock requires.
+
+    Bedrock processes cache points in `tools`, then `system`, then `messages` order: "Cache entries with longer TTL must
+    appear before shorter TTLs" (https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html).
+    """
+    blocks: list[object] = [*tools, *system_prompt]
+    for message in bedrock_messages:
+        blocks.extend(message.get('content', []))
+    carriers = [block for block in blocks if _utils.is_str_dict(block) and 'cachePoint' in block]
+    ttls: list[Literal['5m', '1h']] = [carrier['cachePoint'].get('ttl', '5m') for carrier in carriers]
+    for carrier, ttl, raised_ttl in zip(carriers, ttls, raise_earlier_cache_ttls(ttls), strict=True):
+        if raised_ttl != ttl:
+            carrier['cachePoint'] = {**carrier['cachePoint'], 'ttl': raised_ttl}
