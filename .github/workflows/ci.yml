@@ -700,6 +700,11 @@ jobs:
       BLOCKBUSTER_ENABLED: false
       # `tests/test_examples.py` type-checks the docs examples with pyright; once per run is enough.
       TYPECHECK_EXAMPLES: ${{ matrix.python-version == '3.14' }}
+      # Per-test time budget enforced by `tests/cost_guards.py` (see "Test cost" in `tests/AGENTS.md`). The 3.13
+      # cells run nearly every test without coverage or blocking-call detection, so their timings carry the least
+      # instrumentation noise; 5s leaves wide headroom over runner jitter. List the tests over a budget from a
+      # run's `--durations` with `scripts/list_over_budget_tests.py`.
+      PYTEST_TEST_BUDGET_SECONDS: ${{ matrix.python-version == '3.13' && '5' || '' }}
       # `tests/harness/absurd` runs on Absurd's schema; an unreachable server fails rather than skips.
       ABSURD_REQUIRE_LIVE: "1"
       ABSURD_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres

@@ -10,7 +10,7 @@ from typing import TypeAlias
 
 import pytest
 
-from .cost_guards import _popen_argv, launches_python  # pyright: ignore[reportPrivateUsage]
+from .cost_guards import BUDGET_ENV_VAR, _popen_argv, launches_python  # pyright: ignore[reportPrivateUsage]
 
 pytest_plugins = ['pytester']
 
@@ -23,12 +23,14 @@ SPAWN = 'subprocess.run([sys.executable, "-I", "-S", "-c", "pass"], check=True)'
 def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunPytest:
     """Run an in-process pytest session over `source` with only the cost guards loaded."""
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
+    monkeypatch.delenv(BUDGET_ENV_VAR, raising=False)
     monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
     pytester.makeini(
         """
         [pytest]
         markers =
             subprocess: launches Python
+            slow: exempt from the budget
         """
     )
 
@@ -130,10 +132,15 @@ def test_a_marked_launch_passes_and_a_marker_needs_a_reason(run: RunPytest):
         @pytest.mark.subprocess
         def test_no_reason():
             pass
+
+        @pytest.mark.slow(reason='  ')
+        def test_blank_reason():
+            pass
         """
     )
-    result.assert_outcomes(passed=1, errors=1)
+    result.assert_outcomes(passed=1, errors=2)
     result.stdout.fnmatch_lines(['*`@pytest.mark.subprocess` requires `reason=...`*'])
+    result.stdout.fnmatch_lines(['*`@pytest.mark.slow` requires `reason=...`*'])
 
 
 def test_a_launch_in_a_shared_fixture_needs_no_marker(run: RunPytest):
@@ -263,6 +270,52 @@ def test_guards_work_under_xdist(run: RunPytest, monkeypatch: pytest.MonkeyPatch
             '*test_guarded.py::test_stale: no test covered by its `@pytest.mark.subprocess`*',
         ]
     )
+
+
+def test_the_time_budget_fails_slow_tests_unless_marked(run: RunPytest, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(BUDGET_ENV_VAR, '0.05')
+    result = run(
+        """
+        @pytest.fixture(scope='module')
+        def shared_server():
+            time.sleep(0.1)
+
+        def test_fast(shared_server):
+            pass
+
+        def test_slow():
+            time.sleep(0.1)
+
+        @pytest.mark.slow(reason='waits on purpose')
+        def test_marked_slow():
+            time.sleep(0.1)
+        """
+    )
+    result.assert_outcomes(passed=2, failed=1)
+    result.stdout.fnmatch_lines(
+        [
+            '*`test_guarded.py::test_slow` took 0.1*s in setup and call, over the 0.05s per-test budget '
+            f'({BUDGET_ENV_VAR}).',
+            '*inject or monkeypatch timeouts*',
+            "*mark it `@pytest.mark.slow(reason='...')`.",
+        ]
+    )
+
+
+def test_the_budget_message_names_excluded_shared_setup(run: RunPytest, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(BUDGET_ENV_VAR, '0.05')
+    result = run(
+        """
+        @pytest.fixture(scope='module')
+        def shared_server():
+            time.sleep(0.01)
+
+        def test_slow(shared_server):
+            time.sleep(0.1)
+        """
+    )
+    result.assert_outcomes(failed=1)
+    result.stdout.fnmatch_lines(['*not counting 0.0*s of shared fixture setup*'])
 
 
 def test_a_run_that_collects_nothing_is_not_judged(run: RunPytest):

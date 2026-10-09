@@ -5,6 +5,8 @@ towards. The plugin:
 
 - fails a test that launches a Python interpreter unless it is marked `@pytest.mark.subprocess(reason=...)`,
   and fails the session when a `subprocess` marker no longer covers any test that launches one;
+- when `PYTEST_TEST_BUDGET_SECONDS` is set, fails a test whose setup and call together take longer than that
+  unless it is marked `@pytest.mark.slow(reason=...)`;
 """
 
 from __future__ import annotations as _annotations
@@ -16,6 +18,7 @@ import shlex
 import subprocess
 import sys
 import sysconfig
+import time
 import traceback
 from collections.abc import Callable, Generator, Sequence
 from contextlib import suppress
@@ -25,6 +28,7 @@ from typing import Any
 import pytest
 
 PLUGIN_NAME = 'pydantic_ai_cost_guards'
+BUDGET_ENV_VAR = 'PYTEST_TEST_BUDGET_SECONDS'
 
 _THIS_FILE = __file__
 _TESTS_DIR = os.path.dirname(__file__) + os.sep
@@ -109,11 +113,14 @@ class _Spawn:
 class _TestState:
     pending_spawns: list[_Spawn] = field(default_factory=list[_Spawn])
     spawned: bool = False
+    shared_setup_seconds: float = 0.0
     shared_fixture_depth: int = 0
+    setup_seconds: float = 0.0
     eligible_for_stale_check: bool = True
 
 
 _STATE_KEY = pytest.StashKey[_TestState]()
+_BUDGET_KEY = pytest.StashKey[float]()
 _DESELECTED_KEY = pytest.StashKey[set[str]]()
 _MARKER_SCOPES_KEY = pytest.StashKey[dict[str, tuple[int, bool]]]()
 _AGGREGATE_KEY = pytest.StashKey['_SessionAggregate']()
@@ -186,6 +193,7 @@ def pytest_configure(config: pytest.Config) -> None:
     global _python_programs
     _python_programs = _python_programs or _python_entry_points()
     _install_spawn_hooks()
+    config.stash[_BUDGET_KEY] = float(os.environ.get(BUDGET_ENV_VAR) or 0)
     if not hasattr(config, 'workerinput'):
         config.stash[_AGGREGATE_KEY] = aggregate = _SessionAggregate()
         _aggregates.append(aggregate)
@@ -198,7 +206,7 @@ def pytest_unconfigure(config: pytest.Config) -> None:
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item: pytest.Item) -> None:
-    for name in ('subprocess',):
+    for name in ('subprocess', 'slow'):
         marker = item.get_closest_marker(name)
         if marker is None:
             continue
@@ -226,15 +234,18 @@ def pytest_runtest_protocol(item: pytest.Item) -> Generator[None, object, object
 
 @pytest.hookimpl(wrapper=True)
 def pytest_fixture_setup(fixturedef: pytest.FixtureDef[Any]) -> Generator[None, object, object]:
-    """Track fixtures shared beyond one test, whose cost is not any one test's."""
+    """Track fixtures shared beyond one test, so their setup is not charged to whichever test happens to run first."""
     if fixturedef.scope == 'function' or not _running:
         return (yield)
     state = _running[-1].stash[_STATE_KEY]
     state.shared_fixture_depth += 1
+    start = time.perf_counter()
     try:
         return (yield)
     finally:
         state.shared_fixture_depth -= 1
+        if not state.shared_fixture_depth:
+            state.shared_setup_seconds += time.perf_counter() - start
 
 
 def _fail_report(report: pytest.TestReport, message: str) -> None:
@@ -263,6 +274,22 @@ def _unmarked_spawn_message(item: pytest.Item, when: str, spawns: list[_Spawn]) 
     return '\n'.join(lines)
 
 
+def _over_budget_message(item: pytest.Item, spent: float, budget: float, state: _TestState) -> str:
+    shared = (
+        f', not counting {state.shared_setup_seconds:.2f}s of shared fixture setup'
+        if state.shared_setup_seconds
+        else ''
+    )
+    return (
+        f'`{item.nodeid}` took {spent:.2f}s in setup and call{shared}, over the {budget:g}s per-test budget '
+        f'({BUDGET_ENV_VAR}).\n'
+        'Make it cheaper: inject or monkeypatch timeouts and poll intervals instead of waiting them out, prove '
+        'complexity bounds with growth ratios at small sizes instead of one huge input, share expensive servers '
+        f'through session-scoped fixtures, and call entry points in-process; see {_GUIDANCE_DOC}.\n'
+        "If the cost is inherent to what the test proves, mark it `@pytest.mark.slow(reason='...')`."
+    )
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> Generator[None, Any, Any]:
     report: pytest.TestReport = yield
@@ -275,6 +302,14 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
         state.spawned = True
         if item.get_closest_marker('subprocess') is None:
             _fail_report(report, _unmarked_spawn_message(item, report.when, spawns))
+
+    if report.when == 'setup':
+        state.setup_seconds = report.duration
+    elif report.when == 'call':
+        budget = item.config.stash[_BUDGET_KEY]
+        spent = max(state.setup_seconds - state.shared_setup_seconds, 0) + report.duration
+        if budget and spent > budget and report.passed and item.get_closest_marker('slow') is None:
+            _fail_report(report, _over_budget_message(item, spent, budget, state))
 
     if not report.passed:
         state.eligible_for_stale_check = False

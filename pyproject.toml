@@ -466,6 +466,7 @@ markers = [
     "sprites_live: runs against a real Sprites control plane; needs credentials",
     "temporal: starts or connects to a local Temporal dev server",
     "subprocess(reason, conditional=False): launches a Python interpreter, which the cost guard otherwise fails; reason required. `conditional=True` skips the stale-marker check for a test that only launches one on some platforms or installs",
+    "slow(reason): exempt from the per-test time budget (`PYTEST_TEST_BUDGET_SECONDS`); reason required",
 ]
 filterwarnings = [
     "error",
