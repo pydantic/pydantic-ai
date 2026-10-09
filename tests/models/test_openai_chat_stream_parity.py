@@ -10,16 +10,15 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, cast
 
 import httpx2
 import pytest
-import yaml
 
 from pydantic_ai.messages import BaseToolCallPart, ModelResponse, ModelResponsePart
 from pydantic_ai.models import ModelRequestParameters
 
+from ..cassette_utils import recorded_interactions
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -44,7 +43,6 @@ with try_import() as imports_successful:
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
-_TESTS_DIR = Path(__file__).parents[1]
 
 # Providers with their own SDK or model class, whose streams another test covers.
 _OTHER_MODEL_HOSTS = ('api.groq.com', 'api.mistral.ai', 'router.huggingface.co')
@@ -73,21 +71,17 @@ def _model(uri: str, model_name: str, client: AsyncOpenAI) -> OpenAIChatModel:
 
 def _recorded_streams() -> dict[str, dict[str, Any]]:
     streams: dict[str, dict[str, Any]] = {}
-    for path in sorted(_TESTS_DIR.rglob('*.yaml')):
-        text = path.read_text()
-        if '/chat/completions' not in text or 'data: {' not in text:
-            continue
-        for index, interaction in enumerate(yaml.safe_load(text)['interactions']):
-            uri: str = interaction['request']['uri']
-            body = interaction['response'].get('body', {}).get('string')
-            if (
-                uri.endswith('/chat/completions')
-                and not any(host in uri for host in _OTHER_MODEL_HOSTS)
-                and isinstance(body, str)
-                # A stream may start with an SSE comment, like OpenRouter's `: OPENROUTER PROCESSING`.
-                and body.lstrip().startswith(('data:', ':'))
-            ):
-                streams[f'{path.relative_to(_TESTS_DIR)}#{index}'] = interaction
+    for name, interaction in recorded_interactions('/chat/completions', 'data: {'):
+        uri: str = interaction['request']['uri']
+        body = interaction['response'].get('body', {}).get('string')
+        if (
+            uri.endswith('/chat/completions')
+            and not any(host in uri for host in _OTHER_MODEL_HOSTS)
+            and isinstance(body, str)
+            # A stream may start with an SSE comment, like OpenRouter's `: OPENROUTER PROCESSING`.
+            and body.lstrip().startswith(('data:', ':'))
+        ):
+            streams[name] = interaction
     return streams
 
 
