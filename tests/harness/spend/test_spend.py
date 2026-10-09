@@ -2675,7 +2675,7 @@ async def _stop_streaming(agent: Agent[None, str], *, at: str) -> RunUsage:
             async for node in run:  # pragma: no branch
                 if Agent.is_model_request_node(node):
                     async with node.stream(run.ctx) as stream:
-                        async for text in stream.stream_text():  # pragma: no branch
+                        async for text in stream.stream_text(debounce_by=None):  # pragma: no branch
                             if at in text:
                                 raise RuntimeError('consumer stopped')
     return run.usage
@@ -2703,8 +2703,8 @@ class TestInterruptedStreams:
         assert (await limits.status())[0].spent == Spent(usd=Decimal('10'), tokens=10, requests=1)
         assert [[(entry.tokens, entry.requests) for entry in batch] for batch in store.batches] == [[(10, 1)]]
 
-    async def test_an_interrupted_chain_is_accrued_at_each_boundary(self):
-        """The segments a stopped chain completed are accrued at their boundaries, adding up to what core counted."""
+    async def test_a_chain_stopped_mid_segment_is_charged_what_core_counted(self):
+        """The merged response of a chain stopped during its second segment is accrued once, matching `RunUsage`."""
         store = _CountingStore()
         model = ScriptedContinuationModel(
             segments=[
@@ -2724,10 +2724,7 @@ class TestInterruptedStreams:
 
         assert usage.total_tokens == 21
         assert (await limits.status())[0].spent == Spent(usd=Decimal('21'), tokens=21, requests=1)
-        assert [[(entry.tokens, entry.requests) for entry in batch] for batch in store.batches] == [
-            [(10, 1)],
-            [(11, 0)],
-        ]
+        assert [[(entry.tokens, entry.requests) for entry in batch] for batch in store.batches] == [[(21, 1)]]
 
     async def test_the_rejected_attempts_before_it_are_charged_too(self):
         model = _AttemptsBeforeStream(
