@@ -73,11 +73,16 @@ short-lived credential for client-led negotiation. Either way the browser is a p
 session and can send provider-native control events, so authorize every server-side tool against
 trusted [`deps`](../dependencies.md), not session instructions supplied to the model.
 
+To continue an earlier conversation, create the `AgentRealtime` per call inside the offer handler,
+`realtime = agent.realtime(model, message_history=...)`, and answer the offer and open the sideband from
+that same object. GPT-Live takes the history when the offer starts the call, and a sideband opened with
+other history refuses to attach; the other providers seed it when the sideband attaches.
+
 !!! warning "The browser can read seeded history"
-    Seeding a sideband session with [`message_history`](history.md) sends those prior turns into the
+    Seeding a WebRTC call with [`message_history`](history.md) sends those prior turns into the
     **shared** provider conversation that the browser is a peer on, so a call participant can read
     them — including confidential tool results — over the data channel (Azure's `webrtcfilter=on`
-    still forwards conversation-item events). Only seed a sideband with history that is safe for the
+    still forwards conversation-item events). Only seed a call with history that is safe for the
     browser to see; keep confidential context in [`deps`](../dependencies.md) and tool logic instead.
 
 A sideband does not own the audio transport: its `send_audio()`, `commit_audio()`, `clear_audio()`,
