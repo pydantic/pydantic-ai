@@ -1,4 +1,4 @@
-"""CLI output is UTF-8 even when the platform's default text codec is not."""
+"""Windows Git and gh output use UTF-8; POSIX Git keeps locale decoding."""
 
 import os
 import subprocess
