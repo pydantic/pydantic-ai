@@ -7,7 +7,7 @@ import sys
 import warnings
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from types import FrameType
@@ -430,6 +430,14 @@ def test_from_data_uri_base64():
     assert bc.media_type == 'image/png'
 
 
+def test_from_data_uri_parameterized_media_type_round_trip():
+    bc = BinaryContent.from_data_uri('data:application/json;charset=utf-8;base64,eyJhIjogMX0=')
+    # The media type is stored verbatim, parameters included.
+    assert bc.media_type == 'application/json;charset=utf-8'
+    assert bc.data == b'{"a": 1}'
+    assert bc.data_uri == 'data:application/json;charset=utf-8;base64,eyJhIjogMX0='
+
+
 def test_from_data_uri_non_base64():
     with pytest.raises(ValueError, match='must be base64-encoded'):
         BinaryContent.from_data_uri('data:text/plain,Hello%20World')
@@ -460,7 +468,7 @@ def test_video_url_invalid():
 
 
 @pytest.mark.skipif(
-    sys.version_info < (3, 11), reason="'Python 3.10's mimetypes module does not support query parameters'"
+    sys.version_info < (3, 12), reason='`mimetypes` does not support URL query parameters on Python 3.11'
 )
 def test_url_with_query_parameters() -> None:
     """Test that Url types correctly infer media type from URLs with query parameters"""
@@ -590,7 +598,7 @@ def test_pre_usage_refactor_messages_deserializable():
             'parts': [
                 {
                     'content': 'What is the capital of Mexico?',
-                    'timestamp': datetime.now(tz=timezone.utc),
+                    'timestamp': datetime.now(tz=UTC),
                     'part_kind': 'user-prompt',
                 }
             ],
@@ -607,7 +615,7 @@ def test_pre_usage_refactor_messages_deserializable():
                 'details': None,
             },
             'model_name': 'gpt-5-2025-08-07',
-            'timestamp': datetime.now(tz=timezone.utc),
+            'timestamp': datetime.now(tz=UTC),
             'kind': 'response',
             'vendor_details': {
                 'finish_reason': 'STOP',
@@ -622,7 +630,7 @@ def test_pre_usage_refactor_messages_deserializable():
                 parts=[
                     UserPromptPart(
                         content='What is the capital of Mexico?',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
             ),
@@ -634,7 +642,7 @@ def test_pre_usage_refactor_messages_deserializable():
                     details={},
                 ),
                 model_name='gpt-5-2025-08-07',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='chatcmpl-CBpEXeCfDAW4HRcKQwbqsRDn7u7C5',
             ),
@@ -874,7 +882,7 @@ def test_file_part_serialization_roundtrip():
 def test_model_messages_type_adapter_preserves_run_id():
     messages: list[ModelMessage] = [
         ModelRequest(
-            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=timezone.utc))],
+            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=UTC))],
             run_id='run-123',
             metadata={'key': 'value'},
         ),
@@ -890,7 +898,7 @@ def test_model_messages_type_adapter_preserves_run_id():
 def test_model_messages_type_adapter_preserves_conversation_id():
     messages: list[ModelMessage] = [
         ModelRequest(
-            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=timezone.utc))],
+            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=UTC))],
             conversation_id='conv-abc',
         ),
         ModelResponse(parts=[TextPart(content='Hello!')], conversation_id='conv-abc'),
@@ -926,7 +934,7 @@ def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():
             parts=[
                 UserPromptPart(
                     content=[TextContent(content='What is the weather like today?', metadata={'foo': 'bar'})],
-                    timestamp=datetime.now(tz=timezone.utc),
+                    timestamp=datetime.now(tz=UTC),
                 )
             ],
             run_id='run-123',
@@ -2137,7 +2145,7 @@ def test_tool_return_mapping_with_non_str_key_stays_mapping():
     assert stringified_key['1'] == ImageUrl(url='https://example.com/x.png')
 
 
-class _Flavour(str, Enum):
+class _Flavour(str, Enum):  # noqa: UP042
     """A `str` subclass of the kind a tool might legitimately return."""
 
     VANILLA = 'vanilla'
@@ -2995,7 +3003,7 @@ def test_prepare_messages_converts_speech_parts():
     # The default profile doesn't support audio input, so the transcript is used.
     prepared = TestModel().prepare_messages(history)
     assert message(prepared, ModelRequest, index=0).parts == [
-        UserPromptPart(content='What time is it?', timestamp=IsNow(tz=timezone.utc))
+        UserPromptPart(content='What time is it?', timestamp=IsNow(tz=UTC))
     ]
     assert message(prepared, ModelResponse, index=1).parts == [
         TextPart(content='It is noon.'),
@@ -3004,9 +3012,7 @@ def test_prepare_messages_converts_speech_parts():
 
     # A model that supports audio input receives the retained audio instead of the transcript.
     prepared = TestModel(profile={'supports_audio_input': True}).prepare_messages(history)
-    assert message(prepared, ModelRequest, index=0).parts == [
-        UserPromptPart(content=[audio], timestamp=IsNow(tz=timezone.utc))
-    ]
+    assert message(prepared, ModelRequest, index=0).parts == [UserPromptPart(content=[audio], timestamp=IsNow(tz=UTC))]
 
 
 @pytest.mark.parametrize(

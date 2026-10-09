@@ -3,10 +3,8 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Literal, cast, overload
-
-from typing_extensions import assert_never
+from datetime import UTC, datetime
+from typing import Any, Literal, assert_never, cast, overload
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
@@ -54,6 +52,7 @@ from . import (
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
+from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
 from ._tool_choice import resolve_tool_choice
 
 try:
@@ -266,7 +265,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
 
         hf_messages = await self._map_messages(messages, model_request_parameters)
 
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name), map_decode_errors(self.model_name):
             return await self.client.chat.completions.create(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType, reportCallIssue]
                 model=self._model_name,
                 messages=hf_messages,  # pyright: ignore[reportArgumentType]
@@ -305,7 +304,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         raw_finish_reason = choice.finish_reason
         provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
         if response.created:  # pragma: no branch
-            provider_details['timestamp'] = datetime.fromtimestamp(response.created, tz=timezone.utc)
+            provider_details['timestamp'] = datetime.fromtimestamp(response.created, tz=UTC)
         finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
 
         return ModelResponse(
@@ -326,7 +325,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         peekable_response: _utils.PeekableAsyncStream[
             ChatCompletionStreamOutput, AsyncIterable[ChatCompletionStreamOutput]
         ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name), map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
@@ -343,7 +342,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
-            _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
+            _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=UTC),
         )
 
     @staticmethod
@@ -563,7 +562,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
         with _map_api_errors(self._model_name):
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
-            async for chunk in self._response:
+            async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
                 self._usage += _map_usage(chunk)
 
                 if chunk.id:  # pragma: no branch

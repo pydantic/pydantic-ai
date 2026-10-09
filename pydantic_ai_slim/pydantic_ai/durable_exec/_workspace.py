@@ -16,12 +16,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Literal, Never, TypeAlias, assert_never, cast
 
 import anyio
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import Never, assert_never
 
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler, select_workspace

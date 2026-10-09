@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from ._warn import HarnessDeprecationWarning
+from ._warn import HarnessDeprecationWarning, MCPReadOnlyNoToolsWarning
 
 if TYPE_CHECKING:
     from .absurd import AbsurdDurability
@@ -104,6 +104,7 @@ __all__ = [
     'InputGuardrailFunc',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
+    'MCPReadOnlyNoToolsWarning',
     'Macroscope',
     'ManagedPrompt',
     'Memory',

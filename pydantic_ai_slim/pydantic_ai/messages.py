@@ -24,6 +24,7 @@ from typing import (
     Literal,
     TypeAlias,
     TypeGuard,
+    assert_never,
     cast,
     get_args,
     overload,
@@ -35,7 +36,7 @@ import pydantic_core
 from genai_prices import types as genai_types
 from pydantic.alias_generators import to_snake
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, TypeVar, assert_never
+from typing_extensions import TypeAliasType, TypeVar
 
 from pydantic_ai._genai_prices import calculate_price_for_usage
 
@@ -72,8 +73,6 @@ _mime_types.read_windows_registry()
 for file in mimetypes.knownfiles:
     if os.path.isfile(file):
         _mime_types.read(file)  # pragma: lax no cover
-# TODO check for added mimetypes in Python 3.11 when dropping support for Python 3.10:
-# https://github.com/python/cpython/blob/3.11/Lib/mimetypes.py
 # Document types
 _mime_types.add_type('application/rtf', '.rtf')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
@@ -4873,8 +4872,8 @@ class RealtimeSessionReconnectEvent:
 
     Session configuration (instructions, tools, voice, ...) is restored on every reconnect.
     Conversation state is restored either by the provider's native session resumption (Gemini Live
-    when enabled, xAI Grok Voice) or by the session replaying its local history into the fresh
-    server-side conversation (OpenAI/Azure OpenAI).
+    when enabled, xAI Grok Voice, a stored OpenAI GPT-Live session) or by the session replaying its local
+    history into the fresh server-side conversation (OpenAI/Azure OpenAI, an unstored GPT-Live session).
     """
 
     _: KW_ONLY
