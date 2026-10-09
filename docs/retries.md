@@ -453,18 +453,18 @@ agent = Agent(fallback)
 
 Not every SDK can take the setting per request:
 
-| Model | Notes |
-|---|---|
-| OpenAI, and the model classes built on it | Full support, including an `AsyncAzureOpenAI` client |
-| Anthropic | Full support, including `AsyncAnthropicBedrock`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients |
-| Groq | Full support |
-| Cohere | Full support |
-| Google | Keeps the delays and status codes of the provider's `retry_options`, which retry nothing unless set |
-| Mistral | `0` only: the SDK bounds retries by elapsed time, not count, so `0` turns off a `retry_config` set on the client and other values are ignored |
-| TypeSafe | The request's other `RetryPolicy` options are the SDK defaults, not the client's |
-| AWS Bedrock | Ignored: boto3 retries per client; see [Configuring Retries](models/bedrock.md#configuring-retries) |
-| xAI | Ignored: gRPC retries per channel; see [SDK retries](models/xai.md#sdk-retries) |
-| Hugging Face | Ignored: the client makes no retries |
+| Model | Supported | Notes |
+|---|---|---|
+| OpenAI, and the model classes built on it | ✅ | Full feature support, including an `AsyncAzureOpenAI` client |
+| Anthropic | ✅ | Full feature support, including `AsyncAnthropicBedrock`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients |
+| Groq | ✅ | Full feature support |
+| Cohere | ✅ | Full feature support |
+| Google | ✅ | Limited parameter support: keeps the delays and status codes of the provider's `retry_options`, which retry nothing unless set |
+| Mistral | ✅ | Limited parameter support: `0` only. The SDK bounds retries by elapsed time, not count, so `0` turns off a `retry_config` set on the client and other values are ignored |
+| TypeSafe | ✅ | Limited parameter support: the request's other `RetryPolicy` options are the SDK defaults, not the client's |
+| AWS Bedrock | ❌ | boto3 retries per client; see [Configuring Retries](models/bedrock.md#configuring-retries) |
+| xAI | ❌ | gRPC retries per channel; see [SDK retries](models/xai.md#sdk-retries) |
+| Hugging Face | ❌ | The client makes no retries |
 
 The model classes that honor it are listed under [`ModelSettings.max_retries`][pydantic_ai.settings.ModelSettings.max_retries]; the others accept it and don't change their retries.
 

@@ -2548,7 +2548,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         try:
             with map_decode_errors(self.model_name):
-                return await self.client.responses.compact(
+                return await with_max_retries(self.client, model_settings).responses.compact(
                     input=openai_messages,
                     model=self.model_name,
                     instructions=instructions,
