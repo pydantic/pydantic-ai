@@ -1583,7 +1583,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             bootstrap_capability = model_layers[0]
         resolved_models_by_selection: dict[tuple[int, str], models.Model] = {}
         # Models this run built from a name, which it enters so their HTTP clients close when it ends.
-        run_built_model_ids: set[int] = set()
+        run_built_models: list[models.Model] = []
 
         # Explicit run/spec/override models are authoritative. Otherwise the capability model
         # contribution selects the initial model needed to construct RunContext and resolve
@@ -1610,7 +1610,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capability=bootstrap_capability,
                 deps=deps,
                 resolved_models=resolved_models_by_selection,
-                run_built_model_ids=run_built_model_ids,
+                run_built_models=run_built_models,
             )
         if model_contribution is not None:
             selection_messages, selection_prompt = _agent_graph.first_step_selection_messages(
@@ -1965,7 +1965,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capability=run_capability,
                 deps=deps,
                 resolved_models=resolved_models_by_selection,
-                run_built_model_ids=run_built_model_ids,
+                run_built_models=run_built_models,
             )
             model_id = run_model_contribution if isinstance(run_model_contribution, str) else None
             model_selector = None
@@ -2064,7 +2064,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             binding=binding,
             cancellation_token=cancellation_token,
             model=model_used,
-            run_enters_current_model=capability_owns_current_model or id(model_used) in run_built_model_ids,
+            capability_owns_current_model=capability_owns_current_model,
+            run_built_models=run_built_models,
             model_resources=model_resources,
             run_capability=run_capability,
             toolset=toolset,
@@ -3133,13 +3134,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capability: AbstractCapability[AgentDepsT],
         deps: AgentDepsT,
         resolved_models: dict[tuple[int, str], models.Model] | None = None,
-        run_built_model_ids: set[int] | None = None,
+        run_built_models: list[models.Model] | None = None,
     ) -> models.Model:
         """Resolve a concrete model selection through the capability chain.
 
         A name that only `infer_model` can resolve builds a new model, with its own provider and HTTP client.
         While the agent is entered, that model is entered on the agent's exit stack and reused by later runs;
-        otherwise its ID is added to `run_built_model_ids` so the run can enter it and close its client when it ends.
+        otherwise it's added to `run_built_models` so the run can enter it and close its client when it ends.
         """
         if not isinstance(selection, str):
             return selection
@@ -3155,8 +3156,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             resolved_model = await self._entered_model_for_name(selection)
             if resolved_model is None:
                 resolved_model = models.infer_model(selection)
-                if run_built_model_ids is not None:
-                    run_built_model_ids.add(id(resolved_model))
+                if run_built_models is not None:
+                    run_built_models.append(resolved_model)
         if resolved_models is not None:
             resolved_models[cache_key] = resolved_model
         return resolved_model
@@ -4376,7 +4377,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     binding: RunBinding | None
     cancellation_token: CancellationToken | None
     model: models.Model
-    run_enters_current_model: bool
+    capability_owns_current_model: bool
+    run_built_models: list[models.Model]
     model_resources: _RunModelResources
     run_capability: AbstractCapability[_PreparedDepsT]
     toolset: AbstractToolset[_PreparedDepsT]
@@ -4496,8 +4498,11 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                     (*_ACTIVE_AGENT_LIMITERS.get(), (task_id, self.concurrency_limiter))
                 )
                 stack.callback(_ACTIVE_AGENT_LIMITERS.reset, limiter_token)
-            if self.run_enters_current_model:
+            if self.capability_owns_current_model:
                 await self.model_resources.enter_model(self.model)
+            # Including one the run's capabilities replaced, which would otherwise never be closed.
+            for built_model in self.run_built_models:
+                await self.model_resources.enter_model(built_model)
             graph_run = await stack.enter_async_context(
                 self.graph.iter(
                     inputs=self.user_prompt_node,

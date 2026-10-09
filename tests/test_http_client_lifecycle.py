@@ -9,15 +9,17 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 import httpx2
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai._http import create_async_httpx2_client
-from pydantic_ai.capabilities import ResolveModelId
+from pydantic_ai.capabilities import AbstractCapability, ResolveModelId
 from pydantic_ai.models import Model, ModelResolutionContext
+from pydantic_ai.models.test import TestModel
 
 from .conftest import try_import
 
@@ -112,6 +114,28 @@ async def test_entered_agent_reuses_its_deferred_model_name(provider_clients: li
         await agent.run('What is the capital of France?', model='openai-chat:gpt-5.2')
         assert [client.is_closed for client in provider_clients] == [True, False]
     assert [client.is_closed for client in provider_clients] == [True, True]
+
+
+@dataclass
+class _SwitchToTestModel(AbstractCapability[Any]):
+    """Contributes no model until `for_run` replaces it with one that contributes a `TestModel`."""
+
+    switched: bool = False
+
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return _SwitchToTestModel(switched=True)
+
+    def get_model(self) -> Model | None:
+        return TestModel() if self.switched else None
+
+
+async def test_run_closes_client_of_model_built_from_name_it_replaced(provider_clients: list[httpx2.AsyncClient]):
+    """A model the run built from a name and a capability then replaced still has its client closed."""
+    agent = Agent('openai-chat:gpt-5.2', defer_model_check=True, capabilities=[_SwitchToTestModel()])
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == 'success (no tool calls)'
+    assert [client.is_closed for client in provider_clients] == [True]
 
 
 async def test_run_leaves_client_of_passed_model_open(provider_clients: list[httpx2.AsyncClient]):
