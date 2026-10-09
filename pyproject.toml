@@ -35,6 +35,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
     "Operating System :: OS Independent",
@@ -226,6 +227,9 @@ fastmcp = "2026-10-08T22:57:02Z"
 fastmcp-slim = "2026-10-08T22:57:02Z"
 fastmcp-tasks = "2026-10-08T22:57:02Z"
 pydocket = "2026-10-08T22:57:02Z"
+# pyarrow 26.0.0 is the first release with cp315 wheels (`datasets`, all-extras on Python 3.15).
+# TODO(adtyavrdhn): Remove after 2026-10-16 08:27 UTC.
+pyarrow = "2026-10-09T08:26:26Z"
 
 [dependency-groups]
 dev = [
@@ -265,6 +269,8 @@ dev = [
     # `fastmcp` package alongside, tracking the same range as the `[mcp]` extra (#6661).
     "fastmcp>=3.3.0,<5",
     # FastMCP 3 pulls in `beartype` 0.22, which imports `typing.no_type_check_decorator` (removed in 3.15).
+    # Removable once beartype 0.23.0 final is released (tracked in #9455):
+    # https://github.com/beartype/beartype/issues/618
     "beartype>=0.23.0rc2; python_version >= '3.15'",
     # The MCP SDK v2 wire types as a standalone pure-Pydantic distribution, so the tests can check
     # the compat readers' field-name pairs against the real v2 models while running against v1.
@@ -515,6 +521,10 @@ filterwarnings = [
     "ignore:UnsupportedFieldAttributeWarning:UserWarning",
     # coolname (prefect dep) uses codecs.open(), deprecated in Python 3.14
     "ignore:codecs.open\\(\\) is deprecated:DeprecationWarning",
+    # Python 3.15 deprecates `isinstance()` against protocols without `@runtime_checkable`, which
+    # `py-key-value-aio`'s `AsyncKeyValue` (via FastMCP) lacks; beartype then turns the warning into an error.
+    # Removable once `py-key-value-aio` decorates its protocols (tracked in #9455).
+    "ignore:<class 'key_value\\.aio\\..*'> isn't explicitly decorated with @runtime_checkable:DeprecationWarning",
     # outlines' llamacpp backend calls llama-cpp-python's `Llama.from_pretrained`, which forwards
     # `local_dir_use_symlinks` to `hf_hub_download`; huggingface-hub >= 1.0 deprecated (and ignores)
     # that arg and warns about it. The arg is a no-op and the call site isn't ours to change.

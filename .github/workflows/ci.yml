@@ -499,8 +499,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `latest-versions-canary.yml` runs the stable endpoints of this list; update it
-        # when Python 3.15 becomes a required test version.
+        # `latest-versions-canary.yml` runs the endpoints of this list; update it alongside.
         # Growing this or any other test matrix grows the tracked-job count that
         # `REPORT_ROW_LIMIT` in `.github/scripts/ci_duration.py` must stay above, or the duration
         # report truncates. That constant's comment enumerates all four.
@@ -545,9 +544,6 @@ jobs:
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.clai2_only == 'true' && matrix.python-version == '3.11' }}
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
       CLAI2_EXTRA: ${{ matrix.clai2_only == 'true' && 'typesafe' || '' }}
-    # Python 3.15 is under evaluation. Keep the results visible while its
-    # dependencies and test suite catch up, then make this entry required.
-    continue-on-error: ${{ matrix.python-version == '3.15' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -661,8 +657,6 @@ jobs:
       BLOCKBUSTER_ENABLED: false
       # `tests/test_examples.py` type-checks the docs examples with pyright; once per run is enough.
       TYPECHECK_EXAMPLES: ${{ matrix.python-version == '3.14' }}
-      # onnxruntime 1.30.0 has no Python 3.15 wheel; see #9455.
-      PY315_EXCLUDE_ONNX: ${{ matrix.python-version == '3.15' }}
       # `tests/harness/absurd` runs on Absurd's schema; an unreachable server fails rather than skips.
       ABSURD_REQUIRE_LIVE: "1"
       ABSURD_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
@@ -678,7 +672,6 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-    continue-on-error: ${{ matrix.python-version == '3.15' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -754,10 +747,6 @@ jobs:
       - name: run tests
         shell: bash
         run: |
-          excluded_extras=()
-          if [[ "$PY315_EXCLUDE_ONNX" == "true" ]]; then
-            excluded_extras=(--no-extra prompt-injection-defender-ml)
-          fi
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
             runner=(coverage run -m pytest)
@@ -767,7 +756,7 @@ jobs:
           fi
           # `--all-packages` so the extras of every workspace member are installed, not just the
           # root package's: that is where `pydantic-ai-harness`'s optional integrations get tested.
-          uv run --all-packages --all-extras --no-extra mcp-tasks "${excluded_extras[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+          uv run --all-packages --all-extras --no-extra mcp-tasks "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec -m "not temporal" --splits "$SPLITS" --group ${{ matrix.shard }}
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
@@ -820,6 +809,10 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         resolution: [locked, lowest]
+        # The declared minimums predate Python 3.15 wheels, so 3.15 runs the `locked` leg only.
+        include:
+          - python-version: "3.15"
+            resolution: locked
     env:
       CI: true
       # Python 3.11 and 3.14 cover version endpoints; both 3.12 resolutions cover Temporal dependency branches.
