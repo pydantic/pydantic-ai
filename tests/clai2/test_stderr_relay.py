@@ -69,7 +69,6 @@ def _shown(screen: int) -> bytes:
 @pytest.mark.subprocess(reason='a child process must inherit the relayed stderr, which is the behavior under test')
 def test_relay_keeps_fork_notices_off_the_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(stderr_relay.sys, 'platform', 'darwin')
-    child = f'import os; os.write(2, b"child error\\n"); os.write(2, {_NOTICE!r}); os.write(2, b"child done\\n")'
     screen, terminal = os.openpty()
     with _stderr_to(terminal):
         os.close(terminal)
@@ -78,7 +77,7 @@ def test_relay_keeps_fork_notices_off_the_terminal(monkeypatch: pytest.MonkeyPat
             # writes in a fork's child before `exec`, is filtered the same way.
             assert not os.isatty(2)
             os.write(2, b'parent error\n' + _NOTICE)
-            subprocess.run([sys.executable, '-c', child], check=True)
+            subprocess.run(['sh', '-c', 'cat >&2'], input=b'child error\n' + _NOTICE + b'child done\n', check=True)
             os.write(2, b'Password: ')
             original = terminal_stderr()
             assert original is not None and os.isatty(original)
