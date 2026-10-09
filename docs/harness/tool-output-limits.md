@@ -358,6 +358,32 @@ engine's payload limit. And a custom `summarize` callable runs directly rather t
 operation -- arbitrary callables cannot be reconstructed on the worker side -- so it may be called
 again on replay.
 
+## Summary streaming
+
+The summary request is non-streaming unless `event_stream_handler` is set on the `Summarize`
+action. Supply a handler to watch the summary as it is written, or pass `drain_summary_events`
+to take the streaming request path without handling the events -- which is what a summarizer
+endpoint that rejects non-streaming requests needs:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness.tool_output_limits import Band, Summarize, ToolOutputLimits, drain_summary_events
+
+agent = Agent(
+    'openai:gpt-4o',
+    capabilities=[
+        ToolOutputLimits(
+            bands=[Band(over=20_000, action=Summarize(event_stream_handler=drain_summary_events))],
+        )
+    ],
+)
+```
+
+Neither transport works everywhere, which is why this is a choice rather than a default: some
+endpoints reject non-streaming requests and others reject streaming ones. The handler receives
+the summary run's own `RunContext` and event stream; the outer `Agent.run(...)` handler is not
+inherited and never sees the summary token deltas.
+
 ## Edge cases
 
 - Binary returns spill verbatim and are never stringify-truncated; `Truncate` / `Summarize`
