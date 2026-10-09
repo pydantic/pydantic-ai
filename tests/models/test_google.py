@@ -9,7 +9,7 @@ import re
 import tempfile
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from datetime import date, timezone
+from datetime import date
 from decimal import Decimal
 from enum import Enum
 from typing import Any, cast
@@ -186,7 +186,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                     ),
                 ],
                 instructions='You are a chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -260,7 +260,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -295,7 +295,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -334,7 +334,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -399,7 +399,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
                     UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime()),
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -440,7 +440,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -481,7 +481,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -913,7 +913,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1078,7 +1078,7 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1169,7 +1169,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1313,7 +1313,7 @@ async def test_google_model_web_search_tool_stream(allow_model_requests: None, g
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1567,7 +1567,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1674,7 +1674,7 @@ async def test_google_model_web_fetch_tool(allow_model_requests: None, google_pr
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1762,7 +1762,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2053,7 +2053,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     )
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2101,7 +2101,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     )
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2159,7 +2159,7 @@ async def test_google_model_thinking_part_from_other_model(
                     )
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2210,7 +2210,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=timezone.utc),
+                    'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=datetime.UTC),
                     'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
@@ -2240,7 +2240,7 @@ async def test_google_model_thinking_part_from_other_model(
                     )
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2303,7 +2303,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                     )
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2511,10 +2511,10 @@ async def test_google_url_input(
                 parts=[
                     UserPromptPart(
                         content=['What is the main content of this URL?', Is(url)],
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=datetime.UTC),
                     ),
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2557,10 +2557,10 @@ async def test_google_url_input_force_download(
                 parts=[
                     UserPromptPart(
                         content=['What is the main content of this URL?', Is(video_url)],
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=datetime.UTC),
                     ),
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2614,7 +2614,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2647,7 +2647,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2680,7 +2680,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2874,7 +2874,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2907,7 +2907,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2946,7 +2946,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2980,7 +2980,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3023,7 +3023,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3082,7 +3082,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3144,7 +3144,7 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3207,7 +3207,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3262,7 +3262,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3305,7 +3305,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3366,7 +3366,7 @@ async def test_google_prompted_output_multiple(allow_model_requests: None, googl
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4618,7 +4618,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             timestamp=IsDatetime(),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4685,7 +4685,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             timestamp=IsDatetime(),
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4797,7 +4797,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                             timestamp=IsDatetime(),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -5025,7 +5025,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5054,7 +5054,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=timezone.utc),
+                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=datetime.UTC),
                     'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
@@ -5071,7 +5071,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5098,7 +5098,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=timezone.utc),
+                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=datetime.UTC),
                     'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
@@ -5152,7 +5152,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5416,7 +5416,7 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5652,7 +5652,7 @@ async def test_google_streaming_tool_call_thought_signature(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5693,7 +5693,7 @@ async def test_google_streaming_tool_call_thought_signature(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6518,7 +6518,7 @@ async def test_google_service_tier_response_extraction(
         ),
         response_id='resp_123',
         model_version=model_name,
-        create_time=datetime.datetime.now(tz=datetime.timezone.utc),
+        create_time=datetime.datetime.now(tz=datetime.UTC),
     )
     response.sdk_http_response = HttpResponse(headers={'x-gemini-service-tier': 'PRIORITY'})
 
@@ -6557,7 +6557,7 @@ async def test_google_service_tier_streamed_response_extraction(
         ),
         response_id='resp_123',
         model_version=model_name,
-        create_time=datetime.datetime.now(tz=datetime.timezone.utc),
+        create_time=datetime.datetime.now(tz=datetime.UTC),
     )
     chunk.sdk_http_response = HttpResponse(headers={'x-gemini-service-tier': 'FLEX'})
 
@@ -7014,7 +7014,7 @@ async def test_google_model_armor_config_is_sent_in_request(
 
 # Opted in, and the cassette was recorded with the described options in the request, so the recording only
 # matches what the code sends while the enum keeps opting in.
-class TicketPriority(UseEnumMemberDocstrings, str, Enum):
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """How urgent the ticket is."""
 
     low = 'low'
