@@ -70,12 +70,16 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
     """Maximum retries for the orchestration tool (syntax/runtime errors count as retries)."""
 
     forward_usage: bool = True
-    """Share the parent run's `usage` accumulator with sub-agents, tallying the whole tree's
-    token and request spend in one place.
+    """Share the parent run's `usage` accumulator and `usage_limits` with sub-agents, tallying
+    and bounding the whole tree's token and request spend in one place.
 
-    This does **not** forward the parent's `usage_limits` into sub-agent runs (`RunContext` does
-    not expose the limit value): set `sub_agent_usage_limits` to bound sub-agents, or
-    `max_agent_calls` for an exact ceiling on the number of runs.
+    The parent's limits are checked against the shared counter, so the `usage_limits` passed to
+    the parent `run()` caps the tree. One `tool_calls_limit` slot is held back for the
+    `run_workflow` call itself, and `count_tokens_before_request` is not forwarded, since a
+    sub-agent may run on a model without `count_tokens` support. The cap is best-effort under
+    concurrent fan-out; use `max_agent_calls` for an exact ceiling on the number of runs.
+    With `False`, each sub-agent run counts on its own and runs under `sub_agent_usage_limits`,
+    or pydantic-ai's default limits when that is unset.
     """
 
     inherit_model: bool = False
@@ -89,13 +93,15 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
     """
 
     sub_agent_usage_limits: UsageLimits | None = None
-    """`UsageLimits` applied to every sub-agent run, replacing pydantic-ai's default.
+    """`UsageLimits` applied to every sub-agent run, replacing the parent's forwarded limits (or
+    pydantic-ai's default, with `forward_usage=False`).
 
     With `forward_usage=False`, a per-run `total_tokens_limit` of `T` plus `max_agent_calls` of
     `N` bounds the tree to roughly `N * T` tokens (each run can overshoot by its final response,
     since core checks token limits after a response arrives). With `forward_usage=True` the limit
     is checked against the shared counter -- a tree-wide cap, best-effort under concurrent fan-out.
-    `None` keeps the default (`request_limit=50`, no token limit).
+    `None` forwards the parent's limits with `forward_usage=True`, and keeps pydantic-ai's default
+    (`request_limit=50`, no token limit) with `forward_usage=False`.
     """
 
     resource_limits: WorkflowResourceLimits | Literal['unlimited'] | None = None
