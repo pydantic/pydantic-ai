@@ -97,6 +97,10 @@ The sandbox also has direct capabilities, no function call needed:
   function like `shell` (e.g. `curl`).
 
 Use raw Python strings for regex patterns so backslashes are not invalid escapes.
+For a multiline shell command, always pass it as a raw triple-quoted string
+with the keyword form, e.g. shell(command=r'''...'''), so its newlines and
+quotes cannot make the snippet fail with a Python syntax or quote-mismatch
+error before the command runs.
 
 How to work. The runtime watches your code AS YOU WRITE IT and starts
 eligible calls before the snippet is finished, so the SHAPE of your code

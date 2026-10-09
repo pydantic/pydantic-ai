@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -585,3 +586,51 @@ class TestSandboxCallDisplay:
         assert await show.wrap_tool_execute(context(), call=call, tool_def=tool_def, args={}, handler=late) == 'late'
         # Nothing was held, so the claim reports nothing; emitting would fail, as this context has no stream.
         await show.on_event(context(), event=claimed(ready=True, elapsed_ms=1, launch_id=call.tool_call_id))
+
+
+async def test_guidance_mentions_raw_triple_quoted_multiline_shell_commands(tmp_path: Path) -> None:
+    instructions: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.instructions is not None
+        instructions.append(info.instructions)
+        return ModelResponse(parts=[TextPart('done')])
+
+    await fold_agent(streamed(respond), SpeculationCounters(), tmp_path).run('hi')
+    [instruction] = instructions
+    assert 'raw triple-quoted' in instruction
+    assert 'shell(command=' in instruction
+
+
+async def test_run_code_multiline_shell_command_keyword_raw_string_runs(tmp_path: Path) -> None:
+    code = "out = await shell(command=r'''echo one\necho \"it's fine\"\necho two''')\nout"
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+    coder = Coder(repo_context=False)
+    agent: Agent[None, str] = Agent(
+        streamed(respond),
+        capabilities=[
+            coder,
+            *speculative_capabilities(SpeculationCounters(), (coder,)),
+            LocalWorkspace(tmp_path),
+        ],
+    )
+    result = await agent.run('run the multiline shell command')
+    assert result.output == 'done'
+    messages = result.all_messages()
+    tool_returns = [
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+    ]
+    assert len(tool_returns) == 1
+    content = str(tool_returns[0].content)
+    assert 'one' in content
+    assert "it's fine" in content
+    assert 'two' in content
+    assert not any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
