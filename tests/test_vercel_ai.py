@@ -20,6 +20,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Capability, NativeTool
+from pydantic_ai.durable_exec._codec import JSON_CODEC
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     AudioUrl,
@@ -2404,8 +2405,9 @@ async def test_run_stream_native_tool_search_tool_kind_metadata(sdk_version: Lit
     assert tool_events == expectations[sdk_version]
 
 
-async def test_run_stream_tool_metadata_single_chunk():
-    """Test that a single data-carrying chunk in ToolReturnPart.metadata is yielded to the stream."""
+@pytest.mark.parametrize('durable_round_trip', [False, True], ids=['in-memory', 'durable'])
+async def test_run_stream_tool_metadata_single_chunk(durable_round_trip: bool):
+    """A metadata chunk is yielded both directly and after the durable codec round trip."""
 
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -2419,10 +2421,13 @@ async def test_run_stream_tool_metadata_single_chunk():
 
     @agent.tool_plain
     async def send_data() -> ToolReturn:
-        return ToolReturn(
+        result = ToolReturn(
             return_value='Data sent',
             metadata=DataChunk(type='data-custom', data={'key': 'value'}),
         )
+        if durable_round_trip:
+            result = JSON_CODEC.load(ToolReturn, JSON_CODEC.dump(ToolReturn, result))
+        return result
 
     request = SubmitMessage(
         id='foo',
@@ -2460,6 +2465,48 @@ async def test_run_stream_tool_metadata_single_chunk():
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'part',
+    [
+        ToolReturnPart(
+            tool_name='send_data', content={'type': 'data-custom', 'data': {'key': 'value'}}, tool_call_id='call_1'
+        ),
+        ToolReturnPart(
+            tool_name='send_data',
+            content={'type': 'data-custom', 'data': {'key': 'value'}},
+            tool_call_id='call_1',
+            metadata={'url': 'https://example.com/file.png', 'media_type': 'image/png'},
+        ),
+    ],
+    ids=['chunk-shaped-content', 'metadata-without-type'],
+)
+async def test_event_stream_does_not_interpret_non_chunks_as_serialized_metadata(part: ToolReturnPart):
+    """Tool content is never rehydrated, and a metadata dict without a chunk `type` is not a chunk."""
+
+    async def event_generator():
+        yield FunctionToolResultEvent(part=part)
+
+    event_stream = VercelAIEventStream()
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+        if '[DONE]' not in event
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'call_1',
+                'output': {'type': 'data-custom', 'data': {'key': 'value'}},
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
         ]
     )
 
@@ -2528,12 +2575,9 @@ async def test_run_stream_tool_metadata_multiple_chunks():
     )
 
 
-async def test_run_stream_tool_metadata_yields_data_chunks():
-    """Test that data-carrying chunks in ToolReturnPart.metadata are yielded to the stream.
-
-    Only data-carrying chunk types (DataChunk, SourceUrlChunk, SourceDocumentChunk,
-    FileChunk) are yielded; protocol-control chunks are filtered out by iter_metadata_chunks.
-    """
+@pytest.mark.parametrize('serialized', [False, True], ids=['instances', 'serialized'])
+async def test_run_stream_tool_metadata_yields_data_chunks(serialized: bool):
+    """Data-carrying metadata chunks are yielded, as instances or serialized dicts; protocol-control chunks are filtered out."""
 
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -2547,17 +2591,19 @@ async def test_run_stream_tool_metadata_yields_data_chunks():
 
     @agent.tool_plain
     async def send_data() -> ToolReturn:
-        return ToolReturn(
-            return_value='Data sent',
-            metadata=[
-                SourceUrlChunk(source_id='src_1', url='https://example.com', title='Example'),
-                SourceDocumentChunk(source_id='doc_1', media_type='application/pdf', title='Doc', filename='doc.pdf'),
-                FileChunk(url='https://example.com/file.png', media_type='image/png'),
-                # Protocol-control chunk — filtered out by iter_metadata_chunks
-                ToolInputStartChunk(tool_call_id='call_x', tool_name='other'),
-                DataChunk(type='data-valid', data={'survived': True}),
-            ],
-        )
+        metadata = [
+            SourceUrlChunk(source_id='src_1', url='https://example.com', title='Example'),
+            SourceDocumentChunk(source_id='doc_1', media_type='application/pdf', title='Doc', filename='doc.pdf'),
+            FileChunk(url='https://example.com/file.png', media_type='image/png'),
+            # Protocol-control chunk — filtered out by iter_metadata_chunks
+            ToolInputStartChunk(tool_call_id='call_x', tool_name='other'),
+            # Transient data is streamed, but not persisted by dump_messages
+            DataChunk(type='data-progress', data={'pct': 50}, transient=True),
+            DataChunk(type='data-valid', data={'survived': True}),
+        ]
+        if serialized:
+            return ToolReturn(return_value='Data sent', metadata=[chunk.model_dump(mode='json') for chunk in metadata])
+        return ToolReturn(return_value='Data sent', metadata=metadata)
 
     request = SubmitMessage(
         id='foo',
@@ -2591,6 +2637,7 @@ async def test_run_stream_tool_metadata_yields_data_chunks():
                 'filename': 'doc.pdf',
             },
             {'type': 'file', 'url': 'https://example.com/file.png', 'mediaType': 'image/png'},
+            {'type': 'data-progress', 'data': {'pct': 50}, 'transient': True},
             {'type': 'data-valid', 'data': {'survived': True}},
             {'type': 'finish-step'},
             {'type': 'start-step'},
@@ -5640,8 +5687,9 @@ async def test_adapter_tool_return_multimodal_always_serialized(tiny_image: Bina
     )
 
 
-async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
-    """Test dumping messages where ToolReturnPart.metadata contains a single DataChunk."""
+@pytest.mark.parametrize('json_round_trip', [False, True], ids=['in-memory', 'persisted'])
+async def test_adapter_dump_messages_with_tool_metadata_single_chunk(json_round_trip: bool):
+    """A metadata chunk is dumped both directly and after documented history persistence."""
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Send data')]),
         ModelResponse(
@@ -5666,6 +5714,9 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
         ModelResponse(parts=[TextPart(content='Done')]),
     ]
 
+    if json_round_trip:
+        stored_messages = ModelMessagesTypeAdapter.dump_json(messages)
+        messages = ModelMessagesTypeAdapter.validate_json(stored_messages)
     ui_messages = VercelAIAdapter.dump_messages(messages)
     ui_message_dicts = [msg.model_dump() for msg in ui_messages]
 
@@ -5822,6 +5873,8 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                         FileChunk(url='https://example.com/file.png', media_type='image/png'),
                         # Protocol-control chunk — filtered out by iter_metadata_chunks
                         ToolInputStartChunk(tool_call_id='call_x', tool_name='other'),
+                        # Transient data is streamed but, as in the Vercel AI SDK, never persisted
+                        DataChunk(type='data-progress', data={'pct': 50}, transient=True),
                         DataChunk(type='data-valid', data={'survived': True}),
                     ],
                 )

@@ -2,9 +2,9 @@
 
 from collections.abc import Iterable, Iterator
 from datetime import datetime
-from typing import Any
+from typing import Any, TypeAlias, cast
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
@@ -178,27 +178,48 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 #
 # If the Vercel AI SDK introduces new data-carrying UIMessagePart variants,
 # the corresponding chunk type should be added here.
+MetadataChunk: TypeAlias = DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk
 DATA_CHUNK_TYPES = (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)
+_METADATA_CHUNK_TA: TypeAdapter[MetadataChunk] = TypeAdapter(MetadataChunk)
 
 
-def iter_metadata_chunks(
-    tool_result: ToolReturnPart,
-) -> Iterator[DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk]:
+def _as_metadata_chunk(value: object, *, allow_dict: bool) -> MetadataChunk | None:
+    """Restore a supported chunk, rehydrating dictionaries only when they came from metadata.
+
+    `ToolReturnPart.metadata` is typed `Any`, so persisting message history or a durable
+    tool result turns a chunk into a plain dict. A serialized chunk always carries its
+    `type`, which keeps an unrelated metadata dict like `{'url': ..., 'media_type': ...}`
+    from matching a chunk whose `type` has a default. Tool content is model-facing output
+    that may legitimately contain a chunk-shaped mapping, so it is never rehydrated.
+    """
+    if isinstance(value, DATA_CHUNK_TYPES):
+        return value
+    if allow_dict and is_str_dict(value) and 'type' in value:
+        try:
+            return _METADATA_CHUNK_TA.validate_python(value)
+        except ValidationError:
+            pass
+    return None
+
+
+def iter_metadata_chunks(tool_result: ToolReturnPart) -> Iterator[MetadataChunk]:
     """Yield data-carrying chunks from `tool_result.metadata` (or `.content`).
 
-    Used by both the streaming and dump paths. Only `DATA_CHUNK_TYPES` are
-    yielded; protocol-control chunks are filtered out.
+    Used by both the streaming and dump paths. Serialized metadata dictionaries
+    are rehydrated after persistence. Only `DATA_CHUNK_TYPES` are yielded;
+    protocol-control chunks are filtered out.
     """
     possible = tool_result.metadata or tool_result.content
-    if isinstance(possible, DATA_CHUNK_TYPES):
-        yield possible
+    from_metadata = bool(tool_result.metadata)
+    if chunk := _as_metadata_chunk(possible, allow_dict=from_metadata):
+        yield chunk
     elif isinstance(possible, (str, bytes)):  # pragma: no branch
         # Avoid iterable check for strings and bytes.
         pass
     elif isinstance(possible, Iterable):  # pragma: no branch
-        for item in possible:  # type: ignore[reportUnknownMemberType]
-            if isinstance(item, DATA_CHUNK_TYPES):  # pragma: no branch
-                yield item
+        for item in cast(Iterable[object], possible):
+            if chunk := _as_metadata_chunk(item, allow_dict=from_metadata):
+                yield chunk
 
 
 _TOOL_PART_TYPES = (
