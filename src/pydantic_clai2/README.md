@@ -17,11 +17,12 @@ The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive wit
 token kept in `/keys`. `/google_workspace` opens its settings menu: the `/keys`
 entry to use (`GOOGLE_ACCESS_TOKEN` by default), products, and read-only tools; see
 [its settings](PLUGINS.md#google_workspace-gmail-calendar-and-drive-tools).
-`/plugins enable logfire_mcp` lets the agent query your Logfire telemetry and opens
-a settings menu (region, tools, and a key picked from `/keys`, never stored in plugin
-settings; otherwise browser sign-in, which also signs new users up and works over SSH:
-`/logfire_mcp login`). Reopen it with `/plugins configure logfire_mcp`; see
-[Logfire MCP](PLUGINS.md#logfire-mcp-query-your-telemetry).
+`/plugins enable logfire_mcp` turns on the Logfire plugin, which lets the agent query
+your Logfire telemetry through Logfire's MCP server, and opens a settings menu (which
+Logfire, tools, and a key picked from `/keys`, never stored in plugin settings;
+otherwise browser sign-in, which also signs new users up and works over SSH:
+`/logfire login`). Reopen it with `/plugins configure logfire_mcp`; see
+[Logfire](PLUGINS.md#logfire-query-your-telemetry).
 `/mcp` manages MCP servers the way Code Puppy's `/mcp` does. Bare `/mcp` shows a
 status dashboard. `/mcp install` opens a form where you name the server, pick
 `stdio`, `http`, or `sse`, type its URL or command, edit the rest of its JSON
@@ -2212,18 +2213,23 @@ Agent runs and recorded UI interactions nest under a `CLAI session` root span.
 Its `agent_session_id` attribute is the saved conversation ID.
 `/clear` selects a new root; `/resume` returns to that conversation's root if it
 was already opened by this plugin instance. Unloading the plugin ends its roots;
-reloading starts new traces with the same saved conversation IDs.
+reloading starts new traces with the same saved conversation IDs. A span is only
+exported when it ends, which a root does at exit, so each root also gets a
+`CLAI session opened` log right away, carrying the same `agent_session_id` and
+email: query that to find a session that is still running. With `--resume`, the
+log is repeated with the saved ID as soon as startup picks the conversation.
 
 Each session root is tagged with your email, as a Logfire tag and the
-`user.email` attribute, never on child spans or logs. `user_tag` picks where it
-comes from. The default, `logfire-account`, uses the account you signed in with
-when you set up the **Logfire project** (below); that account already has access
-to the project, so the tag reveals nothing new to it. With a token from
-`LOGFIRE_TOKEN`, the credentials file, a token changed since setup, a setup made
-before this setting existed, or a server that does not report your email, roots
-are not tagged until you run the setup again. `git-email` uses
-`git config user.email` instead (Git is only queried with this choice; a missing
-email leaves the tag out), and `false` turns the tag off. Choose **User tag** in
+`user.email` attribute; of its children, only the `CLAI session opened` log
+carries it. `user_tag` picks where it comes from. The default,
+`logfire-account`, uses the account you signed in with when you set up the
+**Logfire project** (below); that account already has access to the project, so
+the tag reveals nothing new to it. With a token from `LOGFIRE_TOKEN`, the
+credentials file, a token changed since setup, a setup made before this setting
+existed, or a server that does not report your email, roots are not tagged until
+you run the setup again. `git-email` uses `git config user.email` instead (Git
+is only queried with this choice; a missing email leaves the tag out), and
+`false` turns the tag off. Choose **User tag** in
 `/plugins configure observability`, or set `user_tag` in the plugin settings.
 Everything CLAI records itself (session roots, UI records, and plugin load
 failures) uses the `clai2` instrumentation scope.
@@ -2274,16 +2280,21 @@ never recorded, since both can hold secrets such as `/plugins add` settings.
 Choose **Logfire project** in the settings menu (`/plugins configure observability`, or
 `c` on `observability` in `/plugins`):
 
-1. Pick where traces go: Logfire US, Logfire EU, or a self-hosted Logfire URL.
+1. Pick which Logfire: Logfire US, Logfire EU, or **Another Logfire...** to type a
+   self-hosted or staging one as a host (`logfire.example.com`), the URL you open it
+   at, or its MCP URL (`https://logfire.example.com/mcp`); see
+   [Which Logfire](PLUGINS.md#which-logfire). Enter chooses; Esc cancels and changes
+   nothing.
 2. Sign in, or sign up, in the browser. CLAI prints the link too, so it works over SSH.
-3. Pick one of the projects you can write to.
+3. Pick one of the projects you can write to (`/` to search, Enter to use it).
 
 CLAI then creates a write token for that project, saves it in `/keys` as
 `LOGFIRE_TOKEN_<ORG>_<PROJECT>`, and points the plugin's `token` at it; the plugin
 reloads and the next turn is traced there. The sign-in itself is not kept, only
 your account's email, saved with the key name as `account` to tag session roots. The
-URL you picked is saved as the plugin's `base_url`, so `LOGFIRE_BASE_URL` cannot
-send the token elsewhere, and sending is turned on if it was off. Choose the row
+Logfire you picked is saved as the plugin's `base_url`, so `LOGFIRE_BASE_URL` cannot
+send the token elsewhere, and sending is turned on if it was off. The Logfire
+plugin's settings start from the same Logfire, so you pick the region once. Choose the row
 again to switch projects, or press `R` on it to go back to `LOGFIRE_TOKEN` or the
 credentials file.
 
