@@ -8,6 +8,7 @@ from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
+from functools import partial
 from pathlib import Path
 from typing import Generic, Literal, TypeVar, cast
 from uuid import uuid4
@@ -42,6 +43,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+from pydantic_clai2.plugins import ConversationChanged
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
 from pydantic_clai2.ui import telemetry
 
@@ -322,11 +324,15 @@ class Session(Generic[DepsT, OutputT]):
         conversations: SqliteConversationStore | None = None,
         workspace: Path | None = None,
         on_stream_event: Callable[[AgentStreamEvent], Awaitable[None]] | None = None,
+        summary: ConversationSummary | None = None,
     ) -> None:
         self.delegations: DelegationTasks | None = None
         self.conversations = conversations
         self.workspace = str((workspace or Path.cwd()).resolve())
-        self.summary = ConversationSummary(workspace=self.workspace)
+        self.summary = summary or ConversationSummary(workspace=self.workspace)
+        self.on_change: Callable[[ConversationChanged], Awaitable[None]] | None = None
+        """Told when `conversation_id` or `title` changes; the shell fires it to plugins."""
+        self._published = (self.conversation_id, self.title)
         self.step_store: StepStore | None = (
             SqliteStepStore(database=conversations.database, max_snapshots_per_run=8) if conversations else None
         )
@@ -357,6 +363,7 @@ class Session(Generic[DepsT, OutputT]):
         self.on_stream_event = on_stream_event
         self._messages: list[ModelMessage] = list(message_history)
         self._running = False
+        self._record_resumed: Callable[[], None] | None = None
         self._accepting_steering = False
         self._run_context: RunContext[DepsT] | None = None
         self._pending_steering: list[Sequence[UserContent]] = []
@@ -376,12 +383,38 @@ class Session(Generic[DepsT, OutputT]):
         """Return a snapshot of the conversation's message list."""
         return list(self._messages)
 
-    def clear(self) -> None:
+    @property
+    def conversation_id(self) -> str:
+        """The ID `/resume` restores this conversation by."""
+        return self.summary.id
+
+    @property
+    def title(self) -> str | None:
+        """The saved title; `None` until the first prompt is saved."""
+        return self.summary.title if self.summary.revision else None
+
+    async def _publish(self) -> None:
+        """Tell `on_change` about a new conversation ID or title, once per change."""
+        identity = (self.conversation_id, self.title)
+        if identity == self._published:
+            return
+        self._published = identity
+        if self.on_change is not None:
+            await self.on_change(ConversationChanged(conversation_id=identity[0], title=identity[1]))
+
+    async def clear(self) -> None:
         """Start a new conversation without replacing the agent or plugins."""
         cleared = len(self._messages)
         self.replace_messages(())
         telemetry.record('conversation cleared', messages=cleared)
         self.summary = ConversationSummary(workspace=self.workspace)
+        await self._publish()
+
+    async def renamed(self, *, conversation_id: str, title: str) -> None:
+        """Adopt a title already saved for `conversation_id`, if that is this conversation."""
+        if conversation_id == self.summary.id:
+            self.summary = replace(self.summary, title=title)
+            await self._publish()
 
     def replace_messages(self, messages: Sequence[ModelMessage]) -> None:
         """Swap the retained history, as `/compact` does after summarising it."""
@@ -403,12 +436,25 @@ class Session(Generic[DepsT, OutputT]):
         finally:
             self._running = False
 
-    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False) -> str:
+    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False, record: bool = True) -> str:
         """Restore a saved head without invoking the model or replaying tools.
 
         A session another live process is running is not taken over: its newest saved state is
         copied into a new saved session, which this one continues while the original keeps running.
+
+        `record=False` leaves the `conversation resumed` UI event to a later `record_resumed()`, for a
+        startup restore that runs before the observability plugin subscribes.
         """
+        notice = await self._restore(conversation_id, allow_other_workspace=allow_other_workspace, record=record)
+        await self._publish()
+        return notice
+
+    def record_resumed(self) -> None:
+        """Record the `conversation resumed` UI event for the last restore."""
+        if self._record_resumed is not None:
+            self._record_resumed()
+
+    async def _restore(self, conversation_id: str, *, allow_other_workspace: bool, record: bool) -> str:
         if self._running:
             raise RuntimeError('Cannot resume during a running conversation')
         self._running = True
@@ -444,13 +490,16 @@ class Session(Generic[DepsT, OutputT]):
                 )
             self._messages = list(messages)
             self.summary = summary
-            telemetry.record(
+            self._record_resumed = partial(
+                telemetry.record,
                 'conversation resumed',
                 outcome=saved.summary.outcome,
                 messages=len(messages),
                 other_workspace=saved.summary.workspace != self.workspace,
                 forked=busy is not None,
             )
+            if record:
+                self.record_resumed()
             # Keep the caller's current model and approval configuration. Saved models are informational.
             return notice
         finally:
@@ -569,6 +618,9 @@ class Session(Generic[DepsT, OutputT]):
                     self.delegations.bind() if self.delegations is not None else nullcontext(),
                 ):
                     try:
+                        # The first save titles a new conversation. Inside the handlers below, so a
+                        # failed or cancelled observer still finalizes the `running` head saved above.
+                        await self._publish()
                         run_model, capabilities = self._bind()
                         if self.delegations is not None:
                             capabilities.append(

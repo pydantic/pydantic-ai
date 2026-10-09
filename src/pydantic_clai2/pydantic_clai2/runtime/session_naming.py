@@ -83,12 +83,14 @@ class SessionNamer:
         generate: Callable[[str], Awaitable[NamingResult | None]],
         enabled: Callable[[], bool] = lambda: True,
         timeout: float = 60,
+        on_named: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> None:
-        """Bind dependencies without spawning a task."""
+        """Bind dependencies without spawning a task; `on_named` gets each saved conversation ID and title."""
         self.store = store
         self.generate = generate
         self.enabled = enabled
         self.timeout = timeout
+        self.on_named = on_named
         self._pending: OrderedDict[str, None] = OrderedDict()
         self._wake = anyio.Event()
 
@@ -123,31 +125,47 @@ class SessionNamer:
                 try:
                     if self.enabled():
                         with anyio.fail_after(self.timeout):
-                            await self.name(conversation_id=conversation_id)
+                            title = await self._name(conversation_id=conversation_id)
+                        # Outside the timeout: telling the shell may wait for the terminal, and the name is saved.
+                        if title is not None:
+                            await self._notify(conversation_id, title)
                 except Exception:
                     logging.getLogger(__name__).debug('Session naming failed for %s', conversation_id, exc_info=True)
 
     async def name(self, *, conversation_id: str) -> bool:
         """Name a saved revision. Safe to drive directly in tests without a background loop."""
+        title = await self._name(conversation_id=conversation_id)
+        if title is not None:
+            await self._notify(conversation_id, title)
+        return title is not None
+
+    async def _notify(self, conversation_id: str, title: str) -> None:
+        if self.on_named is not None:
+            await self.on_named(conversation_id, title)
+
+    async def _name(self, *, conversation_id: str) -> str | None:
+        """Generate and save a name; the saved title, or `None` when nothing was saved."""
         saved = await self.store.get(conversation_id=conversation_id)
         if not self.needed(saved.summary):
-            return False
+            return None
         # A bounded current tail, rather than a message-count cursor, remains valid after
         # compaction and recovery. Prior metadata supplies continuity with older context.
         digest = conversation_text(saved.messages)[-2400:]
         if not digest.strip():
-            return False
+            return None
         prompt = (
             f'Previous title: {saved.summary.title}\nPrevious detail: {saved.summary.subtitle}\n'
             f'Current conversation tail:\n{digest}'
         )
         result = await self.generate(prompt)
         if result is None:
-            return False
-        return await self.store.name(
+            return None
+        title = ' '.join(result.name.title.split()[:8])
+        named = await self.store.name(
             source=saved.summary,
-            title=' '.join(result.name.title.split()[:8]),
+            title=title,
             subtitle=' '.join(result.name.subtitle.split()[:12]),
             tags=tuple(result.name.tags),
             tokens=result.tokens,
         )
+        return title if named else None

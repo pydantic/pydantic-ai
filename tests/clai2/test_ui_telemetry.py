@@ -291,7 +291,6 @@ async def test_settings_and_keys_record_names_not_secrets(
     context = CommandContext(
         settings=Settings(),
         store=SettingsStore(tmp_path / 'config.db'),
-        clear_history=lambda: None,
         apply_setting=lambda key, settings: None,
     )
     context.set_setting(['display.thinking', 'false'])
@@ -354,7 +353,7 @@ async def test_conversations_cleared_and_resumed(exporter: InMemorySpanExporter,
     )
     await session.prompt('first')
     saved = session.summary.id
-    session.clear()
+    await session.clear()
     await session.resume(saved)
     assert recorded(exporter) == [
         ('conversation cleared', {'messages': 2}),

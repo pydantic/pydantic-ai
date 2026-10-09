@@ -6,6 +6,7 @@ Claude Code and Codex sessions.
 
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
+from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import Generic, TypeVar
 
 from anyio.to_thread import run_sync
@@ -53,8 +54,13 @@ class Sessions(Generic[DepsT, OutputT]):
         self.session = session
         self.store = store
         self.context = context
+        self.quiet: Callable[[], AbstractAsyncContextManager[None]] = nullcontext
+        """Entered to tell plugins about a background rename; the shell holds it until no turn or command runs."""
         self.namer = SessionNamer(
-            store=store, generate=self.generate, enabled=lambda: self.context.settings.session_namer
+            store=store,
+            generate=self.generate,
+            enabled=lambda: self.context.settings.session_namer,
+            on_named=self.named,
         )
         self.on_resume: Callable[[Sequence[ModelMessage]], Awaitable[None]] | None = None
         """Told the restored history after each resume, so the shell can show it."""
@@ -62,9 +68,24 @@ class Sessions(Generic[DepsT, OutputT]):
     async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False) -> str:
         """Restore a saved session, then show its history."""
         notice = await self.session.resume(conversation_id, allow_other_workspace=allow_other_workspace)
+        await self.show_resumed()
+        return notice
+
+    async def show_resumed(self) -> None:
+        """Show the restored history; a startup restore calls this once plugin renderers have loaded."""
         if self.on_resume is not None:
             await self.on_resume(self.session.messages)
-        return notice
+
+    async def named(self, conversation_id: str, title: str) -> None:
+        """Retitle the current conversation after background naming, once the terminal is free."""
+        if conversation_id != self.session.conversation_id:
+            return
+        before = self.session.title
+        async with self.quiet():
+            # A rename in `/resume` while this waited wins over the generated name. A save in the
+            # meantime may already have adopted it from the store without telling plugins.
+            if self.session.title in (before, title):
+                await self.session.renamed(conversation_id=conversation_id, title=title)
 
     async def generate(self, prompt: str) -> NamingResult | None:
         """Resolve credentials on the owning loop, without loading any coding plugins."""
@@ -124,11 +145,14 @@ class Sessions(Generic[DepsT, OutputT]):
             saved: list[ConversationSummary] = [] if source else apply(self.store.listing(query=query, limit=limit))
             return merge(saved, imports.listing(query, limit), limit=limit)
 
+        retitled: dict[str, str] = {}
+
         async def rename(source: ConversationSummary, title: str) -> None:
             if not await self.store.name(
                 source=source, title=title, subtitle=source.subtitle, tags=source.tags, manual=True
             ):
                 raise ValueError('Session changed. Refresh and rename again.')
+            retitled[source.id] = title
 
         def browse() -> str:
             # Resolve Git identities on the menu worker, not the application loop.
@@ -145,6 +169,9 @@ class Sessions(Generic[DepsT, OutputT]):
             ).run()
 
         selected = await run_worker(browse)
+        # Plugins hear of a rename once the browser has closed, so none of them draws over it.
+        if (title := retitled.get(self.session.conversation_id)) is not None:
+            await self.session.renamed(conversation_id=self.session.conversation_id, title=title)
         if not selected:
             return ''
         if (imported := imports.get(selected)) is not None:

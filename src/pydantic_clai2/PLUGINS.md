@@ -287,17 +287,18 @@ answers, or tool contents are sent; session IDs, database paths, and conversatio
 titles are sent to the local herdr socket.
 
 The pane title follows the persisted conversation title, including background
-naming and manual renames, checked every two seconds. Each metadata update keeps
-the current title. Only single-pane tabs are renamed. The original tab label is
-restored on session changes or clean unload, but a manually renamed or shared
-tab is left alone. An abrupt exit may leave the last tab label in place.
+naming and manual renames in `/resume`, as `on_conversation_changed` reports
+them. Each metadata update keeps the current title. Only single-pane tabs are
+renamed. The original tab label is restored on session changes or clean unload,
+but a manually renamed or shared tab is left alone. An abrupt exit may leave the
+last tab label in place.
 
 Socket IO uses a plugin-owned daemon worker with bounded, latest-wins mailboxes.
 State and session reports take priority over activity and metadata. Requests
 retry up to three times with the same sequence number; missing sockets and
-server errors are nonfatal. Unloading cancels and drains the title watcher,
-discards queued work, and attempts one release with bounded shutdown. A departed
-or unresponsive herdr may miss reports; they do not fail the agent turn.
+server errors are nonfatal. Unloading discards queued work and attempts one
+release with bounded shutdown. A departed or unresponsive herdr may miss
+reports; they do not fail the agent turn.
 
 ## Desktop notifications
 
@@ -1770,16 +1771,16 @@ contributes nothing:
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_plugin_load_failed` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_plugin_load_failed` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, and its
 saved settings. Set up state in `__init__`; call `super().__init__(host, settings)`
 first.
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_plugin_load_failed`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_plugin_load_failed`
 
-Five `async` methods fire outside the agent run, in the shell:
+Six `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
@@ -1787,6 +1788,7 @@ Five `async` methods fire outside the agent run, in the shell:
 | `on_session_end` | CLAI is quitting, or the plugin is unloading | `reason`: `exit`, `eof`, or `error` | no |
 | `on_turn_start` | you pressed Enter on a prompt | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |
+| `on_conversation_changed` | the shell switched conversations, or the current one got a new title | `conversation_id`, `title` | no |
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
@@ -1795,6 +1797,15 @@ of load order. It covers startup loading, not individual `/plugins` actions. Dec
 whose own module is not installed stay quiet, as on the terminal; a missing dependency
 inside an available plugin is reported. A handler failure is printed without stopping
 startup or preventing other handlers from running.
+
+`on_conversation_changed` receives a `ConversationChanged` event after `/new`, `/clear`,
+and `/resume`, when the first prompt of a new conversation gives it a title, and when
+background naming or a rename in the `/resume` browser retitles the current conversation.
+`title` is `None` until the first prompt is saved. A startup `--resume SESSION-ID` is restored
+before plugins load, so `on_session_start` already sees that conversation in `host.conversation`;
+a session picked from the `--resume` browser arrives as this event. The event fires once per
+change, never for a background `/fork`, and a name from background naming waits until no turn
+or command is running.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
@@ -2311,7 +2322,9 @@ again. Services with Dynamic Client Registration need none of this: add them as
 model CLAI or the user selected for the next prompt. A capability that selects a model, such as
 Logfire's `AgentControl`, can replace CLAI's default per request; `resolved_model()` and the
 status row still name the selected one, and `/compact` and session naming (without a
-`sessions.naming_model`) run on it. Local `!command` executions append a user message
+`sessions.naming_model`) run on it. `conversation_id` is the ID `--resume` restores it by, and
+`title` its saved title (`None` until the first prompt is saved); `on_conversation_changed` says
+when either changes. Local `!command` executions append a user message
 with the command, stdout, stderr, and completion status. They do not start an
 agent turn or fire turn hooks; the context reaches the model on the next prompt.
 
@@ -2862,7 +2875,8 @@ already committed snapshot. No new CLAI lifecycle hooks are introduced.
 
 Session naming is a shell-owned background service (`runtime/session_naming.py`).
 It never writes into the agent transcript or loads plugin code. `/resume` does
-not fire plugin load/unload hooks or restore previous plugin approvals. Cross-project
+not fire plugin load/unload hooks or restore previous plugin approvals; it fires
+`on_conversation_changed`, as does a name the namer saves for the current conversation. Cross-project
 resume keeps the current working directory and the saved conversation's original
 project grouping. The
 project/session browser is a dedicated Termflow widget: unlike a single-pane
@@ -2906,7 +2920,7 @@ abort the run. The `ask_user` plugin is skipped even if saved settings enable or
 replace it; this does not change those settings. `host.full_screen()` raises in
 headless mode. Plugins must not bypass the host by reading terminal input or
 printing directly to stdout. `--resume SESSION-ID` restores history without a
-browser or tool replay.
+browser or tool replay, before plugins load.
 
 ## The stock agent from code
 

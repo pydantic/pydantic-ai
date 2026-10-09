@@ -464,7 +464,6 @@ def sessions_service(tmp_path: Path) -> tuple[Sessions[None, str], SqliteConvers
     context = CommandContext(
         settings=Settings(model=None, session_namer=False),
         store=SettingsStore(tmp_path / 'config.db'),
-        clear_history=session.clear,
         apply_setting=lambda key, settings: None,
     )
     return Sessions(session=session, store=store, context=context), store
@@ -495,7 +494,7 @@ async def test_resume_browser_lists_imports_beside_saved_sessions(
     service, store = sessions_service(tmp_path)
     await service.session.prompt('A CLAI session')
     native_id = service.session.summary.id
-    service.session.clear()
+    await service.session.clear()
     # Older than the CLAI session, so the browser lists it first.
     os.utime(claude_session(tmp_path), (2_000, 2_000))
     os.utime(codex_session(tmp_path / 'other'), (1_000, 1_000))

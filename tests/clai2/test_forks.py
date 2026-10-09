@@ -238,6 +238,26 @@ async def test_notices_wait_while_busy(tmp_path: Path) -> None:
     assert 'fork #1 cancelled after' in text
 
 
+async def test_quiet_waits_for_every_turn_and_command(tmp_path: Path) -> None:
+    shell = shell_for(tmp_path, Model(), io.StringIO())
+    forks = shell.forks
+    entered: list[str] = []
+
+    async def notice() -> None:
+        async with forks.quiet():
+            entered.append('notice')
+
+    async with anyio.create_task_group() as tasks:
+        async with forks.busy():
+            tasks.start_soon(notice)
+            await anyio.wait_all_tasks_blocked()
+        # The notice wakes as the first command ends, but another has claimed the terminal by then.
+        async with forks.busy():
+            await anyio.wait_all_tasks_blocked()
+            assert entered == []
+    assert entered == ['notice']
+
+
 async def test_announcements_own_the_terminal(tmp_path: Path) -> None:
     model, output = Model(), io.StringIO()
     shell = shell_for(tmp_path, model, output)

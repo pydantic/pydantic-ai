@@ -79,7 +79,7 @@ async def test_multi_turn_restart_new_and_compaction(tmp_path: Path) -> None:
     restarted = saved_session(tmp_path)
     await restarted.resume(first_id)
     assert restarted.messages == compacted
-    restarted.clear()
+    await restarted.clear()
     assert restarted.summary.id != first_id
     assert restarted.messages == []
     assert (await store.get(conversation_id=first_id)).messages == compacted

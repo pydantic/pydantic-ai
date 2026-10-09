@@ -163,7 +163,6 @@ def test_picker_builds_without_active_model(tmp_path: Path) -> None:
     context = CommandContext(
         settings=Settings(model=None),
         store=SettingsStore(tmp_path / 'empty.db'),
-        clear_history=lambda: None,
         apply_setting=lambda key, settings: None,
     )
     menu = build_model_settings_picker(context=context, current=None)

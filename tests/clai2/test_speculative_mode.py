@@ -82,9 +82,7 @@ def fold_agent(model: FunctionModel, counters: SpeculationCounters, root: Path) 
 
 def test_switch_supplies_the_sandbox_capabilities(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
-    context = CommandContext(
-        settings=store.load(), store=store, clear_history=lambda: None, apply_setting=lambda key, settings: None
-    )
+    context = CommandContext(settings=store.load(), store=store, apply_setting=lambda key, settings: None)
     switch = Speculation(context=context, console=Console(file=io.StringIO()))
     switch.toggle()
     assert [type(capability).__name__ for capability in switch.capabilities([])] == [

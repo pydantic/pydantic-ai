@@ -314,19 +314,28 @@ async def chat(
                         async with create_task_group() as workers:
                             workers.start_soon(shell.sessions.namer.run)
                             try:
-                                with (
-                                    transcript.capture(console),
-                                    shell.defer_identity() if resume is not None else nullcontext(),
-                                ):
-                                    await shell.loader.load_all(fresh=fresh)
-                                    _report_project_plugins(shell.loader, console)
-                                    if resume is not None:
-                                        source = [resume_from] if resume_from else []
-                                        console.print(
-                                            await shell.sessions.command([*source, resume] if resume else source),
-                                            markup=False,
-                                        )
+                                with transcript.capture(console):
+                                    # Restore a named session first, so plugins start with it. The browser
+                                    # waits for plugins, whose models may name the sessions it lists, and
+                                    # until it picks one, telemetry has no session to assign.
+                                    notice: str | None = None
+                                    if resume:
+                                        if resume_from is not None:
+                                            resume = await shell.sessions.import_session(resume_from, resume)
+                                        notice = await shell.session.resume(resume, record=False)
                                         resume = None
+                                    with shell.defer_identity() if resume is not None else nullcontext():
+                                        await shell.loader.load_all(fresh=fresh)
+                                        _report_project_plugins(shell.loader, console)
+                                        if notice is not None:
+                                            # Now that observability has subscribed and renderers have loaded.
+                                            shell.session.record_resumed()
+                                            await shell.sessions.show_resumed()
+                                            console.print(notice, markup=False)
+                                        if resume is not None:
+                                            source = [resume_from] if resume_from else []
+                                            console.print(await shell.sessions.command(source), markup=False)
+                                            resume = None
                                 warming = warming or warm_imports.start()
                                 reason = await shell.run()
                             finally:
@@ -551,9 +560,8 @@ def create_shell(
         usage_limits=usage_limits,
         message_history=message_history,
         conversations=conversations,
+        summary=summary,
     )
-    if summary is not None:
-        session.summary = summary
     session.model = settings.model
     session.model_chosen = 'model' in settings.model_fields_set
     session.tool_retries = settings.tool_retries
@@ -565,9 +573,7 @@ def create_shell(
 
     session_settings = SessionSettings(session=session, console=console, settings=settings)
 
-    context = CommandContext(
-        settings=settings, store=store, clear_history=session.clear, apply_setting=session_settings, project=project
-    )
+    context = CommandContext(settings=settings, store=store, apply_setting=session_settings, project=project)
     models.pool_accounts = lambda: context.settings.pool_accounts
 
     def fast(args: list[str]) -> str:
@@ -713,8 +719,8 @@ def create_shell(
         transcript.clear()
         _print_welcome(project, console)
 
-    def clear(_: list[str]) -> str:
-        session.clear()
+    async def clear(_: list[str]) -> str:
+        await session.clear()
         reset_screen()
         return ''
 
@@ -771,6 +777,7 @@ def create_shell(
         status=status,
         enabled=load_plugins,
     )
+    session.on_change = loader.fire
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -938,6 +945,7 @@ class _Shell(Generic[DepsT, OutputT]):
             fire=self.loader.fire,
             models=self.context.store.models,
         )
+        self.sessions.quiet = self.forks.quiet
         self.session.on_setup_error = self.capability_failed
 
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
