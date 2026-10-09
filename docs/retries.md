@@ -123,7 +123,7 @@ This wait strategy:
 
 - Automatically parses `Retry-After` headers from HTTP 429 responses
 - Supports both seconds format (`"30"`) and HTTP date format (`"Wed, 21 Oct 2015 07:28:00 GMT"`)
-- Falls back to your chosen strategy when no header is present
+- Falls back to your chosen strategy when the header is absent or cannot be parsed
 - Respects the `max_wait` limit to prevent excessive delays
 
 ### Transport classes

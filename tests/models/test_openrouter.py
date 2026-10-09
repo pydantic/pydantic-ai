@@ -149,7 +149,7 @@ async def test_openrouter_stream_with_native_options(allow_model_requests: None,
         assert stream.provider_details is not None
         assert stream.provider_details == snapshot(
             {
-                'timestamp': datetime.datetime(2025, 11, 2, 6, 14, 57, tzinfo=datetime.timezone.utc),
+                'timestamp': datetime.datetime(2025, 11, 2, 6, 14, 57, tzinfo=datetime.UTC),
                 'finish_reason': 'completed',
                 'cost': 0.00333825,
                 'upstream_inference_cost': None,
@@ -646,7 +646,7 @@ async def test_openrouter_with_provider_details_but_no_parent_details(openrouter
         {
             'downstream_provider': 'TestProvider',
             'finish_reason': 'stop',
-            'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc),
+            'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.UTC),
         }
     )
 
@@ -879,7 +879,7 @@ async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None
 
     # With empty openrouter_details, we should still get the parent's provider_details (timestamp + finish_reason)
     assert result.provider_details == snapshot(
-        {'finish_reason': 'stop', 'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)}
+        {'finish_reason': 'stop', 'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.UTC)}
     )
 
 
@@ -893,13 +893,13 @@ async def test_openrouter_google_nested_schema(allow_model_requests: None, openr
 
     provider = OpenRouterProvider(api_key=openrouter_api_key)
 
-    class LevelType(str, Enum):
+    class LevelType(str, Enum):  # noqa: UP042
         ground = 'ground'
         basement = 'basement'
         floor = 'floor'
         attic = 'attic'
 
-    class SpaceType(str, Enum):
+    class SpaceType(str, Enum):  # noqa: UP042
         entryway = 'entryway'
         living_room = 'living-room'
         kitchen = 'kitchen'
@@ -1948,7 +1948,7 @@ def test_openrouter_nested_provider_response() -> None:
         {
             'downstream_provider': 'Google',
             'finish_reason': 'STOP',
-            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.timezone.utc),
+            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.UTC),
         }
     )
 
@@ -1988,7 +1988,7 @@ def test_openrouter_nested_provider_null_name() -> None:
         {
             'downstream_provider': 'unknown',
             'finish_reason': 'STOP',
-            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.timezone.utc),
+            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.UTC),
         }
     )
 

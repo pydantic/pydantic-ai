@@ -12,6 +12,7 @@ Harness capabilities that act in a [workspace](../workspace.md), such as [`Coder
 activity or step reattaches to the environment it names, whichever worker runs it. A later run that
 continues the conversation from `message_history`, in a new workflow or flow, works in the
 [same environment](../workspace.md#continuing-in-the-same-workspace).
+[`Researcher`](researcher.md) works under all three engines too: pass `Researcher()` next to the durability capability, as the `Coder` examples below do, and keep the workspace attached for its tool-result spills.
 
 Attach the workspace, the harness capabilities, and the durability capability when you construct the
 agent. The examples below run the same `Coder` agent on each engine. Swap `LocalWorkspace` for a

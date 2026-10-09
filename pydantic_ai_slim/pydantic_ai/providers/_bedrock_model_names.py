@@ -15,7 +15,14 @@ from __future__ import annotations as _annotations
 
 import re
 
-__all__ = ('BEDROCK_GEO_PREFIXES', 'remove_bedrock_geo_prefix', 'split_bedrock_model_id')
+from ..settings import CacheRetention
+
+__all__ = (
+    'BEDROCK_GEO_PREFIXES',
+    'bedrock_claude_cache_retentions',
+    'remove_bedrock_geo_prefix',
+    'split_bedrock_model_id',
+)
 
 # Known geo prefixes for cross-region inference profile IDs
 BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us', 'eu', 'apac', 'jp', 'au', 'ca', 'in', 'global', 'us-gov')
@@ -55,3 +62,32 @@ def split_bedrock_model_id(model_id: str) -> tuple[str | None, str]:
     if version_match := _VERSION_SUFFIX_RE.match(name):
         name = version_match.group(1)
     return provider, name
+
+
+# The Claude models whose Bedrock entry lists both the 5-minute and the 1-hour cache TTL; the others
+# (Claude 3.7 Sonnet, Claude 3.5 Sonnet v2) only take the default 5 minutes. Bare names, as
+# `split_bedrock_model_id` returns them; a prefix also covers later point releases (`claude-opus-5-5`).
+# https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html#prompt-caching-models
+_ONE_HOUR_CACHE_CLAUDE_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-haiku-4-5',
+    'claude-mythos-5',
+    'claude-opus-4-5',
+    'claude-opus-4-6',
+    'claude-opus-4-7',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-4-5',
+    'claude-sonnet-4-6',
+    'claude-sonnet-5',
+)
+
+
+def bedrock_claude_cache_retentions(model_name: str) -> tuple[CacheRetention, ...]:
+    """The prompt-cache retention tiers Bedrock supports for a Claude model.
+
+    Accepts a full Bedrock model ID (e.g. `us.anthropic.claude-sonnet-4-5-20250929-v1:0`) or a bare
+    model name (e.g. `claude-sonnet-4-5-20250929`).
+    """
+    _, name = split_bedrock_model_id(model_name)
+    return ('5m', '1h') if name.startswith(_ONE_HOUR_CACHE_CLAUDE_MODEL_PREFIXES) else ('5m',)

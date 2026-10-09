@@ -4,11 +4,10 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Genera
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, cast
 
 import pydantic_core
 from pydantic import JsonValue
-from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils
 from .._run_context import RunContext

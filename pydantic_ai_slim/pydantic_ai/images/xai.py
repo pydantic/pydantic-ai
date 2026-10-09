@@ -3,9 +3,7 @@ from __future__ import annotations
 import base64
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal, cast
-
-from typing_extensions import assert_never
+from typing import Literal, assert_never, cast
 
 from pydantic_ai.exceptions import (
     ContentFilterError,

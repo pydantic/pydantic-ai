@@ -7,9 +7,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Literal, cast
-
-from typing_extensions import assert_never
+from typing import Any, Literal, assert_never, cast
 
 from .. import _model_errors, _utils
 from .._run_context import RunContext

@@ -8,7 +8,7 @@ request would exercise.
 
 from __future__ import annotations as _annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import pytest
@@ -31,11 +31,12 @@ with try_import() as bedrock_imports:
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 with try_import() as openai_imports:
+    from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
-NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
 def _history(idle: timedelta) -> list[ModelMessage]:
@@ -182,6 +183,62 @@ def test_cache_point_extends_explicit_retention():
     assert prompt_cache_outlook(_history(timedelta(minutes=30)), retention=timedelta(minutes=10), now=NOW) == 'cold'
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_unsupported_cache_point_ttl_does_not_extend_retention():
+    # OpenAI ignores `CachePoint.ttl`, so a `'1h'` marker doesn't stretch GPT-5.6's 30-minute retention.
+    profile = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key='test-key')).profile
+    assert prompt_cache_outlook(_cache_point_history(timedelta(minutes=45), '1h'), profile=profile, now=NOW) == 'cold'
+    assert prompt_cache_outlook(_cache_point_history(timedelta(minutes=20), '1h'), profile=profile, now=NOW) == 'warm'
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openai_provider_profiles_declare_cache_tiers():
+    # Raw provider profiles gate `CachePoint.ttl` too, not just `Model.profile` with its defaults filled in.
+    gpt_5_6 = OpenAIProvider.model_profile('gpt-5.6-sol')
+    assert gpt_5_6 is not None and gpt_5_6.get('supported_cache_retentions') == ('30m',)
+    assert prompt_cache_outlook(_cache_point_history(timedelta(minutes=45), '1h'), profile=gpt_5_6, now=NOW) == 'cold'
+    gpt_5 = OpenAIProvider.model_profile('gpt-5')
+    assert gpt_5 is not None and gpt_5.get('supported_cache_retentions') == ()
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_cache_point_ttl_honored_per_model():
+    history = _cache_point_history(timedelta(minutes=45), '1h')
+    one_hour = BedrockProvider.model_profile('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
+    assert prompt_cache_outlook(history, profile=one_hour, now=NOW) == 'warm'
+    five_minutes = BedrockProvider.model_profile('anthropic.claude-3-7-sonnet-20250219-v1:0')
+    assert prompt_cache_outlook(history, profile=five_minutes, now=NOW) == 'cold'
+
+
+@pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+def test_supported_cache_point_ttl_extends_retention():
+    profile = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key')).profile
+    assert prompt_cache_outlook(_cache_point_history(timedelta(minutes=45), '1h'), profile=profile, now=NOW) == 'warm'
+    assert prompt_cache_outlook(_cache_point_history(timedelta(minutes=45), '5m'), profile=profile, now=NOW) == 'cold'
+
+
+def test_cache_point_ttl_extends_retention_without_declared_tiers():
+    # Without tier information, a TTL is assumed honored: a false 'warm' merely defers maintenance,
+    # while a false 'cold' would sacrifice a live cache hit.
+    history = _cache_point_history(timedelta(minutes=45), '1h')
+    profile = ModelProfile(default_cache_retention=timedelta(minutes=30))
+    assert 'supported_cache_retentions' not in profile
+    assert prompt_cache_outlook(history, profile=profile, now=NOW) == 'warm'
+    assert prompt_cache_outlook(history, retention=timedelta(minutes=30), now=NOW) == 'warm'
+
+
+def test_declared_tiers_gate_cache_point_ttl():
+    history = _cache_point_history(timedelta(minutes=45), '1h')
+    profile = ModelProfile(
+        default_cache_retention=timedelta(minutes=30), supports_cache=True, supported_cache_retentions=('5m',)
+    )
+    assert prompt_cache_outlook(history, profile=profile, now=NOW) == 'cold'
+    profile = ModelProfile(
+        default_cache_retention=timedelta(minutes=30), supports_cache=True, supported_cache_retentions=('5m', '1h')
+    )
+    assert prompt_cache_outlook(history, profile=profile, now=NOW) == 'warm'
+
+
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
 @pytest.mark.parametrize(('anthropic_cache', 'expected'), [(None, 'cold'), (True, 'cold'), ('1h', 'warm')])
 def test_outlook_with_resolved_retention(anthropic_cache: bool | Literal['1h'] | None, expected: str):
@@ -293,5 +350,5 @@ def test_outlook_defaults_now_to_current_time():
 
 
 def _recent_history() -> list[ModelMessage]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return [ModelResponse(parts=[TextPart(content='Hello!')], timestamp=now)]
