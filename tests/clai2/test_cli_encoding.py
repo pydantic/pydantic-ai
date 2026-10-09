@@ -4,24 +4,35 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import pydantic_clai2.runtime.project_identity as project_identity_module
+import pydantic_clai2.runtime.worktrees as worktrees_module
 from pydantic_clai2.gh_cli import gh_token, start_login
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
 from pydantic_clai2.runtime.worktrees import current_worktree, open_worktree
 from tests.clai2.test_session_browser import repository
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def non_utf8_locale(monkeypatch: pytest.MonkeyPatch) -> None:
     # Patch the default codec selection, preserving real subprocess pipe decoding
     # even when the interpreter was started in UTF-8 mode.
     monkeypatch.setattr(subprocess, '_text_encoding', lambda: 'cp1251')
 
 
+@pytest.fixture
+def windows_non_utf8_locale(monkeypatch: pytest.MonkeyPatch, non_utf8_locale: None) -> None:
+    monkeypatch.setattr(project_identity_module, 'sys', SimpleNamespace(platform='win32'))
+    monkeypatch.setattr(worktrees_module, 'sys', SimpleNamespace(platform='win32', stdin=sys.stdin))
+
+
 @pytest.mark.parametrize('name', ['После', 'Иван'])
-def test_project_identity_with_non_ascii_paths_and_branch(tmp_path: Path, name: str) -> None:
+def test_project_identity_with_non_ascii_paths_and_branch(
+    tmp_path: Path, name: str, windows_non_utf8_locale: None
+) -> None:
     """Cover both mojibake and the UTF-8 byte 0x98, which cp1251 cannot decode."""
     repo = tmp_path / name
     linked = tmp_path / f'{name}-checkout'
@@ -33,7 +44,9 @@ def test_project_identity_with_non_ascii_paths_and_branch(tmp_path: Path, name: 
     )
 
 
-def test_worktree_with_non_ascii_repository_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_worktree_with_non_ascii_repository_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, windows_non_utf8_locale: None
+) -> None:
     repo = tmp_path / 'Иван'
     repository(repo, linked=tmp_path / 'linked', branch='feature')
     monkeypatch.chdir(repo)
@@ -49,9 +62,29 @@ def test_worktree_with_non_ascii_repository_path(tmp_path: Path, monkeypatch: py
     assert current.branch == 'clai-encoding'
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='checks native POSIX text decoding for Git output')
+def test_git_output_uses_posix_default_codec(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = tmp_path / 'Иван'
+    linked = tmp_path / 'После-checkout'
+    repository(repo, linked=linked, branch='feature/Иван')
+
+    identity = project_identity(str(linked))
+    assert identity.name == 'Иван'
+    assert identity.checkout == 'feature/Иван'
+
+    monkeypatch.chdir(repo)
+    worktree = open_worktree(name='encoding')
+    assert worktree.path == repo.resolve() / '.worktrees' / 'encoding'
+    monkeypatch.chdir(worktree.path)
+    current = current_worktree()
+    assert current is not None
+    assert current.path == worktree.path
+    assert current.branch == 'clai-encoding'
+
+
 @pytest.mark.parametrize('command', ['token', 'login'])
 @pytest.mark.subprocess(reason='Verify UTF-8 decoding of real subprocess pipes.')
-def test_gh_with_non_ascii_diagnostics(monkeypatch: pytest.MonkeyPatch, command: str) -> None:
+def test_gh_with_non_ascii_diagnostics(monkeypatch: pytest.MonkeyPatch, command: str, non_utf8_locale: None) -> None:
     """Run a stand-in CLI so the actual run/Popen pipes decode UTF-8 diagnostics."""
     for name in tuple(os.environ):
         if name.startswith('COVERAGE_'):
