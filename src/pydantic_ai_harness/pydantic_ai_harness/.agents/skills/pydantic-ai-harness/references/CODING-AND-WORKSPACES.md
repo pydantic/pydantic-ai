@@ -98,8 +98,10 @@ Keyword-only options: `instructions=None` (appended to the default guidance),
 - File tools stay in the working directory with `.git`, `.env*`, keys, and `secrets*` read-only; `shell`
   bypasses all of that. To change a bundled setting (hashes, allowlist, `list_directory`), compose
   `FileSystem`/`Shell`/`RepoContext`/`SubAgents` yourself.
-- **Prompt caching is on by default** (`cache=True`, which caches tool definitions, instructions, and the
-  conversation on Anthropic, Bedrock, OpenRouter Anthropic/Gemini, and OpenAI GPT-5.6+). A `cache` set on
+- **Prompt caching is on by default** (`cache=True`): a coding run resends the same tools and
+  instructions plus a growing conversation on every request, so each request reads back the previous
+  one's prefix. What it does per provider and what it costs:
+  <https://pydantic.dev/docs/ai/capabilities/caching/#unified-caching-settings>. A `cache` set on
   the model, in `Agent(model_settings=...)`, or by a `Caching` listed before `Coder` wins, as do a later
   capability and run-level `model_settings`: `model_settings={'cache': False}` turns it off,
   `{'cache': '1h'}` keeps it longer. `Coder(caching=False)` leaves the default out.

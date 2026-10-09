@@ -231,11 +231,9 @@ capabilities emit.
 ## Prompt caching
 
 `Coder` turns on [prompt caching](https://pydantic.dev/docs/ai/capabilities/caching/) by setting the unified `cache` model setting to `True`. A coding run
-sends the same tool definitions, instructions, and a growing conversation on every request, so on models that
-only cache when asked (such as Anthropic's, Amazon Bedrock's Claude and Nova models, OpenRouter's Anthropic and
-Gemini routes, and OpenAI's GPT-5.6 and later) each request reads back what the previous one wrote. Writing to
-the cache costs more than uncached input (1.25x for a 5-minute cache), and each read costs about 0.1x, so a
-cached prefix pays for itself once it is read back. Models that cache implicitly, or not at all, are unaffected.
+sends the same tool definitions and instructions, plus a conversation that only grows, on every request, so
+each request can read back the prefix the previous one wrote. See [what `cache=True` does on each
+provider](https://pydantic.dev/docs/ai/capabilities/caching/#unified-caching-settings) and [what caching costs](https://pydantic.dev/docs/ai/capabilities/caching/#cost).
 
 A `cache` value set on the model, in the agent's `model_settings`, or by a capability listed before `Coder`
 replaces this default, and so do a capability listed after it and the run's own `model_settings`. To keep the
@@ -264,6 +262,7 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 
 This release makes the workspace the single place that decides where an agent works. Removed arguments are still accepted, emit a `HarnessDeprecationWarning` naming the fix, and are ignored.
 
+- **Prompt caching is on by default.** `Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
 - **Attach a workspace.** `Coder`, `FileSystem`, `Shell`, `RepoContext`, and `Macroscope` fail at run start without one, as do `Skills`, `PydanticAIDocs` (with a local checkout), and `ToolOutputLimits` (when it can spill) unless given their own `workspace=` or store. Add `LocalWorkspace('.')` to the agent's capabilities, as in [Usage](#usage).
 - **Set the directory on the workspace.** `Coder('dir')`, `Shell(cwd=)`, `FileSystem(cwd=)`, `Macroscope(cwd=)`, and `RepoContext(workspace_dir=)` are ignored; use `LocalWorkspace('./dir')`.
 - **Pass the command environment.** Commands used to inherit your whole environment (`Coder` removed LLM API keys from it). Now they get only your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`, plus the workspace's `env` and `Shell(env=)`. Pass what they need, such as an SSH agent socket, a `gh` token or proxy settings, with `LocalWorkspace('.', env={...})` (see [The command environment](#the-command-environment)).
