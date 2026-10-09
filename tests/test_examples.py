@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import importlib
 import json
 import os
 import re
@@ -10,7 +11,7 @@ import subprocess
 import sys
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from inspect import FrameInfo
@@ -169,13 +170,27 @@ def tmp_path_cwd(tmp_path: Path):
         sys.path.remove(str(tmp_path))
 
 
-def _patch_sentence_transformers(mocker: MockerFixture, example: CodeExample) -> None:
-    """Stub the model download, only for examples that use it: patching imports `sentence_transformers` and `torch`."""
-    if re.search(r'sentence[-_]transformers', example.source, re.IGNORECASE):
-        try:
+_HEAVY_IMPORTS = re.compile(r'sentence[-_]transformers|voyage', re.IGNORECASE)
+
+
+@pytest.fixture(scope='module')
+def heavy_example_imports() -> None:
+    """Import `sentence_transformers` and `voyageai` (which imports it and `torch`) once per worker.
+
+    It takes seconds, so it is shared setup rather than a cost of whichever example happens to need it first (see
+    "Test cost" in `tests/AGENTS.md`).
+    """
+    for module in ('sentence_transformers', 'voyageai'):
+        with suppress(ImportError):
+            importlib.import_module(module)
+
+
+def _prepare_heavy_imports(request: pytest.FixtureRequest, mocker: MockerFixture, example: CodeExample) -> None:
+    """Only for the examples that use them: import the heavy embedding packages, and stub the model download."""
+    if _HEAVY_IMPORTS.search(example.source):
+        request.getfixturevalue('heavy_example_imports')
+        with suppress(ModuleNotFoundError):
             mocker.patch('sentence_transformers.SentenceTransformer')
-        except ModuleNotFoundError:
-            pass
 
 
 def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
@@ -462,6 +477,7 @@ def test_docs_examples(
     tmp_path_cwd: Path,
     vertex_provider_auth: None,
     examples_type_errors: dict[str, list[str]] | None,
+    request: pytest.FixtureRequest,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai.embeddings.infer_embedding_model', side_effect=mock_infer_embedding_model)
@@ -497,7 +513,7 @@ def test_docs_examples(
 
     _patch_optional_mcp_modules(mocker)
     _patch_realtime_models(mocker)
-    _patch_sentence_transformers(mocker, example)
+    _prepare_heavy_imports(request, mocker, example)
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
