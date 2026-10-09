@@ -5,6 +5,7 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_origin, overload
 
@@ -1674,7 +1675,10 @@ def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]
         elif isinstance(output, PromptedOutput):
             outputs_flat.extend(types_from_output_spec(output.outputs))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         elif isinstance(output, TextOutput):
-            type_hints = get_function_type_hints(output.output_function)
+            func = output.output_function
+            while isinstance(func, partial):
+                func = func.func
+            type_hints = get_function_type_hints(func)
             if return_annotation := type_hints.get('return', None):
                 outputs_flat.extend(types_from_output_spec(return_annotation))
             else:
