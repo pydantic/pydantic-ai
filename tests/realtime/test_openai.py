@@ -5375,7 +5375,7 @@ async def test_a_conversation_id_resolved_late_reaches_the_core_history() -> Non
 
 
 @pytest.mark.anyio
-async def test_audio_that_fails_to_go_out_is_taken_back_from_the_core_too() -> None:
+async def test_audio_that_fails_to_go_out_never_reaches_the_core() -> None:
     class _FailingAudio(_QueuedWebSocket):
         async def send(self, data: str) -> None:
             raise OSError('gone')  # (the audio is all this session sends)
@@ -5397,8 +5397,8 @@ async def test_audio_that_fails_to_go_out_is_taken_back_from_the_core_too() -> N
 
 
 @pytest.mark.anyio
-async def test_a_failed_send_takes_back_its_own_audio_while_another_waits_to_go_out() -> None:
-    """Two chunks sent at once go out one after the other: the first failing takes back its own audio, not the second's."""
+async def test_a_failed_send_leaves_its_audio_out_while_another_waits_to_go_out() -> None:
+    """Two chunks sent at once go out one after the other: the first failing never adds its audio, and the second's goes in."""
 
     class _FirstAudioFails(_QueuedWebSocket):
         def __init__(self) -> None:
