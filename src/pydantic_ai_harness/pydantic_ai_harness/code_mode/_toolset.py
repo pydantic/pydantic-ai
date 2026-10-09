@@ -329,6 +329,8 @@ class _RunCodeArguments(RunCodeArgs):
 
 
 _RUN_CODE_TOOL_NAME = 'run_code'
+_FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
+"""Kinds of the framework's control tools, which stay native to drive tool search and capability loading."""
 _RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
 _RUN_CODE_JSON_SCHEMA = _RUN_CODE_ADAPTER.json_schema()
 _RUN_CODE_ARGS_VALIDATOR: SchemaValidatorProt = _RUN_CODE_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
@@ -742,7 +744,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     Some tools always stay native rather than being sandboxed:
 
-    - Framework control tools (`tool_kind` set: tool search, capability loading).
+    - Framework control tools (`tool_kind` of `'tool-search'` or `'capability-load'`).
     - `defer_loading=True` tools, until tool search or capability loading reveals them.
     - `unless_native` tools, so `Model.prepare_request` can drop them when the
       provider supports the native tool.
@@ -919,9 +921,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         native_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in wrapped_tools.items():
             # Framework control tools (tool search, capability loading) stay native to
-            # drive protocol-level flows. `tool_kind` is the framework's discriminator
-            # for them; pydantic-ai has set it on `search_tools` since 1.95.0.
-            if tool.tool_def.tool_kind is not None:
+            # drive protocol-level flows. Any other registered `tool_kind` is an ordinary tool.
+            if tool.tool_def.tool_kind in _FRAMEWORK_CONTROL_TOOL_KINDS:
                 native_tools[name] = tool
             elif not ctx.is_tool_available(tool.tool_def):
                 # Use the run's public availability predicate so Tool Search and deferred

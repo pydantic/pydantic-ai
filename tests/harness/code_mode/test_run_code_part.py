@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
-from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai import Agent, RunContext, Tool, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs, WrapToolExecuteHandler
 from pydantic_ai.messages import (
     ModelMessage,
@@ -22,6 +22,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness import CodeMode
 from pydantic_ai_harness.code_mode import RunCodeCallPart
+
+
+class LookupCallPart(ToolCallPart, namespace='code_mode_test', tool_kind='lookup'):
+    """Registers a non-core kind, like a capability's typed tool part would."""
 
 
 @dataclass
@@ -55,6 +59,29 @@ def _run_code_then_answer(code: str) -> Callable[[list[ModelMessage], AgentInfo]
 
 
 class TestRunCodeCallPart:
+    async def test_a_tool_with_a_registered_non_core_kind_is_sandboxed(self) -> None:
+        async def with_lookup_kind(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition:
+            return replace(tool_def, tool_kind=LookupCallPart.tool_kind)
+
+        def lookup(item: str) -> str:
+            """Look up an item."""
+            return item
+
+        tool_defs: list[ToolDefinition] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tool_defs.extend(info.function_tools)
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(model_fn), tools=[Tool(lookup, prepare=with_lookup_kind)], capabilities=[CodeMode[object]()]
+        )
+        await agent.run('hi')
+
+        (run_code,) = tool_defs
+        assert run_code.name == 'run_code'
+        assert run_code.description is not None and 'async def lookup' in run_code.description
+
     async def test_run_code_tool_declares_its_kind(self) -> None:
         tool_defs: list[ToolDefinition] = []
 
