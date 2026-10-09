@@ -112,6 +112,7 @@ def test_coder_members_and_parameters() -> None:
         'WarnNearLimits',
         '_BoundToolOutputs',
         'RepairToolArguments',
+        '_DefaultCaching',
     ]
     files = next(item for item in coder.capabilities if isinstance(item, FileSystem))
     assert (files.root_dir, files.content_hashes, files.tools) == (None, False, FILE_TOOL_NAMES)
