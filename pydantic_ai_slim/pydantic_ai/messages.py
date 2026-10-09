@@ -3243,28 +3243,35 @@ def _dangling_tool_calls_by_response(messages: list[ModelMessage]) -> dict[int, 
 
     Matching is an ordered walk: a tool result (`_is_tool_result_part` — a `ToolReturnPart` or
     *tool-bound* `RetryPromptPart`; plain validation feedback doesn't answer a call even if its
-    `tool_call_id` collides) only answers a call that is open (produced by an earlier response and
-    not already answered) at that point. An out-of-place result — one preceding its call, a
+    `tool_call_id` collides) answers the oldest open call with a matching ID, so calls repeating an
+    ID within one response are answered FIFO. An out-of-place result — one preceding its call, a
     duplicate, or one reusing the ID of an already-answered call — doesn't mask a genuinely
-    dangling call.
+    dangling call. An open call whose ID is reused by a call from a later response can no longer be
+    answered — any later result answers the new call instead — so it's dangling.
     """
-    open_calls: dict[str, tuple[int, ToolCallPart]] = {}
+    open_calls: dict[str, list[tuple[int, ToolCallPart]]] = {}
     dangling_by_response: dict[int, list[ToolCallPart]] = {}
     for index, message in enumerate(messages):
         if isinstance(message, ModelResponse):
             for part in message.parts:
                 if isinstance(part, ToolCallPart):
-                    if shadowed := open_calls.get(part.tool_call_id):
-                        # A new call reusing the ID of an open call means the open call can no
-                        # longer be answered: any later result answers the new call instead.
-                        dangling_by_response.setdefault(shadowed[0], []).append(shadowed[1])
-                    open_calls[part.tool_call_id] = (index, part)
+                    pending = open_calls.get(part.tool_call_id)
+                    if pending and pending[-1][0] != index:
+                        # A call reusing the ID of calls from an earlier response means those calls
+                        # can no longer be answered: any later result answers the new call instead.
+                        for shadowed_index, shadowed in pending:
+                            dangling_by_response.setdefault(shadowed_index, []).append(shadowed)
+                        pending.clear()
+                    open_calls.setdefault(part.tool_call_id, []).append((index, part))
         elif isinstance(message, ModelRequest):  # pragma: no branch
             for part in message.parts:
                 if _is_tool_result_part(part):
-                    open_calls.pop(part.tool_call_id, None)
-    for response_index, call in open_calls.values():
-        dangling_by_response.setdefault(response_index, []).append(call)
+                    pending = open_calls.get(part.tool_call_id)
+                    if pending:
+                        pending.pop(0)
+    for calls in open_calls.values():
+        for response_index, call in calls:
+            dangling_by_response.setdefault(response_index, []).append(call)
     return dangling_by_response
 
 
@@ -3367,10 +3374,11 @@ def _repair_dangling_tool_calls(
     are the live frontier that run resumption and `deferred_tool_results` may still answer, and a
     trailing unparsable-args call is left for local args validation to turn into a retry prompt.
 
-    Matching is an ordered walk: a result only answers a call that is open (produced by an earlier
-    response and not already answered) at that point. An out-of-place result — one preceding its
-    call, a duplicate, or one reusing the ID of an already-answered call — doesn't mask a genuinely
-    dangling call; such orphaned results themselves are not repaired.
+    Matching is an ordered walk: a result only answers an open call (produced by an earlier response
+    and not already answered) at that point — the oldest open call with a matching ID, so calls
+    repeating an ID within one response bind FIFO. An out-of-place result — one preceding its call, a
+    duplicate, or one reusing the ID of an already-answered call — doesn't mask a genuinely dangling
+    call; such orphaned results themselves are not repaired.
 
     The repair is deterministic and idempotent: synthesized parts derive their timestamp from the
     response they repair and contain no wall-clock or random data, so repairing the same history
