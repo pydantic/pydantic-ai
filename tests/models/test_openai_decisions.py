@@ -64,11 +64,12 @@ from pydantic_ai.tools import ObjectJsonSchema, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsStr, RequestCapture, TestEnv, try_import
+from ..conftest import IsDatetime, IsList, IsStr, RequestCapture, TestEnv, try_import
 from .test_system_one import Captured, Frustration, Handler, Ticket
 
 with try_import() as imports_successful:
     from openai import APIConnectionError, APIError, APIStatusError, AsyncOpenAI
+    from openai.types.decision_create_params import DecisionCreateParams
 
     from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel, OpenAIDecisionsModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -497,19 +498,38 @@ async def test_rubric_over_the_limit(
 
 @pytest.mark.vcr
 @pytest.mark.parametrize(
-    ('limit', 'question'),
+    ('limit', 'question', 'expected'),
     [
         pytest.param(
             lambda: OpenAIDecisionsModel.max_choice_options,
             ChoiceQuestion(criteria={str(option): None for option in range(256)}),
+            snapshot(
+                {
+                    'model': 'gpt-6-luna',
+                    'input': 'Charged twice.',
+                    'questions': [{'type': 'choice', 'name': 'q', 'instructions': '', 'choices': IsList(length=256)}],
+                }
+            ),
             id='options',
         ),
-        pytest.param(lambda: OpenAIDecisionsModel.max_score_levels, ScoreQuestion(criteria=[None] * 11), id='levels'),
+        pytest.param(
+            lambda: OpenAIDecisionsModel.max_score_levels,
+            ScoreQuestion(criteria=[None] * 11),
+            snapshot(
+                {
+                    'model': 'gpt-6-luna',
+                    'input': 'Charged twice.',
+                    'questions': [{'type': 'score', 'name': 'q', 'instructions': '', 'levels': IsList(length=11)}],
+                }
+            ),
+            id='levels',
+        ),
     ],
 )
 async def test_api_limits(
     limit: Callable[[], int | None],
     question: DecisionQuestion,
+    expected: JsonValue,
     allow_model_requests: None,
     capture_model: OpenAIDecisionsModel,
     request_capture: RequestCapture,
@@ -522,23 +542,7 @@ async def test_api_limits(
         await capture_model.decide(DecisionRequest(state='Charged twice.', questions={'q': question}), {})
     assert exc_info.value.status_code == 400
 
-    request_body = request_capture.body('/v1/decisions')
-    request_questions = request_body['questions']
-    assert isinstance(request_questions, list)
-    assert len(request_questions) == 1
-    request_question = request_questions[0]
-    assert isinstance(request_question, dict)
-    if isinstance(question, ChoiceQuestion):
-        assert request_question['type'] == 'choice'
-        choices = request_question['choices']
-        assert isinstance(choices, list)
-        assert len(choices) == 256
-    else:
-        assert isinstance(question, ScoreQuestion)
-        assert request_question['type'] == 'score'
-        levels = request_question['levels']
-        assert isinstance(levels, list)
-        assert len(levels) == 11
+    assert request_capture.body('/v1/decisions') == expected
 
 
 @pytest.mark.vcr
@@ -1370,26 +1374,14 @@ async def test_failed_tool_return_image_keeps_order_and_one_error_wrapper(allow_
     assert ModelMessagesTypeAdapter.dump_json(history) == original_history
 
 
-async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: None):
-    """The route and fill receive one identical prepared image input and aggregate their usage."""
-
-    def route_and_fill(request: httpx2.Request) -> httpx2.Response:
-        request_body: JsonValue = json.loads(request.content)
-        assert isinstance(request_body, dict)
-        questions = request_body['questions']
-        assert isinstance(questions, list)
-        route_question = next(
-            (question for question in questions if isinstance(question, dict) and question.get('name') == 'route'), None
-        )
-        if route_question is not None:
-            choices = route_question['choices']
-            assert isinstance(choices, list)
+def pick_first_route(body: DecisionCreateParams) -> httpx2.Response | None:
+    for question in body['questions']:
+        if question.get('name') == 'route' and question['type'] == 'choice':
             labels: list[str] = []
-            for choice in choices:
-                assert isinstance(choice, dict)
-                label = choice.get('value')
-                assert isinstance(label, str)
-                labels.append(label)
+            for choice in question['choices']:
+                value = choice['value']
+                assert isinstance(value, str)
+                labels.append(value)
             picked = labels[0]
             return decisions(
                 {
@@ -1402,6 +1394,17 @@ async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: 
                     'confidence': 1.0,
                 }
             )
+    return None
+
+
+async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: None):
+    """The route and fill receive one identical prepared image input and aggregate their usage."""
+
+    def route_and_fill(request: httpx2.Request) -> httpx2.Response:
+        request_body: DecisionCreateParams = json.loads(request.content)
+        route_response = pick_first_route(request_body)
+        if route_response is not None:
+            return route_response
         return decisions(
             {'type': 'predicate', 'name': 'urgent', 'probability': 0.9},
             {
@@ -1424,34 +1427,62 @@ async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: 
 
     download.assert_awaited_once()
     assert result.output == Ticket(urgent=True, area='billing')
-    request_bodies = [json.loads(request.content) for request in captured.requests]
-    assert len(request_bodies) == 2
-    assert request_bodies[0]['input'] == request_bodies[1]['input']
-    assert request_bodies[0]['questions'] != request_bodies[1]['questions']
-    request_input: JsonValue = request_bodies[0]['input']
-    assert isinstance(request_input, list)
-    input_message = request_input[0]
-    assert isinstance(input_message, dict)
-    content = input_message['content']
-    assert isinstance(content, list)
-    assert content == snapshot(
+    expected_input: list[dict[str, object]] = [
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'type': 'input_text',
+                    'text': IsStr(
+                        regex=r'(?s)^The receipt is attached\. (?:Some detail nobody asked about\. ){3000}\s*<image 1>$'
+                    ),
+                },
+                {'type': 'input_text', 'text': '<image 1>:'},
+                {
+                    'type': 'input_image',
+                    'image_url': BinaryContent(b'picture', media_type='image/png').data_uri,
+                    'detail': 'high',
+                },
+            ],
+        }
+    ]
+    request_bodies: list[DecisionCreateParams] = [json.loads(request.content) for request in captured.requests]
+    assert request_bodies == snapshot(
         [
             {
-                'type': 'input_text',
-                'text': IsStr(
-                    regex=r'(?s)^The receipt is attached\. (?:Some detail nobody asked about\. ){3000}\s*<image 1>$'
-                ),
+                'model': 'gpt-6-luna',
+                'input': expected_input,
+                'questions': [
+                    {
+                        'type': 'choice',
+                        'name': 'route',
+                        'instructions': 'Which of these does this call for?',
+                        'choices': [
+                            {'value': 'Ticket', 'description': 'Triage a support ticket.'},
+                            {'value': 'Mood', 'description': "Read the customer's mood."},
+                        ],
+                    }
+                ],
             },
-            {'type': 'input_text', 'text': '<image 1>:'},
             {
-                'type': 'input_image',
-                'image_url': BinaryContent(b'picture', media_type='image/png').data_uri,
-                'detail': 'high',
+                'model': 'gpt-6-luna',
+                'input': expected_input,
+                'questions': [
+                    {
+                        'type': 'predicate',
+                        'name': 'urgent',
+                        'instructions': '{"field": "urgent", "premise": "If the user\'s request calls for Ticket: Triage a support ticket.", "question": "Does this need a reply within the hour?"}',
+                    },
+                    {
+                        'type': 'choice',
+                        'name': 'area',
+                        'instructions': '{"field": "area", "premise": "If the user\'s request calls for Ticket: Triage a support ticket.", "question": "Which team owns it?"}',
+                        'choices': [{'value': 'billing'}, {'value': 'bug'}],
+                    },
+                ],
             },
         ]
     )
-    assert [question['name'] for question in request_bodies[0]['questions']] == ['route']
-    assert [question['name'] for question in request_bodies[1]['questions']] == ['urgent', 'area']
     assert result.response.provider_details == {
         'confidence': {'urgent': 0.8, 'area': 1.0},
         'probabilities': {'area': {'billing': 1.0, 'bug': 0.0}},
@@ -1694,39 +1725,13 @@ async def test_overfull_speculation_picks_then_fills_under_question_limit(allow_
         notify: bool = Field(description='Should the owner be notified?')
 
     def route_and_fill(request: httpx2.Request) -> httpx2.Response:
-        body: JsonValue = json.loads(request.content)
-        assert isinstance(body, dict)
-        questions = body['questions']
-        assert isinstance(questions, list)
-        route_question = next(
-            (question for question in questions if isinstance(question, dict) and question.get('name') == 'route'), None
-        )
-        if route_question is not None:
-            choices = route_question['choices']
-            assert isinstance(choices, list)
-            labels: list[str] = []
-            for choice in choices:
-                assert isinstance(choice, dict)
-                label = choice.get('value')
-                assert isinstance(label, str)
-                labels.append(label)
-            picked = labels[0]
-            return decisions(
-                {
-                    'type': 'choice',
-                    'name': 'route',
-                    'choice': picked,
-                    'probabilities': [
-                        {'value': label, 'probability': 1.0 if label == picked else 0.0} for label in labels
-                    ],
-                    'confidence': 1.0,
-                }
-            )
-
-        [question] = questions
-        assert isinstance(question, dict)
-        question_name = question['name']
-        assert isinstance(question_name, str)
+        body: DecisionCreateParams = json.loads(request.content)
+        route_response = pick_first_route(body)
+        if route_response is not None:
+            return route_response
+        question = next(iter(body['questions']))
+        question_name = question.get('name')
+        assert question_name is not None
         return decisions({'type': 'predicate', 'name': question_name, 'probability': 0.9})
 
     captured = Captured(route_and_fill)
@@ -1746,11 +1751,50 @@ async def test_overfull_speculation_picks_then_fills_under_question_limit(allow_
 
     download.assert_awaited_once_with(image_url, data_format='bytes')
     assert result.output == Approve(approved=True)
-    assert len(captured.requests) == 2
-    request_bodies = [json.loads(request.content) for request in captured.requests]
-    assert [question['name'] for question in request_bodies[0]['questions']] == ['route']
-    assert [question['name'] for question in request_bodies[1]['questions']] == ['approved']
-    assert request_bodies[0]['input'] == request_bodies[1]['input']
+    expected_input: list[dict[str, object]] = [
+        {
+            'role': 'user',
+            'content': [
+                {'type': 'input_text', 'text': 'Review the ticket.\n\n<image 1>'},
+                {'type': 'input_text', 'text': '<image 1>:'},
+                {
+                    'type': 'input_image',
+                    'image_url': BinaryContent(b'picture', media_type='image/png').data_uri,
+                },
+            ],
+        }
+    ]
+    request_bodies: list[DecisionCreateParams] = [json.loads(request.content) for request in captured.requests]
+    assert request_bodies == snapshot(
+        [
+            {
+                'model': 'gpt-6-luna',
+                'input': expected_input,
+                'questions': [
+                    {
+                        'type': 'choice',
+                        'name': 'route',
+                        'instructions': '{"question": "Which of these does this call for?", "background": "Choose an action for this request."}',
+                        'choices': [
+                            {'value': 'Approve', 'description': 'Approve this request.'},
+                            {'value': 'Notify', 'description': 'Notify the owner.'},
+                        ],
+                    }
+                ],
+            },
+            {
+                'model': 'gpt-6-luna',
+                'input': expected_input,
+                'questions': [
+                    {
+                        'type': 'predicate',
+                        'name': 'approved',
+                        'instructions': '{"field": "approved", "premise": "If the user\'s request calls for Approve: Approve this request.", "question": "Can this be approved?", "background": "Choose an action for this request."}',
+                    }
+                ],
+            },
+        ]
+    )
 
 
 @pytest.mark.parametrize('selected_route', ['Big', 'Small'])
