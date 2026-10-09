@@ -133,7 +133,7 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
 
 Then the plumbing, which the agent never calls directly:
 
-6. [`ClearToolResults`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_fraction=0.7)` and [`WarnNearLimits`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_context_fraction=0.9)`.
+6. [`ClearToolResults`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_fraction=0.7)`.
 7. A private [`ToolOutputLimits`](https://pydantic.dev/docs/ai/harness/tool-output-limits/) specialization that truncates any tool result over 64,000 characters
    without adding a spill-retrieval tool. Its stable ID, `coder_tool_output_limits`, lets durability
    capabilities bind its inherited operations without colliding with a separately configured `ToolOutputLimits`.
