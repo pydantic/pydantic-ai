@@ -11,6 +11,7 @@ UNDO_KEYS = ('ctrl-z', 'super-z')
 REDO_KEYS = ('ctrl-y', 'ctrl-shift-z', 'super-shift-z')
 UNDO_LIMIT = 100
 """Undo steps kept per draft; the oldest is forgotten first."""
+_MOVES = ('left', 'right', 'home', 'ctrl-a', 'end', 'ctrl-e', 'alt-b', 'ctrl-left', 'alt-f', 'ctrl-right')
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -102,6 +103,8 @@ class PromptBuffer:
         self._step(self._redo, self._undo)
 
     def _step(self, source: deque[_Snapshot], target: deque[_Snapshot]) -> None:
+        # Even an undo with nothing to restore ends the current step, so the next change saves the draft.
+        self._group = None
         # A history walk that came back to the draft leaves a step with nothing to change.
         while source and source[-1].text == self.text:
             source.pop()
@@ -112,7 +115,6 @@ class PromptBuffer:
         self.text, self.cursor, self._pastes = snapshot.text, snapshot.cursor, list(snapshot.pastes)
         # Restored text is an edit: it ends a recall walk, and the next change starts its own step.
         self.history_index = None
-        self._group = None
 
     def insert(self, text: str, *, paste: bool = False) -> None:
         """Insert literal text; terminal control bytes do not become escape output.
@@ -164,6 +166,7 @@ class PromptBuffer:
         row, column = before.count('\n'), len(before.rsplit('\n', 1)[-1])
         target = row + (-1 if backwards else 1)
         if len(lines) > 1 and 0 <= target < len(lines):
+            self._group = None
             self.cursor = sum(len(line) + 1 for line in lines[:target]) + min(column, len(lines[target]))
         else:
             self.recall(backwards=backwards, queued=queued, recorded=recorded)
@@ -192,15 +195,13 @@ class PromptBuffer:
         if self.search is not None:
             self.search_key(key)
             return True
-        before, after = self.text[: self.cursor], self.text[self.cursor :]
+        before = self.text[: self.cursor]
         if key == 'ctrl-r':
+            # Each search is its own undo step, even when it picks the same entry as the last.
+            self._group = None
             self.search_original, self.search = self.text, ''
-        elif key in ('left', 'right'):
-            self.cursor = max(0, min(len(self.text), self.cursor + (-1 if key == 'left' else 1)))
-        elif key in ('home', 'ctrl-a'):
-            self.cursor = before.rfind('\n') + 1
-        elif key in ('end', 'ctrl-e'):
-            self.cursor += after.find('\n') if '\n' in after else len(after)
+        elif key in _MOVES:
+            self._move(key)
         elif key in UNDO_KEYS:
             self.undo()
         elif key in REDO_KEYS:
@@ -211,13 +212,6 @@ class PromptBuffer:
             self.replace_range(self.cursor, min(len(self.text), self.cursor + 1), '', group='delete')
         elif key in ('ctrl-u', 'ctrl-k', 'ctrl-w', 'alt-backspace'):
             self._kill(key)
-        elif key in ('alt-b', 'ctrl-left', 'alt-f', 'ctrl-right'):
-            if key in ('alt-b', 'ctrl-left'):
-                self.cursor = len(before.rstrip().rsplit(' ', 1)[0]) + 1 if ' ' in before.rstrip() else 0
-            else:
-                self.cursor += len(after) - len(after.lstrip())
-                tail = self.text[self.cursor :]
-                self.cursor += tail.find(' ') if ' ' in tail else len(tail)
         elif key in ('up', 'down'):
             self.vertical(backwards=key == 'up')
         elif len(key) == 1 and key.isprintable():
@@ -225,6 +219,23 @@ class PromptBuffer:
         else:
             return False
         return True
+
+    def _move(self, key: str) -> None:
+        """Move the cursor; the next change starts a new undo step, even back where the last one ended."""
+        self._group = None
+        before, after = self.text[: self.cursor], self.text[self.cursor :]
+        if key in ('left', 'right'):
+            self.cursor = max(0, min(len(self.text), self.cursor + (-1 if key == 'left' else 1)))
+        elif key in ('home', 'ctrl-a'):
+            self.cursor = before.rfind('\n') + 1
+        elif key in ('end', 'ctrl-e'):
+            self.cursor += after.find('\n') if '\n' in after else len(after)
+        elif key in ('alt-b', 'ctrl-left'):
+            self.cursor = len(before.rstrip().rsplit(' ', 1)[0]) + 1 if ' ' in before.rstrip() else 0
+        else:
+            self.cursor += len(after) - len(after.lstrip())
+            tail = self.text[self.cursor :]
+            self.cursor += tail.find(' ') if ' ' in tail else len(tail)
 
     def _kill(self, key: str) -> None:
         """Delete everything before the cursor (`ctrl-u`), after it (`ctrl-k`), or the word before it."""

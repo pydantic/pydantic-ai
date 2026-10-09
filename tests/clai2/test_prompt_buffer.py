@@ -305,3 +305,46 @@ def test_reset_forgets_the_submitted_draft() -> None:
     for key in ('ctrl-z', 'ctrl-y'):
         buffer.edit(key)
         assert buffer.text == ''
+
+
+def test_moving_away_and_back_still_ends_the_typing_step() -> None:
+    buffer = PromptBuffer()
+    typed(buffer, 'abc')
+    buffer.edit('left')
+    buffer.edit('right')
+    typed(buffer, 'X')
+    buffer.undo()
+    assert buffer.text == 'abc'
+    buffer.replace('one\ntwo')
+    buffer.edit('backspace')
+    buffer.edit('up')
+    buffer.edit('down')
+    buffer.edit('backspace')
+    buffer.undo()
+    assert buffer.text == 'one\ntw', 'moving between lines also ends the step'
+
+
+def test_each_reverse_search_is_its_own_step() -> None:
+    buffer = PromptBuffer(history=['alpha', 'beta'])
+    for query in ('alp', 'bet'):
+        buffer.edit('ctrl-r')
+        typed(buffer, query)
+        buffer.edit('enter')
+    assert buffer.text == 'beta'
+    buffer.undo()
+    assert buffer.text == 'alpha'
+    buffer.undo()
+    assert buffer.text == ''
+
+
+def test_a_history_walk_after_an_empty_undo_can_still_be_undone() -> None:
+    buffer = PromptBuffer(text='kept', cursor=4, history=['older'])
+    buffer.edit('up')
+    buffer.edit('down')
+    assert buffer.text == 'kept'
+    buffer.undo()
+    assert buffer.text == 'kept'
+    buffer.edit('up')
+    assert buffer.text == 'older'
+    buffer.undo()
+    assert buffer.text == 'kept'
