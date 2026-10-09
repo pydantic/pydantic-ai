@@ -63,7 +63,10 @@ dependencies = [
     # support (#6661) so the workspace lock can fork onto SDK v2 for the `mcp-tasks` extra.
     "mcp[cli]>=1.28.1",
     "modal>=1.0.4",
-    "duckdb>=1.4.2",
+    # Only `data_analyst.py` uses duckdb, and it has no cp315 wheels: a source build takes longer than
+    # the CI timeout. 3.15 marker removable once duckdb ships cp315 wheels (tracked in #9455):
+    # https://pypi.org/project/duckdb/#files
+    "duckdb>=1.4.2; python_version < '3.15'",
     "datasets>=4.0.0",
     "pandas>=2.3.3",
     # Needed by the interactive cancel_and_resume example. Declaring it here also pulls prompt_toolkit

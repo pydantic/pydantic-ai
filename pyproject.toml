@@ -230,6 +230,12 @@ pydocket = "2026-10-08T22:57:02Z"
 # pyarrow 26.0.0 is the first release with cp315 wheels (`datasets`, all-extras on Python 3.15).
 # TODO(adtyavrdhn): Remove after 2026-10-16 08:27 UTC.
 pyarrow = "2026-10-09T08:26:26Z"
+# First releases with cp315 wheels, so Python 3.15 CI installs them instead of compiling from source.
+# TODO(adtyavrdhn): Remove after 2026-10-15 00:30 UTC (the latest of these leaves the cooldown then).
+aiohttp = "2026-10-05T17:43:49Z"
+asyncpg = "2026-10-06T20:32:41Z"
+fastavro = "2026-10-08T00:29:29Z"
+markupsafe = "2026-10-02T23:07:23Z"
 
 [dependency-groups]
 dev = [

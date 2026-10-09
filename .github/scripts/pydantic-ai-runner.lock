@@ -26,6 +26,9 @@ logfire-api = false
 cassetter = false
 fastmcp-slim = "2026-10-08T22:57:02Z"
 listentome = false
+aiohttp = "2026-10-05T17:43:49Z"
+asyncpg = "2026-10-06T20:32:41Z"
+fastavro = "2026-10-08T00:29:29Z"
 logfire = false
 pydantic-settings = false
 pydantic-monty-client = false
@@ -36,6 +39,7 @@ anthropic = "2026-10-08T03:42:01.588842Z"
 openai = "2026-10-06T21:31:20Z"
 google-genai = "2026-09-22T17:23:02Z"
 fastmcp-tasks = "2026-10-08T22:57:02Z"
+markupsafe = "2026-10-02T23:07:23Z"
 
 [manifest]
 requirements = [
@@ -1141,6 +1145,7 @@ requires-dist = [
     { name = "absurd-sdk", marker = "extra == 'absurd'", specifier = ">=0.5.0,<1" },
     { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.11,<0.12" },
     { name = "aws-durable-execution-sdk-python", marker = "python_full_version >= '3.11' and extra == 'aws-lambda'", specifier = ">=1.7.0,<2" },
+    { name = "beartype", marker = "python_full_version >= '3.15' and extra == 'stackone'", specifier = ">=0.23.0rc2" },
     { name = "browser-use", marker = "python_full_version >= '3.11' and extra == 'browser-use'", specifier = ">=0.13.6,<0.14" },
     { name = "e2b", marker = "extra == 'e2b'", specifier = ">=2.48.0" },
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.16.0" },

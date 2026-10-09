@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
-from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
+from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag, TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -3050,6 +3050,17 @@ def tool_with_decimal(x: Decimal) -> str:
     return f'{x}'  # pragma: no cover
 
 
+# pydantic 2.14 dropped the `pattern` from `Decimal`'s string schema; the lowest-versions job still runs an
+# older pydantic, so each schema shape is pinned for the version that produces it.
+_DECIMAL_SCHEMA_HAS_PATTERN = 'pattern' in TypeAdapter(Decimal).json_schema()['anyOf'][1]
+_requires_decimal_pattern = pytest.mark.skipif(
+    not _DECIMAL_SCHEMA_HAS_PATTERN, reason='pydantic>=2.14 omits the Decimal string pattern'
+)
+_requires_no_decimal_pattern = pytest.mark.skipif(
+    _DECIMAL_SCHEMA_HAS_PATTERN, reason='pydantic<2.14 emits the Decimal string pattern'
+)
+
+
 def tool_with_url(x: AnyUrl) -> str:
     return f'{x}'  # pragma: no cover
 
@@ -3160,7 +3171,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             ),
             snapshot(True),
         ),
-        (
+        pytest.param(
             tool_with_decimal,
             None,
             snapshot(
@@ -3182,8 +3193,9 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 }
             ),
             snapshot(None),
+            marks=_requires_decimal_pattern,
         ),
-        (
+        pytest.param(
             tool_with_decimal,
             True,
             snapshot(
@@ -3205,6 +3217,36 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 }
             ),
             snapshot(True),
+            marks=_requires_decimal_pattern,
+        ),
+        pytest.param(
+            tool_with_decimal,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'anyOf': [{'type': 'number'}, {'type': 'string'}]}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            # Without the pattern the schema is strict-compatible, so strict is inferred.
+            snapshot(True),
+            marks=_requires_no_decimal_pattern,
+        ),
+        pytest.param(
+            tool_with_decimal,
+            True,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'anyOf': [{'type': 'number'}, {'type': 'string'}]}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+            marks=_requires_no_decimal_pattern,
         ),
         (
             tool_with_url,
