@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager, suppress
+from contextlib import AbstractContextManager, AsyncExitStack, asynccontextmanager, nullcontext, suppress
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from functools import cached_property
@@ -25,6 +25,7 @@ from pydantic_ai._utils import await_maybe, get_first_param_type
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelRequestAttempt, ModelResponse
 from ..profiles import ModelProfile
+from ..settings import merge_model_settings
 from . import (
     KnownModelName,
     Model,
@@ -32,6 +33,8 @@ from . import (
     StreamedResponse,
     infer_model,
 )
+from ._request_timeout import RequestDeadline
+from .wrapper import WrapperModel
 
 if TYPE_CHECKING:
     from ..messages import ModelMessage
@@ -258,7 +261,8 @@ class FallbackModel(Model):
             try:
                 _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
-                response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
+                with _enforce_request_deadline(pinned, model_settings):
+                    response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 duration = start.elapsed()
                 if not await self._should_fallback(exc):
@@ -288,7 +292,8 @@ class FallbackModel(Model):
                 _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
                 prepared_messages = model.prepare_messages(messages, model_request_parameters)
-                response = await model.request(prepared_messages, model_settings, model_request_parameters)
+                with _enforce_request_deadline(model, model_settings):
+                    response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 duration = start.elapsed()
                 if await self._should_fallback(exc):
@@ -349,7 +354,9 @@ class FallbackModel(Model):
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
-                        pinned.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
+                        open_request_stream(
+                            pinned, prepared_messages, model_settings, model_request_parameters, run_context
+                        )
                     )
                 except Exception as exc:
                     duration = start.elapsed()
@@ -384,7 +391,9 @@ class FallbackModel(Model):
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = model.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
-                        model.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
+                        open_request_stream(
+                            model, prepared_messages, model_settings, model_request_parameters, run_context
+                        )
                     )
                 except Exception as exc:
                     duration = start.elapsed()
@@ -558,6 +567,50 @@ class FallbackModel(Model):
             record_attempt_span(
                 attempt, failure, model=model, index=len(attempts) - 1, parent=span, tracer=policy.tracer
             )
+
+
+def start_request_deadline(model: Model, model_settings: ModelSettings | None) -> RequestDeadline | None:
+    """Start the `request_timeout` deadline of a request to `model` made now, if it's set there or on the model.
+
+    A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], also behind a wrapper, gets none of its own:
+    it starts a fresh one for each model it tries.
+    """
+    inner = model
+    while isinstance(inner, WrapperModel):
+        inner = inner.wrapped
+    if isinstance(inner, FallbackModel):
+        return None
+    return RequestDeadline.start(model.model_name, merge_model_settings(model.settings, model_settings))
+
+
+def _enforce_request_deadline(model: Model, model_settings: ModelSettings | None) -> AbstractContextManager[None]:
+    deadline = start_request_deadline(model, model_settings)
+    return deadline.enforce() if deadline is not None else nullcontext()
+
+
+@asynccontextmanager
+async def open_request_stream(
+    model: Model,
+    messages: list[ModelMessage],
+    model_settings: ModelSettings | None,
+    model_request_parameters: ModelRequestParameters,
+    run_context: RunContext[Any] | None = None,
+) -> AsyncGenerator[StreamedResponse]:
+    """Open a streamed request to `model` under its `request_timeout` deadline, if it's set.
+
+    The deadline covers opening the stream and each pull of its next event.
+    """
+    stream = model.request_stream(messages, model_settings, model_request_parameters, run_context)
+    deadline = start_request_deadline(model, model_settings)
+    if deadline is None:
+        async with stream as streamed_response:
+            yield streamed_response
+        return
+    async with AsyncExitStack() as stack:
+        with deadline.enforce():
+            streamed_response = await stack.enter_async_context(stream)
+        streamed_response._request_deadline = deadline  # pyright: ignore[reportPrivateUsage]
+        yield streamed_response
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:

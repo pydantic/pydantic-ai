@@ -100,6 +100,7 @@ from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
 from ._known_model_names import KnownModelName as KnownModelName
 from ._prompt_cache import snap_cache_setting, split_cache_setting
+from ._request_timeout import RequestDeadline
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -1269,6 +1270,10 @@ class StreamedResponse(ABC):
     _first_chunk_monotonic: float | None = field(default=None, init=False)
     """`time.perf_counter()` stamped on the first event surfaced to the consumer, or `None` if nothing
     was yielded; surfaced as a duration by the `time_to_first_chunk` method."""
+    _request_deadline: RequestDeadline | None = field(default=None, init=False, repr=False)
+    """The `ModelSettings['request_timeout']` deadline each pull of the next event runs under, if any.
+
+    Set before iteration starts by whoever opened the stream under that deadline."""
 
     @cached_property
     def _parts_manager(self) -> ModelResponsePartsManager:
@@ -1377,9 +1382,10 @@ class StreamedResponse(ABC):
                     if not self._cancelled:
                         self._finished = True
 
-            self._event_iterator = iterator_with_cancel_guard(
-                iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
-            )
+            events = self._get_event_iterator()
+            if self._request_deadline is not None:
+                events = self._request_deadline.iterate(events)
+            self._event_iterator = iterator_with_cancel_guard(iterator_with_part_end(iterator_with_final_event(events)))
         return self._event_iterator
 
     async def cancel(self) -> None:

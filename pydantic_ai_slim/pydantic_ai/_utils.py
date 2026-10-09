@@ -711,9 +711,12 @@ class PeekableAsyncStream(Generic[T, SourceT]):
             scope.cancel()
         value = self._source_iter if self._source_iter is not None else self.source
         # Wait for the cancelled pull to release the source before closing it, so we don't close a
-        # generator that's still running.
-        async with self._source_lock:
-            await aclose_if_supported(value)
+        # generator that's still running. Shielded, as this is teardown: it often runs inside an anyio scope that
+        # was cancelled, e.g. at a `request_timeout` deadline, where waiting for the lock would raise again and
+        # leave the source open.
+        with anyio.CancelScope(shield=True):
+            async with self._source_lock:
+                await aclose_if_supported(value)
 
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> str:

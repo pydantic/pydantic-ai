@@ -547,7 +547,7 @@ Some providers can pause a model turn mid-flight (Anthropic `pause_turn`) or run
 
 This has a few operational implications:
 
-- **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. Model request activities are given a default `heartbeat_timeout` of 30 seconds; see [Activity Configuration](#activity-configuration) for how heartbeating works across the other activities.
+- **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. A [`request_timeout`](../timeouts.md#model-request-deadlines) model setting covers all segments of the turn: it runs as a workflow timer, and cancels the in-flight activity when it fires. Model request activities are given a default `heartbeat_timeout` of 30 seconds; see [Activity Configuration](#activity-configuration) for how heartbeating works across the other activities.
 - **Retries and waits**: a failed segment retries independently. Delays between background polls use durable Temporal timers and do not consume activity wall-clock time.
 - **Cancellation**: if an error abandons a suspended job, its provider teardown runs in a dedicated cancellation activity.
 - **Payload size**: whenever [streaming](#streaming) is used — an `event_stream_handler`, a `ProcessEventStream` capability, or a per-run `event_stream_handler` — each segment's buffered events are shipped back to the workflow and must fit within Temporal's [payload size limit](#large-payloads) (2MB by default). A segment that overflows raises the same `UserError` as any other oversized model response.

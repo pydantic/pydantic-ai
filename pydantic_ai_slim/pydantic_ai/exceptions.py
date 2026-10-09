@@ -37,6 +37,7 @@ __all__ = (
     'ConcurrencyLimitExceeded',
     'ModelAPIError',
     'ModelHTTPError',
+    'ModelRequestTimeout',
     'ContentFilterError',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
@@ -512,6 +513,26 @@ class ModelAPIError(AgentRunError):
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
         return self.__class__, (self.model_name, self.message)
+
+
+class ModelRequestTimeout(ModelAPIError):
+    """Raised when a model request didn't finish within its [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout].
+
+    The deadline is enforced by Pydantic AI around one request to one model, so it covers every attempt the
+    provider SDK and HTTP transport make, and reading a streamed response through its last chunk. Under a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], each model gets a deadline of its own, and its
+    default `fallback_on` falls back on this error.
+    """
+
+    timeout: float
+    """The `request_timeout` that ran out, in seconds."""
+
+    def __init__(self, model_name: str, timeout: float):
+        self.timeout = timeout
+        super().__init__(model_name, f'Request to model {model_name!r} timed out after {timeout:g} seconds')
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.model_name, self.timeout)
 
 
 class ModelHTTPError(ModelAPIError):

@@ -29,6 +29,7 @@ from pydantic_ai import (
     ImageGenerator,
     ModelMessage,
     ModelRequest,
+    ModelRequestTimeout,
     ModelResponse,
     MultiModalContent,
     PartDeltaEvent,
@@ -441,6 +442,85 @@ async def test_durability_non_model_error_still_reaches_workflow_as_activity_err
             task_queue=TASK_QUEUE,
         )
     assert output == 'ActivityError'
+
+
+# --- `ModelSettings['request_timeout']` runs on the workflow's clock ---
+
+
+async def _hanging_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    await asyncio.sleep(3600)
+    raise AssertionError('unreachable')  # pragma: no cover
+
+
+async def _hanging_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    await asyncio.sleep(3600)
+    yield 'unreachable'  # pragma: no cover
+
+
+def _request_timeout_agent(name: str, model: FunctionModel, *, streamed: bool = False) -> Agent[None, str]:
+    capabilities: list[AbstractCapability[None]] = [ProcessEventStream(_drain_events)] if streamed else []
+    capabilities.append(TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG))
+    return Agent(
+        model,
+        name=name,
+        deps_type=type(None),
+        capabilities=capabilities,
+        model_settings={'request_timeout': 1},
+    )
+
+
+request_timeout_agent = _request_timeout_agent(
+    'durability_request_timeout', FunctionModel(_hanging_model_fn, model_name='hanging')
+)
+streamed_request_timeout_agent = _request_timeout_agent(
+    'durability_streamed_request_timeout',
+    FunctionModel(stream_function=_hanging_stream_fn, model_name='hanging'),
+    streamed=True,
+)
+
+
+@workflow.defn
+class RequestTimeoutWorkflow:
+    @workflow.run
+    async def run(self, agent_name: str) -> str:
+        agent = {agent.name: agent for agent in (request_timeout_agent, streamed_request_timeout_agent)}[agent_name]
+        try:
+            await agent.run('hello')
+        except ModelRequestTimeout as error:
+            return f'{type(error).__name__} {error.model_name} {error.timeout}'
+        raise AssertionError('unreachable')  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    'agent',
+    [pytest.param(request_timeout_agent, id='request'), pytest.param(streamed_request_timeout_agent, id='stream')],
+)
+async def test_durability_request_timeout_cancels_the_model_activity(client: Client, agent: Agent[None, str]):
+    """The deadline is a workflow timer: when it fires, the hanging model activity is cancelled and the workflow sees
+    `ModelRequestTimeout`, well within the activity's own timeouts."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RequestTimeoutWorkflow],
+        plugins=[AgentPlugin(agent)],
+    ):
+        handle = await client.start_workflow(
+            RequestTimeoutWorkflow.run,
+            args=[agent.name],
+            id=f'{RequestTimeoutWorkflow.__name__}_{agent.name}',
+            task_queue=TASK_QUEUE,
+        )
+        output = await handle.result()
+        history = await handle.fetch_history()
+
+    assert output == 'ModelRequestTimeout hanging 1'
+    event_types = {event.WhichOneof('attributes') for event in history.events}
+    assert {'timer_started_event_attributes', 'activity_task_cancel_requested_event_attributes'} <= event_types
+
+    # The deadline replays from history, so a replayed run raises at the same point.
+    await Replayer(
+        workflows=[RequestTimeoutWorkflow], workflow_runner=UnsandboxedWorkflowRunner(), plugins=[AgentPlugin(agent)]
+    ).replay_workflow(history)
 
 
 # --- Durability with tools ---
