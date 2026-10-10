@@ -2508,7 +2508,7 @@ async def test_from_request_rejects_cross_origin_forgeable_content_type(content_
         await DummyUIAdapter.from_request(starlette_request, agent=agent)
 
     assert exc_info.value.status_code == 415
-    assert exc_info.value.detail == snapshot(
+    assert exc_info.value.detail == (
         f'Expected `Content-Type: application/json`, got {content_type.decode().split(";")[0] if content_type else "no content type"}'
     )
 

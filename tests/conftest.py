@@ -277,7 +277,7 @@ def content_handler(value: Any, builder: Builder) -> Custom | None:  # pragma: n
 
     if isinstance(value, BinaryContent):
         return builder.create_call(
-            BinaryContent,
+            type(value),
             [],
             {
                 # prevent generation of IsBytes() because it does not work together with Pydantic models
@@ -296,7 +296,7 @@ def content_handler(value: Any, builder: Builder) -> Custom | None:  # pragma: n
                 [],
                 {
                     'url': value.url,
-                    'media_type': builder.with_default(value.media_type, None),
+                    'media_type': builder.with_default(value._media_type, None),
                     # TODO: identifier is not used for == comparison should we ignore it?
                     'identifier': builder.with_default(value.identifier, None),
                     'force_download': builder.with_default(value.force_download, False),

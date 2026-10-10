@@ -84,7 +84,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDef
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import UsageLimits
 
-from ._inline_snapshot import snapshot
+from ._inline_snapshot import snapshot, Is
 from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, message, message_part, try_import
 
 with try_import() as starlette_import_successful:
@@ -5240,7 +5240,7 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
     reloaded = VercelAIAdapter.load_messages(ui_messages)
     tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
-        [ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
+        [ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=Is(content), timestamp=IsDatetime())]
     )
 
 
