@@ -20,9 +20,12 @@ from pydantic_ai import (
     DocumentUrl,
     ImageUrl,
     ModelAPIError,
+    ModelConnectionError,
+    ModelOverloadedError,
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    ModelTimeoutError,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -30,6 +33,7 @@ from pydantic_ai import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    TransportPhase,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -62,7 +66,7 @@ with try_import() as imports_successful:
         ChatCompletionStreamOutputDelta,
         ChatCompletionStreamOutputUsage,
     )
-    from huggingface_hub.errors import HfHubHTTPError, OverloadedError
+    from huggingface_hub.errors import GenerationError, HfHubHTTPError, OverloadedError
 
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
@@ -688,12 +692,13 @@ def _stream_breaking_off(request: httpx.Request) -> httpx.Response:
 
 
 @pytest.mark.parametrize(
-    ('handler', 'stream', 'cause_name'),
+    ('handler', 'stream', 'cause_name', 'error_class', 'phase'),
     [
-        pytest.param(_connect_error, False, 'ConnectError', id='connect'),
-        pytest.param(_connect_error, True, 'ConnectError', id='stream-connect'),
-        pytest.param(_timeout, False, 'InferenceTimeoutError', id='timeout'),
-        pytest.param(_stream_breaking_off, True, 'ReadError', id='mid-stream'),
+        pytest.param(_connect_error, False, 'ConnectError', ModelConnectionError, 'connect', id='connect'),
+        pytest.param(_connect_error, True, 'ConnectError', ModelConnectionError, 'connect', id='stream-connect'),
+        # `InferenceTimeoutError` doesn't say at which stage the request timed out.
+        pytest.param(_timeout, False, 'InferenceTimeoutError', ModelTimeoutError, None, id='timeout'),
+        pytest.param(_stream_breaking_off, True, 'ReadError', ModelConnectionError, 'read', id='mid-stream'),
     ],
 )
 async def test_model_transport_error(
@@ -702,6 +707,8 @@ async def test_model_transport_error(
     handler: Callable[[httpx.Request], httpx.Response],
     stream: bool,
     cause_name: str,
+    error_class: type[ModelConnectionError],
+    phase: TransportPhase | None,
 ) -> None:
     """`huggingface_hub` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
     monkeypatch.setattr(
@@ -718,14 +725,17 @@ async def test_model_transport_error(
         else:
             await agent.run('hello')
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is error_class
+    assert exc_info.value.phase == phase
     assert type(exc_info.value.__cause__).__name__ == cause_name
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
     error = HfHubHTTPError(
         message='test_error',
-        response=Mock(status_code=500, content={'error': 'test error'}, headers=httpx.Headers({'x-request-id': 'abc'})),
+        response=Mock(
+            status_code=500, content=b'{"error": "test error"}', headers=httpx.Headers({'x-request-id': 'abc'})
+        ),
     )
     mock_client = MockHuggingFace.create_mock(error)
     m = HuggingFaceModel('not_a_model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
@@ -733,18 +743,30 @@ def test_model_status_error(allow_model_requests: None) -> None:
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     exc = exc_info.value
-    assert str(exc) == snapshot("status_code: 500, model_name: not_a_model, body: {'error': 'test error'}")
+    assert str(exc) == snapshot('status_code: 500, model_name: not_a_model, body: b\'{"error": "test error"}\'')
     assert exc.headers == {'x-request-id': 'abc'}
 
 
+@pytest.mark.parametrize(
+    ('error_kind', 'error_class'),
+    [
+        pytest.param('overloaded', ModelOverloadedError, id='overloaded'),
+        pytest.param('generation', ModelAPIError, id='generation'),
+    ],
+)
 @pytest.mark.parametrize('first_chunk', [True, False], ids=['first-chunk', 'mid-stream'])
-async def test_stream_error_object_raises_model_api_error(allow_model_requests: None, first_chunk: bool) -> None:
-    """An error object inside a 200 stream, which `huggingface_hub` raises as a `TextGenerationError`, surfaces as
-    `ModelAPIError`, with no status code invented for it.
+async def test_stream_error_object_raises_model_api_error(
+    allow_model_requests: None,
+    first_chunk: bool,
+    error_kind: Literal['overloaded', 'generation'],
+    error_class: type[ModelAPIError],
+) -> None:
+    """An error object inside a 200 stream, which `huggingface_hub` raises as a `TextGenerationError`, surfaces with
+    `in_stream` set: an overloaded server gets the 429 it answers with before a stream opens, other errors no status.
 
     https://github.com/pydantic/pydantic-ai/issues/8722
     """
-    error = OverloadedError('Model is overloaded')
+    error = (OverloadedError if error_kind == 'overloaded' else GenerationError)('Model is overloaded')
     stream: list[MockStreamEvent] = [error] if first_chunk else [text_chunk('Hello'), error]
     mock_client = MockHuggingFace.create_stream_mock(stream)
     model = HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
@@ -752,8 +774,15 @@ async def test_stream_error_object_raises_model_api_error(allow_model_requests: 
         async with Agent(model).run_stream('hello') as result:
             await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
-    assert exc_info.value.message == 'Model is overloaded'
+    assert isinstance(exc_info.value, error_class)
+    assert exc_info.value.in_stream is True
+    if error_kind == 'overloaded':
+        assert isinstance(exc_info.value, ModelHTTPError)
+        assert exc_info.value.status_code == 429
+        assert exc_info.value.body == 'Model is overloaded'
+    else:
+        assert type(exc_info.value) is ModelAPIError
+        assert exc_info.value.message == 'Model is overloaded'
     assert exc_info.value.__cause__ is error
 
 

@@ -54,7 +54,15 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelConnectionError,
+    ModelHTTPError,
+    ModelRetry,
+    ModelTimeoutError,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ToolAvailabilityDeltaPart,
@@ -4267,7 +4275,8 @@ async def test_bedrock_stream_transport_error_mid_stream(
         async with Agent(model).run_stream('hello') as result:
             await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is (ModelTimeoutError if error_kind == 'read-timeout' else ModelConnectionError)
+    assert exc_info.value.phase == 'read'
     assert exc_info.value.__cause__ is error
 
 

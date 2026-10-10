@@ -69,6 +69,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelRetry,
     UnexpectedModelBehavior,
@@ -5404,7 +5405,8 @@ async def test_google_connect_error_is_wrapped(allow_model_requests: None, strea
             else:
                 await Agent(model).run('test')
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == 'connect'
     assert exc_info.value.message == 'connection refused'
     assert isinstance(exc_info.value.__cause__, HTTPX2ConnectError)
 
@@ -5431,7 +5433,8 @@ async def test_google_stream_read_error_mid_stream_is_wrapped(allow_model_reques
             async with Agent(model).run_stream('test') as result:
                 await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == 'read'
     assert exc_info.value.message == 'connection reset'
     assert isinstance(exc_info.value.__cause__, HTTPX2ReadError)
 

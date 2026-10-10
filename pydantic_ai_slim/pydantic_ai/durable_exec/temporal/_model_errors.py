@@ -88,7 +88,9 @@ def model_errors_as_application_errors() -> Generator[None]:
     """In a model activity, raise a model error as an `ApplicationError` the workflow can rebuild it from.
 
     The `ApplicationError`'s `type` is the error's class name, which is what Temporal would have used
-    for the raw exception, so the activity's retry policy treats it exactly as before.
+    for the raw exception, so the activity's retry policy treats it exactly as before. An HTTP error with an
+    error category is an instance of a private class (see `ModelHTTPError.for_category`), so it reports
+    `ModelHTTPError`, the name a retry policy can refer to.
     """
     try:
         yield
@@ -101,7 +103,12 @@ def model_errors_as_application_errors() -> Generator[None]:
             encoded = None
         if encoded is None or _decode(encoded) is None:
             raise
-        raise ApplicationError(str(error), {_DETAILS_KEY: encoded}, type=type(error).__name__) from error
+        raise ApplicationError(str(error), {_DETAILS_KEY: encoded}, type=_public_class_name(error)) from error
+
+
+def _public_class_name(error: ModelAPIError) -> str:
+    """The name of the first public class in the error's MRO."""
+    return next(cls.__name__ for cls in type(error).__mro__ if not cls.__name__.startswith('_'))
 
 
 @contextmanager

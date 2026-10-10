@@ -59,8 +59,11 @@ from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelRateLimitError,
     ModelRetry,
+    ModelServerError,
     SuspendedResponseExpired,
 )
 from pydantic_ai.messages import (
@@ -14338,7 +14341,7 @@ _ERROR_EVENT: dict[str, Any] = {
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
 @pytest.mark.parametrize(
-    ('stream', 'content', 'message'),
+    ('stream', 'content', 'status_code', 'message'),
     [
         pytest.param(
             True,
@@ -14346,13 +14349,25 @@ _ERROR_EVENT: dict[str, Any] = {
                 _CREATED_EVENT,
                 {'type': 'error', 'code': 'server_error', 'message': 'The server had an error', 'sequence_number': 1},
             ),
-            'server_error: The server had an error',
+            500,
+            None,
             id='stream-error-event',
         ),
         pytest.param(
             True,
+            _sse(
+                _CREATED_EVENT,
+                {'type': 'error', 'code': 'invalid_prompt', 'message': 'Invalid prompt', 'sequence_number': 1},
+            ),
+            None,
+            'invalid_prompt: Invalid prompt',
+            id='stream-error-event-unmapped',
+        ),
+        pytest.param(
+            True,
             _sse(_ERROR_EVENT),
-            'insufficient_quota: You exceeded your current quota',
+            429,
+            None,
             id='stream-error-event-first',
         ),
         pytest.param(
@@ -14369,7 +14384,8 @@ _ERROR_EVENT: dict[str, Any] = {
                     },
                 }
             ),
-            'You exceeded your current quota',
+            429,
+            None,
             id='stream-error-event-nested',
         ),
         pytest.param(
@@ -14385,22 +14401,27 @@ _ERROR_EVENT: dict[str, Any] = {
                     'sequence_number': 1,
                 },
             ),
-            'rate_limit_exceeded: Rate limit reached',
+            429,
+            None,
             id='stream-response-failed-background',
         ),
         pytest.param(
             False,
             json.dumps(_failed_response_json({'code': 'server_error', 'message': 'The model failed'})).encode(),
+            None,
             'server_error: The model failed',
             id='response-failed',
         ),
     ],
 )
 async def test_response_error_raises_model_api_error(
-    allow_model_requests: None, stream: bool, content: bytes, message: str
+    allow_model_requests: None, stream: bool, content: bytes, status_code: int | None, message: str | None
 ):
-    """A failure the Responses API reports in a 200 body or stream raises `ModelAPIError` with no status code,
-    instead of ending the response with `finish_reason='error'` and sending the model an output retry.
+    """A failure the Responses API reports in a 200 body or stream raises instead of ending the response with
+    `finish_reason='error'` and sending the model an output retry.
+
+    In a stream, it gets the status the same error has before a stream opens, with `in_stream` set. A failed
+    response body has no status to report.
 
     A mock transport stands in for a cassette because no real provider returns such a response on demand.
     """
@@ -14426,10 +14447,48 @@ async def test_response_error_raises_model_api_error(
             else:
                 await agent.run('Hello')
 
-    assert type(exc_info.value) is ModelAPIError
-    assert exc_info.value.message == message
+    if status_code is not None:
+        assert isinstance(exc_info.value, ModelHTTPError)
+        assert exc_info.value.status_code == status_code
+        assert exc_info.value.in_stream is True
+    else:
+        # A failed response body has no status, but a `server_error` still has a category.
+        assert type(exc_info.value) is (
+            ModelServerError if message == 'server_error: The model failed' else ModelAPIError
+        )
+        assert exc_info.value.message == message
+        assert exc_info.value.in_stream is stream
     # No output retry, re-poll, or cancellation of a background job the provider already marked as failed.
     assert requests_made == 1
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    ('code', 'category'),
+    [
+        pytest.param('rate_limit_exceeded', ModelRateLimitError, id='rate-limit'),
+        pytest.param('context_length_exceeded', ModelContextWindowExceededError, id='context-window'),
+    ],
+)
+async def test_failed_response_body_gets_category(allow_model_requests: None, code: str, category: type[ModelAPIError]):
+    """A failed response body gets the same category as the same error in a stream, though no status code."""
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        body = _failed_response_json({'code': code, 'message': 'Failed'})
+        return httpx2.Response(200, content=json.dumps(body).encode(), headers={'content-type': 'application/json'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        agent = Agent(OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client)))
+        with pytest.raises(category) as exc_info:
+            await agent.run('Hello')
+
+    assert not isinstance(exc_info.value, ModelHTTPError)
+    assert exc_info.value.provider_error_code == code
+    assert exc_info.value.in_stream is False
 
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])

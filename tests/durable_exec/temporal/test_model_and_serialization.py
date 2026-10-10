@@ -49,6 +49,8 @@ from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
+    ModelServerError,
+    ModelTimeoutError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -3084,7 +3086,7 @@ def test_a_subclass_with_plain_reduce_state_crosses_with_it():
     class StatefulModelError(ModelAPIError):
         extra: int | None = None
 
-        def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:
             return self.__class__, (self.model_name, self.message), {'extra': self.extra}
 
     # Only Pydantic AI's own classes cross, so present this one as one of them.
@@ -3110,6 +3112,27 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             raise ModelHTTPError(503, 'gpt-test')
     assert raised.value.type == 'ModelHTTPError'
     assert not raised.value.non_retryable
+
+
+@pytest.mark.parametrize(
+    ('error', 'type_name'),
+    [
+        pytest.param(
+            ModelHTTPError.for_category(ModelServerError, status_code=500, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-category',
+        ),
+        pytest.param(ModelTimeoutError('gpt-test', 'timed out', phase='read'), 'ModelTimeoutError', id='category'),
+    ],
+)
+def test_a_categorized_error_keeps_a_public_type_name(error: ModelAPIError, type_name: str):
+    """An HTTP error with a category keeps the `ModelHTTPError` type a retry policy can name, and still crosses."""
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    assert raised.value.type == type_name
+    rebuilt = _crossed(error)
+    assert type(rebuilt) is type(error)
 
 
 def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: pytest.MonkeyPatch):

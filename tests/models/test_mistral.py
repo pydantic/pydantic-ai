@@ -38,7 +38,14 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelConnectionError,
+    ModelHTTPError,
+    ModelRetry,
+    TransportPhase,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.settings import ThinkingLevel
@@ -3054,11 +3061,11 @@ def _stream_breaking_off(request: httpx2.Request) -> httpx2.Response:
 
 
 @pytest.mark.parametrize(
-    ('handler', 'stream', 'message', 'cause'),
+    ('handler', 'stream', 'message', 'cause', 'phase'),
     [
-        pytest.param(_connect_error, False, 'connection refused', httpx2.ConnectError, id='connect'),
-        pytest.param(_connect_error, True, 'connection refused', httpx2.ConnectError, id='stream-connect'),
-        pytest.param(_stream_breaking_off, True, 'connection reset', httpx2.ReadError, id='mid-stream'),
+        pytest.param(_connect_error, False, 'connection refused', httpx2.ConnectError, 'connect', id='connect'),
+        pytest.param(_connect_error, True, 'connection refused', httpx2.ConnectError, 'connect', id='stream-connect'),
+        pytest.param(_stream_breaking_off, True, 'connection reset', httpx2.ReadError, 'read', id='mid-stream'),
     ],
 )
 async def test_model_transport_error(
@@ -3067,6 +3074,7 @@ async def test_model_transport_error(
     stream: bool,
     message: str,
     cause: type[Exception],
+    phase: TransportPhase,
 ) -> None:
     """`mistralai` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
@@ -3079,7 +3087,8 @@ async def test_model_transport_error(
             else:
                 await agent.run('hello')
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == phase
     assert exc_info.value.message == message
     assert isinstance(exc_info.value.__cause__, cause)
 

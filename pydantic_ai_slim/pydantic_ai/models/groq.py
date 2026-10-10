@@ -10,12 +10,15 @@ from typing import Any, Literal, assert_never, cast, overload
 from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
 
-from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .. import ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import (
+    ModelAPIError,
+    UserError,
+)
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -67,7 +70,16 @@ from ._tool_choice import resolve_tool_choice
 from ._transport_errors import transport_error_message
 
 try:
-    from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream, NotGiven
+    from groq import (
+        NOT_GIVEN,
+        APIConnectionError,
+        APIError,
+        APIStatusError,
+        APITimeoutError,
+        AsyncGroq,
+        AsyncStream,
+        NotGiven,
+    )
     from groq.types import chat
     from groq.types.chat.chat_completion_content_part_image_param import ImageURL
     from groq.types.chat.chat_completion_message import ExecutedTool
@@ -92,28 +104,36 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
     except APIStatusError as e:
         if (status_code := e.status_code) >= 400:
             body: object | None = e.body
+            error = nested if _utils.is_str_dict(body) and _utils.is_str_dict(nested := body.get('error')) else {}
+            code, error_type, message = error.get('code'), error.get('type'), error.get('message')
+            code = code if isinstance(code, str) else None
+            error_type = error_type if isinstance(error_type, str) else None
             suggested_model_id = None
-            if _utils.is_str_dict(body) and _utils.is_str_dict(error := body.get('error')):
-                if error.get('code') == 'model_not_found':
-                    suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-            raise ModelHTTPError(
+            if code == 'model_not_found':
+                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+            category = _model_errors.openai_compatible_category(status_code, code, error_type, message)
+            raise ModelHTTPError.for_category(
+                category,
                 status_code=status_code,
                 model_name=model_name,
                 body=body,
                 headers=dict(e.response.headers),
                 suggested_model_id=suggested_model_id,
+                provider_error_code=code,
+                provider_error_type=error_type,
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
-        raise ModelAPIError(model_name=model_name, message=e.message) from e
+        raise _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError)) from e
     except APIError as e:
         # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
-        # been received, so there is no status code to report.
-        raise ModelAPIError(model_name=model_name, message=e.message) from e
+        # been received; it gets the status the same error has before a stream opens.
+        raise _model_errors.stream_error(model_name, e.message, e.body) from e
     except httpx.TransportError as e:
         # `groq` wraps transport failures in `APIConnectionError` only until the response starts; one that breaks
         # off a stream mid-way surfaces as the raw `httpx` error.
-        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
+        timeout = isinstance(e, httpx.TimeoutException)
+        raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
 
 
 ProductionGroqModelNames = Literal[

@@ -14,13 +14,22 @@ import pydantic_core
 from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
 
-from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._http import to_httpx2_timeout
 from .._run_context import RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ..capabilities.abstract import AbstractCapability
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    ModelOverloadedError,
+    ModelQuotaExceededError,
+    ModelRateLimitError,
+    UserError,
+    _HTTPErrorCategory,  # pyright: ignore[reportPrivateUsage]
+)
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -156,6 +165,7 @@ try:
         NOT_GIVEN,
         APIConnectionError,
         APIStatusError,
+        APITimeoutError,
         AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
         AsyncAnthropicBedrockMantle,  # pyright: ignore[reportPrivateImportUsage]
         AsyncAnthropicFoundry,
@@ -417,26 +427,51 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> G
     try:
         yield
     except APIStatusError as e:
+        body: object | None = e.body
+        error = nested if _utils.is_str_dict(body) and _utils.is_str_dict(nested := body.get('error')) else {}
+        error_type, error_message = error.get('type'), error.get('message')
+        category = _ERROR_TYPE_CATEGORIES.get(error_type) if isinstance(error_type, str) else None
+        if error_type == 'invalid_request_error' and isinstance(error_message, str):
+            if 'prompt is too long' in error_message.lower():
+                category = ModelContextWindowExceededError
+            elif 'credit balance is too low' in error_message.lower():
+                # Anthropic reports an exhausted prepaid balance as a 400, identifiable only by its message.
+                category = ModelQuotaExceededError
+        provider_error_type = error_type if isinstance(error_type, str) else None
         if (status_code := _error_status_code(e)) >= 400:
-            body: object | None = e.body
             suggested_model_id = None
-            if _utils.is_str_dict(body) and _utils.is_str_dict(error := body.get('error')):
-                if error.get('type') == 'not_found_error' and error.get('message') == f'model: {model_name}':
-                    suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-            raise ModelHTTPError(
+            if error_type == 'not_found_error' and error_message == f'model: {model_name}':
+                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+            raise ModelHTTPError.for_category(
+                category or _model_errors.http_status_category(status_code, error_message),
                 status_code=status_code,
                 model_name=model_name,
                 body=body,
                 headers=dict(e.response.headers),
                 suggested_model_id=suggested_model_id,
+                provider_error_type=provider_error_type,
+                # An `error` event inside a stream comes with the stream's own 200 status; it got its status above.
+                in_stream=e.status_code < 400,
             ) from e
-        raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
+        # An `error` event inside a stream whose type has no known status.
+        raise (category or ModelAPIError)(
+            model_name=model_name, message=e.message, body=body, provider_error_type=provider_error_type, in_stream=True
+        ) from e
     except APIConnectionError as e:
-        raise ModelAPIError(model_name=model_name, message=e.message) from e
+        raise _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError)) from e
     except httpx2.TransportError as e:
         # `anthropic` wraps transport failures in `APIConnectionError` only until the response starts; one that breaks
         # off a stream mid-way surfaces as the raw `httpx2` error.
-        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
+        timeout = isinstance(e, httpx2.TimeoutException)
+        raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
+
+
+_ERROR_TYPE_CATEGORIES: dict[str, _HTTPErrorCategory] = {
+    'rate_limit_error': ModelRateLimitError,
+    'billing_error': ModelQuotaExceededError,
+    'overloaded_error': ModelOverloadedError,
+}
+"""Error categories for the `error.type` Anthropic sends, both in an HTTP error body and in a stream's `error` event."""
 
 
 LatestAnthropicModelNames = ModelParam

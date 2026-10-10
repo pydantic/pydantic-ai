@@ -13,9 +13,19 @@ from uuid import uuid4
 
 import httpx2
 
-from .. import UnexpectedModelBehavior, _utils, usage
+from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._run_context import RunContext
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    ModelOverloadedError,
+    ModelRateLimitError,
+    ModelServerError,
+    ModelUnavailableError,
+    UserError,
+    _HTTPErrorCategory,  # pyright: ignore[reportPrivateUsage]
+)
 from ..messages import (
     BinaryContent,
     CachePoint,
@@ -411,7 +421,8 @@ def _map_api_error(
     """Map a `google.genai` API error or a transport failure to the pydantic-ai exception to raise in its place."""
     if isinstance(e, httpx2.TransportError):
         # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
-        return ModelAPIError(model_name=model_name, message=transport_error_message(e))
+        timeout = isinstance(e, httpx2.TimeoutException)
+        return _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout)
     if (status_code := e.code) >= 400:
         headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         details = e.details  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
@@ -424,14 +435,51 @@ def _map_api_error(
                 and message.startswith(f'models/{model_name} is not found ')
             ):
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-        return ModelHTTPError(
+        status = e.status if isinstance(e.status, str) else None
+        category = _error_category(status, e.message)
+        # An error chunk inside a stream comes with the stream's own 200 response; its `code` is the error's status.
+        response_status = getattr(e.response, 'status_code', None)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        return ModelHTTPError.for_category(
+            category or _model_errors.http_status_category(status_code, e.message),
             status_code=status_code,
             model_name=model_name,
             body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
             headers=headers,
             suggested_model_id=suggested_model_id,
+            provider_error_code=status,
+            in_stream=isinstance(response_status, int) and response_status < 400,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
+
+
+_CONTEXT_WINDOW_ERROR_MESSAGES = ('input token count', 'number of tokens allowed')
+"""Gemini reports a context window overflow as `INVALID_ARGUMENT`, identifiable only by its message.
+
+The full message is `The input token count (N) exceeds the maximum number of tokens allowed (M)`; the file-upload
+variant drops the leading clause.
+"""
+
+
+def _error_category(status: str | None, message: object) -> _HTTPErrorCategory | None:
+    """The error category for a Google API error status, like `RESOURCE_EXHAUSTED`.
+
+    Gemini sends `RESOURCE_EXHAUSTED` for both rate limits and exhausted quota, with the same message, so it's
+    always a rate limit.
+    """
+    match status:
+        case 'RESOURCE_EXHAUSTED':
+            return ModelRateLimitError
+        case 'UNAVAILABLE':
+            # Like `The model is overloaded. Please try again later.`
+            return ModelOverloadedError if _model_errors.says_overloaded(message) else ModelUnavailableError
+        case 'INTERNAL':
+            return ModelServerError
+        case 'INVALID_ARGUMENT' if isinstance(message, str) and any(
+            m in message.lower() for m in _CONTEXT_WINDOW_ERROR_MESSAGES
+        ):
+            return ModelContextWindowExceededError
+        case _:
+            return None
 
 
 def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> dict[str, str]:

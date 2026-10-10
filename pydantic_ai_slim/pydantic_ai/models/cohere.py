@@ -5,9 +5,13 @@ from dataclasses import dataclass, field
 from types import EllipsisType
 from typing import Literal, assert_never, cast
 
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+)
 
-from .. import ModelHTTPError, usage
+from .. import _model_errors, usage
 from .._utils import (
     generate_tool_call_id as _generate_tool_call_id,
     guard_tool_call_id as _guard_tool_call_id,
@@ -215,13 +219,21 @@ class CohereModel(Model[AsyncClientV2]):
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
+                message = e.body.get('message') if _is_str_dict(e.body) else None
+                category = _model_errors.http_status_category(status_code, message)
+                # Cohere reports a context window overflow as a 400 identifiable only by its message, like
+                # `too many tokens: size limit exceeded by N tokens`.
+                if status_code == 400 and isinstance(message, str) and message.lower().startswith('too many tokens'):
+                    category = ModelContextWindowExceededError
+                raise ModelHTTPError.for_category(
+                    category, status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
                 ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
         except httpx.TransportError as e:
             # `cohere` doesn't wrap connection errors and timeouts in its own exceptions.
-            raise ModelAPIError(model_name=self.model_name, message=transport_error_message(e)) from e
+            timeout = isinstance(e, httpx.TimeoutException)
+            message = transport_error_message(e)
+            raise _model_errors.connection_error(self.model_name, message, e, timeout=timeout) from e
 
     def _get_tool_choice(
         self,
