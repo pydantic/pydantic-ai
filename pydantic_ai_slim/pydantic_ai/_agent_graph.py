@@ -1783,6 +1783,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not self.is_resuming_without_prompt:
             fill_run_metadata(self.request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.message_history.append(self.request)
+        _deliver_capability_loads(ctx)
 
         ctx.state.run_step += 1
 
@@ -2819,6 +2820,28 @@ def run_cancelled_snapshot(
         run_id=state.run_id,
         conversation_id=state.conversation_id,
     )
+
+
+def _deliver_capability_loads(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+    """Record the capability loads queued by `RunContext.load_capability` after the request being prepared.
+
+    Recorded before `_refresh_loaded_capability_ids`, where a load the model made through the
+    `load_capability` tool already is by then, so the request sees the loaded capability in full:
+    its tools, instructions, model settings, native tools, and hooks.
+    """
+    queue = ctx.state.pending_messages
+    assert isinstance(queue, _enqueue.PendingMessageQueue)
+    loads = queue.pop_capability_loads()
+    if not loads:
+        return
+    run_context = build_run_context(ctx)
+    for pending in loads:
+        for message in pending.messages:
+            fill_run_metadata(message, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+        ctx.state.message_history.extend(pending.messages)
+        run_context._emit_event(  # pyright: ignore[reportPrivateUsage]
+            _messages.EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending.messages))
+        )
 
 
 def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:

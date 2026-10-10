@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
 import pytest
@@ -3058,3 +3058,95 @@ async def test_load_capability_from_a_tool_attempt_that_retries_still_loads() ->
     result = await agent.run('Was I refunded?')
 
     assert parse_loaded_capabilities(result.all_messages()) == {'refunds'}
+
+
+@dataclass
+class _HotfixWorkflow(AbstractCapability[object]):
+    """A deferred capability whose model settings and model-request hook record when they apply."""
+
+    id: str | None = 'hotfix'
+    description: str | None = 'Hotfix workflow.'
+    defer_loading: bool = True
+    hook_fired_at: list[int] = field(default_factory=list[int])
+
+    def get_model_settings(self) -> _ModelSettings:
+        return _ModelSettings(temperature=0.123)
+
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        self.hook_fired_at.append(ctx.run_step)
+        return request_context
+
+
+@pytest.mark.parametrize('loaded_by', ['model', 'code'])
+async def test_first_request_after_load_applies_capability_settings_and_hooks(loaded_by: str) -> None:
+    """A load from code takes full effect on the next request, like a load the model makes.
+
+    Not just its tools: its model settings and model-request hooks apply to that request too.
+    """
+    hotfix = _HotfixWorkflow()
+    temperatures: list[float | None] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        temperatures.append((info.model_settings or {}).get('temperature'))
+        if len(messages) == 1:
+            if loaded_by == 'model':
+                return ModelResponse(parts=[ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'hotfix'})])
+            return ModelResponse(parts=[ToolCallPart('open_case', {})])
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[hotfix])
+
+    @agent.tool
+    async def open_case(ctx: RunContext[object]) -> str:
+        await ctx.load_capability('hotfix')
+        return 'Case opened.'
+
+    await agent.run('Ship the hotfix.')
+
+    assert (temperatures, hotfix.hook_fired_at) == ([None, 0.123], [2])
+
+
+async def test_load_capability_records_a_deterministic_tool_call_id() -> None:
+    """The load's tool call id is derived from the run, the tool call, and the capability, not random.
+
+    So a replay of the same run (as Temporal does with a tool hook) records the same exchange.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('open_case', {}, tool_call_id='open')])
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[_refunds()])
+
+    @agent.tool
+    async def open_case(ctx: RunContext[object]) -> str:
+        await ctx.load_capability('refunds')
+        return 'Case opened.'
+
+    async def load_call_id(run_id: str) -> str:
+        result = await agent.run('Was I refunded?', run_id=run_id)
+        [load_call] = _load_calls(result.all_messages())
+        return load_call.tool_call_id
+
+    first, replayed, other_run = await load_call_id('run-1'), await load_call_id('run-1'), await load_call_id('run-2')
+
+    assert first == replayed != other_run
+
+
+async def test_load_capability_after_the_run_ended_raises() -> None:
+    """A `RunContext` kept from a tool call can't load a capability once its run has ended."""
+    stored: list[RunContext[object]] = []
+    agent = Agent(FunctionModel(_open_case_then_check_refund), capabilities=[_refunds()])
+
+    @agent.tool
+    async def open_case(ctx: RunContext[object]) -> str:
+        stored.append(ctx)
+        return 'Case opened.'
+
+    await agent.run('Was I refunded?')
+
+    with pytest.raises(UserError, match='is not available because the agent run has ended'):
+        await stored[0].load_capability('refunds')

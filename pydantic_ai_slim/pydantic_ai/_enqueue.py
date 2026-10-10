@@ -204,7 +204,7 @@ class PendingMessageQueue(list[PendingMessage]):
 
     def append_capability_load(self, pending: PendingMessage) -> None:
         with self._lock:
-            if self._closed:  # pragma: no cover - a tool call can't run after the run has ended
+            if self._closed:
                 raise UserError('`load_capability` is not available because the agent run has ended.')
             self._capability_loads.append(pending)
 

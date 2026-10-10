@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 
-from pydantic_ai import _utils
 from pydantic_ai._deferred_capabilities import (
     LoadCapabilityArgs,
     LoadCapabilityCallPart,
@@ -158,7 +158,10 @@ async def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx:
     # A capability counts as loaded because its `load_capability` exchange is in message history, so
     # recording the same exchange a model-initiated load produces is what makes this load take
     # effect from the next model request, and survive resumption and compaction.
-    tool_call_id = _utils.generate_tool_call_id()
+    # Derived rather than random so a durable workflow that replays this tool hook records the same
+    # exchange: the run ID is replay-stable, and a capability is loaded at most once per tool call.
+    digest = hashlib.sha256(f'{ctx.run_id}:{ctx.tool_call_id}:{capability_id}'.encode()).hexdigest()
+    tool_call_id = f'pyd_ai_{digest[:32]}'
     request_parts: list[ModelRequestPart] = [LoadCapabilityReturnPart(content=result, tool_call_id=tool_call_id)]
     if tools:
         request_parts.append(ToolAvailabilityDeltaPart(tools_added=tools, tool_call_id=tool_call_id))
