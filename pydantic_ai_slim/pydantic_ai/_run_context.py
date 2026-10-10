@@ -395,7 +395,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
 
     loaded_capability_ids: set[str] = field(default_factory=set[str])
-    """IDs of the deferred capabilities the model has explicitly loaded via the `load_capability` tool.
+    """IDs of the deferred capabilities that have been explicitly loaded, by the model via the `load_capability` tool or from code via [`load_capability`][pydantic_ai.tools.RunContext.load_capability].
 
     The capability-side mirror of `discovered_tool_names`: the runtime-revealed subset.
     Derived from message history (`parse_loaded_capabilities`) before each request, so a capability
@@ -885,6 +885,41 @@ class RunContext(Generic[RunContextAgentDepsT]):
             return None
         self.pending_messages.append(pending)
         return pending.enqueue_id
+
+    async def load_capability(self, capability: str | AbstractCapability[RunContextAgentDepsT]) -> bool:
+        """Load an [on-demand capability](../capabilities/on-demand.md#loading-from-code) from a tool or tool hook.
+
+        The load is recorded in message history as a `load_capability` call and return, the same exchange
+        the `load_capability` tool records when the model loads a capability, and takes effect from the next
+        model request: the capability's instructions are delivered then and its tools become available.
+        Because it lives in history, the load survives
+        [resuming the conversation](../capabilities/on-demand.md#resumable-across-runs).
+
+        Call it while a tool call is being handled: from a tool function, or from a tool hook such as
+        `after_tool_execute`. The load rides along with the run's next model request and never causes one:
+        if the run ends at this step instead (because a tool call needs approval or is deferred, or the
+        run produces its output), the load is discarded. Durable execution engines run some tools in an
+        activity, step, or task, where it isn't supported; see
+        [Loading a capability from code](../capabilities/on-demand.md#loading-from-code).
+
+        Args:
+            capability: The capability to load: its `id` in this run, or the capability instance itself.
+
+        Returns:
+            `True` if the load was queued, or `False` if the capability is already active (always-on or
+            loaded) or already being loaded: by an earlier call, or by a `load_capability` tool call in the
+            model response being handled. In that last case, the capability is only loaded if the model's
+            call succeeds.
+
+        Raises:
+            UserError: If the capability isn't registered in this run, or this context can't load
+                capabilities: outside a tool call, from an output tool, or inside a durable execution
+                activity, step, or task.
+        """
+        # Imported here: the loader module imports `RunContext`.
+        from .toolsets._deferred_capability_loader import load_capability
+
+        return await load_capability(capability, self)
 
     def cancel(self) -> None:
         """Cancel the agent run this context belongs to.

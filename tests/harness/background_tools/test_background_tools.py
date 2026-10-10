@@ -12,7 +12,8 @@ from typing import Any
 import anyio
 import pytest
 
-from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, UsageLimits
+from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, ToolOutput, UsageLimits
+from pydantic_ai.capabilities import Capability, Hooks
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -51,6 +52,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import BackgroundTools
+from pydantic_graph import End
 
 
 def _ack_seen(messages: list[ModelMessage]) -> bool:
@@ -814,6 +816,68 @@ class TestBackgroundTools:
         assert result.output == 'done'
         assert _follow_up_seen(result.all_messages(), 'completed.\nResult: fast value')
         assert _follow_up_seen(result.all_messages(), 'completed.\nResult: slow value')
+
+    @pytest.mark.parametrize('load_capability', [False, True])
+    async def test_capability_load_in_final_step_does_not_skip_waiting_for_live_task(
+        self, load_capability: bool
+    ) -> None:
+        """A capability load queued in the step that ends the run doesn't count as a message that continues it.
+
+        So the run still waits for the live background task and delivers its result, the same as without the load.
+        """
+        release = asyncio.Event()
+        model_calls = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal model_calls
+            model_calls += 1
+            if _follow_up_seen(messages, 'background value'):
+                return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args='{"response": 2}')])
+            if _ack_seen(messages):
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args='{"response": 1}'),
+                        ToolCallPart(tool_name='open_case', args='{}'),
+                    ]
+                )
+            return ModelResponse(parts=[ToolCallPart(tool_name='bg', args='{}')])
+
+        release_on_end = Hooks[object]()
+
+        @release_on_end.on.after_node_run
+        async def release_when_run_ends(ctx: RunContext[object], *, node: Any, result: Any) -> Any:
+            # Runs before `BackgroundTools.after_node_run` (after-hooks run in reverse order), so the
+            # task is still live when `BackgroundTools` decides whether to wait for it.
+            run_ended = isinstance(result, End)
+            if run_ended:
+                release.set()
+            return result
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=ToolOutput(int, name='final_result'),
+            end_strategy='exhaustive',
+            capabilities=[
+                BackgroundTools(),
+                release_on_end,
+                Capability(id='refunds', description='Refund tools.', defer_loading=True),
+            ],
+        )
+
+        @agent.tool_plain(metadata={'background': True})
+        async def bg() -> str:
+            await release.wait()
+            return 'background value'
+
+        @agent.tool
+        async def open_case(ctx: RunContext[object]) -> str:
+            if load_capability:
+                await ctx.load_capability('refunds')
+            return 'Case opened.'
+
+        result = await asyncio.wait_for(agent.run('go'), timeout=5)
+
+        assert (result.output, model_calls) == (2, 3)
 
     async def test_failed_background_tool_cancels_its_sibling(self) -> None:
         slow_started = asyncio.Event()
