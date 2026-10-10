@@ -13,7 +13,7 @@ from collections.abc import (
     Sequence,
 )
 from concurrent.futures import Executor
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from types import FrameType, TracebackType
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeAlias, cast, overload
@@ -1738,6 +1738,53 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """
         raise NotImplementedError
         yield
+
+    @asynccontextmanager
+    async def connect(self) -> AsyncGenerator[Self]:
+        """Use one persistent model connection for agent runs inside this context.
+
+        The configured model must support [`Model.connect()`][pydantic_ai.models.Model.connect],
+        such as [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
+        A model selected by a run-dependent capability cannot be connected outside a run.
+        The connection binds the configured model for every run in the context, including runs
+        that pass `model=`. It takes precedence over per-run model arguments and run-dependent
+        model selection; configure the model before entering the context.
+
+        Runs use the connected model without an additional `model` argument. The connection
+        closes and the previous model selection is restored when the context exits. Each context
+        opens an independent connection; concurrent tasks can open their own contexts on the same agent.
+        The model's connection context defines request concurrency and interruption behavior.
+
+        This context also manages the HTTP client for a source model created for the connection
+        from a model ID. Existing model instances and the agent's toolsets retain their lifetimes.
+
+        ```python {test="skip"}
+        from pydantic_ai import Agent
+
+        agent = Agent('openai-responses:gpt-6-astra')
+
+        async def main():
+            async with agent.connect():
+                result = await agent.run('What is the capital of France?')
+                print(result.output)
+        ```
+        """
+        selection = self._get_model_selection_outside_run()
+        async with AsyncExitStack() as stack:
+            if isinstance(selection, str):
+                model = models.infer_model(selection)
+                await stack.enter_async_context(model)
+            else:
+                model = selection
+            async with model.connect() as connected:
+                with self.override(model=connected):
+                    yield self
+
+    def _get_model_selection_outside_run(
+        self, model: models.Model | models.KnownModelName | str | None = None
+    ) -> models.Model | str:
+        """Resolve the configured model selection for operations that do not have run dependencies."""
+        raise NotImplementedError
 
     @contextmanager
     @abstractmethod

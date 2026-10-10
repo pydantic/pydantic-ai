@@ -4421,7 +4421,7 @@ async def test_openai_previous_response_id(allow_model_requests: None, openai_ap
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
     result = await agent.run('The secret key is sesame')
-    settings = OpenAIResponsesModelSettings(openai_previous_response_id=result.all_messages()[-1].provider_response_id)  # pyright: ignore[reportArgumentType, reportAttributeAccessIssue, reportUnknownMemberType]
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id=result.response.provider_response_id)
     result = await agent.run('What is the secret code?', model_settings=settings)
     assert result.output == snapshot('sesame')
 
@@ -18405,6 +18405,41 @@ async def test_codex_suspended_continuation_is_rejected(allow_model_requests: No
     )
     with pytest.raises(UserError, match='Resuming a suspended run is not supported'):
         await model.request([ModelRequest(parts=[UserPromptPart('hi')]), suspended], None, ModelRequestParameters())
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize('other_tiers', [False, True], ids=['no-other-tiers', 'overrides-other-tiers'])
+@pytest.mark.parametrize('responses_tier', ['ultrafast', None], ids=['ultrafast', 'reset'])
+async def test_responses_service_tier_http(
+    allow_model_requests: None, other_tiers: bool, responses_tier: Literal['ultrafast'] | None
+):
+    """Pin the serialized HTTP tier and reset behavior across settings layers."""
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        expected_tier = responses_tier or ('priority' if other_tiers else None)
+        if expected_tier is None:
+            assert 'service_tier' not in body
+        else:
+            assert body['service_tier'] == expected_tier
+        return httpx2.Response(200, json=_MINIMAL_RESPONSE)
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        model = OpenAIResponsesModel(
+            'gpt-6-astra',
+            provider=OpenAIProvider(openai_client=openai_client),
+            settings=OpenAIResponsesModelSettings(openai_responses_service_tier='ultrafast'),
+        )
+        settings = OpenAIResponsesModelSettings(openai_responses_service_tier=responses_tier)
+        if other_tiers:
+            settings.update(openai_service_tier='priority', service_tier='flex')
+        result = await Agent(model, model_settings=settings).run('Hello')
+
+    assert result.output == 'hi there'
 
 
 async def test_responses_store_passthrough_on_standard_model(allow_model_requests: None):
