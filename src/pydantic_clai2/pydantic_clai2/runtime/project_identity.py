@@ -1,6 +1,7 @@
 """Read-only repository identities for the session browser, without changing saved workspaces."""
 
 import subprocess
+import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -35,6 +36,8 @@ def project_identity(workspace: str) -> ProjectIdentity:
             ['git', '-C', workspace, 'symbolic-ref', '--quiet', '--short', 'HEAD'],
             capture_output=True,
             text=True,
+            # Git for Windows emits UTF-8; POSIX Git preserves ref bytes for Python's locale decoder.
+            encoding='utf-8' if sys.platform == 'win32' else None,
             timeout=2,
             check=False,
         ).stdout.strip()
@@ -55,5 +58,7 @@ def _git_path(*, workspace: str, option: str) -> str:
         check=True,
         capture_output=True,
         text=True,
+        # Git for Windows emits UTF-8; POSIX Git preserves path bytes for Python's locale decoder.
+        encoding='utf-8' if sys.platform == 'win32' else None,
         timeout=2,
     ).stdout.removesuffix('\n')
