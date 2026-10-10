@@ -29,9 +29,6 @@ With [dependencies installed and environment variables set](./setup.md#usage), r
 python/uv-run -m pydantic_ai_examples.data_analyst
 ```
 
-This example needs Python 3.14 or earlier for now: DuckDB doesn't publish Python 3.15 wheels yet, so the
-examples' dependencies skip it there.
-
 
 Output (debug):
 
