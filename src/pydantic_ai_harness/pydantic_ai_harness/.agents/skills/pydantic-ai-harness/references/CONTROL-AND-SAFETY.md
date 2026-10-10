@@ -198,7 +198,7 @@ Report-only by default; `block_high_risk=True` replaces a rejected result with a
 
 ```bash
 uv add "pydantic-ai-harness[prompt-injection-defender]"     # Python 3.11+
-uv add "pydantic-ai-harness[prompt-injection-defender-ml]"  # adds ONNX classifier
+uv add "pydantic-ai-harness[prompt-injection-defender-ml]"  # adds ONNX classifier; Python 3.11-3.14 only
 ```
 
 ```python {test="skip"}
@@ -228,12 +228,13 @@ agent = Agent(
 
 Parameters: `defense` (positional; a configured `stackone_defender.PromptDefense`), then keyword-only
 `block_high_risk=None` (library default: report only), `semantic_detection=False` (needs the `-ml`
-extra; catches text under unrecognised fields), `tool_filter='all'` (names, `'all'`, or a
+extra and Python 3.14 or earlier; catches text under unrecognised fields), `tool_filter='all'` (names, `'all'`, or a
 `ToolSelector`), `on_detection` (sync/async; raising fails the run), `blocked_message` (supports
 `{tool_name}` and `{risk_level}` only).
 
 Gotchas: `defense` plus `block_high_risk` or `semantic_detection` raises `UserError`; so does
-`semantic_detection=True` without ONNX Runtime. Importing the module without the extra raises
+`semantic_detection=True` without ONNX Runtime, which has no Python 3.15 wheels yet (on 3.15 the `-ml`
+extra installs pattern detection only). Importing the module without the extra raises
 `ImportError`. Not scanned: provider-native tools, externally supplied deferred results,
 `ModelRetry` messages, `ToolReturn.metadata`, mapping keys, media. A withheld result carries
 diagnostics in `ToolReturn.metadata['prompt_injection']` (not sent to the model). With a custom ML
