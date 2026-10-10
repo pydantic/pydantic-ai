@@ -100,6 +100,7 @@ from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
 from ._known_model_names import KnownModelName as KnownModelName
 from ._prompt_cache import snap_cache_setting, split_cache_setting
+from ._request_timeout import RequestDeadline
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -612,6 +613,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         """Whether these (merged) settings include a provider-specific cache setting, which takes precedence."""
         return False
+
+    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
+        """Start the `request_timeout` deadline of a request to this model made now, if it's set here or on the model.
+
+        A model that makes its requests through other models, each under a deadline of its own, overrides this to
+        return `None`, as [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does.
+        """
+        return RequestDeadline.start(self.model_name, merge_model_settings(self.settings, model_settings))
 
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         """Whether a model that needs prompt caching configured on the request got no caching configuration at all.
@@ -1269,6 +1278,10 @@ class StreamedResponse(ABC):
     _first_chunk_monotonic: float | None = field(default=None, init=False)
     """`time.perf_counter()` stamped on the first event surfaced to the consumer, or `None` if nothing
     was yielded; surfaced as a duration by the `time_to_first_chunk` method."""
+    _request_deadline: RequestDeadline | None = field(default=None, init=False, repr=False)
+    """The `ModelSettings['request_timeout']` deadline each pull of the next event runs under, if any.
+
+    Set before iteration starts by whoever opened the stream under that deadline."""
 
     @cached_property
     def _parts_manager(self) -> ModelResponsePartsManager:
@@ -1377,10 +1390,16 @@ class StreamedResponse(ABC):
                     if not self._cancelled:
                         self._finished = True
 
-            self._event_iterator = iterator_with_cancel_guard(
-                iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
-            )
+            events = self._get_event_iterator()
+            if self._request_deadline is not None:
+                events = self._request_deadline.iterate(events)
+            self._event_iterator = iterator_with_cancel_guard(iterator_with_part_end(iterator_with_final_event(events)))
         return self._event_iterator
+
+    def _enforce_request_deadline(self, deadline: RequestDeadline) -> None:
+        """Pull each event under `deadline`, the `request_timeout` deadline this stream was opened under."""
+        assert self._event_iterator is None, 'The request deadline must be set before the stream is iterated'
+        self._request_deadline = deadline
 
     async def cancel(self) -> None:
         """Cancel local stream consumption and request provider shutdown.

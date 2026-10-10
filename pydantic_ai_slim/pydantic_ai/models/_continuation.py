@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator
-from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
+from contextlib import AbstractContextManager, AsyncExitStack, contextmanager, nullcontext, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -47,6 +47,7 @@ from ..messages import (
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 from . import Model, ModelRequestContext, StreamedResponse
+from ._request_timeout import ContinuationChain, RequestDeadline, use_continuation_chain
 
 __all__ = [
     'MAX_BACKGROUND_POLLS',
@@ -314,6 +315,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
     segment_context: Callable[[], AbstractContextManager[Any]] = nullcontext
     # The request whose segment observers (see `observe_continuation_segments`) see each segment response.
     request_context: ModelRequestContext | None = None
+    # The `request_timeout` deadline every pull of the stitched stream runs under, so it covers opening each
+    # segment, the waits between segments, and reading each segment's events.
+    request_deadline: RequestDeadline | None = None
 
     _merged_response: ModelResponse | None = field(default=None, init=False)
     _current_sub: StreamedResponse | None = field(default=None, init=False)
@@ -331,6 +335,8 @@ class _ContinuationStreamedResponse(StreamedResponse):
     # directly: the outer cancel-guard's `async for … in iterator` does NOT forward `aclose()`
     # to it, and this generator owns each segment's `async with request_stream(...)`.
     _segment_iterator: AsyncGenerator[ModelResponseStreamEvent, None] | None = field(default=None, init=False)
+    # Carries the deadline of the model a `FallbackModel` picked from one segment to the next.
+    _chain: ContinuationChain = field(default_factory=ContinuationChain, init=False)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream every segment as one continuous event stream.
@@ -347,7 +353,10 @@ class _ContinuationStreamedResponse(StreamedResponse):
         """
         if self._event_iterator is None:
             self._segment_iterator = self._get_event_iterator()
-            self._event_iterator = self._iterator_with_cancel_guard(self._segment_iterator)
+            events: AsyncIterator[ModelResponseStreamEvent] = self._segment_iterator
+            if self.request_deadline is not None:
+                events = self.request_deadline.iterate(events)
+            self._event_iterator = self._iterator_with_cancel_guard(events)
         return self._event_iterator
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
@@ -472,9 +481,14 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 # is populated, so replace-vs-accumulate matches the eventual `merge_mode`.
                 segment_offset: int | None = None
                 with self.segment_context():
-                    async with self.model.request_stream(
-                        messages, self.model_settings, self.model_request_parameters, self.run_context
-                    ) as sub:
+                    async with AsyncExitStack() as stack:
+                        # Set only while the segment opens: that's when a `FallbackModel` reads and pins the chain.
+                        with use_continuation_chain(self._chain):
+                            sub = await stack.enter_async_context(
+                                self.model.request_stream(
+                                    messages, self.model_settings, self.model_request_parameters, self.run_context
+                                )
+                            )
                         self._current_sub = sub
                         async for event in sub:
                             if isinstance(event, FinalResultEvent):

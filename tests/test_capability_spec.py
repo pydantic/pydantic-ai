@@ -1648,6 +1648,7 @@ def test_model_json_schema_with_capabilities():
                         'top_p': {'title': 'Top P', 'type': 'number'},
                         'top_k': {'title': 'Top K', 'type': 'integer'},
                         'timeout': {'anyOf': [{'type': 'integer'}, {'type': 'number'}], 'title': 'Timeout'},
+                        'request_timeout': {'title': 'Request Timeout', 'type': 'number'},
                         'parallel_tool_calls': {'title': 'Parallel Tool Calls', 'type': 'boolean'},
                         'tool_choice': {
                             'anyOf': [

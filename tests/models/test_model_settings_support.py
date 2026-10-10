@@ -151,6 +151,7 @@ PROBE_VALUES: dict[str, tuple[object, ...]] = {
     'top_p': (0.234567,),
     'top_k': (4242,),
     'timeout': (987.654,),
+    'request_timeout': (876.543,),
     'parallel_tool_calls': (False, True),
     'seed': (424242,),
     'presence_penalty': (0.345678,),

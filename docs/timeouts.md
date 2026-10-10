@@ -13,6 +13,7 @@ Each knob below bounds a different unit of work. None of them bounds the wall-cl
 | What you want to bound | How to set it | What happens on expiry |
 |---|---|---|
 | A single model request attempt — a provider SDK client's retries re-arm it for every attempt | `timeout` on [`ModelSettings`][pydantic_ai.settings.ModelSettings] | The provider client raises; the run fails unless a [`FallbackModel`](models/overview.md#fallback-model) or a [transport retry](retries.md#transport-retries) handles it |
+| A whole model request — every attempt the provider SDK and transport make, and reading a streamed response through its last chunk | `request_timeout` on [`ModelSettings`][pydantic_ai.settings.ModelSettings] — see [Model request deadlines](#model-request-deadlines) | [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout], a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]; the run fails unless a [`FallbackModel`](models/overview.md#fallback-model) falls back on it |
 | A function tool call | `Agent(tool_timeout=...)`, or `timeout=` on an individual tool — see [Tool Timeout](tools-advanced.md#tool-timeout) | The model receives a retry prompt `'Timed out after N seconds.'`, consuming that tool's [retry budget](retries.md#tool-retries). A `def` tool is not actually stopped: the deadline is enforced around the await, so the worker thread runs to completion |
 | A [hook](hooks.md) function | `timeout=` on the `@hooks.on.*` decorator | [`HookTimeoutError`][pydantic_ai.capabilities.HookTimeoutError], which is an [`AgentRunError`][pydantic_ai.exceptions.AgentRunError] and aborts the run. Like a `def` tool, a `def` hook is not actually stopped: the worker thread runs to completion |
 | Connecting to an MCP server | `MCPToolset(init_timeout=...)`, default `5` seconds | The connection and `initialize` handshake fail |
@@ -21,13 +22,14 @@ Each knob below bounds a different unit of work. None of them bounds the wall-cl
 | Total work done by a run | [`UsageLimits`][pydantic_ai.usage.UsageLimits] — requests, tool calls, tokens, or cost — see [Usage Limits](agent.md#usage-limits) | [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] |
 | Wall-clock duration of a whole run | Nothing built in — wrap `agent.run()` in `asyncio.timeout` (Python 3.11+) or `anyio.fail_after()`, or cancel a [`CancellationToken`][pydantic_ai.CancellationToken] from a timer | The run is [cancelled](agent.md#cancelling-a-run) |
 
-Two of these need qualifying:
+Three of these need qualifying:
 
 - **`ModelSettings['timeout']` is applied per model class, not universally.** The model classes that forward it to their provider client are listed under [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout]; the ones built on OpenAI's inherit the forwarding from [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] / [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]. Other model classes ignore the setting, and the timeout on the HTTP client they were built with applies instead. When Pydantic AI creates that client itself, it defaults to a 600-second total timeout with a 5-second connect timeout. Google and Mistral additionally reject an `httpx.Timeout` object and accept only a number of seconds.
 
     To bound a request on a model class that ignores the setting, configure the timeout where that provider actually takes one. Most providers accept your own `http_client`, but several don't: [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider] takes a client-level `timeout` (or a preconfigured `xai_client`), [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] takes `aws_read_timeout` and `aws_connect_timeout` (or a preconfigured `bedrock_client`), and [`HuggingFaceProvider`][pydantic_ai.providers.huggingface.HuggingFaceProvider] rejects `http_client` outright in favor of `hf_client`.
 
     On a client Pydantic AI created, including one from [`create_async_httpx2_client()`][pydantic_ai.models.create_async_httpx2_client], a request timeout given in seconds can shorten but never lengthen the client's connect timeout (5 seconds by default) and pool timeout (600 seconds by default). This includes the 600 seconds google-genai sends with every Gemini request. To connect for longer, pass an `httpx.Timeout` whose `connect` differs from its other phases, or your own `http_client`.
+- **`ModelSettings['request_timeout']` is enforced by Pydantic AI, on every model.** It is never sent to the provider, so it works the same everywhere, including on the model classes that ignore `timeout`. See [Model request deadlines](#model-request-deadlines).
 - **Tool timeouts are enforced by [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] only, and each toolset carries its own.** `Agent(tool_timeout=...)` sets the default for tools you register *on the agent* — it does not reach into a `FunctionToolset` you constructed yourself and passed via `toolsets=[...]`. Give that toolset its own `FunctionToolset(timeout=...)`, or set `timeout=` on the individual tools. Tools coming from an [MCP server](mcp/client.md), an [external toolset](deferred-tools.md), or a custom [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] read neither; bound those with the server-side or transport-level timeout instead.
 
 If you enforce a deadline inside a tool body yourself, catch the `TimeoutError` and re-raise it as [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] rather than letting it escape. What happens to a bare `TimeoutError` depends on whether that tool has a timeout of its own:
@@ -36,6 +38,41 @@ If you enforce a deadline inside a tool body yourself, catch the `TimeoutError` 
 - **A `timeout` is configured.** The call runs inside `anyio.fail_after(timeout)`, which signals expiry with `TimeoutError` too, so a `TimeoutError` you raised yourself is indistinguishable from the deadline expiring and becomes the same `'Timed out after N seconds.'` retry prompt — reporting a deadline that may never have passed.
 
 Re-raising in the tool is the more local choice; the hook is for applying one policy across every tool.
+
+## Model request deadlines
+
+[`ModelSettings['timeout']`][pydantic_ai.settings.ModelSettings.timeout] is applied by the provider client to one attempt at a request: each SDK retry gets a fresh one, and for a streamed response it only limits the wait for each chunk, not the whole response. `request_timeout` is one clock over the whole request to one model, enforced by Pydantic AI: every attempt the provider SDK and [HTTP transport](retries.md#transport-retries) make, the backoff between them, any continuation of a response the provider paused, and reading a streamed response through its last chunk. In Temporal's terms, `timeout` is the start-to-close timeout of one attempt, and `request_timeout` is the schedule-to-close timeout of the request.
+
+```py {title="request_timeout.py"}
+from pydantic_ai import Agent, ModelRequestTimeout
+
+agent = Agent(
+    'openai:gpt-5.2',
+    model_settings={
+        'timeout': 30,  # (1)!
+        'request_timeout': 90,  # (2)!
+    },
+)
+
+
+async def main():
+    try:
+        result = await agent.run('What is the capital of France?')
+        print(result.output)
+        #> The capital of France is Paris.
+    except ModelRequestTimeout as e:
+        print(f'{e.model_name} took longer than {e.timeout} seconds')
+```
+
+1. Each attempt gets 30 seconds, and the OpenAI SDK retries a failed attempt twice by default.
+2. However many attempts it takes, the request ends after 90 seconds.
+
+When the deadline passes, the request is cancelled and [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] is raised. It's a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so an [`on_model_request_error`](hooks.md) hook can recover from it like from any other failed request. A timeout of a single attempt, raised by the provider client or transport and controlled by `timeout`, is a different error and is never reported as `ModelRequestTimeout`.
+
+- **Streaming.** The deadline is fixed when the request is made and covers reading the stream until its last chunk, so the time your code takes to consume the events counts towards it: a consumer that is still reading when the deadline passes gets `ModelRequestTimeout` from the stream. What has been streamed so far is kept in the message history as an `'interrupted'` response. Once the last chunk has been read, the deadline no longer applies. This includes the streaming `run()` does behind the scenes, for example with an [event stream handler](agent.md#streaming-all-events).
+- **Fallback.** A [`FallbackModel`](models/overview.md#fallback-model) gives each model it tries a fresh deadline, and its default `fallback_on` moves on to the next model when one runs out. Each attempt that ran out is recorded in the response's [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts]. If the model it picked pauses its response, the continuation is still the same request to that model and keeps its deadline. A model's own `settings` can set a different `request_timeout` for it. Once a streamed response has started, `FallbackModel` no longer falls back, so running out while it's being read raises `ModelRequestTimeout`.
+- **Durable execution.** On [Temporal](durable_execution/temporal.md), the deadline runs on the workflow's clock, as a durable timer. When it passes, the model request activity is cancelled, which also ends its activity retries, and `ModelRequestTimeout` is raised in the workflow. A `FallbackModel` runs inside the activity, along with the deadlines it gives each model. Each segment of a paused response is a separate activity there, so the model it picked gets a fresh deadline for each segment rather than one over the whole continuation.
+- **Direct requests.** [`model_request()`][pydantic_ai.direct.model_request] and [`model_request_stream()`][pydantic_ai.direct.model_request_stream] apply it too.
 
 ## Ending a run from inside a tool
 

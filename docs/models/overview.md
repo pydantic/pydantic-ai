@@ -329,6 +329,8 @@ exception handlers, and response handlers — all of which can be sync or async.
 
     When using `FallbackModel`, it's recommended to disable provider SDK retries to ensure immediate fallback, for example by setting `max_retries=0` on a [custom OpenAI client](openai.md#custom-openai-client) or a [custom Anthropic client](anthropic.md#custom-http-client). See [The layers](../retries.md#the-layers) in the retries guide for the full retry map.
 
+    To bound how long the fallback can be delayed instead, set [`request_timeout`](../timeouts.md#model-request-deadlines) in the model settings: each model gets that long across all of its attempts, and when it runs out the resulting [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] triggers the fallback to the next model, which gets a fresh deadline.
+
 In the following example, the agent first makes a request to the OpenAI model (which fails due to an invalid API key),
 and then falls back to the Anthropic model.
 

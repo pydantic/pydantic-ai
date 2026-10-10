@@ -1,7 +1,11 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager, suppress
+from contextlib import (
+    AsyncExitStack,
+    asynccontextmanager,
+    suppress,
+)
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from functools import cached_property
@@ -31,6 +35,14 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     infer_model,
+)
+from ._request_timeout import (
+    ContinuationChain,
+    RequestDeadline,
+    current_continuation_chain,
+    enforce_request_deadline,
+    start_request_deadline,
+    stream_under_deadline,
 )
 
 if TYPE_CHECKING:
@@ -248,6 +260,7 @@ class FallbackModel(Model):
         # the chain then produces is fresh generation superseding the stale suspended turn, so it must
         # be stamped as a replace (see `_stamp_replace_previous`) rather than accumulated onto it.
         rewound = False
+        chain = current_continuation_chain()
 
         if pinned := self._get_continuation_model(messages):
             # `_get_continuation_model` only returns a model when the last message is a suspended response.
@@ -255,10 +268,12 @@ class FallbackModel(Model):
             assert isinstance(suspended_response, ModelResponse)
             prepared_parameters = model_request_parameters
             start = AttemptStart()
+            deadline = _pinned_request_deadline(chain, pinned, model_settings)
             try:
                 _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
-                response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
+                with enforce_request_deadline(deadline):
+                    response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 duration = start.elapsed()
                 if not await self._should_fallback(exc):
@@ -272,12 +287,15 @@ class FallbackModel(Model):
                     await pinned.cancel_suspended_response(suspended_response)
                 messages = _rewind_messages(messages)
                 rewound = True
+                # The model the chain was pinned to is abandoned, and with it its deadline.
+                _unpin_request_deadline(chain)
                 exceptions.append(exc)
                 self._record_failed_attempt(pinned, attempts, exc, start=start, duration=duration)
                 # Fall through to normal chain below
             else:
                 if response.state == 'suspended':
                     _stamp_continuation(response, pinned)
+                    _pin_request_deadline(chain, deadline)
                 self._set_span_attributes(pinned, prepared_parameters)
                 return response
 
@@ -288,7 +306,9 @@ class FallbackModel(Model):
                 _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
                 prepared_messages = model.prepare_messages(messages, model_request_parameters)
-                response = await model.request(prepared_messages, model_settings, model_request_parameters)
+                deadline = start_request_deadline(model, model_settings)
+                with enforce_request_deadline(deadline):
+                    response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 duration = start.elapsed()
                 if await self._should_fallback(exc):
@@ -313,6 +333,7 @@ class FallbackModel(Model):
                 _stamp_replace_previous(response)
             if response.state == 'suspended':
                 _stamp_continuation(response, model)
+                _pin_request_deadline(chain, deadline)
             self._set_span_attributes(model, prepared_parameters)
             return response
 
@@ -337,6 +358,7 @@ class FallbackModel(Model):
         attempts: list[ModelRequestAttempt] = []
         # Set once a pinned continuation fails and we rewind to the chain: see the non-streaming `request`.
         rewound = False
+        chain = current_continuation_chain()
 
         if pinned := self._get_continuation_model(messages):
             # `_get_continuation_model` only returns a model when the last message is a suspended response.
@@ -345,11 +367,17 @@ class FallbackModel(Model):
             async with AsyncExitStack() as stack:
                 prepared_parameters = model_request_parameters
                 start = AttemptStart()
+                deadline = _pinned_request_deadline(chain, pinned, model_settings)
                 try:
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
-                        pinned.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
+                        stream_under_deadline(
+                            deadline,
+                            pinned.request_stream(
+                                prepared_messages, model_settings, model_request_parameters, run_context
+                            ),
+                        )
                     )
                 except Exception as exc:
                     duration = start.elapsed()
@@ -363,6 +391,7 @@ class FallbackModel(Model):
                         await pinned.cancel_suspended_response(suspended_response)
                     messages = _rewind_messages(messages)
                     rewound = True
+                    _unpin_request_deadline(chain)
                     exceptions.append(exc)
                     self._record_failed_attempt(pinned, attempts, exc, start=start, duration=duration)
                     # Fall through to normal chain below
@@ -374,6 +403,7 @@ class FallbackModel(Model):
                     # stream. Callers must therefore call `get()` after the `async with` exits.
                     if streamed_response.state == 'suspended':
                         _stamp_continuation(streamed_response, pinned)
+                        _pin_request_deadline(chain, deadline)
                     return
 
         for model in self.models:
@@ -383,8 +413,14 @@ class FallbackModel(Model):
                 try:
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = model.prepare_messages(messages, model_request_parameters)
+                    deadline = start_request_deadline(model, model_settings)
                     streamed_response = await stack.enter_async_context(
-                        model.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
+                        stream_under_deadline(
+                            deadline,
+                            model.request_stream(
+                                prepared_messages, model_settings, model_request_parameters, run_context
+                            ),
+                        )
                     )
                 except Exception as exc:
                     duration = start.elapsed()
@@ -411,6 +447,7 @@ class FallbackModel(Model):
                 # caller has consumed the stream, so callers must call `get()` after the context exits.
                 if streamed_response.state == 'suspended':
                     _stamp_continuation(streamed_response, model)
+                    _pin_request_deadline(chain, deadline)
                 return
 
         _raise_fallback_exception_group(exceptions, [], attempts)
@@ -451,6 +488,10 @@ class FallbackModel(Model):
     @cached_property
     def profile(self) -> ModelProfile:
         raise NotImplementedError('FallbackModel does not have its own model profile.')
+
+    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
+        # Each model it tries gets a fresh deadline of its own instead.
+        return None
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """A fallback model can't know which model will serve the request, so no retention is claimed."""
@@ -558,6 +599,35 @@ class FallbackModel(Model):
             record_attempt_span(
                 attempt, failure, model=model, index=len(attempts) - 1, parent=span, tracer=policy.tracer
             )
+
+
+def _pinned_request_deadline(
+    chain: ContinuationChain | None, model: Model, model_settings: ModelSettings | None
+) -> RequestDeadline | None:
+    """The deadline of a continuation segment for the model the chain is pinned to.
+
+    The deadline that model got when it was picked carries over, so the continuation stays one request to it. A
+    chain resumed from message history has none, so the model gets a fresh one. A nested `FallbackModel` gets none,
+    as it carries over the deadline of the model it picked itself.
+    """
+    deadline = start_request_deadline(model, model_settings)
+    if deadline is not None and chain is not None and chain.pinned is not None:
+        return chain.pinned
+    return deadline
+
+
+def _pin_request_deadline(chain: ContinuationChain | None, deadline: RequestDeadline | None) -> None:
+    """Carry the deadline of the model a response suspended on over to the chain's next segment.
+
+    A nested `FallbackModel` has no deadline of its own, and already pinned the one of the model it picked.
+    """
+    if chain is not None and deadline is not None:
+        chain.pinned = deadline
+
+
+def _unpin_request_deadline(chain: ContinuationChain | None) -> None:
+    if chain is not None:
+        chain.pinned = None
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:

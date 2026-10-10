@@ -287,6 +287,24 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI Decisions
     """
 
+    request_timeout: float
+    """A deadline for one request to one model, in seconds, enforced by Pydantic AI for every model.
+
+    [`timeout`][pydantic_ai.settings.ModelSettings.timeout] is applied by the provider client to each attempt:
+    an SDK retry re-arms it, and on a streamed response it only limits the wait for each chunk. This one clock
+    instead covers every attempt the provider SDK and HTTP transport make, any continuation of a paused
+    response, and reading a streamed response through its last chunk, including the time your code takes to
+    consume it. In Temporal's terms, `timeout` is the start-to-close timeout of one attempt and
+    `request_timeout` the schedule-to-close timeout of the whole request.
+
+    When it runs out, the request is cancelled and
+    [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] is raised. A
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] gives each model it tries a fresh deadline,
+    and by default falls back to the next model when one runs out.
+
+    It is not sent to the provider. See [Timeouts](../timeouts.md#model-request-deadlines).
+    """
+
     parallel_tool_calls: bool
     """Whether to allow parallel tool calls.
 

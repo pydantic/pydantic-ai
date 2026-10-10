@@ -93,6 +93,12 @@ from .models._continuation import (
     merge_responses,
     report_continuation_segment,
 )
+from .models._request_timeout import (
+    ContinuationChain,
+    enforce_request_deadline,
+    start_request_deadline,
+    use_continuation_chain,
+)
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
@@ -1204,7 +1210,14 @@ async def model_request(
     # re-issue (`last_mode is None`) counts as strict, harmless since both ceilings allow ≥1.
     last_mode: MergeMode | None = None
     response = seed
-    with set_current_run_context(run_context):
+    # One `request_timeout` deadline covers the whole continuation chain, including the waits between segments. A
+    # `FallbackModel` starts one per model it tries instead, and carries the one of the model it picked on the chain.
+    deadline = start_request_deadline(model, request_context.model_settings)
+    with (
+        set_current_run_context(run_context),
+        use_continuation_chain(ContinuationChain()),
+        enforce_request_deadline(deadline),
+    ):
         while True:
             if response is None:
                 messages = base_messages
@@ -1339,6 +1352,8 @@ async def model_request_stream(
             # updates (e.g. `FallbackModel` recording the resolved inner model) on the right span.
             segment_context=capture_current_context(),
             request_context=request_context,
+            # Started here, in the `wrap_model_request` task, so it also covers the wait for the first pull.
+            request_deadline=start_request_deadline(model, request_context.model_settings),
         )
         try:
             yield sr
