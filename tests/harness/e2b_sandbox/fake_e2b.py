@@ -32,6 +32,7 @@ from typing import IO, TYPE_CHECKING, Literal, Protocol
 
 import anyio
 import anyio.lowlevel
+import e2b
 from e2b import CommandExitException, CommandResult, FileType, WriteInfo
 from e2b.exceptions import (
     AuthenticationException,
@@ -43,10 +44,10 @@ from e2b.exceptions import (
     TimeoutException,
 )
 
-try:
-    from e2b.exceptions import format_sandbox_unavailable_exception  # pyright: ignore[reportAttributeAccessIssue,reportUnknownVariableType]
-except ImportError:  # e2b < 2.53.1
-    from e2b.exceptions import format_sandbox_timeout_exception as format_sandbox_unavailable_exception
+# What the SDK raises for an envd call on a gone sandbox. Looked up by its public name rather than
+# through the SDK's formatting helper, which e2b renamed in 2.53.1: from then on it is the exported
+# `SandboxNotRunningException` (e2b-dev/E2B#1949), before it `TimeoutException` itself.
+_SandboxGoneException: type[TimeoutException] = getattr(e2b, 'SandboxNotRunningException', TimeoutException)
 
 __all__ = (
     'FakeCommandCall',
@@ -659,7 +660,7 @@ class FakeSandbox:
         `SandboxNotRunningException` subclass, which the backend still probes as a timeout.
         """
         if self.killed:
-            raise format_sandbox_unavailable_exception('The sandbox was not found')
+            raise _SandboxGoneException('The sandbox was not found: it was killed or reached its timeout.')
 
     async def is_running(self, request_timeout: float | None = None) -> bool:
         del request_timeout
