@@ -98,6 +98,9 @@ class ZaiProvider(_OpenAICompatibleProvider):
                 'to use the Z.AI provider.'
             )
 
+        if openai_client is not None and base_url is not None:
+            raise UserError('Cannot provide both `openai_client` and `base_url`')
+
         self._base_url = base_url or 'https://api.z.ai/api/paas/v4'
 
         if openai_client is not None:
