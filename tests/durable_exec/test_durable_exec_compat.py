@@ -96,6 +96,7 @@ def test_public_engine_builder_exports() -> None:
         'OperationConfigRole',
         'RegisteredOperationBackend',
         'RoleBasedOperationConfig',
+        'SerializedRunContext',
         'ToolsetKind',
         'ToolsetValidateToolArgumentsId',
     ]

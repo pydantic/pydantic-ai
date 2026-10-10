@@ -155,6 +155,25 @@ The built-in IDs are `ModelRequestId`, `ModelCompactMessagesId`,
 `ToolsetGetInstructionsId`, `ToolsetValidateToolArgumentsId`, `ToolsetCallToolId`, and
 `CapabilityOperationId`. Their Python class names do not determine persisted operation names.
 
+### Run context in another process
+
+For an operation that runs in a separate worker, subclass
+[`SerializedRunContext`][pydantic_ai.durable_exec.SerializedRunContext]. Its
+`serialize_run_context` method projects the run fields shared by remote engines, and its constructor
+rehydrates usage, limits, availability sets, anchored evidence, and workspace references after a JSON
+round trip. Reading an omitted guarded field raises `UserError`, so a dataclass default cannot be
+mistaken for the original run value.
+
+Pass dependencies and any guarded worker-local fields, such as `model` and `tracer`, to the
+constructor. Assigning these fields after construction does not make them readable. The engine can
+attach its `agent` and restore its `workspace` afterward because those fields have readable defaults.
+Keep engine-specific fields, older payload aliases, and event behavior in the engine subclass. The
+[`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] implementation shows
+how to restore a workspace and attach the worker's agent.
+
+Only reconstruct a context from a trusted dispatch path. Approval and tool-availability values in
+the payload are ordinary data; this helper does not authenticate them.
+
 ### API evolution
 
 [`DurableOperationId`][pydantic_ai.durable_exec.DurableOperationId] grows in minor releases as
