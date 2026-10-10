@@ -782,3 +782,172 @@ class TestSqliteListSnapshots:
         binary = prompt.content[1]
         assert isinstance(binary, BinaryContent)
         assert binary.data == payload
+
+
+# ---------------------------------------------------------------------------
+# SqliteStepStore(deduplicate_messages=True)
+# ---------------------------------------------------------------------------
+
+
+def _growing_histories(turns: int) -> list[list[ModelMessage]]:
+    """The history after each turn; each is a prefix of the next, as across a conversation's runs."""
+    histories: list[list[ModelMessage]] = []
+    history: list[ModelMessage] = []
+    for turn in range(turns):
+        history = [
+            *history,
+            ModelRequest(parts=[UserPromptPart(content=f'question {turn}')]),
+            ModelResponse(parts=[TextPart(content=f'answer {turn}')]),
+        ]
+        histories.append(history)
+    return histories
+
+
+def _count(db: Path, table: str) -> int:
+    conn = sqlite3.connect(db)
+    try:
+        (count,) = conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()
+        return count
+    finally:
+        conn.close()
+
+
+class TestSqliteDeduplicateMessages:
+    async def test_stores_each_message_once_and_restores_every_snapshot(self, tmp_path: Path) -> None:
+        db = tmp_path / 'runs.db'
+        store = SqliteStepStore(database=db, media_store=None, max_snapshots_per_run=1, deduplicate_messages=True)
+        histories = _growing_histories(5)
+        for turn, history in enumerate(histories):
+            # A second, pruned step per run: its messages stay, as later snapshots share them.
+            for step in range(2):
+                await store.save_snapshot(ContinuableSnapshot(run_id=f'r{turn}', step_index=step, messages=history))
+
+        assert _count(db, 'snapshots') == len(histories)
+        assert _count(db, 'snapshot_messages') == len(histories[-1])
+        for turn, history in enumerate(histories):
+            snap = await store.latest_snapshot(run_id=f'r{turn}')
+            assert snap is not None
+            assert snap.messages == history
+        assert [s.messages for s in await store.list_snapshots(run_id='r3')] == [histories[3]]
+
+    async def test_rows_written_with_and_without_the_flag_share_a_database(self, tmp_path: Path) -> None:
+        db = tmp_path / 'runs.db'
+        plain = SqliteStepStore(database=db, media_store=None)
+        deduplicating = SqliteStepStore(database=db, media_store=None, deduplicate_messages=True)
+        first, second = _growing_histories(2)
+        await plain.save_snapshot(ContinuableSnapshot(run_id='r0', step_index=0, messages=first))
+        await deduplicating.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=second))
+
+        for store in (plain, deduplicating):
+            for run_id, history in (('r0', first), ('r1', second)):
+                snap = await store.latest_snapshot(run_id=run_id)
+                assert snap is not None
+                assert snap.messages == history
+
+    async def test_externalized_media_round_trips(self, tmp_path: Path) -> None:
+        db = tmp_path / 'runs.db'
+        store = SqliteStepStore(database=db, deduplicate_messages=True)
+        plain = SqliteStepStore(database=tmp_path / 'plain.db')
+        messages = _sample_messages_with_media(70_000)
+        for step in range(2):
+            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=step, messages=messages))
+        await plain.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=messages))
+
+        snap = await store.latest_snapshot(run_id='r1')
+        expected = await plain.latest_snapshot(run_id='r1')
+        assert snap is not None and expected is not None
+        assert snap.messages == expected.messages
+        assert _count(db, 'media') == 1
+        assert _count(db, 'snapshot_messages') == 2
+
+    async def test_caller_owned_connection_round_trips(self, tmp_path: Path) -> None:
+        conn = sqlite3.connect(tmp_path / 'runs.db', check_same_thread=False)
+        try:
+            store = SqliteStepStore(connection=conn, media_store=None, deduplicate_messages=True)
+            history = _growing_histories(2)[-1]
+            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=history))
+            snap = await store.latest_snapshot(run_id='r1')
+            assert snap is not None
+            assert snap.messages == history
+        finally:
+            conn.close()
+
+    async def test_missing_message_raises_on_latest_and_is_skipped_by_list(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        db = tmp_path / 'runs.db'
+        store = SqliteStepStore(database=db, media_store=None, deduplicate_messages=True)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=_growing_histories(1)[0]))
+        conn = sqlite3.connect(db, isolation_level=None)
+        try:
+            conn.execute("DELETE FROM snapshot_messages WHERE message LIKE '%question 0%'")
+        finally:
+            conn.close()
+
+        with pytest.raises(ValueError, match='1 message\\(s\\) missing from `snapshot_messages`'):
+            await store.latest_snapshot(run_id='r1')
+        with caplog.at_level(logging.WARNING):
+            assert await store.list_snapshots(run_id='r1') == []
+        assert any('unparsable' in record.message for record in caplog.records)
+
+    async def test_agent_runs_continuing_a_conversation(self, tmp_path: Path) -> None:
+        db = tmp_path / 'runs.db'
+        store = SqliteStepStore(database=db, deduplicate_messages=True)
+        agent: Agent[None, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store)])
+
+        history: list[ModelMessage] = []
+        for turn in range(3):
+            result = await agent.run(f'question {turn}', message_history=history)
+            history = result.all_messages()
+
+        runs = await store.list_runs()
+        assert len(runs) == 3
+        snap = await store.latest_snapshot(run_id=runs[-1].run_id)
+        assert snap is not None
+        assert snap.messages == history
+        # Each run's snapshots repeat the earlier turns; each message is stored once.
+        assert _count(db, 'snapshot_messages') == len(history)
+
+    async def test_failed_snapshot_write_keeps_its_messages_out(self, tmp_path: Path) -> None:
+        db = tmp_path / 'runs.db'
+        store = SqliteStepStore(database=db, media_store=None, deduplicate_messages=True)
+        first, second = _growing_histories(2)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=first))
+        conn = sqlite3.connect(db, isolation_level=None)
+        try:
+            conn.execute(
+                'CREATE TRIGGER reject_step_one BEFORE INSERT ON snapshots WHEN NEW.step_index = 1 '
+                "BEGIN SELECT RAISE(ABORT, 'rejected'); END"
+            )
+        finally:
+            conn.close()
+
+        with pytest.raises(sqlite3.IntegrityError, match='rejected'):
+            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=second))
+        assert _count(db, 'snapshot_messages') == len(first)
+
+    @pytest.mark.parametrize('caller_owned', [False, True])
+    async def test_idempotent_retry_does_not_store_its_messages(self, tmp_path: Path, caller_owned: bool) -> None:
+        db = tmp_path / 'runs.db'
+        conn = sqlite3.connect(db, check_same_thread=False, isolation_level=None) if caller_owned else None
+        try:
+            if conn is not None:
+                store = SqliteStepStore(connection=conn, media_store=None, deduplicate_messages=True)
+            else:
+                store = SqliteStepStore(database=db, media_store=None, deduplicate_messages=True)
+            first, second = _growing_histories(2)
+            await store.save_snapshot(
+                ContinuableSnapshot(run_id='r1', step_index=0, messages=first, idempotency_key='same-key')
+            )
+            await store.save_snapshot(
+                ContinuableSnapshot(run_id='r1', step_index=1, messages=second, idempotency_key='same-key')
+            )
+
+            assert _count(db, 'snapshots') == 1
+            assert _count(db, 'snapshot_messages') == len(first)
+            snap = await store.latest_snapshot(run_id='r1')
+            assert snap is not None
+            assert snap.messages == first
+        finally:
+            if conn is not None:
+                conn.close()
