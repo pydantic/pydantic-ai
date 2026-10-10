@@ -15,7 +15,7 @@ Consumers import the file from `main`, so a merge reaches them on their next com
 nothing downstream re-checks it. `--published` is therefore part of the pull request gate
 rather than a release step: it asks PyPI whether both pinned package releases are available.
 
-The lint job and the release reminder job both call this, which is why the checks live here
+The lint job and the release run both call this, which is why the checks live here
 rather than inlined as shell twice.
 
 Inline dependency metadata, so `uv run --script src/pydantic_ai_harness/scripts/gh_aw_engine_version.py` works
