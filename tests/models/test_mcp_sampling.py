@@ -16,10 +16,12 @@ from pydantic_ai import (
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    CachePoint,
     FilePart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     RetryPromptPart,
+    TextContent as PaiTextContent,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
@@ -191,6 +193,20 @@ def test_assistant_text_history_complex():
     assert any(
         isinstance(message.content, TextContent) and message.content.text == '<system>system content</system>'
         for message in sampling_messages
+    )
+
+
+def test_text_content_and_cache_point():
+    create_message = AsyncMock(
+        return_value=CreateMessageResult(role='assistant', content=TextContent(type='text', text='Done'), model='test')
+    )
+    agent = Agent(MCPSamplingModel(fake_session(create_message)))
+    agent.run_sync(['Summarize:', PaiTextContent('some text', metadata={'id': 1}), CachePoint()])
+    assert [msg.model_dump(by_alias=True, exclude_none=True) for msg in create_message.call_args.args[0]] == snapshot(
+        [
+            {'role': 'user', 'content': {'type': 'text', 'text': 'Summarize:'}},
+            {'role': 'user', 'content': {'type': 'text', 'text': 'some text'}},
+        ]
     )
 
 
