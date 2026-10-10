@@ -166,3 +166,55 @@ A request over a limit the profile does not know about gets an error response fr
 !!! note "Measure on your own data"
     Each model's confidence is its own, and a threshold tuned on one model does not carry over to another. Measure
     accuracy, the hand-off rate and any threshold on labelled examples of your own before relying on them.
+
+## Fast mode on an open-source decision model {#fast-mode}
+
+A decision model in front of a language model takes the steps that are classifications itself and hands the rest on, as [Decision models](decision.md#fast-mode) describes with Jev. An open-source decision model does the same job, and with [Ollama](#ollama) both models can run on your own machine, with no API key:
+
+```python {title="open_source_fast_mode.py"}
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+from pydantic_ai.models.decision import DecisionHandOff, DecisionModelSettings
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.ollama import OllamaModel
+from pydantic_ai.models.system_one import SystemOneModel
+from pydantic_ai.profiles.decision import DecisionModelProfile
+from pydantic_ai.providers.ollama import OllamaProvider
+from pydantic_ai.providers.system_one import SystemOneProvider
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+
+
+class Reply(BaseModel):
+    """Answer the customer directly: a question rather than a problem to triage."""
+
+    message: str = Field(description='The reply to send the customer.')
+
+
+# Nimble decides over the System One API, at Ollama's root URL.
+nimble = SystemOneModel(
+    'nimble',
+    provider=SystemOneProvider(base_url='http://localhost:11434'),
+    profile=DecisionModelProfile(
+        decision_max_choice_options=26, decision_max_score_levels=26
+    ),
+)
+# Its hand-offs go to a language model over Ollama's OpenAI-compatible API, at `/v1`.
+writer = OllamaModel(
+    'qwen3', provider=OllamaProvider(base_url='http://localhost:11434/v1')
+)
+
+agent = Agent(
+    FallbackModel(nimble, writer, fallback_on=DecisionHandOff),
+    output_type=[Ticket, Reply],
+    # A starting point only: a threshold tuned on Jev does not carry over to Nimble.
+    model_settings=DecisionModelSettings(decision_route_threshold=0.7),
+)
+```
+
+Pull both models first, with `ollama pull nimble` and `ollama pull qwen3`. Any other server behind this API, such as one serving CLM or Laya, takes Nimble's place with its own URL and [limits](#limits), and the language model behind it can be any model, local or hosted.
