@@ -4887,8 +4887,9 @@ async def test_dbos_default_ids_survive_recovery(dbos: DBOS) -> None:
     assert [run_id for run_id, _ in seen] == [f'{workflow_id}:1', f'{workflow_id}:3', f'{workflow_id}:3:1']
     assert len({*seen[0], *seen[1], *seen[2]}) == 6
 
-    # Recovery re-executes the workflow function: model requests replay from their recorded steps, while
-    # the function tool, which runs in the workflow, runs again and sees the same IDs.
-    handle = await asyncio.to_thread(DBOS._execute_workflow_id, workflow_id)  # pyright: ignore[reportPrivateUsage]
-    assert sorted(tuple(ids) for ids in await asyncio.to_thread(handle.get_result)) == seen
+    # Resuming the pending workflow re-executes it under the same ID, the way recovery does: model requests
+    # replay from their recorded steps, while the function tool, which runs in the workflow, runs again and
+    # sees the same IDs.
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    assert sorted(tuple(ids) for ids in await handle.get_result()) == seen
     assert sorted(stable_ids_seen[3:]) == seen

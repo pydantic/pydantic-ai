@@ -612,7 +612,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                     },
                     output_reasoning_tokens=529,
                     web_searches=1,
-                    cost=Decimal('0.148734'),
+                    cost=Decimal('0.162734'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
