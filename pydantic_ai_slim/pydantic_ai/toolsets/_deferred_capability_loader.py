@@ -115,17 +115,18 @@ async def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx:
             '`ctx.load_capability()` can only be called while a tool call is being handled: '
             'from a tool function or a tool hook such as `after_tool_execute`.'
         )
-    if ctx.realtime:
-        raise UserError('`ctx.load_capability()` is not supported in a realtime session.')
     tool_manager = ctx.tool_manager
     pending_messages = ctx.pending_messages
-    # Durable engines swap the run's queue for a guard inside an activity, step, or task.
+    # Durable engines swap the run's queue for a guard inside an activity, step, or task. Checked
+    # first: a Temporal activity's context raises on most other fields, including `ctx.realtime`'s.
     if tool_manager is None or not isinstance(pending_messages, PendingMessageQueue):
         raise UserError(
             '`ctx.load_capability()` is not supported inside a durable execution activity, step, or task, '
             'whose recorded result is replayed without re-running your code. '
             'Load the capability from a tool hook such as `after_tool_execute` instead.'
         )
+    if ctx.realtime:
+        raise UserError('`ctx.load_capability()` is not supported in a realtime session.')
     tool_def = tool_manager.get_tool_def(ctx.tool_name) if ctx.tool_name is not None else None
     if tool_def is not None and tool_def.kind == 'output':
         raise UserError('`ctx.load_capability()` cannot be called from an output tool, which ends the run.')
