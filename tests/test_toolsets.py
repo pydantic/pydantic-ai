@@ -741,6 +741,23 @@ async def test_comprehensive_toolset_composition():
     )
 
 
+async def test_combined_toolset_forwards_exception_to_children():
+    received: tuple[Any, ...] | None = None
+
+    class SuppressingToolset(FunctionToolset[None]):
+        async def __aexit__(self, *args: Any) -> bool:
+            nonlocal received
+            received = args
+            return True
+
+    error = ValueError('boom')
+    async with CombinedToolset([SuppressingToolset()]):
+        raise error
+
+    assert received is not None
+    assert received[:2] == (ValueError, error)
+
+
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_context_manager():
     try:
