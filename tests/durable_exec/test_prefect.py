@@ -2948,6 +2948,10 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                     ToolAvailabilityDeltaPart(tools_added=['invoice_status'], tool_call_id=load_id),
                 ],
                 timestamp=IsDatetime(),
+                instructions="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- billing: Billing.\
+""",
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
