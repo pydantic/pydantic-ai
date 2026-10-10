@@ -122,6 +122,43 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
     ...
     ```
 
+    In front of a language model, Jev is a fast mode for an agent: it answers the steps it can without writing any
+    text, and only the steps it hands off wait for the language model:
+
+    ```python
+    from typing import Literal
+
+    from pydantic import BaseModel, Field
+
+    from pydantic_ai import Agent
+    from pydantic_ai.models.decision import DecisionHandOff, DecisionModelSettings
+    from pydantic_ai.models.fallback import FallbackModel
+
+
+    class Handling(BaseModel):
+        verdict: Literal['run', 'reject', 'ask'] = Field(description='How to handle this command.')
+
+
+    class Reply(BaseModel):
+        message: str = Field(description='The answer to a question, rather than a command to handle.')
+
+
+    agent = Agent(
+        # Jev answers first. `fallback_on=DecisionHandOff` hands Claude only the steps Jev hands off: a pick of
+        # `Reply`, whose `str` Jev cannot write, or any pick below `decision_route_threshold`. An error from
+        # TypeSafe's API fails the run instead of quietly sending every step to Claude.
+        FallbackModel('typesafe:jev-latest', 'anthropic:claude-opus-5-5', fallback_on=DecisionHandOff),
+        output_type=[Handling, Reply],
+        model_settings=DecisionModelSettings(decision_route_threshold=0.7),
+    )
+    ...
+    ```
+
+    The same agent runs on an open-source decision model through
+    [`SystemOneModel`][pydantic_ai.models.system_one.SystemOneModel]. See
+    [A fast mode for a language model agent](https://pydantic.dev/docs/ai/models/decision/#fast-mode) for how this
+    compares with a language model's own fast mode, such as Anthropic's `anthropic_speed='fast'`.
+
     See [Decision models](https://pydantic.dev/docs/ai/models/decision/) for how an agent's output type and tools
     become questions, and [TypeSafe (Jev)](https://pydantic.dev/docs/ai/models/typesafe/) for setup, Jev's limits,
     and what it answers badly.

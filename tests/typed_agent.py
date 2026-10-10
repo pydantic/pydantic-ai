@@ -14,6 +14,8 @@ from starlette.requests import Request
 from pydantic_ai import Agent, ModelRetry, RunContext, RunUsage, Tool
 from pydantic_ai.agent import AgentRun, AgentRunResult
 from pydantic_ai.capabilities import PrepareTools, Thinking, WebSearch
+from pydantic_ai.models.decision import DecisionHandOff, DecisionModelSettings
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.output import (
     Choice,
     Choices,
@@ -442,6 +444,15 @@ else:
     assert_type(Agent(output_type=Annotated[Foo, 'meta'] | Bar), Agent[object, Foo | Bar])
     assert_type(Agent(output_type=Confidence | None), Agent[object, float | None])
     assert_type(ToolOutput(bool | tuple[str, int]), ToolOutput[bool | tuple[str, int]])
+
+    # A decision model in front of a language model, as a fast mode, keeps the output type whichever model answers
+    fast_mode_agent = Agent(
+        FallbackModel('typesafe:jev-latest', 'anthropic:claude-opus-5-5', fallback_on=DecisionHandOff),
+        output_type=[Foo, Bar],
+        model_settings=DecisionModelSettings(decision_route_threshold=0.7),
+    )
+    assert_type(fast_mode_agent, Agent[object, Foo | Bar])
+    assert_type(fast_mode_agent.run_sync('x').output, Foo | Bar)
 
     marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore[arg-type]
     complex_output_agent = Agent(

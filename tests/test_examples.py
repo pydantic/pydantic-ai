@@ -1090,6 +1090,10 @@ async def decision_model_logic(messages: list[ModelMessage], info: AgentInfo) ->
         # docs/models/decision.md: Jev's route pick is below `decision_route_threshold`, so the language model behind
         # it takes the step
         raise UnsureRoute('jev-latest', 'Ticket', {'Ticket': 0.6, 'Escalation': 0.4}, 0.7)
+    if isinstance(last, UserPromptPart) and last.content == 'Which plans include single sign-on?':
+        # docs/models/decision.md: in fast mode, Jev picks `Reply`, whose `str` field it cannot fill, so the
+        # language model behind it takes the step
+        raise UnfillableRoute('jev-latest', 'Reply', 0.93)
     return await model_logic(messages, info)
 
 
@@ -1349,6 +1353,17 @@ async def model_logic(  # noqa: C901
         elif m.content == 'Can you recommend a good restaurant near your office?':
             # docs/models/decision.md: the language model behind Jev takes the step Jev's route pick was unsure of
             return ModelResponse(parts=[_structured_output(info, 'Ticket', {'urgent': False})])
+        elif m.content == 'Which plans include single sign-on?':
+            # docs/models/decision.md: the language model behind Jev writes the reply Jev handed off in fast mode
+            return ModelResponse(
+                parts=[
+                    _structured_output(
+                        info,
+                        'Reply',
+                        {'message': 'Single sign-on is included in the Business and Enterprise plans.'},
+                    )
+                ]
+            )
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])

@@ -72,6 +72,41 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
     ...
     ```
 
+    An open-source decision model can be a fast mode for a language model agent, as Jev can: it takes the steps it
+    can answer, and a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] hands the rest to the language
+    model. With [Ollama](https://pydantic.dev/docs/ai/models/system-one/#ollama), both can run locally:
+
+    ```python
+    from pydantic import BaseModel, Field
+
+    from pydantic_ai import Agent
+    from pydantic_ai.models.decision import DecisionHandOff
+    from pydantic_ai.models.fallback import FallbackModel
+    from pydantic_ai.models.ollama import OllamaModel
+    from pydantic_ai.models.system_one import SystemOneModel
+    from pydantic_ai.providers.ollama import OllamaProvider
+    from pydantic_ai.providers.system_one import SystemOneProvider
+
+
+    class Handling(BaseModel):
+        irreversible: bool = Field(description='Would running this destroy data or leak secrets?')
+
+
+    class Reply(BaseModel):
+        message: str = Field(description='The answer to a question, rather than a command to handle.')
+
+
+    # Nimble decides on Ollama's System One API. Picking `Reply`, whose `str` Nimble cannot write, hands the step
+    # to Qwen on Ollama's OpenAI-compatible API; an error from Nimble's server fails the run instead.
+    nimble = SystemOneModel('nimble', provider=SystemOneProvider(base_url='http://localhost:11434'))
+    qwen = OllamaModel('qwen3', provider=OllamaProvider(base_url='http://localhost:11434/v1'))
+    agent = Agent(FallbackModel(nimble, qwen, fallback_on=DecisionHandOff), output_type=[Handling, Reply])
+    ...
+    ```
+
+    See [Fast mode on an open-source decision model](https://pydantic.dev/docs/ai/models/system-one/#fast-mode)
+    for Ollama's limits and the threshold that hands off unsure picks too.
+
     See [Decision models](https://pydantic.dev/docs/ai/models/decision/) for how an agent's output type and tools
     become questions, and [System One API](https://pydantic.dev/docs/ai/models/system-one/) for connecting to one.
 

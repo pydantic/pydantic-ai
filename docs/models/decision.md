@@ -8,7 +8,7 @@ A decision model answers typed questions about a text rather than writing text: 
 
 [`DecisionModel`][pydantic_ai.models.decision.DecisionModel] maps an agent run onto those questions. Each field of the `output_type` becomes one question, the prompt is the text, and the answers come back as the output: a `bool` is a yes or no, a `Literal` or `Enum` is one label out of several, a list of labels is a yes or no per label, a bounded `float` is the probability of yes itself, and a set of described levels is a score against a rubric. A Pydantic model with several fields extracts several values in one request. Output types, output functions and tools are [routes](#routes-which-thing-to-do): with more than one on offer, the model picks the one the text calls for, and fills that route's fields or arguments the same way. Change the model name and the same agent runs on a language model, so you can compare the two.
 
-A decision model can also work together with a language model. When it picks a route it cannot continue down — a tool with an argument it cannot fill, such as a free-form `str`, or one of several output types with such a field — it escalates: behind a [`FallbackModel`](overview.md#fallback-model), a language model takes that whole step, with the same tools and output types to choose from. The same fallback can take the steps the decision model [was unsure about](#falling-back-on-low-confidence). The cheap model answers what it can, and the expensive one only runs when it is needed.
+A decision model can also work together with a language model. When it picks a route it cannot continue down — a tool with an argument it cannot fill, such as a free-form `str`, or one of several output types with such a field — it escalates: behind a [`FallbackModel`](overview.md#fallback-model), a language model takes that whole step, with the same tools and output types to choose from. The same fallback can take the steps the decision model [was unsure about](#falling-back-on-low-confidence). The cheap model answers what it can, and the expensive one only runs when it is needed: a [fast mode](#fast-mode) for a language model agent.
 
 Pydantic AI supports three decision model backends out of the box:
 
@@ -878,6 +878,64 @@ for threshold in (0.5, 0.8, 0.9):
 Jev sent two ordinary product tickets that mention privacy to `Escalation`, at 0.57 and 0.72. A bar of 0.8 hands both of them on and keeps every pick it had right; 0.9 hands on two more that it had right as well, at 0.83 and 0.87. The numbers move by a few hundredths from one run to the next, so a bar is a range to choose from rather than a point.
 
 The same works for [`decision_boolean_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_boolean_threshold]: declare the field as a `float` bounded with `ge=0` and `le=1` while you tune, which returns the probability of yes itself, and compare it with each bar. Tune on a few hundred texts rather than a handful, drawn from the traffic the agent will see, and tune again when you change the model version, the routes or their docstrings. Your production traces carry the same numbers on each decision model request, so the texts you label later can come from there.
+
+## A fast mode for a language model agent {#fast-mode}
+
+A fast mode on a language model, such as Anthropic's [fast mode](anthropic.md#fast-mode) (`anthropic_speed='fast'`) or OpenAI's `priority` [service tier](openai.md#service-tier), serves the same model faster: every step is still written by the language model. A decision model in front of the language model makes a different trade. It answers each step that is a classification — which output type or tool the text calls for, and the fields or arguments it can fill — without writing any text, and only the steps it hands off reach the language model. The pieces are on this page; together they are:
+
+- a [`FallbackModel`](overview.md#fallback-model) with the decision model first and the language model behind it, with `fallback_on=`[`DecisionHandOff`][pydantic_ai.models.decision.DecisionHandOff] so that only [hand-offs](#escalating-to-a-language-model) cost a language model call, and an outage of the decision model's backend fails the run rather than quietly sending every step to the language model;
+- a route the decision model cannot fill, such as an output type with a `str` field, for whatever has to be [written](#give-every-outcome-a-route);
+- [`decision_route_threshold`](#handing-off-an-unsure-route), so a pick the decision model is unsure of goes to the language model too.
+
+The two kinds of fast mode compose, as the language model behind the decision model can run in its own fast mode:
+
+```python {title="fast_mode.py"}
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+from pydantic_ai.models.decision import DecisionHandOff, DecisionModelSettings
+from pydantic_ai.models.fallback import FallbackModel
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+
+
+class Reply(BaseModel):
+    """Answer the customer directly: a question rather than a problem to triage."""
+
+    message: str = Field(description='The reply to send the customer.')
+
+
+# Only the steps Jev hands off reach Claude, which takes them in Anthropic's fast mode.
+claude = AnthropicModel(
+    'claude-opus-5-5', settings=AnthropicModelSettings(anthropic_speed='fast')
+)
+agent = Agent(
+    FallbackModel('typesafe:jev-latest', claude, fallback_on=DecisionHandOff),
+    output_type=[Ticket, Reply],
+    model_settings=DecisionModelSettings(decision_route_threshold=0.7),
+)
+
+result = agent.run_sync('The export button does nothing when I click it.')
+print(result.output)
+#> urgent=False
+
+result = agent.run_sync('Which plans include single sign-on?')
+print(result.output)
+#> message='Single sign-on is included in the Business and Enterprise plans.'
+print(result.response.model_name)
+#> claude-opus-5-5
+```
+
+Jev triaged the broken button itself. The question about plans picked `Reply`, whose `str` field Jev cannot fill, so Claude took that step and wrote the reply. The output is `Ticket | Reply` to a type checker whichever model answered, so code that handles it does not depend on which one did.
+
+The same agent runs on an open-source decision model, locally if you like, by changing the first model: see [fast mode on an open-source decision model](system-one.md#fast-mode).
+
+How much faster and cheaper this is depends on how many steps the decision model keeps, so [watch the hand-off rate](#escalating-to-a-language-model): an agent that hands off most of its steps pays for both models and waits for both.
 
 ## Judging a conversation
 
