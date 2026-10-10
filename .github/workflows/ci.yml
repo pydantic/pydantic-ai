@@ -661,7 +661,8 @@ jobs:
             if [[ "$python" == 3.11 ]]; then all_extras_shards=3; fi
             python3 .github/scripts/shard_durations.py fetch --prefix "test-durations-$python-all-extras-" \
               --shards "$all_extras_shards" --output "test-durations/$python-all-extras.json"
-            # `test-lowest-versions` has no 3.15 cell: the declared minimums predate cp315 wheels.
+            # No 3.15 lowest-versions shards exist to fetch: like `test-durable-exec`'s `lowest` leg, they
+            # would compile our declared minimums from source on 3.15.
             if [[ "$python" != 3.15 ]]; then
               python3 .github/scripts/shard_durations.py fetch --prefix "test-durations-$python-lowest-versions-" \
                 --shards 2 --output "test-durations/$python-lowest-versions.json"
@@ -749,6 +750,9 @@ jobs:
       # Cache only the immutable model used by `TestSentenceTransformers`. The old
       # shared HF cache could be populated first by a matrix job that never downloaded
       # this model, permanently turning an exact cache hit into a cold model cache.
+      # The `sentence-transformers` extra only installs below Python 3.14 (its marker in
+      # `pydantic_ai_slim/pyproject.toml`), so 3.14 and 3.15 skip these three steps: there,
+      # the download would fail its import and spend its retries before giving up.
       - name: restore sentence-transformers test model
         id: sentence-transformers-cache
         if: matrix.python-version != '3.14' && matrix.python-version != '3.15'
@@ -898,7 +902,9 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         resolution: [locked, lowest]
-        # The declared minimums predate Python 3.15 wheels, so 3.15 runs the `locked` leg only.
+        # 3.15 runs the `locked` leg only: `lowest` installs our declared minimums, and 13 of them
+        # have no 3.15 wheel (pydantic-core 2.41, numpy 2.3, tiktoken 0.12, ...), so the leg would
+        # compile them from source past this job's timeout.
         include:
           - python-version: "3.15"
             resolution: locked

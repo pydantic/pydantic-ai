@@ -221,21 +221,13 @@ openai = "2026-10-06T21:31:20Z"
 # google-genai 2.25.0 is the `google-genai` floor: it sends Gemini blob fields as `mime_type`/`file_uri`.
 # TODO(adtyavrdhn): Remove after 2026-09-29 17:24 UTC.
 google-genai = "2026-09-22T17:23:02Z"
-# FastMCP 3.4.8 carries security fixes; FastMCP 4.1.0 is the first release supporting Python 3.15.
-# TODO(Kludex): Remove after 2026-10-15 22:57 UTC.
-fastmcp = "2026-10-08T22:57:02Z"
-fastmcp-slim = "2026-10-08T22:57:02Z"
-fastmcp-tasks = "2026-10-08T22:57:02Z"
-pydocket = "2026-10-08T22:57:02Z"
-# pyarrow 26.0.0 is the first release with cp315 wheels (`datasets`, all-extras on Python 3.15).
-# TODO(adtyavrdhn): Remove after 2026-10-16 08:27 UTC.
-pyarrow = "2026-10-09T08:26:26Z"
 # First releases with cp315 wheels, so Python 3.15 CI installs them instead of compiling from source.
-# TODO(adtyavrdhn): Remove after 2026-10-15 00:30 UTC (the latest of these leaves the cooldown then).
+# Each admits that release's artifacts through one second after its last upload.
+# TODO(adtyavrdhn): Remove after 2026-10-16 08:27 UTC, when the last of these (pyarrow) leaves the cooldown.
 aiohttp = "2026-10-05T17:43:49Z"
 asyncpg = "2026-10-06T20:32:41Z"
-fastavro = "2026-10-08T00:29:29Z"
-markupsafe = "2026-10-02T23:07:23Z"
+fastavro = "2026-10-05T22:24:00Z"
+pyarrow = "2026-10-09T08:26:26Z"
 
 [dependency-groups]
 dev = [
