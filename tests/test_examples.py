@@ -965,6 +965,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Generate an illustration of a cafe, then write alt text for it.': ToolCallPart(
         tool_name='generate_image', args={'prompt': 'An illustration of a cozy corner cafe'}
     ),
+    'Generate an illustration of a cafe. Then write alt text for it.': ToolCallPart(
+        tool_name='generate_image', args={'prompt': 'A cozy cafe interior with warm lighting.'}
+    ),
     'What is a banana?': ToolCallPart(tool_name='return_fruit', args={'name': 'banana', 'color': 'yellow'}),
     'What is a Ford Explorer?': '{"result": {"kind": "Vehicle", "data": {"name": "Ford Explorer", "wheels": 4}}}',
     'What is a MacBook?': '{"result": {"kind": "Device", "data": {"name": "MacBook", "kind": "laptop"}}}',
