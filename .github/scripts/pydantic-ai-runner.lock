@@ -1149,7 +1149,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "idna", marker = "extra == 'playwright'", specifier = ">=3.4" },
     { name = "json-repair", specifier = ">=0.58.0" },
-    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.31.0" },
+    { name = "logfire", marker = "extra == 'logfire'", git = "https://github.com/pydantic/logfire.git?subdirectory=logfire&rev=ca08c9e15746e53a364fdf72d9156ce87492ad3a" },
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.2" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.61.0" },
     { name = "pydantic-ai-slim", editable = "../../pydantic_ai_slim" },

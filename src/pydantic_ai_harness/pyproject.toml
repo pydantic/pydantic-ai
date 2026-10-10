@@ -54,7 +54,9 @@ codemode = ["pydantic-ai-slim[duckduckgo]=={{ major }}.{{ minor }}.{{ patch }}{%
 researcher = ["pydantic-ai-slim[duckduckgo,web-fetch]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 temporal = ["pydantic-ai-slim[temporal]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 dbos = ["pydantic-ai-slim[dbos]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-# `logfire.variables` needs `pydantic_handlebars.extract_dependencies` (0.2.1), which logfire does not require.
+# `AgentControl` needs `logfire.agent_control`, which has not been released yet. The sources below
+# pin logfire PR #2389 until a release is available. `logfire.variables` also needs
+# `pydantic_handlebars.extract_dependencies` (0.2.1), which logfire does not require.
 logfire = ["logfire>=4.31.0", "pydantic-ai-slim[spec]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}", "pydantic-handlebars>=0.2.1"]
 modal = ["modal>=1.5.2"]
 e2b = ["e2b>=2.48.0"]
@@ -111,3 +113,7 @@ include = ["/pydantic_ai_harness", "/README.md", "/LICENSE"]
 
 [tool.uv.sources]
 pydantic-ai-slim = { workspace = true }
+# Temporary fixed revision from https://github.com/pydantic/logfire/pull/2389. Replace these sources
+# with a released logfire version and raise the `logfire` extra's floor before merging.
+logfire = { git = "https://github.com/pydantic/logfire.git", rev = "ca08c9e15746e53a364fdf72d9156ce87492ad3a", subdirectory = "logfire" }
+logfire-sdk = { git = "https://github.com/pydantic/logfire.git", rev = "ca08c9e15746e53a364fdf72d9156ce87492ad3a", subdirectory = "logfire-sdk" }

@@ -44,7 +44,7 @@ if TYPE_CHECKING:
         ToolGuardrail,
     )
     from .localstack import LocalStack
-    from .logfire import ManagedPrompt
+    from .logfire import AgentControl, ManagedPrompt
     from .macroscope import Macroscope
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
@@ -74,6 +74,7 @@ if TYPE_CHECKING:
 __all__ = [
     'AbsurdDurability',
     'Advisor',
+    'AgentControl',
     'AskUser',
     'BackgroundTools',
     'BrowserUse',
@@ -151,6 +152,7 @@ __all__ = [
 _CAPABILITY_EXPORTS = {
     'AbsurdDurability': 'absurd',
     'Advisor': 'advisor',
+    'AgentControl': 'logfire',
     'AskUser': 'ask_user',
     'BackgroundTools': 'background_tools',
     'BrowserUse': 'browser_use',

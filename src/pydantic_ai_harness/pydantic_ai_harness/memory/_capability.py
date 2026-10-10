@@ -18,6 +18,8 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._durable import RetryRequest
 from pydantic_ai_harness.memory._store import FileStore, InMemoryStore, MemoryFile, MemoryStore, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
+    DEFAULT_AGENT_NAME,
+    DEFAULT_MEMORY_ID,
     MAIN_FILENAME,
     MemoryDeleteResult,
     MemorySearchResponse,
@@ -26,6 +28,7 @@ from pydantic_ai_harness.memory._toolset import (
     MemoryWriteResult,
     injection_listing_limit,
     list_subfiles,
+    memory_toolset_id,
     render_memory_prompt,
     run_as_operation,
 )
@@ -66,9 +69,11 @@ class Memory(AbstractCapability[AgentDepsT]):
     store_resolver: Callable[[RunContext[AgentDepsT]], MemoryStore] | None = None
     """Optional per-run store resolver. Resolver failures always propagate."""
 
-    agent_name: str = 'main'
+    agent_name: str = DEFAULT_AGENT_NAME
     """Storage segment that isolates memory within a namespace. Part of the scope
-    key only; never rendered into the model-facing memory block."""
+    key only; never rendered into the model-facing memory block. Also identifies the
+    contributed toolset, so composing several `Memory` capabilities on one agent needs a
+    distinct `agent_name` per instance -- which their separate storage already requires."""
 
     heading: str = field(default='', kw_only=True)
     """Markdown heading for rendered guidance and the injected memory block,
@@ -108,8 +113,11 @@ class Memory(AbstractCapability[AgentDepsT]):
     """Whether store failures during automatic injection are ignored or raised."""
 
     # Override the inherited default ID because durable-operation recovery needs a stable identity.
+    # Declared in the class body, because that is what tells Pydantic AI an agent has one `Memory`
+    # and two of it are one configuration stated twice. `__post_init__` moves a *named* scope off
+    # this default; see there.
     _: KW_ONLY
-    id: str | None = 'memory'
+    id: str | None = DEFAULT_MEMORY_ID
 
     _resolved_scope: tuple[MemoryStore, str] | None = field(default=None, init=False, repr=False, compare=False)
 
@@ -125,6 +133,15 @@ class Memory(AbstractCapability[AgentDepsT]):
         _validate_positive('max_search_files', self.max_search_files)
         if self.injection_errors not in ('ignore', 'raise'):
             raise ValueError("injection_errors must be 'ignore' or 'raise'")
+        if self.id == DEFAULT_MEMORY_ID:
+            # A named scope takes the toolset's own id. Composing several memories on one agent is
+            # a documented pattern, and it needs this: `prefix_tools` wraps one of them, so the two
+            # reach the run as different capability *classes*, and one id claimed by two classes is
+            # rejected outright rather than merged. The default scope keeps the bare `memory` a
+            # durable deployment has already journaled operations under; a named one moves to
+            # `memory-<agent_name>`, the same rename its workflow step name already takes and for
+            # the same reason.
+            self.id = memory_toolset_id(self.agent_name)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Memory[AgentDepsT]:
         """Return a clone with scope resolution isolated to this run."""
@@ -160,7 +177,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         return store, scope
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
-        """Provide the stable `memory` toolset, shared with every per-run copy."""
+        """Provide the memory toolset, identified by this instance's `agent_name` scope and shared with per-run copies."""
         return self._memory_toolset
 
     @property
@@ -353,7 +370,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         backend: Literal['memory', 'file', 'sqlite'] = 'memory',
         directory: str = '.agent-memory',
         database: str = '.agent-memory.db',
-        agent_name: str = 'main',
+        agent_name: str = DEFAULT_AGENT_NAME,
         heading: str = '',
         namespace: str = '',
         inject_memory: bool = True,
