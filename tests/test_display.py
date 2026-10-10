@@ -665,6 +665,12 @@ def test_the_fork_handler_hands_back_a_lock_nobody_holds():
 
 
 @pytest.mark.skipif(not hasattr(os, 'fork'), reason='fork is POSIX-only')
+# Forking while another thread holds the lock is the scenario under test. Python 3.12+ warns about forking a
+# multithreaded process; from 3.15, `os.fork()` raises that warning under this suite's `error` filter instead
+# of swallowing it.
+@pytest.mark.filterwarnings(
+    'ignore:This process .* is multi-threaded, use of fork\\(\\) may lead to deadlocks:DeprecationWarning'
+)
 def test_a_banner_does_not_hang_a_process_forked_mid_claim():
     """`fork` clones one thread, so a lock another was holding is held forever in the child.
 

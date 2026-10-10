@@ -35,6 +35,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
     "Operating System :: OS Independent",
@@ -220,6 +221,16 @@ openai = "2026-10-06T21:31:20Z"
 # google-genai 2.25.0 is the `google-genai` floor: it sends Gemini blob fields as `mime_type`/`file_uri`.
 # TODO(adtyavrdhn): Remove after 2026-09-29 17:24 UTC.
 google-genai = "2026-09-22T17:23:02Z"
+# First releases with cp315 wheels, so Python 3.15 CI installs them instead of compiling from source.
+# rpds-py 2026.9.1 is its first cp315 wheel built against the frozen 3.15 ABI (3.15.0rc1); earlier ones
+# were built against betas, which broke greenlet's on 3.15.0.
+# Each admits that release's artifacts through one second after its last upload.
+# TODO(adtyavrdhn): Remove after 2026-10-13 20:33 UTC, when the last of these (asyncpg) leaves the cooldown,
+# then run `uv lock` and `uv lock --script .github/scripts/pydantic-ai-runner`.
+aiohttp = "2026-10-05T17:43:49Z"
+asyncpg = "2026-10-06T20:32:41Z"
+fastavro = "2026-10-05T22:24:00Z"
+rpds-py = "2026-10-04T16:32:38Z"
 
 [dependency-groups]
 dev = [
@@ -258,6 +269,11 @@ dev = [
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
     # `fastmcp` package alongside, tracking the same range as the `[mcp]` extra (#6661).
     "fastmcp>=3.3.0,<5",
+    # FastMCP 3 pulls in `beartype` 0.22 (via `py-key-value-aio`), which imports `typing.no_type_check_decorator`
+    # (removed in 3.15).
+    # Removable once beartype 0.23.0 final is released (tracked in #9455):
+    # https://github.com/beartype/beartype/issues/618
+    "beartype>=0.23.0rc2; python_version >= '3.15'",
     # The MCP SDK v2 wire types as a standalone pure-Pydantic distribution, so the tests can check
     # the compat readers' field-name pairs against the real v2 models while running against v1.
     "mcp-types>=2.0.0",
@@ -535,6 +551,10 @@ filterwarnings = [
     "ignore:UnsupportedFieldAttributeWarning:UserWarning",
     # coolname (prefect dep) uses codecs.open(), deprecated in Python 3.14
     "ignore:codecs.open\\(\\) is deprecated:DeprecationWarning",
+    # Python 3.15 deprecates `isinstance()` against protocols without `@runtime_checkable`, which
+    # `py-key-value-aio`'s `AsyncKeyValue` (via FastMCP) lacks; this suite's `error` filter would fail on it.
+    # Removable once `py-key-value-aio` decorates its protocols (tracked in #9455).
+    "ignore:<class 'key_value\\.aio\\..*'> isn't explicitly decorated with @runtime_checkable:DeprecationWarning",
     # outlines' llamacpp backend calls llama-cpp-python's `Llama.from_pretrained`, which forwards
     # `local_dir_use_symlinks` to `hf_hub_download`; huggingface-hub >= 1.0 deprecated (and ignores)
     # that arg and warns about it. The arg is a no-op and the call site isn't ours to change.

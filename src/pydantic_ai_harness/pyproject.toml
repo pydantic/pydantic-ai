@@ -37,6 +37,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Software Development :: Libraries",
     "Typing :: Typed",
 ]
@@ -71,14 +72,23 @@ mongodb = ["pymongo>=4.17.0"]
 skills = ["pyyaml>=6.0.2"]
 browser-use = ["browser-use>=0.13.6,<0.14 ; python_full_version >= '3.11'"]
 playwright = ["idna>=3.4", "playwright>=1.61.0"]
-stackone = ["fastmcp>=3.4.5,<4", "pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+# FastMCP 3 resolves `beartype` 0.22 (via `py-key-value-aio`), which imports `typing.no_type_check_decorator` (removed in 3.15).
+# The beartype line is removable once beartype 0.23.0 final is released (tracked in #9455):
+# https://github.com/beartype/beartype/issues/618
+stackone = ["fastmcp>=3.4.5,<4", "beartype>=0.23.0rc2 ; python_version >= '3.15'", "pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 ordinal = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 grain = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 day-ai = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 posthog = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 pylon = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 prompt-injection-defender = ["stackone-defender>=0.7.3,<0.8 ; python_full_version >= '3.11'"]
-prompt-injection-defender-ml = ["stackone-defender[onnx]>=0.7.3,<0.8 ; python_full_version >= '3.11'"]
+# The base requirement keeps pattern detection installed on 3.15, where onnxruntime has no wheels yet.
+# Fold back into one `[onnx]` line once onnxruntime ships cp315 wheels (tracked in #9455):
+# https://pypi.org/project/onnxruntime/#files
+prompt-injection-defender-ml = [
+    "stackone-defender>=0.7.3,<0.8 ; python_full_version >= '3.11'",
+    "stackone-defender[onnx]>=0.7.3,<0.8 ; python_full_version >= '3.11' and python_version < '3.15'",
+]
 github = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 slack = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 coder = ["ripgrep==14.1.0 ; sys_platform != 'android'"]
