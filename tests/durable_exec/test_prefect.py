@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
 import uuid
@@ -49,6 +50,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     RunContext,
+    RunTimedOut,
     TextPart,
     TextPartDelta,
     ToolCallPart,
@@ -2487,6 +2489,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'partial_output',  # only set for output validators, which run in flow code, never inside a task
         'run_id',  # per-run id; deliberately excluded so an identical run replays instead of re-executing
         'conversation_id',  # per-conversation id; same rationale as run_id
+        'deadline',  # a time bound on the run rather than an input to a task; same rationale as run_id
         'capability_active',  # derived from loaded_capability_ids plus the static capability set, which are projected
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
         '_event_stream_buffer',  # live per-run event buffer drained in flow code, not a task input
@@ -2684,6 +2687,57 @@ async def test_flow_retry_replays_tool_result() -> None:
     assert attempts == 2
     assert tool_runs == ['record_side_effect']
     assert model_runs == 2
+
+
+async def test_flow_retry_keeps_run_deadline() -> None:
+    """The run's start time is a cached task, so a flow retry counts `timeout=` from the first attempt."""
+    agent = Agent(TestModel(), name='retry_deadline_agent', capabilities=[PrefectDurability[object]()])
+    deadlines: list[datetime | None] = []
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        async with agent.iter('go', timeout=3600) as agent_run:
+            async for _node in agent_run:
+                pass
+        deadlines.append(agent_run.ctx.deps.deadline)
+        # Fail after the agent run, so the retry replays its recorded start time.
+        if len(deadlines) == 1:
+            raise RuntimeError('boom')
+        assert agent_run.result is not None
+        return agent_run.result.output
+
+    assert await flaky() == 'success (no tool calls)'
+    first, retried = deadlines
+    assert first is not None
+    assert retried == first
+
+
+async def test_timeout_in_flow() -> None:
+    def call_slow_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('slow_tool')])
+
+    agent = Agent(
+        FunctionModel(call_slow_tool), name='timed_out_flow_agent', capabilities=[PrefectDurability[object]()]
+    )
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        await asyncio.sleep(30)
+        return 'never reached'  # pragma: no cover
+
+    @flow
+    async def timed_out() -> list[str]:
+        try:
+            await agent.run('go', timeout=0.5)
+        except RunTimedOut as exc:
+            return [type(message).__name__ for message in exc.all_messages()]
+        return []  # pragma: no cover
+
+    assert await timed_out() == ['ModelRequest', 'ModelResponse', 'ModelRequest']
+
+    # Outside a flow the capability is transparent: the run's own clock starts the deadline.
+    with pytest.raises(RunTimedOut):
+        await agent.run('go', timeout=0.1)
 
 
 async def test_runs_in_one_flow_differing_in_metadata_do_not_share_results() -> None:

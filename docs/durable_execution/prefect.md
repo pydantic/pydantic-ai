@@ -256,6 +256,12 @@ Because the model stream is consumed inside the task, cancelling it from the flo
 
 [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for flow code: it requires no running event loop and wraps `run_stream()`. Under [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability], use the buffered async streaming APIs above or [`Agent.run()`][pydantic_ai.agent.Agent.run] with an event stream handler. Outside a flow, an agent with `PrefectDurability` behaves like a normal agent, so `run_stream_sync()` works as usual. (Wrapper `PrefectAgent` forbids `run_stream` inside flows — use `run` + event stream handler there.)
 
+### Run Timeouts
+
+A run's [`timeout=`](../timeouts.md#bounding-a-whole-run) works inside a flow. The run's start time is recorded by a cached `{name}__run_start_time` task, so a flow retry keeps the deadline the run started with, and may find it has already passed. When the deadline passes, the run raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] in flow code, where you can catch it. The deprecated `PrefectAgent` rejects `timeout=`.
+
+The deadline bounds the agent run, not the flow. To bound the whole flow as well, set Prefect's own `timeout_seconds` on the flow.
+
 ### Suspended Turns and Background Mode
 
 When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request task. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first task. Size `timeout_seconds` in [Task Configuration](#task-configuration) for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation task.

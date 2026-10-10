@@ -25,6 +25,7 @@ from contextlib import (
 from contextvars import ContextVar
 from copy import copy
 from dataclasses import replace
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NamedTuple, Self, cast, overload
 from uuid import uuid4
@@ -62,7 +63,14 @@ from .._agent_graph import (
     build_run_context,
     capture_run_messages,
 )
-from .._cancel import CancellationToken, RunBinding, RunCancellation, take_run_binding
+from .._cancel import (
+    CancellationToken,
+    RunBinding,
+    RunCancellation,
+    inherited_run_deadline,
+    provide_run_deadline,
+    take_run_binding,
+)
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
@@ -1272,6 +1280,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1299,6 +1308,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1326,6 +1336,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1420,6 +1431,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Token used to cancel this run from another task or thread. Single-use:
                 mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], keeping what it
+                completed. A run started inside another run (e.g. from a tool) inherits that run's deadline,
+                which `timeout` can shorten but not extend. See [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline].
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -1456,6 +1471,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings=model_settings,
             usage_limits=usage_limits,
             cancellation_token=cancellation_token,
+            timeout=timeout,
             usage=usage,
             metadata=metadata,
             retries=retries,
@@ -1482,6 +1498,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1685,6 +1702,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 default=bootstrap_capability._default_conversation_id(resolved_run_id),  # pyright: ignore[reportPrivateUsage]
             ),
         )
+
+        # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability
+        # capability supplies a replay-safe clock and start time, so a replayed or recovered run keeps
+        # the deadline it started with. A run started inside another run can only shorten its deadline.
+        run_clock = bootstrap_capability._run_clock() or _utils.now_utc  # pyright: ignore[reportPrivateUsage]
+        deadline = inherited_run_deadline()
+        if timeout is not None:
+            start = await bootstrap_capability._run_start_time() or run_clock()  # pyright: ignore[reportPrivateUsage]
+            own_deadline = start + timedelta(seconds=timeout)
+            deadline = own_deadline if deadline is None else min(own_deadline, deadline)
         historical_response = next(
             (message for message in reversed(state.message_history) if isinstance(message, _messages.ModelResponse)),
             None,
@@ -1765,6 +1792,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             _model_id=model_id,
             usage=usage,
             usage_limits=usage_limits,
+            deadline=deadline,
             prompt=user_prompt,
             messages=state.message_history,
             run_step=0,
@@ -2048,6 +2076,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
             cancellation=cancellation,
+            deadline=deadline,
         )
 
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
@@ -2068,6 +2097,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             agent_name=self.name or 'agent',
             binding=binding,
             cancellation_token=cancellation_token,
+            run_clock=run_clock,
             model=model_used,
             capability_owns_current_model=capability_owns_current_model,
             model_resources=model_resources,
@@ -4353,6 +4383,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     agent_name: str
     binding: RunBinding | None
     cancellation_token: CancellationToken | None
+    run_clock: Callable[[], datetime]
     model: models.Model
     capability_owns_current_model: bool
     model_resources: _RunModelResources
@@ -4389,8 +4420,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
 
         @asynccontextmanager
         async def _translate_cancellation() -> AsyncGenerator[None]:
-            def _run_cancelled(message: str) -> exceptions.RunCancelled:
-                return _agent_graph.run_cancelled_snapshot(message, state, graph_deps)
+            def _run_cancelled(message: str, *, timed_out: bool = False) -> exceptions.RunCancelled:
+                return _agent_graph.run_cancelled_snapshot(message, state, graph_deps, timed_out=timed_out)
 
             try:
                 yield
@@ -4403,10 +4434,14 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 # cancellation as the cause. Whether a nested cancellation should terminate this run
                 # at all, or be isolated as a tool failure, is a separate semantics question tracked
                 # in https://github.com/pydantic/pydantic-ai/issues/7199.
+                if isinstance(exc, exceptions.RunTimedOut):
+                    raise _run_cancelled('The agent run timed out in a nested run.', timed_out=True) from exc
                 raise _run_cancelled('The agent run was cancelled by a nested run.') from exc
             except asyncio.CancelledError as exc:
                 first_party = graph_deps.cancellation.resolve()
                 if first_party:
+                    if graph_deps.cancellation.timed_out:
+                        raise _run_cancelled('The agent run timed out.', timed_out=True) from exc
                     raise _run_cancelled('The agent run was cancelled.') from exc
                 # An external cancellation must keep propagating as `CancelledError`, but the run
                 # state rides along on the exception instance for `RunCancelled.from_cancellation()`.
@@ -4455,6 +4490,17 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             stack.callback(pending_message_queue.close)
             if self.cancellation_token is not None:
                 graph_deps.cancellation.attach_token(self.cancellation_token)
+            if (deadline := graph_deps.deadline) is not None:
+                # Runs started inside this one (e.g. an agent delegated to from a tool) inherit the deadline.
+                stack.enter_context(provide_run_deadline(deadline, self.run_clock))
+                remaining = (deadline - self.run_clock()).total_seconds()
+                if remaining <= 0:
+                    graph_deps.cancellation.expire()
+                else:
+                    # Expiry is first-party cancellation, so the run tears down exactly as on `cancel()`.
+                    # Inside a Temporal workflow, `call_later` schedules a durable workflow timer.
+                    timer = asyncio.get_running_loop().call_later(remaining, graph_deps.cancellation.expire)
+                    stack.callback(timer.cancel)
 
             self.model_resources.bind_stack(stack)
             task_id = anyio.get_current_task().id

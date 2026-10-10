@@ -541,6 +541,12 @@ async def test_temporal_agent_rejects_cancellation_token() -> None:
         await _legacy_migration_agent.run('hello', cancellation_token=CancellationToken())
 
 
+async def test_temporal_agent_rejects_timeout() -> None:
+    """The deprecated wrapper agent has no replay-safe clock, so it points to `TemporalDurability` instead."""
+    with pytest.raises(UserError, match='`timeout` is not supported by the deprecated `TemporalAgent`'):
+        await _legacy_migration_agent.run('hello', timeout=1)
+
+
 _migration_agent: AbstractAgent[None, str] = _legacy_migration_agent
 
 

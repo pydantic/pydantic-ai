@@ -4,6 +4,7 @@ from abc import ABC
 from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequence
 from dataclasses import KW_ONLY, dataclass
+from datetime import datetime
 from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 
@@ -564,6 +565,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     def _default_conversation_id(self, run_id: str) -> str | None:
         """A replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7."""
+        return None
+
+    def _run_clock(self) -> Callable[[], datetime] | None:
+        """A replay-safe clock to measure a run's deadline against, or `None` for the system clock."""
+        return None
+
+    async def _run_start_time(self) -> datetime | None:
+        """A replay-stable start time to count a run's `timeout=` from, or `None` to read the run's clock."""
         return None
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:

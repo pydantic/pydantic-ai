@@ -45,7 +45,7 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
-from .._runtime_toolsets import reject_cancellation_token, reject_unsupported_runtime_toolsets
+from .._runtime_toolsets import reject_cancellation_token, reject_run_timeout, reject_unsupported_runtime_toolsets
 from .._workspace import RejectWorkspaceInContainer
 from ._model import PrefectModel
 from ._toolset import prefectify_toolset
@@ -268,6 +268,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -296,6 +297,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -323,6 +325,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -366,6 +369,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Unsupported for Prefect durable execution; passing one raises `UserError`.
+            timeout: Unsupported by the deprecated `PrefectAgent`; passing one raises `UserError`. Use the
+                `PrefectDurability` capability, which keeps the run's deadline when the flow is replayed or recovered.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -384,6 +389,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             The result of the run.
         """
         reject_cancellation_token(cancellation_token, engine='Prefect')
+        reject_run_timeout(timeout, wrapper='PrefectAgent', capability='PrefectDurability')
 
         @flow(name=f'{self._name} Run')
         async def wrapped_run_flow() -> AgentRunResult[Any]:
@@ -440,6 +446,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -468,6 +475,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -495,6 +503,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -540,6 +549,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Unsupported for Prefect durable execution; passing one raises `UserError`.
+            timeout: Unsupported by the deprecated `PrefectAgent`; passing one raises `UserError`. Use the
+                `PrefectDurability` capability, which keeps the run's deadline when the flow is replayed or recovered.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -560,6 +571,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         _utils.check_no_nested_sync_run()
 
         reject_cancellation_token(cancellation_token, engine='Prefect')
+
+        reject_run_timeout(timeout, wrapper='PrefectAgent', capability='PrefectDurability')
 
         @flow(name=f'{self._name} Sync Run')
         def wrapped_run_sync_flow() -> AgentRunResult[Any]:
@@ -619,6 +632,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -647,6 +661,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -675,6 +690,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -715,6 +731,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Unsupported for Prefect durable execution; passing one raises `UserError`.
+            timeout: Unsupported by the deprecated `PrefectAgent`; passing one raises `UserError`. Use the
+                `PrefectDurability` capability, which keeps the run's deadline when the flow is replayed or recovered.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -733,6 +751,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             The result of the run.
         """
         reject_cancellation_token(cancellation_token, engine='Prefect')
+        reject_run_timeout(timeout, wrapper='PrefectAgent', capability='PrefectDurability')
         if FlowRunContext.get() is not None:
             raise UserError(
                 '`agent.run_stream()` cannot be used inside a Prefect flow. '
@@ -781,6 +800,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -808,6 +828,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -834,6 +855,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -894,6 +916,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Unsupported for Prefect durable execution; passing one raises `UserError`.
+            timeout: Unsupported by the deprecated `PrefectAgent`; passing one raises `UserError`. Use the
+                `PrefectDurability` capability, which keeps the run's deadline when the flow is replayed or recovered.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -912,6 +936,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             handle over `AgentStreamEvent`s ending with a final `AgentRunResultEvent` carrying the run result.
         """
         reject_cancellation_token(cancellation_token, engine='Prefect')
+        reject_run_timeout(timeout, wrapper='PrefectAgent', capability='PrefectDurability')
         super_run_stream_events = super().run_stream_events
 
         @asynccontextmanager
@@ -965,6 +990,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -992,6 +1018,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1019,6 +1046,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1111,6 +1139,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Unsupported for Prefect durable execution; passing one raises `UserError`.
+            timeout: Unsupported by the deprecated `PrefectAgent`; passing one raises `UserError`. Use the
+                `PrefectDurability` capability, which keeps the run's deadline when the flow is replayed or recovered.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -1128,6 +1158,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             The result of the run.
         """
         reject_cancellation_token(cancellation_token, engine='Prefect')
+        reject_run_timeout(timeout, wrapper='PrefectAgent', capability='PrefectDurability')
         if model is not None and not isinstance(model, PrefectModel):
             raise UserError(
                 'Non-Prefect model cannot be set at agent run time inside a Prefect flow, it must be set at agent creation time.'

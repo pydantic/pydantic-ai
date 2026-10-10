@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -272,6 +273,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def _default_conversation_id(self, run_id: str) -> str | None:
         return self.wrapped._default_conversation_id(run_id)
+
+    def _run_clock(self) -> Callable[[], datetime] | None:
+        return self.wrapped._run_clock()
+
+    async def _run_start_time(self) -> datetime | None:
+        return await self.wrapped._run_start_time()
 
     async def prepare_tools(
         self,

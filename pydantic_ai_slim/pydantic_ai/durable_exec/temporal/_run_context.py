@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, overload
 
 from pydantic import TypeAdapter
@@ -35,6 +36,7 @@ _str_set_ta: TypeAdapter[set[str]] = TypeAdapter(set[str])
 _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
     ('usage', dict, TypeAdapter(RunUsage)),
     ('usage_limits', dict, TypeAdapter(UsageLimits)),
+    ('deadline', str, TypeAdapter(datetime)),
     ('loaded_capability_ids', list, _str_set_ta),
     ('discovered_tool_names', list, _str_set_ta),
     ('available_tool_names', list, _str_set_ta),
@@ -70,7 +72,13 @@ _NONE_UNLESS_ATTACHED = (
 # which is exactly what `is_tool_available` reads when the serving response has no provenance. A
 # custom `serialize_run_context` written before this field existed therefore keeps answering — with
 # the history-derived window — instead of raising for a field it never knew to carry.
-_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (('_anchored_evidence', AnchoredEvidence()),)
+# `deadline` is defaulted for the same reason: an activity dispatched by a worker that predates it, or a
+# custom `serialize_run_context` that doesn't carry it, sees no deadline, so an agent its tool runs just
+# doesn't inherit one, rather than the tool failing on the read.
+_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (
+    ('_anchored_evidence', AnchoredEvidence()),
+    ('deadline', None),
+)
 
 # Payloads written by a worker running an older version, or by a custom `serialize_run_context` that
 # still spells the old name. An activity can be dispatched by one worker version and replayed by
@@ -90,7 +98,7 @@ _GUARDED_FIELDS = frozenset(RunContext.__dataclass_fields__) - {'deps', *_NONE_U
 class TemporalRunContext(RunContext[AgentDepsT]):
     """The [`RunContext`][pydantic_ai.tools.RunContext] subclass to use to serialize and deserialize the run context for use inside a Temporal activity.
 
-    By default, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, `usage_limits`, `partial_output`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, the private dispatch-only availability supplements, and `capability_active` attributes will be available. Reading any other attribute raises a `UserError` explaining how to make it available, rather than returning its default value, so a field that didn't cross the boundary can't be mistaken for real run state.
+    By default, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, `usage_limits`, `deadline`, `partial_output`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, the private dispatch-only availability supplements, and `capability_active` attributes will be available. Reading any other attribute raises a `UserError` explaining how to make it available, rather than returning its default value, so a field that didn't cross the boundary can't be mistaken for real run state.
 
     `agent` and `root_capability` are re-attached from the worker's agent instance, `pending_messages` holds a guard that makes [`enqueue`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, and `tool_manager` and `realtime_session` are `None`: they hold live run state that isn't serializable (for `tool_manager`, `available_tool_names` returns the resolved snapshot serialized at activity dispatch time, falling back to `discovered_tool_names` if a custom subclass doesn't carry it; for `realtime_session`, `None` already means "not available here"). The `capabilities` registry is excluded for the same reason — it holds live capability objects (toolsets, hooks, callables) — so `active_capability_ids` likewise returns a snapshot serialized at dispatch time, which is what lets [`is_tool_available`][pydantic_ai.tools.RunContext.is_tool_available] answer for a capability-owned tool inside an activity; reading `capabilities` itself still raises. `model` and `tracer` are excluded as live objects too. `messages` is excluded because the full history would be duplicated into every activity payload, and `prompt` is excluded because a multi-modal prompt can carry large `BinaryContent` that would likewise ride in every activity payload, risking Temporal's 2 MB limit. `model_settings` is excluded because it's only set for model requests, which receive it as their own activity parameter, and `validation_context` because it's an arbitrary user object with no serialization contract. A live `workspace` cannot cross the activity boundary either: only its [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] is serialized, and the activity rebuilds `workspace` from it through the agent's capabilities (their `get_workspace`, which may read only `deps` and the fields listed here), policy wrappers included. A subclass whose `deserialize_run_context` sets `workspace` itself keeps that value.
     To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A subclass can use this escape hatch to opt in to carrying `prompt` if it knows its prompts are text-only.
@@ -222,6 +230,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             'instrumentation_version': ctx.instrumentation_version,
             'usage': ctx.usage,
             'usage_limits': ctx.usage_limits,
+            'deadline': ctx.deadline,
             'loaded_capability_ids': ctx.loaded_capability_ids,
             'discovered_tool_names': ctx.discovered_tool_names,
             # The dispatch-time widening of the two sets above, which `is_tool_available` reads for
