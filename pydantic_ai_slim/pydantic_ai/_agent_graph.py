@@ -758,7 +758,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             await self._reevaluate_dynamic_prompts(messages, run_context)
 
         if next_message:
-            await self._reevaluate_dynamic_prompts([next_message], run_context)
+            reevaluated: list[_messages.ModelMessage] = [next_message]
+            await self._reevaluate_dynamic_prompts(reevaluated, run_context)
+            next_message = cast(_messages.ModelRequest, reevaluated[0])
         else:
             parts: list[_messages.ModelRequestPart] = []
             if not messages:
@@ -833,7 +835,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         """Reevaluate any `SystemPromptPart` with dynamic_ref in the provided messages by running the associated runner function."""
         # Only proceed if there's at least one dynamic runner.
         if self.system_prompt_dynamic_functions:
-            for msg in messages:
+            for index, msg in enumerate(messages):
                 if isinstance(msg, _messages.ModelRequest):
                     reevaluated_message_parts: list[_messages.ModelRequestPart] = []
                     for part in msg.parts:
@@ -850,9 +852,10 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
                         reevaluated_message_parts.append(part)
 
-                    # Replace message parts with reevaluated ones to prevent mutating parts list
+                    # Replace the whole message instead of assigning to msg.parts so
+                    # caller-owned message_history objects are never mutated in place.
                     if reevaluated_message_parts != msg.parts:
-                        msg.parts = reevaluated_message_parts
+                        messages[index] = replace(msg, parts=reevaluated_message_parts)
 
     async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.SystemPromptPart]:
         """Build the initial system-prompt messages for the conversation."""
@@ -2117,6 +2120,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # No response reaches history, but a response a `FallbackModel` rejected was still billed,
             # so it counts towards the run's usage and its token and cost limits.
             _record_attempts_usage(ctx.state.usage, error.attempts)
+            # No response carries them either, so `wrap_model_request` finds them on the request context.
+            request_context._usage_response_ledger.attempts.extend(error.attempts)  # pyright: ignore[reportPrivateUsage]
         root_capability = ctx.deps.root_capability
         try:
             if not root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]

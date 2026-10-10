@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, TypeAlias, cast
 
+from ..cassette_utils import load_cassette_yaml
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -204,7 +205,7 @@ class XaiProtoCassette:
 
     @classmethod
     def load(cls, path: Path) -> XaiProtoCassette:
-        data = yaml.safe_load(path.read_text(encoding='utf-8'))
+        data = load_cassette_yaml(path.read_text(encoding='utf-8'))
 
         interactions: list[Interaction] = []
         for item in data.get('interactions', []):

@@ -8166,6 +8166,82 @@ def test_dynamic_true_reevaluate_system_prompt():
     assert res_two.new_messages() == res_two.all_messages()[-2:]
 
 
+def test_dynamic_system_prompt_does_not_mutate_caller_message_history():
+    """Test that dynamic system-prompt re-evaluation does not rewrite caller-owned history objects."""
+    agent = Agent('test', system_prompt='Foobar')
+
+    dynamic_value = 'A'
+
+    @agent.system_prompt(dynamic=True)
+    async def dynamic_func() -> str:
+        return dynamic_value
+
+    res_one = agent.run_sync('Hello')
+    history = res_one.all_messages()
+    caller_requests = [(msg, msg.parts) for msg in history if isinstance(msg, ModelRequest)]
+
+    dynamic_value = 'B'
+    res_two = agent.run_sync('World', message_history=history)
+
+    # The re-evaluated value still reaches the run's own messages.
+    assert [
+        part.content
+        for msg in res_two.all_messages()
+        for part in msg.parts
+        if isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+    ] == ['B']
+
+    # The caller's history objects are left untouched.
+    assert [
+        part.content
+        for _, parts in caller_requests
+        for part in parts
+        if isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+    ] == ['A']
+    for msg, parts in caller_requests:
+        assert msg.parts is parts
+
+
+async def test_concurrent_runs_sharing_history_isolate_dynamic_system_prompts():
+    """Test that concurrent runs sharing one history list do not leak dynamic system prompts into each other."""
+    agent = Agent('test', system_prompt='Foobar')
+
+    counter = [0]
+
+    @agent.system_prompt(dynamic=True)
+    async def dynamic_func() -> str:
+        counter[0] += 1
+        return f'D{counter[0]}'
+
+    res_one = await agent.run('Hello')
+    history = res_one.all_messages()
+    caller_requests = [(msg, msg.parts) for msg in history if isinstance(msg, ModelRequest)]
+
+    results = await asyncio.gather(
+        agent.run('A', message_history=history),
+        agent.run('B', message_history=history),
+    )
+
+    # Each run re-evaluated to its own fresh value.
+    assert sorted(
+        part.content
+        for result in results
+        for msg in result.all_messages()
+        for part in msg.parts
+        if isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+    ) == ['D2', 'D3']
+
+    # The shared history objects are left untouched.
+    assert [
+        part.content
+        for _, parts in caller_requests
+        for part in parts
+        if isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+    ] == ['D1']
+    for msg, parts in caller_requests:
+        assert msg.parts is parts
+
+
 def test_dynamic_system_prompt_no_changes():
     """Test coverage for _reevaluate_dynamic_prompts branch where no parts are changed
     and the messages loop continues after replacement of parts.
@@ -10097,6 +10173,7 @@ def test_set_mcp_sampling_model():
     assert server2.sampling_model is function_model2
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_explicit_context_manager():
     try:
         from fastmcp.client.transports import StdioTransport
@@ -10120,6 +10197,7 @@ async def test_explicit_context_manager():
             assert server2.is_running
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_implicit_context_manager():
     try:
         from fastmcp.client.transports import StdioTransport
@@ -10139,6 +10217,7 @@ async def test_implicit_context_manager():
         assert server2.is_running
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 def test_parallel_mcp_calls():
     try:
         from fastmcp.client.transports import StdioTransport
@@ -12651,26 +12730,35 @@ async def test_dynamic_tool_in_run_call():
 
 
 @pytest.mark.parametrize(
-    'tool_choice',
+    'tool_choice,match',
     [
-        pytest.param('required', id='required'),
-        pytest.param(['get_weather'], id='list'),
+        pytest.param('required', 'prevents the agent from producing a final response', id='required'),
+        pytest.param(['get_weather'], 'names no output tool', id='function-only-list'),
     ],
 )
-async def test_tool_choice_required_or_list_rejected_in_agent_run(tool_choice: Any):
-    """Verify that statically-set tool_choice='required' or list[str] raises UserError in agent.run().
+async def test_static_tool_choice_without_output_tool_rejected_in_agent_run(tool_choice: Any, match: str):
+    """A static forcing choice with no output tool cannot finish an agent run.
 
-    These settings exclude output tools and would force a tool call on every step, preventing
-    the agent from producing a final response. Users should use ToolOrOutput, set tool_choice
-    dynamically via a capability that returns a callable from get_model_settings(), or use
-    pydantic_ai.direct.model_request for single-shot calls.
+    Plain text output does not help because the model must call one of the listed tools on every step.
     """
     model = TestModel()
     agent = Agent(model)
 
     settings: ModelSettings = {'tool_choice': tool_choice}
-    with pytest.raises(UserError, match='prevents the agent from producing a final response'):
+    with pytest.raises(UserError, match=match):
         await agent.run('Hello', model_settings=settings)
+
+
+async def test_static_tool_choice_with_output_tool_accepted_in_agent_run():
+    """A static list can finish when it names an output tool from this run's output schema."""
+
+    def return_output(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('final_result', {'response': 42})])
+
+    agent = Agent(FunctionModel(return_output), output_type=ToolOutput(int))
+    result = await agent.run('Hello', model_settings={'tool_choice': ['final_result']})
+
+    assert result.output == 42
 
 
 async def test_central_content_filter_handling():

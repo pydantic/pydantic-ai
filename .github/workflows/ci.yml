@@ -230,6 +230,7 @@ jobs:
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
           .github/scripts/test_ci_content_classifier.py
+          .github/scripts/test_shard_durations.py
 
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
       # answer here silently stops type errors reaching a developer's terminal.
@@ -504,7 +505,7 @@ jobs:
         # `REPORT_ROW_LIMIT` in `.github/scripts/ci_duration.py` must stay above, or the duration
         # report truncates. That constant's comment enumerates all four.
         # `all-extras` is the slowest install shape -- it runs sharded in `test-all-extras` instead.
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
         install:
           - name: pydantic-ai-slim
             command: "--package pydantic-ai-slim"
@@ -629,19 +630,65 @@ jobs:
           path: .coverage
           include-hidden-files: true
 
+  # The sharded jobs below assign whole test modules to shards by the per-test durations their
+  # shards uploaded on the latest `main` run (see `.github/scripts/shard_durations.py`). Fetching
+  # that baseline once here means every shard of this run splits from the same file, so each module
+  # runs exactly once even if the API fails (the files are then empty and the split falls back to
+  # module size). Keep the shard counts in step with `SPLITS` in the jobs below. It runs alongside
+  # `classify`, not after it, to stay off the critical path, so it also runs (and its result goes
+  # unused) on content-only and clai2-only changes, where the sharded jobs are skipped. That costs a
+  # few API calls; don't add `needs: classify` to save them.
+  test-durations-baseline:
+    name: fetch test durations baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: fetch the latest main run's test durations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir test-durations
+          for python in 3.11 3.12 3.13 3.14 3.15; do
+            all_extras_shards=2
+            if [[ "$python" == 3.11 ]]; then all_extras_shards=3; fi
+            python3 .github/scripts/shard_durations.py fetch --prefix "test-durations-$python-all-extras-" \
+              --shards "$all_extras_shards" --output "test-durations/$python-all-extras.json"
+            # No 3.15 lowest-versions shards exist to fetch: like `test-durable-exec`'s `lowest` leg, they
+            # would compile our declared minimums from source on 3.15.
+            if [[ "$python" != 3.15 ]]; then
+              python3 .github/scripts/shard_durations.py fetch --prefix "test-durations-$python-lowest-versions-" \
+                --shards 2 --output "test-durations/$python-lowest-versions.json"
+            fi
+          done
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-durations-baseline
+          path: test-durations
+          if-no-files-found: error
+          retention-days: 7
+
   # `all-extras` is the slowest install shape by a wide margin -- it alone pulls in every
   # optional dependency -- so it gets its own job, split into shards, instead of sharing the
   # `test` job's timeout budget with the three much lighter install shapes.
   test-all-extras:
     name: test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/${{ matrix.python-version == '3.11' && 3 || 2 }})
-    needs: classify
+    needs: [classify, test-durations-baseline]
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
         shard: [1, 2]
         include:
           - python-version: "3.11"
@@ -652,17 +699,31 @@ jobs:
       # The 3.11 legacy tracer needs a third shard to stay within the job timeout.
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.python-version == '3.11' }}
       SPLITS: ${{ matrix.python-version == '3.11' && 3 || 2 }}
+      DURATIONS_PREFIX: test-durations-${{ matrix.python-version }}-all-extras-
+      DURATIONS_BASELINE: test-durations-baseline/${{ matrix.python-version }}-all-extras.json
       # Rebenchmark after https://github.com/cbornet/blockbuster/pull/61 is released in a
       # compatible version; re-enable if a shard then stays comfortably within its timeout.
       BLOCKBUSTER_ENABLED: false
       # `tests/test_examples.py` type-checks the docs examples with pyright; once per run is enough.
       TYPECHECK_EXAMPLES: ${{ matrix.python-version == '3.14' }}
+      # Per-test time budget enforced by `tests/cost_guards.py` (see "Test cost" in `tests/AGENTS.md`). The 3.13
+      # cells run nearly every test without coverage or blocking-call detection, so their timings carry the least
+      # instrumentation noise. 8s sits above the fresh-interpreter tests (4-6s on these runners) with headroom for runner
+      # jitter; the per-test report on the 3.12 cells surfaces anything new over 1s. List the tests over a budget from a
+      # run's `--durations` with `scripts/list_over_budget_tests.py`.
+      PYTEST_TEST_BUDGET_SECONDS: ${{ matrix.python-version == '3.13' && '8' || '' }}
+      # Per-module collection budget, also enforced by `tests/cost_guards.py`. The first module in a shard to import a
+      # dependency many modules share (`anthropic`, `openai`, `hypothesis`) is charged for it, up to 5s on these cells;
+      # 8s sits above that with headroom for runner jitter, and well below the 11-16s a module paid for importing
+      # `torch` at collection.
+      PYTEST_COLLECT_BUDGET_SECONDS: ${{ matrix.python-version == '3.13' && '8' || '' }}
       # `tests/harness/absurd` runs on Absurd's schema; an unreachable server fails rather than skips.
       ABSURD_REQUIRE_LIVE: "1"
       ABSURD_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
     services:
       postgres:
-        image: postgres:16
+        # AWS's mirror of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
+        image: public.ecr.aws/docker/library/postgres:16
         ports:
           - 5432:5432
         env:
@@ -690,9 +751,12 @@ jobs:
       # Cache only the immutable model used by `TestSentenceTransformers`. The old
       # shared HF cache could be populated first by a matrix job that never downloaded
       # this model, permanently turning an exact cache hit into a cold model cache.
+      # The `sentence-transformers` extra only installs below Python 3.14 (its marker in
+      # `pydantic_ai_slim/pyproject.toml`), so 3.14 and 3.15 skip these three steps: there,
+      # the download would fail its import and spend its retries before giving up.
       - name: restore sentence-transformers test model
         id: sentence-transformers-cache
-        if: matrix.python-version != '3.14'
+        if: matrix.python-version != '3.14' && matrix.python-version != '3.15'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
@@ -711,7 +775,7 @@ jobs:
       - name: pre-download sentence-transformers test model
         id: sentence-transformers-download
         if: >-
-          matrix.python-version != '3.14'
+          matrix.python-version != '3.14' && matrix.python-version != '3.15'
           && steps.sentence-transformers-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         run: |
@@ -728,7 +792,7 @@ jobs:
       # A failed non-fatal download must not become an immutable exact cache hit.
       - name: save sentence-transformers test model
         if: >-
-          matrix.python-version != '3.14'
+          matrix.python-version != '3.14' && matrix.python-version != '3.15'
           && steps.sentence-transformers-cache.outputs.cache-hit != 'true'
           && steps.sentence-transformers-download.outcome == 'success'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -736,11 +800,17 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
-      # `-n logical` (see note on the `test` job). Split into `SPLITS` shards with `pytest-split`
-      # so this, the slowest install shape, keeps pace with the rest of the matrix. The split is
-      # by test count, not measured duration -- no `.test_durations` file is committed -- so
-      # rebalance with `--store-durations` if `ci_duration.py`'s report shows the shards
-      # drifting apart. The 3.11 cells use three shards; every test runs once per version.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: test-durations-baseline
+          path: ${{ runner.temp }}/test-durations-baseline
+
+      # `-n logical` (see note on the `test` job). Split into `SPLITS` shards so this, the slowest
+      # install shape, keeps pace with the rest of the matrix. `shard_durations.py select` assigns
+      # whole test modules to shards by the `test-durations-baseline` durations and `--ignore`s the
+      # other shards' modules, so a shard's workers never collect them (`pytest-split` would have
+      # every worker collect the whole suite, then deselect most of it). The 3.11 cells use three
+      # shards; every test module runs in exactly one shard per version.
       # Everything under `tests/durable_exec` and every test marked `temporal` runs in
       # `test-durable-exec` instead: those tests pin xdist groups around real local servers, so
       # the chains they form would otherwise be this job's critical-path floor.
@@ -756,10 +826,34 @@ jobs:
           fi
           # `--all-packages` so the extras of every workspace member are installed, not just the
           # root package's: that is where `pydantic-ai-harness`'s optional integrations get tested.
+          uv run --no-project python .github/scripts/shard_durations.py select --durations "$RUNNER_TEMP/$DURATIONS_BASELINE" \
+            --shards "$SPLITS" --shard ${{ matrix.shard }} --exclude tests/durable_exec > "$RUNNER_TEMP/shard-args.txt"
+          mapfile -t shard_args < "$RUNNER_TEMP/shard-args.txt"
+          # `--store-durations` (from `pytest-split`) records this shard's durations for the next run.
           uv run --all-packages --all-extras --no-extra mcp-tasks "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
-            --ignore=tests/durable_exec -m "not temporal" --splits "$SPLITS" --group ${{ matrix.shard }}
+            --ignore=tests/durable_exec -m "not temporal" "${shard_args[@]}" \
+            --store-durations --clean-durations --durations-path "$RUNNER_TEMP/test-durations.json"
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
+
+      # Only `main` push runs are ever read back as the baseline (`shard_durations.py fetch`).
+      - name: store test durations
+        if: ${{ !cancelled() && github.event_name == 'push' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.DURATIONS_PREFIX }}${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-durations.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # Show authors what their change costs: new tests over a second and tests that got at least
+      # twice as slow as on `main`, in the job summary. One coverage-free version is enough.
+      - name: report new and slower tests
+        if: ${{ !cancelled() && matrix.python-version == '3.12' }}
+        run: >-
+          uv run --no-project python .github/scripts/shard_durations.py report
+          --baseline "$RUNNER_TEMP/$DURATIONS_BASELINE" --current "$RUNNER_TEMP/test-durations.json"
+          --title "all-extras on ${{ matrix.python-version }}, shard ${{ matrix.shard }}"
 
       - name: cover Absurd without a database URL
         if: matrix.python-version == '3.14' && matrix.shard == 1
@@ -809,6 +903,12 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         resolution: [locked, lowest]
+        # 3.15 runs the `locked` leg only: `lowest` installs our declared minimums, and 13 of them
+        # have no 3.15 wheel (pydantic-core 2.41, numpy 2.3, tiktoken 0.12, ...), so the leg would
+        # compile them from source past this job's timeout.
+        include:
+          - python-version: "3.15"
+            resolution: locked
     env:
       CI: true
       # Python 3.11 and 3.14 cover version endpoints; both 3.12 resolutions cover Temporal dependency branches.
@@ -901,13 +1001,14 @@ jobs:
 
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions, shard ${{ matrix.shard }}/2)
-    needs: classify
+    needs: [classify, test-durations-baseline]
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
+        # No 3.15: our declared minimums (pydantic-core 2.41, numpy 2.3, tiktoken 0.12, ...) have no 3.15 wheels.
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         shard: [1, 2]
     env:
@@ -919,6 +1020,8 @@ jobs:
       BLOCKBUSTER_ENABLED: false
       # The docs examples are type-checked in the Python 3.14 all-extras jobs.
       TYPECHECK_EXAMPLES: false
+      DURATIONS_PREFIX: test-durations-${{ matrix.python-version }}-lowest-versions-
+      DURATIONS_BASELINE: test-durations-baseline/${{ matrix.python-version }}-lowest-versions.json
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -973,8 +1076,13 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
-      # `-n logical` (see note on the `test` job). Split into 2 shards with `pytest-split`
-      # (see the matching note in `test-all-extras` for why, and for the rebalancing caveat).
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: test-durations-baseline
+          path: ${{ runner.temp }}/test-durations-baseline
+
+      # `-n logical` (see note on the `test` job). Split into 2 shards by test module (see the
+      # matching note in `test-all-extras` for why and how).
       # The durable-execution suites and harness `temporal` tests run in `test-durable-exec`
       # (its `lowest` leg covers this resolution), keeping their grouped xdist chains off this
       # job's critical path.
@@ -988,10 +1096,24 @@ jobs:
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
+          uv run --no-project python .github/scripts/shard_durations.py select --durations "$RUNNER_TEMP/$DURATIONS_BASELINE" \
+            --shards 2 --shard ${{ matrix.shard }} --exclude tests/durable_exec > "$RUNNER_TEMP/shard-args.txt"
+          mapfile -t shard_args < "$RUNNER_TEMP/shard-args.txt"
           uv run --no-sync "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
-            --ignore=tests/durable_exec -m "not temporal" --splits 2 --group ${{ matrix.shard }}
+            --ignore=tests/durable_exec -m "not temporal" "${shard_args[@]}" \
+            --store-durations --clean-durations --durations-path "$RUNNER_TEMP/test-durations.json"
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
+
+      # Only `main` push runs are ever read back as the baseline (`shard_durations.py fetch`).
+      - name: store test durations
+        if: ${{ !cancelled() && github.event_name == 'push' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.DURATIONS_PREFIX }}${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-durations.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       # See the matching step in the `test` job.
       - name: combine coverage files
@@ -1043,6 +1165,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # No 3.15: the examples need duckdb and datasets, which are skipped there (see `examples/pyproject.toml`).
         python-version: ["3.11", "3.12", "3.13", "3.14"]
     env:
       CI: true
@@ -1313,7 +1436,8 @@ jobs:
     timeout-minutes: 15
     services:
       mongodb:
-        image: mongo:8
+        # AWS's mirror of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
+        image: public.ecr.aws/docker/library/mongo:8
         ports:
           - 27017:27017
         options: >-
@@ -1348,7 +1472,8 @@ jobs:
     timeout-minutes: 15
     services:
       redis:
-        image: redis:8
+        # AWS's mirror of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
+        image: public.ecr.aws/docker/library/redis:8
         ports:
           - 6379:6379
         options: >-

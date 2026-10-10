@@ -220,6 +220,7 @@ async def test_loader_persistence_disable_and_project_plugin_trust(tmp_path: Pat
     assert not list(commands)
 
 
+@pytest.mark.subprocess(reason='starts real stdio MCP servers written in Python')
 async def test_start_stop_restart_logs_and_agent_use(tmp_path: Path) -> None:
     script, pid_file = write_server(tmp_path)
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
@@ -267,6 +268,7 @@ async def test_start_stop_restart_logs_and_agent_use(tmp_path: Path) -> None:
     assert 'Stopped local' in await run('/mcp stop-all')
 
 
+@pytest.mark.subprocess(reason='starts a real stdio MCP server written in Python')
 async def test_tools_without_start_and_empty_server(tmp_path: Path) -> None:
     script, pid_file = write_server(tmp_path, with_tool=False)
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
@@ -276,6 +278,7 @@ async def test_tools_without_start_and_empty_server(tmp_path: Path) -> None:
     assert_exited(pid_file)
 
 
+@pytest.mark.subprocess(reason='starts a stdio MCP server command that exits immediately')
 async def test_failed_start_is_reported_and_logged(tmp_path: Path) -> None:
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
     plugin = make_plugin({}, store)
@@ -332,6 +335,7 @@ def test_env_reference_order_and_template_escapes(
     assert servers.state(entry) == 'ready'
 
 
+@pytest.mark.subprocess(reason='starts real stdio MCP servers written in Python')
 async def test_reconfiguring_or_removing_releases_the_connection(tmp_path: Path) -> None:
     script, pid_file = write_server(tmp_path)
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
@@ -353,6 +357,7 @@ async def test_reconfiguring_or_removing_releases_the_connection(tmp_path: Path)
         servers.get('local')
 
 
+@pytest.mark.subprocess(reason='serves a real HTTP/SSE MCP server from a separate process')
 @pytest.mark.parametrize(('kind', 'path'), [('http', 'mcp'), ('sse', 'sse')])
 async def test_real_remote_server(tmp_path: Path, kind: str, path: str) -> None:
     with socket.socket() as probe:
@@ -420,6 +425,7 @@ def test_fastmcp_info_logging_stays_off_the_prompt() -> None:
     assert logging.getLogger('fastmcp.client.auth.oauth').getEffectiveLevel() >= logging.WARNING
 
 
+@pytest.mark.subprocess(reason='starts a stdio MCP server command that exits immediately')
 async def test_a_server_that_cannot_connect_does_not_fail_the_prompt(tmp_path: Path) -> None:
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
     plugin = make_plugin({}, store)

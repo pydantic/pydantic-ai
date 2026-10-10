@@ -121,7 +121,7 @@ class TestMongoMediaStoreRoundTrip:
         """
         client = _mock_client()
         store = MongoMediaStore(client=client, database='t', chunk_size_bytes=4)
-        data = bytes(range(256)) * 40  # 10_240 bytes -> 2560 chunks of 4
+        data = bytes(range(42))  # 42 bytes -> 10 full chunks of 4 plus a 2-byte tail
         uri = await store.put(data)
         digest = parse_media_uri(uri)
         expected_chunks = (len(data) + 3) // 4
@@ -175,8 +175,10 @@ class TestMongoMediaStoreRoundTrip:
     async def test_multi_byte_text_survives_chunk_boundaries(self) -> None:
         """Chunking splits raw bytes, so a multi-byte character straddles two chunks."""
         store = MongoMediaStore(client=_mock_client(), database='t', chunk_size_bytes=7)
-        text = 'héllo wörld 日本語 🎉 ' * 500
+        text = 'héllo wörld 日本語 🎉 ' * 2
         data = text.encode('utf-8')
+        # At least one chunk boundary lands on a UTF-8 continuation byte, mid-character.
+        assert any(data[i] & 0xC0 == 0x80 for i in range(7, len(data), 7))
         uri = await store.put(data, context=MediaContext(media_type='text/plain'))
         fetched = await store.get(uri)
         assert fetched == data
