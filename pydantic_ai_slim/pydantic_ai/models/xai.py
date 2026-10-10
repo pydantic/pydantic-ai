@@ -115,7 +115,7 @@ def _map_api_errors(
         raise ModelAPIError(model_name=model_name, message=details) from e
 
 
-XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest', 'grok-4.6', 'grok-build-0.1']
+XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest', 'grok-4.6', 'grok-4.7', 'grok-build-0.1']
 """Possible xAI model names.
 
 The ids in the local `Literal` are bridged because `xai_sdk`'s `ChatModel` doesn't list them at the

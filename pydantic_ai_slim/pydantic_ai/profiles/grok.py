@@ -44,6 +44,8 @@ _GROK_45_REASONING_MODELS = frozenset(
         # Grok 4.6 takes the same `reasoning_effort` values as 4.5, so it shares the set rather than
         # getting a branch of its own. `grok-4.6-latest` is deliberately absent: xAI doesn't serve one.
         'grok-4.6',
+        # Grok 4.7 likewise takes the same `reasoning_effort` values as 4.5.
+        'grok-4.7',
         # `grok-build-latest` is xAI's floating alias for the newest Grok build model, currently Grok 4.5,
         # so it accepts the same `reasoning_effort` values. https://docs.x.ai/developers/models
         'grok-build-latest',
