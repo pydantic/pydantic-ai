@@ -110,6 +110,15 @@ class _OpenRouterMaxPrice(TypedDict, total=False):
     request: int
 
 
+class _OpenRouterPercentileCutoffs(TypedDict, total=False):
+    """The object specifying the percentile cutoffs for the preferred throughput and latency: a subset of `p50`, `p75`, `p90`, and `p99`."""
+
+    p50: float
+    p75: float
+    p90: float
+    p99: float
+
+
 KnownOpenRouterProviders = Literal[
     'z-ai',
     'cerebras',
@@ -248,6 +257,12 @@ class OpenRouterProviderConfig(TypedDict, total=False):
 
     max_price: _OpenRouterMaxPrice
     """The maximum pricing you want to pay for this request. [See details](https://openrouter.ai/docs/features/provider-routing#max-price)"""
+
+    preferred_min_throughput: float | _OpenRouterPercentileCutoffs
+    """The minimum throughput you want to pay for, in tokens per second: a bare value is treated as the p50 cutoff, or specify percentile cutoffs. [See details](https://openrouter.ai/docs/features/provider-routing)"""
+
+    preferred_max_latency: float | _OpenRouterPercentileCutoffs
+    """The maximum latency you want to pay for, in seconds: a bare value is treated as the p50 cutoff, or specify percentile cutoffs. [See details](https://openrouter.ai/docs/features/provider-routing)"""
 
 
 class OpenRouterReasoning(TypedDict, total=False):
