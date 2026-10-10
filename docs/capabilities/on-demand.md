@@ -126,7 +126,7 @@ History carries *which* capability ids were loaded, not the capabilities themsel
 
 Several [`RunContext`][pydantic_ai.tools.RunContext] fields expose progressive-disclosure state to tools, hooks, and capability-owned callbacks:
 
-- `ctx.loaded_capability_ids` — deferred capability IDs explicitly loaded through the `load_capability` tool, reconstructed from message history before each model request. A capability loaded during a step appears from the *next* step onwards, which is also the first step on which its instructions and tools reach the model.
+- `ctx.loaded_capability_ids` — deferred capability IDs explicitly loaded, by the model through the `load_capability` tool or by [your code](#loading-from-code) through `ctx.load_capability()`, reconstructed from message history before each model request. A capability loaded during a step appears from the *next* step onwards, which is also the first step on which its instructions and tools reach the model.
 - `ctx.active_capability_ids` — the currently-live capability IDs: always-on capabilities plus `ctx.loaded_capability_ids`.
 - `ctx.capability_active` — only meaningful while Pydantic AI is running a capability-owned hook or callback. It is scoped to that capability; deferred hooks and callbacks are skipped until this value would be true. Active, not loaded: an always-on capability's hooks read `True` although nothing ever loaded it.
 - `ctx.discovered_tool_names` — deferred function tools revealed by durable history, whether through tool search, [`ToolReturn.tools`][pydantic_ai.messages.ToolReturn], or a capability load.
@@ -134,7 +134,7 @@ Several [`RunContext`][pydantic_ai.tools.RunContext] fields expose progressive-d
 - `ctx.is_tool_available(tool)` — whether a function tool is currently visible. Wrapping toolsets should pass the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] they hold; model-request hooks and tool execution can pass a name from the current `ctx.tools` snapshot.
 - `ctx.usage_limits` — the [`UsageLimits`][pydantic_ai.usage.UsageLimits] the run is enforcing (defaulting to `UsageLimits()` when none were passed, so it's only `None` outside of a run), alongside `ctx.usage` for the usage so far. A capability can read the run's limits to disclose or adapt to the remaining budget (e.g. budget disclosure) without being configured with a duplicate copy. Treat it as read-only: it's the live object the run enforces against, so mutating a field would change what the run enforces on subsequent requests.
 
-Loading a capability updates the capability state immediately, but the loaded bundle's function tools, native tools, and model settings take effect on the next model request.
+A load, by the model or [from code](#loading-from-code), takes effect on the next model request: that's when the capability's ID appears in `ctx.loaded_capability_ids` and `ctx.active_capability_ids`, and when the loaded bundle's function tools, native tools, and model settings apply.
 
 ## Cross-provider behavior
 
@@ -230,7 +230,7 @@ agent = Agent(
 
 ### Lifecycle hooks with deferred workflows
 
-Hooks can live on deferred capabilities too. They do not run until the model loads the capability that owns them:
+Hooks can live on deferred capabilities too. They do not run until the capability that owns them is loaded:
 
 ```python {title="deferred_hooks.py"}
 from dataclasses import dataclass
@@ -261,7 +261,7 @@ agent = Agent('openai-responses:gpt-5.4', capabilities=[AccountSecurityWorkflow(
 
 ### Deferred native tools
 
-Any [provider-adaptive capability](overview.md#provider-adaptive-tools) (`WebSearch`, `WebFetch`, `MCP`, …) can be deferred the same way. The native tool definition only enters the request after the `load_capability` tool loads the capability — see [Cache implications](#cache-implications) for the trade-off:
+Any [provider-adaptive capability](overview.md#provider-adaptive-tools) (`WebSearch`, `WebFetch`, `MCP`, …) can be deferred the same way. The native tool definition only enters the request after the capability is loaded — see [Cache implications](#cache-implications) for the trade-off:
 
 ```python {title="deferred_native_tool.py"}
 from pydantic_ai import Agent
@@ -415,6 +415,108 @@ def issue_refund(order_id: str, amount: float) -> str:
 The model sees `issue_refund` from turn 1. If it tries to call it before opening `refund-policy`, the hook bounces the call back with a message pointing at the exact `load_capability` tool call to make. The model loads the policy, the policy text lands in its recent context, and the refund runs *within* the rules — and only then. The same pattern works for any tool-and-runbook pair.
 
 Because the loaded set is just runtime data on [`RunContext`][pydantic_ai.tools.RunContext], the pattern generalises: dynamic instructions can warn when a risky pair of workflows is open, audit hooks can tag traces with the loaded set, escalation hooks can require an extra confirmation when both `payments` and `account-security` are active.
+
+## Loading a capability from code {#loading-from-code}
+
+The model normally decides when to load an on-demand capability, but sometimes your code knows first: a tool has just classified the request, or the ticket you're handling says which workflow applies. Instead of waiting for the model to call the `load_capability` tool, call [`ctx.load_capability()`][pydantic_ai.tools.RunContext.load_capability] from a tool, or from a tool hook such as `after_tool_execute`, passing the capability's `id` or the capability instance:
+
+```python {title="load_capability_from_code.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext, ToolCallPart, ToolReturnPart
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+@dataclass
+class Ticket:
+    order_id: str
+    category: str
+
+
+refunds = Capability[Ticket](
+    id='refunds',
+    description='Use for refund eligibility, refund status, or processing a refund.',
+    instructions='Always confirm the order ID before issuing a refund.',
+    defer_loading=True,
+)
+
+
+@refunds.tool_plain
+def refund_status(order_id: str) -> str:
+    """Look up the refund status for an order."""
+    return f'Order {order_id}: refund issued on 2026-05-01.'
+
+
+def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # Stands in for an LLM: open the ticket, check the refund once that tool is available, then answer.
+    last_part = messages[-1].parts[-1]
+    if isinstance(last_part, ToolReturnPart) and last_part.tool_name == 'refund_status':
+        return ModelResponse(parts=[TextPart(last_part.model_response_str())])
+    if any(tool.name == 'refund_status' for tool in info.function_tools):
+        return ModelResponse(parts=[ToolCallPart('refund_status', {'order_id': 'ABC-123'})])
+    return ModelResponse(parts=[ToolCallPart('open_ticket', {})])
+
+
+agent = Agent(FunctionModel(model_fn), deps_type=Ticket, capabilities=[refunds])
+
+
+@agent.tool
+async def open_ticket(ctx: RunContext[Ticket]) -> str:
+    """Open the customer's support ticket."""
+    if ctx.deps.category == 'refund':
+        await ctx.load_capability(refunds)
+    return f'Ticket for order {ctx.deps.order_id} opened.'
+
+
+result = agent.run_sync('Where is my refund?', deps=Ticket(order_id='ABC-123', category='refund'))
+print(result.output)
+#> Order ABC-123: refund issued on 2026-05-01.
+```
+
+`open_ticket` loads `refunds` because the ticket is about a refund, so on its next request the model sees the refund instructions and can call `refund_status` without calling the `load_capability` tool first.
+
+How a load from code behaves:
+
+- **It takes effect from the next model request.** The capability's instructions arrive as the result of a `load_capability` tool call, and its tools, model settings, and hooks become active from then on. Because it can only be called while a tool call from a model response is being handled, it can't affect the first model request of a run.
+- **It never causes a model request.** The load rides along with the run's next model request, so if the run ends at this step instead (because a tool call needs approval or is deferred, or the run produces its output), the load is discarded. A load made by a tool attempt that then raises `ModelRetry` still counts.
+- **It's recorded in message history** as the same `load_capability` tool call and return exchange that the `load_capability` tool records, so it [survives resuming the conversation](#resumable-across-runs) and appears in `ctx.loaded_capability_ids` from the next step.
+- **It loads a capability once.** It returns `True` if it queued the load, and `False` if the capability is already active or already being loaded: by an earlier `ctx.load_capability()` call, including one from a parallel tool call, or by the model's own `load_capability` call in the same response. In that last case, the capability only loads if the model's call succeeds.
+
+`ctx.load_capability()` raises a [`UserError`][pydantic_ai.exceptions.UserError] if the capability isn't registered in the run, if it's called outside a tool call (from a `before_run` or `after_model_request` hook, for example), or if it's called from an output tool, including an output function, which ends the run.
+
+`ctx.load_capability()` isn't supported in a [realtime session](../realtime/capabilities.md#deferred-capability-loading) either: it raises a `UserError`, which ends the session like any other `UserError` a session tool raises. The model can still load an instructions-only on-demand capability there with the `load_capability` tool.
+
+### Durable execution {#loading-from-code-durable}
+
+When a durable execution engine runs a tool in its own activity, step, or task, it replays the tool's recorded result on recovery without re-running your code, so a load made there would be lost. Where Pydantic AI can detect this, `ctx.load_capability()` raises a `UserError` instead:
+
+- [Temporal](../durable_execution/temporal.md) runs tool functions in activities, so they can't load capabilities.
+- [Prefect](../durable_execution/prefect.md) runs tool functions in tasks, so they can't load capabilities.
+- [DBOS](../durable_execution/dbos.md) runs plain function tools in workflow code, so they can load capabilities. Tools from MCP servers and dynamic toolsets run in steps and can't. Don't load from a function you decorated with `@DBOS.step` either: Pydantic AI can't detect that case, so the load succeeds but is lost when DBOS recovers the workflow.
+
+Tool hooks run in workflow or flow code on all three engines, around the activity, step, or task that runs the tool, so load from a hook such as `after_tool_execute` when the tool itself can't:
+
+```python {title="load_capability_from_tool_hook.py"}
+from typing import Any
+
+from pydantic_ai import RunContext, ToolCallPart, ToolDefinition
+from pydantic_ai.capabilities import Hooks
+
+hooks = Hooks()
+
+
+@hooks.on.after_tool_execute
+async def load_refunds(
+    ctx: RunContext, *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
+) -> Any:
+    if tool_def.name == 'open_ticket':
+        await ctx.load_capability('refunds')
+    return result
+```
+
+Register `hooks` on the agent alongside the `refunds` capability. The hook runs for every tool call, including the model's own `load_capability` calls, so check which tool it's handling.
 
 ## Loading skills from Markdown files
 

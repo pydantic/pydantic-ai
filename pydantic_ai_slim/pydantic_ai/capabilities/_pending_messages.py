@@ -87,10 +87,13 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         that fixup.
 
         Emits one [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] per drained
-        [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order, describing the
-        messages exactly as delivered here.
+        [`load_capability`][pydantic_ai.tools.RunContext.load_capability] call, then per drained
+        [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in order, describing the messages
+        exactly as delivered here, so consumers that rebuild history from events (such as UI
+        adapters) record capability loads too.
         """
-        drained = _queue(ctx).pop_priority('asap')
+        queue = _queue(ctx)
+        drained = [*queue.pop_capability_loads(), *queue.pop_priority('asap')]
         for pending in drained:
             messages = _stamped_messages(
                 pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
@@ -118,7 +121,8 @@ def drain_pending_messages_at_end(
     [`ModelRequestNode`][pydantic_ai._agent_graph.ModelRequestNode]'s request; any
     earlier ones are appended to `ctx.messages` so they appear in history before the
     redirect. Emits one [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]
-    per drained [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order.
+    per drained [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or
+    [`load_capability`][pydantic_ai.tools.RunContext.load_capability] call, in delivery order.
     """
     if not isinstance(result, End):
         return result
