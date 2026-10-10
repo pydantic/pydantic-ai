@@ -105,6 +105,8 @@ jobs:
               README.md|clai/README.md|src/pydantic_clai2/README.md|src/pydantic_ai_harness/README.md) ;;
               docs/*.md|docs/*.mdc|docs/*.png|docs/*.svg|docs/*.ico|docs/*.jpg|docs/*.jpeg|docs/*.gif|docs/*.webp|docs/*.avif) ;;
               examples/*.md|pydantic_ai_slim/*.md|pydantic_graph/*.md|pydantic_evals/*.md) ;;
+              # The docs atlas is generated from `docs/`; the `docs-only` job's pre-commit run gates it.
+              scripts/docs_map/docs-atlas.md) ;;
               *) return 1 ;;
             esac
           }

@@ -125,6 +125,7 @@ fi
         ([('docs/AGENTS.md', '')], {'content_only': 'true', 'docs_changed': 'true'}),
         ([('docs/img/logo.svg', '')], {'content_only': 'true', 'docs_changed': 'true'}),
         ([('docs/navigation.yml', '')], {'content_only': 'false', 'docs_changed': 'false'}),
+        ([('scripts/docs_map/docs-atlas.md', '')], {'content_only': 'true', 'docs_changed': 'true'}),
         ([('pydantic_ai_slim/README.md', '')], {'content_only': 'true', 'docs_changed': 'true'}),
         ([('src/pydantic_ai_harness/README.md', '')], {'content_only': 'true', 'docs_changed': 'true'}),
         ([('.agents/skills/review/SKILL.md', '')], {'content_only': 'true', 'docs_changed': 'false'}),

@@ -1,1 +1,2 @@
 .github/workflows/*.lock.yml linguist-generated=true
+scripts/docs_map/docs-atlas.md linguist-generated=true
