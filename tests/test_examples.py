@@ -1929,8 +1929,7 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
                 mock_fallback_models.append(mock_infer_model(m))
         mocked = FallbackModel(*mock_fallback_models)
         # Keep the example's own `fallback_on`, so a response handler it passes still applies.
-        mocked._exception_handlers = model._exception_handlers  # pyright: ignore[reportPrivateUsage]
-        mocked._response_handlers = model._response_handlers  # pyright: ignore[reportPrivateUsage]
+        mocked._predicates = model._predicates  # pyright: ignore[reportPrivateUsage]
         return mocked
     if isinstance(model, FunctionModel | TestModel):
         return model

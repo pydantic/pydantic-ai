@@ -322,6 +322,8 @@ class ModelRequestParameters:
 class _ModelRequestUsageLedger:
     responses: list[ModelResponse] = field(default_factory=list[ModelResponse])
     attempts: list[ModelRequestAttempt] = field(default_factory=list[ModelRequestAttempt])
+    rejected: list[ModelResponse] = field(default_factory=list[ModelResponse])
+    """The responses in `responses` that a hook rejected to make another attempt."""
 
 
 @dataclass(kw_only=True)
@@ -399,6 +401,24 @@ class ModelRequestContext:
     apart. Read-only from hooks: reassigning it doesn't change how the loop consumes the response.
     """
 
+    attempt: int = 1
+    """Which attempt at this request step is about to run, starting at `1`.
+
+    A step makes more than one attempt when a hook raises
+    [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] — a fallback capability moving to
+    the next model, or a backoff capability re-running the same one. Only
+    [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request],
+    [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] and
+    [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error]
+    can observe a value above `1`; `before_model_request` and `wrap_model_request` run once for the
+    step, before any attempt.
+
+    Distinct from [`RunContext.run_step`][pydantic_ai.tools.RunContext.run_step], which counts
+    request steps: a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] starts a new step (the model
+    sees a retry prompt), while a `RetryModelRequest` stays within this one (the model sees nothing).
+    Read-only from hooks: the loop owns it, and reassigning it doesn't change how many attempts run.
+    """
+
     _usage_response_ledger: _ModelRequestUsageLedger = field(
         default_factory=_ModelRequestUsageLedger, repr=False, compare=False
     )
@@ -415,6 +435,22 @@ class ModelRequestContext:
         `SpendLimits`, which pins this package's exact version.
         """
         return tuple(self._usage_response_ledger.responses)
+
+    @property
+    def _unrejected_usage_responses(self) -> tuple[ModelResponse, ...]:
+        """The responses of `_usage_responses` that no hook rejected to make another attempt.
+
+        A response a hook rejected with [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest]
+        is recorded as a failed [`ModelRequestAttempt`][pydantic_ai.messages.ModelRequestAttempt] with
+        its own span instead, the way a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]
+        records the responses it rejected, so the request's `chat` span doesn't report its usage again.
+
+        Private for now: read by the `Instrumentation` capability.
+        """
+        ledger = self._usage_response_ledger
+        return tuple(
+            response for response in ledger.responses if not any(response is rejected for rejected in ledger.rejected)
+        )
 
     @property
     def _usage_attempts(self) -> tuple[ModelRequestAttempt, ...]:

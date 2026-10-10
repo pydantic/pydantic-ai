@@ -156,11 +156,12 @@ Node hooks fire no matter how the run is driven: [`agent.run()`][pydantic_ai.age
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
 |---|---|---|
 | `before_model_request` | `before_model_request=` | `before_model_request` |
+| `prepare_model_request` | `prepare_model_request=` | `prepare_model_request` |
 | `after_model_request` | `after_model_request=` | `after_model_request` |
 | `model_request` | `model_request=` | `wrap_model_request` |
 | `model_request_error` | `model_request_error=` | `on_model_request_error` |
 
-Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters`. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance.
+Model request hooks fire around each model request step, which usually makes one LLM call, and more when a hook asks for another attempt. [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters`. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance.
 
 `before_model_request` and `model_request` (wrap) use the same message-persistence rules. Each receives two top-level views of the messages:
 
@@ -178,8 +179,10 @@ Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_
 
 To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `model_request` (wrap).
 
+`before_model_request` runs once per request step. `prepare_model_request` runs before every *attempt* at the request, with `request_context.model` set to the model about to serve it, which differs from the step's model when a hook moves the request to another model by raising [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest]. Use it for preparation that depends on the model; see [Retrying and falling back](capabilities/custom.md#model-request-attempts).
+
 !!! note
-    Each model-request lifecycle runs **once per model turn**, even when a provider pauses mid-turn (Anthropic `pause_turn`) or returns a background response (OpenAI background mode) and the agent transparently continues it. `wrap_model_request` is the outermost layer: its handler runs `before_model_request`, the whole turn including any continuations, and then `after_model_request`, which receives the single completed [`ModelResponse`][pydantic_ai.messages.ModelResponse].
+    `before_model_request` and `wrap_model_request` run **once per model turn**, even when a provider pauses mid-turn (Anthropic `pause_turn`) or returns a background response (OpenAI background mode) and the agent transparently continues it. `wrap_model_request` is the outermost layer: its handler runs `before_model_request` and then each attempt at the turn. `prepare_model_request`, `on_model_request_error` and `after_model_request` run once per *attempt*: a turn usually makes one, and `after_model_request` receives its completed [`ModelResponse`][pydantic_ai.messages.ModelResponse], including any continuations. When a hook raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest], as [`Fallback`](capabilities/fallback.md) does, they run again for the next attempt, so `after_model_request` can see a response that is then rejected. See [Retrying and falling back](capabilities/custom.md#model-request-attempts).
 
     When a run resumes a suspended turn from [`message_history`](message-history.md), `before_model_request` and `wrap_model_request` see that suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] as the last entry in `request_context.messages`: it's the continuation seed that will be echoed back to the provider, mirroring what actually goes over the wire.
 

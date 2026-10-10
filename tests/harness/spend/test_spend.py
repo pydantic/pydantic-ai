@@ -21,6 +21,7 @@ from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CapabilityOrdering,
+    Fallback,
     WrapModelRequestHandler,
 )
 from pydantic_ai.durable_exec import (
@@ -2159,6 +2160,38 @@ class TestFallbackAttempts:
             await Agent(model, deps_type=type(None), capabilities=[guard]).run('hi')
 
         assert (await guard.status())[0].spent == Spent(usd=Decimal('120'), tokens=132, requests=2)
+
+    @pytest.mark.parametrize('reject_all', [False, True])
+    async def test_the_fallback_capability_is_charged_like_fallback_model(self, reject_all: bool):
+        """The `Fallback` capability bills the same chain to the same budget as `FallbackModel` does."""
+
+        def reject(response: ModelResponse) -> bool:
+            return reject_all or response.model_name == 'gpt-4o-mini'
+
+        def chain() -> list[FunctionModel]:
+            return [
+                FunctionModel(lambda messages, info: _usage_response(100, 10), model_name='gpt-4o-mini'),
+                FunctionModel(lambda messages, info: _usage_response(20, 2), model_name='gpt-4o'),
+            ]
+
+        spent: list[Spent] = []
+        for use_capability in (False, True):
+            guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal(r.usage.input_tokens))
+            first, second = chain()
+            if use_capability:
+                agent = Agent(first, deps_type=type(None), capabilities=[guard, Fallback(second, fallback_on=reject)])
+            else:
+                agent = Agent(
+                    FallbackModel(first, second, fallback_on=reject), deps_type=type(None), capabilities=[guard]
+                )
+            if reject_all:
+                with pytest.raises(FallbackExceptionGroup):
+                    await agent.run('hi')
+            else:
+                await agent.run('hi')
+            spent.append((await guard.status())[0].spent)
+
+        assert spent[0] == spent[1] == Spent(usd=Decimal('120'), tokens=132, requests=2)
 
     async def test_rejected_responses_are_charged_when_an_outer_hook_recovers(self):
         """Recovery by a capability outside `SpendLimits` hides the group from the wrapper, not the charge."""

@@ -189,8 +189,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
     which is always called per-run during toolset assembly. On each model request,
     [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request]
-    encloses the complete dynamic lifecycle: `before_model_request`, the model call with
-    `on_model_request_error` recovery, and `after_model_request`.
+    encloses the complete dynamic lifecycle: `before_model_request` once, then each attempt at the
+    request, which runs `prepare_model_request`, the model call with `on_model_request_error`
+    recovery, and `after_model_request`. A request usually makes one attempt, and another each time a
+    hook raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest].
 
     See the [capabilities documentation](../capabilities/overview.md) for built-in capabilities.
 
@@ -582,6 +584,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
+    def _model_is_default(self) -> bool:
+        """Whether `get_model()` only offers a default, used when no other capability selects a model.
+
+        `Fallback` supplies the agent's model only when nothing else does: its first candidate is a
+        stand-in for a missing agent model, not a selection that should outrank `SelectModel`.
+        """
+        return False
+
     @property
     def has_resolve_model_id(self) -> bool:
         """Whether this capability or a wrapped capability overrides `resolve_model_id`."""
@@ -949,6 +959,31 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Exceptions propagate through the wrap chain and are not passed to `on_model_request_error`. A
         [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] requests another model attempt and counts
         against the output retry budget.
+        """
+        return request_context
+
+    async def prepare_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        """Called before each *attempt* at a model request, once the serving model is known.
+
+        This is the hook for work that depends on which model is about to run: compaction,
+        context-window fitting, per-profile message translation. Unlike
+        [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request],
+        which runs once per request step while the model may still change,
+        `request_context.model` here is the model that will actually serve the request, and
+        `request_context.attempt` says which attempt this is.
+
+        It runs again for every attempt a hook asks for by raising
+        [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest], so a capability never
+        inherits preparation done for a different model. Anything that should happen once per
+        request step regardless of how many models are tried — a history processor, an injected
+        message — belongs in `before_model_request` instead.
+
+        Changes made here shape the request that goes on the wire but are not persisted to the
+        agent's message history, which is finalized by `before_model_request`.
         """
         return request_context
 

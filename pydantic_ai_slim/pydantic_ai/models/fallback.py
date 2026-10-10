@@ -1,12 +1,12 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from functools import cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, assert_never
+from typing import TYPE_CHECKING, Any
 
 import anyio
 from opentelemetry.trace import Span, get_current_span
@@ -18,11 +18,21 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
     span_include_content,
 )
-from pydantic_ai._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
+from pydantic_ai._model_request_attempts import AttemptStart, record_failed_attempt
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._utils import await_maybe, get_first_param_type
 
-from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
+from .._fallback import (
+    FALLBACK_MODEL_PIN_KEY,
+    ExceptionHandler,
+    FallbackOn,
+    FallbackPredicates,
+    ResponseHandler,
+    ResponseRejected,
+    continuation_pin,
+    raise_fallback_exception_group,
+    stamp_continuation_pin,
+)
+from ..exceptions import ModelAPIError
 from ..messages import ModelRequestAttempt, ModelResponse
 from ..profiles import ModelProfile
 from . import (
@@ -37,52 +47,15 @@ if TYPE_CHECKING:
     from ..messages import ModelMessage
     from ..settings import ModelSettings
 
+# Re-exported: these were public from this module before the fallback machinery was shared with the
+# `Fallback` capability, and `from pydantic_ai.models.fallback import ...` must keep working.
+__all__ = 'FallbackModel', 'FallbackOn', 'ExceptionHandler', 'ResponseHandler', 'ResponseRejected'
+
 _PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
-_FALLBACK_MODEL_ID_KEY = 'fallback_model_id'
 # Must match `_continuation._REPLACE_PREVIOUS_RESPONSE_KEY`: the merge module reads this exact key
 # (under `__pydantic_ai__`) to fold a post-rewind response as a replace. Duplicated as a literal rather
 # than imported because that constant is module-private (importing it trips `reportPrivateUsage`).
 _REPLACE_PREVIOUS_RESPONSE_KEY = 'replace_previous_response'
-
-ExceptionHandler = Callable[[Exception], Awaitable[bool]] | Callable[[Exception], bool]
-"""A sync or async callable that decides whether an exception should trigger fallback."""
-
-ResponseHandler = Callable[[ModelResponse], Awaitable[bool]] | Callable[[ModelResponse], bool]
-"""A sync or async callable that decides whether a model response should trigger fallback."""
-
-FallbackOn = (
-    type[Exception]
-    | tuple[type[Exception], ...]
-    | ExceptionHandler
-    | ResponseHandler
-    | Sequence[type[Exception] | ExceptionHandler | ResponseHandler]
-)
-"""The type of the `fallback_on` parameter to [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]."""
-
-
-class ResponseRejected(Exception):
-    """Raised within a `FallbackExceptionGroup` when model responses are rejected by a response handler."""
-
-    def __init__(self, rejected_count: int):
-        super().__init__(f'{rejected_count} model response(s) rejected by fallback_on handler')
-
-
-def _is_response_handler(handler: Callable[..., Any]) -> bool:
-    """Check if a callable is a response handler based on type hints.
-
-    Returns True if the first parameter is type-hinted as ModelResponse.
-    Returns False otherwise (including if there are no type hints).
-    """
-    first_param_type = get_first_param_type(handler)
-    if first_param_type is None:
-        return False
-    # Only support exact ModelResponse type (no Optional, no subclasses)
-    return first_param_type is ModelResponse
-
-
-def _is_exception_type(value: Any) -> TypeGuard[type[Exception]]:
-    """Check if value is a single exception type."""
-    return isinstance(value, type) and issubclass(value, Exception)
 
 
 @dataclass(init=False)
@@ -94,8 +67,7 @@ class FallbackModel(Model):
 
     models: list[Model]
 
-    _exception_handlers: list[ExceptionHandler] = field(repr=False)
-    _response_handlers: list[ResponseHandler] = field(repr=False)
+    _predicates: FallbackPredicates = field(repr=False)
 
     @cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -130,55 +102,7 @@ class FallbackModel(Model):
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
         self._entered_count = 0
 
-        # Parse fallback_on into exception handlers and response handlers
-        self._exception_handlers = []
-        self._response_handlers = []
-        self._parse_fallback_on(fallback_on)
-
-    def _parse_fallback_on(self, fallback_on: FallbackOn) -> None:
-        """Parse the fallback_on parameter into exception and response handlers."""
-        if _is_exception_type(fallback_on):
-            # Single exception type
-            self._exception_handlers.append(_exception_types_to_handler((fallback_on,)))
-        elif callable(fallback_on):
-            # Single callable - auto-detect by type hints
-            self._add_handler(fallback_on)
-        elif isinstance(fallback_on, Sequence) and not isinstance(fallback_on, (str, bytes)):
-            # Sequence of mixed handlers/types
-            for item in fallback_on:
-                if _is_exception_type(item):
-                    self._exception_handlers.append(_exception_types_to_handler((item,)))
-                elif callable(item):
-                    self._add_handler(item)
-                else:
-                    # Types guarantee all items are exception types or callables
-                    assert_never(item)
-        else:
-            assert_never(fallback_on)  # type: ignore[arg-type]  # pyright can't narrow str/bytes exclusion
-
-        if not self._exception_handlers and not self._response_handlers:
-            raise UserError(
-                'FallbackModel created with empty fallback_on. '
-                'All exceptions will propagate and all responses will be accepted. '
-                'Use fallback_on=(ModelAPIError,) for default behavior.'
-            )
-
-    def _add_handler(self, handler: Callable[..., Any]) -> None:
-        """Add a handler, auto-detecting its type by inspecting type hints."""
-        if _is_response_handler(handler):
-            self._response_handlers.append(handler)
-        else:
-            self._exception_handlers.append(handler)
-
-    async def _should_fallback(self, value: Exception | ModelResponse) -> bool:
-        """Check if any handler wants to trigger fallback."""
-        handlers = self._exception_handlers if isinstance(value, Exception) else self._response_handlers
-        for handler in handlers:
-            # pyright can't narrow handler's param type from the isinstance check on value
-            result = await await_maybe(handler(value))  # type: ignore[arg-type]
-            if result:
-                return True
-        return False
+        self._predicates = FallbackPredicates.parse(fallback_on, owner='FallbackModel')
 
     async def __aenter__(self) -> FallbackModel:
         """Enter all sub-models so their providers can manage HTTP client lifecycle."""
@@ -261,7 +185,7 @@ class FallbackModel(Model):
                 response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 duration = start.elapsed()
-                if not await self._should_fallback(exc):
+                if not await self._predicates.should_fallback(exc):
                     self._set_span_attributes(pinned, prepared_parameters)
                     raise
                 # Best-effort cancel the suspended server-side job we're abandoning before rewinding
@@ -291,7 +215,7 @@ class FallbackModel(Model):
                 response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 duration = start.elapsed()
-                if await self._should_fallback(exc):
+                if await self._predicates.should_fallback(exc):
                     exceptions.append(exc)
                     self._record_failed_attempt(model, attempts, exc, start=start, duration=duration)
                     continue
@@ -299,7 +223,7 @@ class FallbackModel(Model):
                 raise exc
 
             duration = start.elapsed()
-            if await self._should_fallback(response):
+            if await self._predicates.should_fallback(response):
                 rejected_responses.append(response)
                 self._record_failed_attempt(model, attempts, response, start=start, duration=duration)
                 continue
@@ -316,7 +240,7 @@ class FallbackModel(Model):
             self._set_span_attributes(model, prepared_parameters)
             return response
 
-        _raise_fallback_exception_group(exceptions, rejected_responses, attempts)
+        raise_fallback_exception_group(exceptions, rejected_responses, attempts, owner='FallbackModel')
 
     @asynccontextmanager
     async def request_stream(
@@ -353,7 +277,7 @@ class FallbackModel(Model):
                     )
                 except Exception as exc:
                     duration = start.elapsed()
-                    if not await self._should_fallback(exc):
+                    if not await self._predicates.should_fallback(exc):
                         self._set_span_attributes(pinned, prepared_parameters)
                         raise
                     # Best-effort cancel the suspended server-side job we're abandoning before
@@ -388,7 +312,7 @@ class FallbackModel(Model):
                     )
                 except Exception as exc:
                     duration = start.elapsed()
-                    if await self._should_fallback(exc):
+                    if await self._predicates.should_fallback(exc):
                         exceptions.append(exc)
                         self._record_failed_attempt(model, attempts, exc, start=start, duration=duration)
                         continue
@@ -413,7 +337,7 @@ class FallbackModel(Model):
                     _stamp_continuation(streamed_response, model)
                 return
 
-        _raise_fallback_exception_group(exceptions, [], attempts)
+        raise_fallback_exception_group(exceptions, [], attempts, owner='FallbackModel')
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         """Cancel a suspended continuation on the underlying model holding the server-side job.
@@ -498,8 +422,7 @@ class FallbackModel(Model):
 
     def _pinned_continuation_model(self, response: ModelResponse) -> Model | None:
         """Resolve the underlying model pinned to this continuation from its routing metadata."""
-        pydantic_ai_meta = (response.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY, {})
-        if model_id := pydantic_ai_meta.get(_FALLBACK_MODEL_ID_KEY):
+        if model_id := continuation_pin(response, key=FALLBACK_MODEL_PIN_KEY):
             return next((m for m in self.models if m.model_id == model_id), None)
         return None
 
@@ -546,30 +469,23 @@ class FallbackModel(Model):
         duration: timedelta,
     ) -> None:
         """Append the attempt this request is falling back from to `attempts`, and record it as a span under `chat`."""
-        # A nested `FallbackModel` recorded the attempts it made itself, and their usage was billed too.
-        if isinstance(failure, ModelResponse):
-            attempts.extend(failure.failed_attempts or [])
-        elif isinstance(failure, FallbackExceptionGroup):
-            attempts.extend(failure.attempts)
-        attempt = failed_attempt(model, failure, start=start, duration=duration)
-        attempts.append(attempt)
         # Only under the `chat` span instrumentation opened for this request, and on its tracer provider.
-        if (span := self._fallback_span()) and (policy := open_request_policy()):
-            record_attempt_span(
-                attempt, failure, model=model, index=len(attempts) - 1, parent=span, tracer=policy.tracer
-            )
+        span = self._fallback_span()
+        policy = open_request_policy() if span else None
+        record_failed_attempt(
+            attempts,
+            model,
+            failure,
+            start=start,
+            duration=duration,
+            parent=span,
+            tracer=policy.tracer if policy else None,
+        )
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:
-    """Stamp the model's identifier into metadata for stateless continuation routing.
-
-    Uses `metadata['__pydantic_ai__']` to avoid conflating framework-level routing state
-    with provider-specific data in `provider_details`.
-    """
-    if response.metadata is None:
-        response.metadata = {}
-    pydantic_ai_meta = response.metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})
-    pydantic_ai_meta[_FALLBACK_MODEL_ID_KEY] = model.model_id
+    """Stamp the model's identifier into metadata for stateless continuation routing."""
+    stamp_continuation_pin(response, model.model_id, key=FALLBACK_MODEL_PIN_KEY)
 
 
 def _stamp_replace_previous(response: ModelResponse | StreamedResponse) -> None:
@@ -601,30 +517,3 @@ def _rewind_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
     if rewound and isinstance(rewound[-1], ModelResponse) and rewound[-1].state == 'suspended':  # pragma: no branch
         rewound.pop()
     return rewound
-
-
-def _exception_types_to_handler(exceptions: tuple[type[Exception], ...]) -> ExceptionHandler:
-    """Create an exception handler from a tuple of exception types."""
-
-    def handler(exc: Exception) -> bool:
-        return isinstance(exc, exceptions)
-
-    return handler
-
-
-def _raise_fallback_exception_group(
-    exceptions: list[Exception], rejected_responses: list[ModelResponse], attempts: list[ModelRequestAttempt]
-) -> NoReturn:
-    """Raise a FallbackExceptionGroup combining exceptions and response rejections.
-
-    Args:
-        exceptions: List of exceptions raised by models.
-        rejected_responses: List of responses that were rejected by fallback_on handlers.
-        attempts: Every attempt that was made, in order.
-    """
-    all_errors = list(exceptions)
-    if rejected_responses:
-        all_errors.append(ResponseRejected(len(rejected_responses)))
-    group = FallbackExceptionGroup('All models from FallbackModel failed', all_errors)
-    group.attempts = attempts
-    raise group

@@ -311,6 +311,9 @@ except ModelHTTPError as exc:
 
 ## Fallback Model
 
+!!! tip
+    Inside an agent, prefer the [`Fallback`](../capabilities/fallback.md) capability: it attempts each model within the agent's own request loop, so capabilities can see which model will serve each attempt and prepare the request for it. `FallbackModel` remains the way to fall back with [direct model requests](../direct.md) or a standalone model.
+
 You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to attempt multiple models
 in sequence until one succeeds. Pydantic AI can switch to the next model when the current model
 raises an exception (like a 4xx/5xx API error) **or** when the response content indicates a semantic

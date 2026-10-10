@@ -25,12 +25,13 @@ from ._instrumentation import (
     set_error_status,
     span_include_content,
 )
+from .exceptions import FallbackExceptionGroup
 from .messages import ModelRequestAttempt, ModelResponse
 
 if TYPE_CHECKING:
     from .models import Model
 
-__all__ = ('AttemptStart', 'failed_attempt', 'record_attempt_span')
+__all__ = ('AttemptStart', 'failed_attempt', 'record_attempt_span', 'record_failed_attempt')
 
 ATTEMPT_ATTRIBUTE = 'pydantic_ai.model_request.attempt'
 """The zero-based position of an attempt among the attempts at its request."""
@@ -119,6 +120,32 @@ def record_attempt_span(
                 span.set_status(Status(StatusCode.ERROR, 'Response rejected by a `fallback_on` response handler'))
         finally:
             span.end(start_time + round(attempt.duration.total_seconds() * 1e9))
+
+
+def record_failed_attempt(
+    attempts: list[ModelRequestAttempt],
+    model: Model,
+    failure: Exception | ModelResponse,
+    *,
+    start: AttemptStart,
+    duration: timedelta,
+    parent: Span | None,
+    tracer: Tracer | None,
+) -> None:
+    """Append the attempt a request is moving on from to `attempts`, and record it as a span under `parent`.
+
+    `parent` is the request's `chat` span, and `tracer` the one instrumentation opened it with: without
+    both, the request isn't instrumented and only the record is kept.
+    """
+    # A nested `FallbackModel` recorded the attempts it made itself, and their usage was billed too.
+    if isinstance(failure, ModelResponse):
+        attempts.extend(failure.failed_attempts or [])
+    elif isinstance(failure, FallbackExceptionGroup):
+        attempts.extend(failure.attempts)
+    attempt = failed_attempt(model, failure, start=start, duration=duration)
+    attempts.append(attempt)
+    if parent is not None and tracer is not None:
+        record_attempt_span(attempt, failure, model=model, index=len(attempts) - 1, parent=parent, tracer=tracer)
 
 
 def _to_ns(value: datetime) -> int:

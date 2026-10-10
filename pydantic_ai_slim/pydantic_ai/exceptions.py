@@ -18,6 +18,7 @@ from ._warnings import (
 
 if TYPE_CHECKING:
     from .messages import ModelMessage, ModelRequestAttempt, ModelResponse, RetryPromptPart, ToolReturnPart
+    from .models import KnownModelName, Model
     from .usage import RunUsage
 
 __all__ = (
@@ -25,6 +26,7 @@ __all__ = (
     'CallDeferred',
     'ApprovalRequired',
     'SkipModelRequest',
+    'RetryModelRequest',
     'SkipToolValidation',
     'SkipToolExecution',
     'UserError',
@@ -192,6 +194,56 @@ class SkipModelRequest(Exception):
 
     def __init__(self, response: ModelResponse):
         self.response = response
+        super().__init__()
+
+
+class RetryModelRequest(Exception):
+    """Exception to raise in model request hooks to attempt the request again.
+
+    Raise from [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error]
+    to retry after a failed attempt, from
+    [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] to reject
+    a response the model did return, or from
+    [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] to send
+    the attempt to another model before anything is sent. In each case the agent stays on the same
+    request step: no retry prompt is added to the history, and the model never learns that an earlier
+    attempt happened. That is what distinguishes it from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry],
+    which asks the model itself to try again. `before_model_request` and `wrap_model_request` run before
+    any attempt, so raising it from them is a [`UserError`][pydantic_ai.exceptions.UserError].
+
+    Pass `model` to attempt a different model, or omit it to attempt the same one again:
+
+    ```python
+    from pydantic_ai import ModelResponse, RetryModelRequest, RunContext
+    from pydantic_ai.capabilities import AbstractCapability
+    from pydantic_ai.exceptions import ModelHTTPError
+    from pydantic_ai.models import ModelRequestContext
+
+
+    class RetryOnOverload(AbstractCapability[None]):
+        async def on_model_request_error(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            if not isinstance(error, ModelHTTPError) or error.status_code != 529:
+                raise error
+            if request_context.attempt == 1:
+                raise RetryModelRequest()  # the same model again
+            raise RetryModelRequest('anthropic:claude-fable-5')  # a different model
+    ```
+
+    Each attempt re-runs
+    [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] for
+    the model that is about to serve it, so per-model preparation (message translation, compaction,
+    context-window fitting) is redone rather than inherited from the previous attempt.
+    `before_model_request` and `wrap_model_request` are *not* re-run: they belong to the request as a
+    whole, not to a single attempt.
+    """
+
+    model: Model | KnownModelName | str | None
+    """The model to attempt next, or `None` to attempt the current one again."""
+
+    def __init__(self, model: Model | KnownModelName | str | None = None):
+        self.model = model
         super().__init__()
 
 
@@ -620,12 +672,14 @@ class FallbackExceptionGroup(ExceptionGroup[Any]):
     """A group of exceptions that can be raised when all fallback models fail."""
 
     attempts: Sequence[ModelRequestAttempt] = ()
-    """Every attempt the [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] made, in order.
+    """Every attempt the [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
+    [`Fallback`][pydantic_ai.capabilities.Fallback] capability made, in order.
 
     Unlike the grouped exceptions, this includes the usage of any response that was rejected by a
     `fallback_on` response handler, which the agent also adds to the run's
-    [`RunUsage`][pydantic_ai.usage.RunUsage]. Only set on the group a `FallbackModel` raised itself: it
-    doesn't survive a durable execution boundary, such as a Temporal activity.
+    [`RunUsage`][pydantic_ai.usage.RunUsage]. Only set on a group a `FallbackModel` or the agent raised
+    itself: it doesn't survive a durable execution boundary, such as a `FallbackModel`'s group leaving a
+    Temporal activity.
     """
 
 

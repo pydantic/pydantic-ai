@@ -169,6 +169,7 @@ Core also ships capabilities for customizing the agent loop itself, mostly for p
 |---|---|---|
 | [Hooks](../hooks.md) | Core | Decorator-based lifecycle hook registration |
 | [Select Model](select-model.md) | Core | Select a static or per-step model with a callable |
+| [Fallback](fallback.md) | Core | Attempt other models when a request fails or its response is rejected |
 | [Resolve Model ID](resolve-model-id.md) | Core | Resolve custom, application-specific model IDs with a callable |
 | [Prepare Tools / Prepare Output Tools](prepare-tools.md) | Core | Filter or modify function and [output tool][pydantic_ai.output.ToolOutput] definitions per step |
 | [Prefix Tools](prefix-tools.md) | Core | Wrap a capability and prefix its tool names |

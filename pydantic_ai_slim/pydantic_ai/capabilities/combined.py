@@ -16,7 +16,7 @@ from pydantic_ai._instructions import (
     validate_instruction_id_segment,
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, RetryModelRequest
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
@@ -371,10 +371,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:
         model: AgentModel[AgentDepsT] | None = None
+        default: AgentModel[AgentDepsT] | None = None
         for capability in self.capabilities:
             if capability.defer_loading is not True and (capability_model := capability.get_model()) is not None:
-                model = capability_model
-        return model
+                if capability._model_is_default():
+                    default = capability_model
+                else:
+                    model = capability_model
+        return model if model is not None else default
 
     @property
     def has_resolve_model_id(self) -> bool:
@@ -665,6 +669,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 keep_mirroring(messages, request_context)
         return request_context
 
+    async def prepare_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        for capability in self.capabilities:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+                request_context = await capability.prepare_model_request(cap_ctx, request_context)
+        return request_context
+
     async def after_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -707,6 +721,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 continue
             try:
                 return await capability.on_model_request_error(cap_ctx, request_context=request_context, error=error)
+            except (ModelRetry, RetryModelRequest):
+                # Control flow, not a replacement error: a capability asking for a prompted retry or
+                # another attempt has answered for the whole chain. Handing it to the next capability
+                # as `error` would let an outer one recover from — or re-wrap — the request to retry.
+                raise
             except Exception as new_error:
                 error = new_error
         raise error
