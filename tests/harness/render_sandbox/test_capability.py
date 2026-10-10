@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 import anyio
 import pytest
@@ -28,6 +29,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.models.function import AgentInfo, FunctionModel
     from pydantic_ai.workspaces import (
+        LocalWorkspaceBackend,
         Workspace,
         WorkspaceBackend,
         WorkspaceRef,
@@ -222,6 +224,20 @@ async def test_caller_backend_never_auto_destroyed(workspace_harness: WorkspaceH
     assert workspace_harness.terminated == []
     await backend.destroy()
     assert workspace_harness.terminated == ['sb-1']
+
+
+async def test_caller_local_workspace_does_not_claim_render_isolation(
+    workspace_harness: WorkspaceHarness, tmp_path: Path
+) -> None:
+    def done(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert 'isolated Render sandbox' not in (info.instructions or '')
+        return ModelResponse(parts=[TextPart('done')])
+
+    backend = LocalWorkspaceBackend(tmp_path)
+    agent = Agent(FunctionModel(done), deps_type=type(None), capabilities=[capability(workspace_harness)])
+    result = await agent.run('hello', workspace=backend)
+    assert result.workspace.backend is backend
+    assert workspace_harness.created == workspace_harness.terminated == []
 
 
 async def test_lazy_run_with_no_workspace_use_creates_nothing(

@@ -102,14 +102,6 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
             owner=self,
         )
 
-    def get_instructions(self) -> str:
-        return (
-            'The workspace is an isolated Render sandbox. Use the standard workspace tools '
-            'to run commands and read or write files. Each command starts in the workspace '
-            'working directory. A nonzero exit code is a command result. Command deadlines '
-            "stop that command's foreground process group; the workspace remains available."
-        )
-
     def backend(self, ref: WorkspaceRef) -> RenderSandboxBackend:
         """Build a lazy backend for an existing sandbox without acquiring or owning it."""
         return RenderSandboxBackend(self.client, config=self.config, ref=ref, on_sandbox_event=self.on_sandbox_event)

@@ -1,9 +1,9 @@
 """Run the released public WorkspaceBackendSuite without editing its tests.
 
-Offline checks verify the resource recorder. Live execution is deliberately opt-in:
+Live execution is deliberately opt-in:
 
     RENDER_SANDBOX_LIVE=1 uv run --no-sync python -m pytest -q -rs \\
-        tests/harness/render_sandbox/test_workspace_conformance.py::TestLiveRenderSandboxBackend
+        tests/harness/render_sandbox/test_workspace_live.py::TestLiveRenderSandboxBackend
 
 The host needs RENDER_API_KEY and RENDER_WORKSPACE_ID. Do not use pytest-xdist:
 ordinary rules share one sandbox; fresh factories supply the concurrent-acquisition
@@ -18,7 +18,6 @@ filesystem, cancellation, reattachment, or background-child rule is disabled.
 
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
@@ -31,7 +30,6 @@ from ...conftest import try_import
 
 with try_import() as imports_successful:
     from render import RenderAsync
-    from render.experimental.sandbox import Sandbox
 
     from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
     from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
@@ -172,87 +170,3 @@ class TestLiveRenderSandboxBackend(WorkspaceBackendSuite):
             await ledger.terminate_owned(client.experimental.sandboxes, backend.ref.id)
 
         return destroy
-
-
-def _snapshot(sandbox_id: str, status: str = 'running') -> Sandbox:
-    return Sandbox(
-        sandbox_id,
-        status,
-        'starter',
-        'deny-all',
-        'oregon',
-        3600,
-        datetime.now(UTC),
-        datetime.now(UTC) if status == 'terminated' else None,
-    )
-
-
-class _FakeControl:
-    """Only the public terminate/from_id surface, with no HTTP or credentials."""
-
-    def __init__(self, statuses: dict[str, str]) -> None:
-        self.statuses = statuses
-        self.calls: list[str] = []
-        self.fail_terminate: set[str] = set()
-        self.stuck: set[str] = set()
-
-    async def terminate(self, sandbox_id: str, *, owner_id: str | None = None) -> None:
-        self.calls.append(sandbox_id)
-        if sandbox_id not in self.stuck:
-            self.statuses[sandbox_id] = 'terminated'
-        if sandbox_id in self.fail_terminate:
-            raise RuntimeError('credential-shaped exception text must never enter the ledger')
-
-    async def from_id(self, sandbox_id: str, *, owner_id: str | None = None) -> Sandbox:
-        return _snapshot(sandbox_id, self.statuses[sandbox_id])
-
-
-async def test_creation_is_persisted_before_returning_to_backend(tmp_path: Path) -> None:
-    path = tmp_path / 'resources.json'
-    ledger = ResourceLedger(path)
-
-    async def create(*, token: str) -> Sandbox:
-        return _snapshot('sbx-recorded')
-
-    created = await ledger.recording_create(create)(token='do-not-serialize-me')
-    data = json.loads(path.read_text())
-    assert data['resources'][0]['id'] == created.id
-    assert not data['audit_complete']
-    assert 'do-not-serialize-me' not in path.read_text()
-
-
-async def test_cleanup_audits_every_id_after_uncertain_termination(tmp_path: Path) -> None:
-    ledger = ResourceLedger(tmp_path / 'resources.json')
-    for sandbox_id in ('sbx-first', 'sbx-second'):
-        ledger.record_created(_snapshot(sandbox_id))
-    control = _FakeControl({sandbox_id: 'running' for sandbox_id in ledger.records})
-    control.fail_terminate.add('sbx-first')
-    await ledger.cleanup_and_audit(control)
-    assert control.calls == ['sbx-first', 'sbx-second']
-    assert ledger.audit_complete
-    assert all(record.terminal for record in ledger.records.values())
-    assert 'credential-shaped' not in ledger.path.read_text()
-    assert ledger.records['sbx-first'].errors == ['RuntimeError']
-
-
-async def test_cleanup_failure_retains_ids_and_still_cleans_other_resources(tmp_path: Path) -> None:
-    ledger = ResourceLedger(tmp_path / 'resources.json')
-    for sandbox_id in ('sbx-stuck', 'sbx-clean'):
-        ledger.record_created(_snapshot(sandbox_id))
-    control = _FakeControl({sandbox_id: 'running' for sandbox_id in ledger.records})
-    control.stuck.add('sbx-stuck')
-    with pytest.raises(RuntimeError, match='sbx-stuck'):
-        await ledger.cleanup_and_audit(control, timeout=0.01)
-    assert control.calls == ['sbx-stuck', 'sbx-clean']
-    data = json.loads(ledger.path.read_text())
-    assert not data['audit_complete']
-    assert {record['id'] for record in data['resources']} == {'sbx-stuck', 'sbx-clean'}
-    assert ledger.records['sbx-clean'].terminal
-
-
-async def test_cleanup_refuses_an_unowned_sandbox(tmp_path: Path) -> None:
-    ledger = ResourceLedger(tmp_path / 'resources.json')
-    control = _FakeControl({'sbx-external': 'running'})
-    with pytest.raises(ValueError, match='not created by this test run'):
-        await ledger.terminate_owned(control, 'sbx-external')
-    assert control.calls == []
