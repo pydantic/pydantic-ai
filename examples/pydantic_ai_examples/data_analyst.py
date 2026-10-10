@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 
 import datasets
-import duckdb
 import pandas as pd
 
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -86,6 +85,9 @@ def run_duckdb(ctx: RunContext[AnalystAgentDeps], dataset: str, sql: str) -> str
         dataset: reference string to the DataFrame
         sql: the query to be executed using DuckDB
     """
+    # Imported here so the other examples still load on Python 3.15, which duckdb has no wheels for yet.
+    import duckdb
+
     data = ctx.deps.get(dataset)
     result = duckdb.query_df(df=data, virtual_table_name='dataset', sql_query=sql)
     # pass the result as ref (because DuckDB SQL can select many rows, creating another huge dataframe)

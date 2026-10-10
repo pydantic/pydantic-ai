@@ -32,6 +32,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
     "Intended Audience :: System Administrators",
@@ -62,10 +63,9 @@ dependencies = [
     # support (#6661) so the workspace lock can fork onto SDK v2 for the `mcp-tasks` extra.
     "mcp[cli]>=1.28.1",
     "modal>=1.0.4",
-    # `data_analyst.py` imports duckdb, which has no cp315 wheels, and a source build outlasts the CI timeout.
-    # The marker keeps `pydantic-ai[examples]` installable on 3.15, but the examples don't claim 3.15 (no
-    # classifier, no 3.15 `test-examples` cell) until duckdb ships cp315 wheels; then drop the marker, add
-    # both back (tracked in #9455): https://pypi.org/project/duckdb/#files
+    # duckdb has no cp315 wheels, and a source build outlasts the CI timeout. Only `data_analyst.py`'s
+    # `run_duckdb` tool needs it, and imports it there, so the examples still load on 3.15. Marker (and that
+    # local import) removable once duckdb ships cp315 wheels (tracked in #9455): https://pypi.org/project/duckdb/#files
     "duckdb>=1.4.2; python_version < '3.15'",
     "datasets>=4.0.0",
     "pandas>=2.3.3",

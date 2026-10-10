@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any
@@ -169,9 +170,15 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
             self._defense = self.defense
         else:
             if self.semantic_detection and importlib.util.find_spec('onnxruntime') is None:
+                # The ML extra skips ONNX Runtime on 3.15, which it has no wheels for yet (tracked in #9455).
+                # A conditional expression: no single interpreter takes both arms of a version branch.
+                remedy = (
+                    'ONNX Runtime has no Python 3.15 wheels yet, so semantic detection needs Python 3.14 or earlier.'
+                    if sys.version_info >= (3, 15)
+                    else 'Install it with: uv add "pydantic-ai-harness[prompt-injection-defender-ml]"'
+                )
                 raise UserError(
-                    'PromptInjectionDefender requires ONNX Runtime when `semantic_detection=True`. '
-                    'Install it with: uv add "pydantic-ai-harness[prompt-injection-defender-ml]"'
+                    f'PromptInjectionDefender requires ONNX Runtime when `semantic_detection=True`. {remedy}'
                 )
             # Construct `PromptDefense` directly; the `create_prompt_defense` factory is untyped and fails pyright strict.
             self._defense = PromptDefense(
