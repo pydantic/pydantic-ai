@@ -42,6 +42,12 @@ async def test_zai_provider():
     assert second_http_client.is_closed
 
 
+def test_zai_provider_custom_base_url() -> None:
+    provider = ZaiProvider(api_key='api-key', base_url='https://api.z.ai/api/coding/paas/v4')
+    assert provider.base_url == 'https://api.z.ai/api/coding/paas/v4'
+    assert str(provider.client.base_url) == 'https://api.z.ai/api/coding/paas/v4/'
+
+
 def test_zai_provider_need_api_key(env: TestEnv) -> None:
     env.remove('ZAI_API_KEY')
     with pytest.raises(
