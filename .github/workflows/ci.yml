@@ -656,13 +656,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir test-durations
-          for python in 3.11 3.12 3.13 3.14; do
+          for python in 3.11 3.12 3.13 3.14 3.15; do
             all_extras_shards=2
             if [[ "$python" == 3.11 ]]; then all_extras_shards=3; fi
             python3 .github/scripts/shard_durations.py fetch --prefix "test-durations-$python-all-extras-" \
               --shards "$all_extras_shards" --output "test-durations/$python-all-extras.json"
-            python3 .github/scripts/shard_durations.py fetch --prefix "test-durations-$python-lowest-versions-" \
-              --shards 2 --output "test-durations/$python-lowest-versions.json"
+            # `test-lowest-versions` has no 3.15 cell: the declared minimums predate cp315 wheels.
+            if [[ "$python" != 3.15 ]]; then
+              python3 .github/scripts/shard_durations.py fetch --prefix "test-durations-$python-lowest-versions-" \
+                --shards 2 --output "test-durations/$python-lowest-versions.json"
+            fi
           done
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

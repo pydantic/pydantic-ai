@@ -85,7 +85,8 @@ def run_duckdb(ctx: RunContext[AnalystAgentDeps], dataset: str, sql: str) -> str
         dataset: reference string to the DataFrame
         sql: the query to be executed using DuckDB
     """
-    # Imported here so the other examples still load on Python 3.15, which duckdb has no wheels for yet.
+    # Imported here so the other examples still load on Python 3.15, which duckdb has no wheels for yet;
+    # this example itself needs Python 3.14 or earlier until then.
     import duckdb
 
     data = ctx.deps.get(dataset)
