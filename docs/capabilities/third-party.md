@@ -34,9 +34,10 @@ Pydantic AI supports [multi-agent patterns](../multi-agent-applications.md) dire
 
 ## File Operations & Sandboxing {#file-operations-sandboxing}
 
-[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) ships sandboxed [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) and [`Shell`](https://pydantic.dev/docs/ai/harness/shell/) capabilities, plus [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) for running tool calls as sandboxed Python. As a community alternative:
+[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) ships [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) and [`Shell`](https://pydantic.dev/docs/ai/harness/shell/) capabilities that operate in the selected workspace, plus [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) for running tool calls as sandboxed Python. To isolate file and shell operations, supply a sandbox workspace. Community options include:
 
 * [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend) - `ConsoleCapability` registers `ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, and `execute` tools with a fine-grained permission system. Backends include `StateBackend` (in-memory, for testing), `LocalBackend` (real filesystem), `DockerSandbox` (isolated container execution), and `CompositeBackend` (routing across backends). Also available as a lower-level `ConsoleToolset`.
+* [`smolmachines`](https://github.com/smol-machines/smol/tree/main/sdk/python#pydantic-ai-harness-workspace) - `SmolSandbox` gives Harness `Shell` and `FileSystem` a local microVM or Smol Cloud VM as their workspace. The workspace reference reattaches to the same VM on later runs; memory checkpoints and independent branches are opt-in.
 
 ## Agent Skills
 
