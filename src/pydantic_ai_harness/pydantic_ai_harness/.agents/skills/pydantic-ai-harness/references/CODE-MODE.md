@@ -240,6 +240,22 @@ for msg in result.all_messages():
 
 For an offline test that drives `run_code` with a `FunctionModel`, see [Testing and Debugging](./TESTING-AND-DEBUGGING.md).
 
+## Recognizing `run_code` in Hooks
+
+`run_code` declares the `'code_mode.run_code'` tool kind, so its call parts are promoted to
+`RunCodeCallPart` (from `pydantic_ai_harness.code_mode`). Match it with `isinstance`, not by tool name;
+`code` holds the submitted snippet, and `typed_args` all the arguments validated as `RunCodeArgs`:
+
+```python {test="skip" lint="skip"}
+async def wrap_tool_execute(self, ctx, *, call, tool_def, args, handler):
+    if isinstance(call, RunCodeCallPart) and call.code is not None:
+        ...  # inspect or record call.code
+    return await handler(args)
+```
+
+`run_code` parts recorded before the kind existed load as plain `ToolCallPart`s;
+`ToolCallPart.narrow_type(part, tool_kind='code_mode.run_code')` promotes one.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/code-mode/

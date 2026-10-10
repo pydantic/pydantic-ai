@@ -52,7 +52,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             name=LOAD_CAPABILITY_TOOL_NAME,
             description=LOAD_CAPABILITY_TOOL_DESCRIPTION,
             parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
-            tool_kind='capability-load',
+            tool_kind=LoadCapabilityCallPart,
         )
 
         load_tool = ToolsetTool(

@@ -23,34 +23,29 @@ provider boundaries.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal, NotRequired, Union, assert_never, cast
+from typing import TYPE_CHECKING, Literal, NotRequired, assert_never
 
-import pydantic
-import pydantic_core
 from typing_extensions import TypedDict
 
 from . import messages as _messages
-from ._utils import copy_dataclass_fields
 
 # `messages.py` imports this module before its `ModelMessage` / `ModelRequest` / `ModelResponse`
 # types are defined; bind the parts we need at class-definition time directly here, and access
 # the message-level types via `_messages.ModelResponse` etc. at function-call time.
 from .messages import (
-    _NATIVE_CALL_NARROWERS,  # pyright: ignore[reportPrivateUsage]
-    _NATIVE_RETURN_NARROWERS,  # pyright: ignore[reportPrivateUsage]
-    _TOOL_CALL_NARROWERS,  # pyright: ignore[reportPrivateUsage]
-    _TOOL_RETURN_NARROWERS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS_BY_TYPE,  # pyright: ignore[reportPrivateUsage]
     NativeToolCallPart,
     NativeToolReturnPart,
     ToolCallPart,
     ToolReturnPart,
+    TypedArgs,
+    TypedContent,
 )
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
-    from .messages import ModelMessage, ModelRequestPart, ModelResponse, ModelResponsePart
+    from .messages import ModelMessage, ModelResponse, ModelResponsePart
 
 
 _NO_MATCHES_MESSAGE = 'No matching tools found. The tools you need may not be available.'
@@ -119,7 +114,7 @@ class ToolSearchReturnContent(TypedDict):
 
 
 @dataclass(repr=False)
-class NativeToolSearchCallPart(NativeToolCallPart):
+class NativeToolSearchCallPart(NativeToolCallPart, _core=True):
     """Typed view of a [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] for tool search.
 
     Used on the native server-side tool-search path (Anthropic BM25/regex, OpenAI
@@ -127,9 +122,10 @@ class NativeToolSearchCallPart(NativeToolCallPart):
     The local-fallback path uses
     [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] instead.
 
-    To detect a tool-search part regardless of execution path (native server-side
-    vs. local fallback), check `part.tool_kind == 'tool-search'` — this works
-    across both call/return and both server/local variants.
+    `part.tool_kind == 'tool-search'` answers which tool a part belongs to, whatever its
+    outcome and whether search ran server-side or locally. To read a search result, check
+    `isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart)` instead: a failed
+    or denied return keeps its `tool_kind`, but its content is an error, not the typed result.
 
     Shadows `args` with a narrower type. The `str` variant covers the
     streaming / partial-args case before parsing completes; once parsed,
@@ -151,30 +147,18 @@ class NativeToolSearchCallPart(NativeToolCallPart):
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (cross-provider tool-search call)."""
 
-    @property
-    def typed_args(self) -> ToolSearchArgs | None:
-        """Typed view of the validated tool-search arguments, or `None` if not yet parseable.
+    typed_args = TypedArgs(ToolSearchArgs)
+    """Typed view of the validated tool-search arguments, or `None` if not yet parseable.
 
-        In non-streaming code (a typed call part on a finalized
-        [`ModelResponse`][pydantic_ai.messages.ModelResponse]), this is always
-        populated — once a part is narrowed to this typed subclass, its `args`
-        have been parsed and validated.
+    In non-streaming code (a typed call part on a finalized
+    [`ModelResponse`][pydantic_ai.messages.ModelResponse]), this is always
+    populated — once a part is narrowed to this typed subclass, its `args`
+    have been validated.
 
-        Returns `None` only in streaming-partial state, where `args` is still an
-        in-progress JSON string the model hasn't finished emitting. For raw
-        string-tolerant access, use the inherited `args_as_dict()`.
-        """
-        if self.args is None:
-            return None
-        if isinstance(self.args, dict):
-            return self.args
-        try:
-            parsed = pydantic_core.from_json(self.args)
-        except ValueError:
-            return None
-        if not isinstance(parsed, dict):
-            return None
-        return cast('ToolSearchArgs', parsed)
+    Returns `None` in streaming-partial state, where `args` is still an
+    in-progress JSON string the model hasn't finished emitting, or when they don't validate.
+    For raw string-tolerant access, use the inherited `args_as_dict()`.
+    """
 
     @property
     def queries(self) -> list[str]:
@@ -190,7 +174,7 @@ class NativeToolSearchCallPart(NativeToolCallPart):
 
 
 @dataclass(repr=False)
-class NativeToolSearchReturnPart(NativeToolReturnPart):
+class NativeToolSearchReturnPart(NativeToolReturnPart, _core=True):
     """Typed view of a [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] for tool search.
 
     Used on the native server-side tool-search path (Anthropic BM25/regex, OpenAI
@@ -198,9 +182,10 @@ class NativeToolSearchReturnPart(NativeToolReturnPart):
     The local-fallback path uses
     [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] instead.
 
-    To detect a tool-search part regardless of execution path (native server-side
-    vs. local fallback), check `part.tool_kind == 'tool-search'` — this works
-    across both call/return and both server/local variants.
+    `part.tool_kind == 'tool-search'` answers which tool a part belongs to, whatever its
+    outcome and whether search ran server-side or locally. To read a search result, check
+    `isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart)` instead: a failed
+    or denied return keeps its `tool_kind`, but its content is an error, not the typed result.
 
     Shadows `content` with a narrower
     [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]
@@ -223,6 +208,9 @@ class NativeToolSearchReturnPart(NativeToolReturnPart):
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (cross-provider tool-search return)."""
 
+    typed_content = TypedContent(ToolSearchReturnContent)
+    """The validated tool-search result, or `None` if it doesn't fit."""
+
     @property
     def discovered_tools(self) -> list[ToolSearchMatch]:
         """Subfield accessor for `content['discovered_tools']`."""
@@ -240,7 +228,7 @@ class NativeToolSearchReturnPart(NativeToolReturnPart):
 
 
 @dataclass(repr=False)
-class ToolSearchCallPart(ToolCallPart):
+class ToolSearchCallPart(ToolCallPart, _core=True):
     """Typed view of a [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] for the local `search_tools` function call.
 
     Used on the local-fallback path (and as the synthetic-injection target on
@@ -249,9 +237,10 @@ class ToolSearchCallPart(ToolCallPart):
     [`NativeToolSearchCallPart`][pydantic_ai.messages.NativeToolSearchCallPart]
     instead.
 
-    To detect a tool-search part regardless of execution path (native server-side
-    vs. local fallback), check `part.tool_kind == 'tool-search'` — this works
-    across both call/return and both server/local variants.
+    `part.tool_kind == 'tool-search'` answers which tool a part belongs to, whatever its
+    outcome and whether search ran server-side or locally. To read a search result, check
+    `isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart)` instead: a failed
+    or denied return keeps its `tool_kind`, but its content is an error, not the typed result.
 
     Shadows `args` with the canonical typed shape. The `str` variant covers the
     streaming / partial-args case before parsing completes; once parsed,
@@ -273,30 +262,18 @@ class ToolSearchCallPart(ToolCallPart):
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (framework-emitted `search_tools` call)."""
 
-    @property
-    def typed_args(self) -> ToolSearchArgs | None:
-        """Typed view of the validated tool-search arguments, or `None` if not yet parseable.
+    typed_args = TypedArgs(ToolSearchArgs)
+    """Typed view of the validated tool-search arguments, or `None` if not yet parseable.
 
-        In non-streaming code (a typed call part on a finalized
-        [`ModelResponse`][pydantic_ai.messages.ModelResponse]), this is always
-        populated — once a part is narrowed to this typed subclass, its `args`
-        have been parsed and validated.
+    In non-streaming code (a typed call part on a finalized
+    [`ModelResponse`][pydantic_ai.messages.ModelResponse]), this is always
+    populated — once a part is narrowed to this typed subclass, its `args`
+    have been validated.
 
-        Returns `None` only in streaming-partial state, where `args` is still an
-        in-progress JSON string the model hasn't finished emitting. For raw
-        string-tolerant access, use the inherited `args_as_dict()`.
-        """
-        if self.args is None:
-            return None
-        if isinstance(self.args, dict):
-            return self.args
-        try:
-            parsed = pydantic_core.from_json(self.args)
-        except ValueError:
-            return None
-        if not isinstance(parsed, dict):
-            return None
-        return cast('ToolSearchArgs', parsed)
+    Returns `None` in streaming-partial state, where `args` is still an
+    in-progress JSON string the model hasn't finished emitting, or when they don't validate.
+    For raw string-tolerant access, use the inherited `args_as_dict()`.
+    """
 
     @property
     def queries(self) -> list[str]:
@@ -312,7 +289,7 @@ class ToolSearchCallPart(ToolCallPart):
 
 
 @dataclass(repr=False)
-class ToolSearchReturnPart(ToolReturnPart):
+class ToolSearchReturnPart(ToolReturnPart, _core=True):
     """Typed view of a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] for the local `search_tools` function return.
 
     Used on the local-fallback path (and as the synthetic-injection target on
@@ -321,9 +298,10 @@ class ToolSearchReturnPart(ToolReturnPart):
     [`NativeToolSearchReturnPart`][pydantic_ai.messages.NativeToolSearchReturnPart]
     instead.
 
-    To detect a tool-search part regardless of execution path (native server-side
-    vs. local fallback), check `part.tool_kind == 'tool-search'` — this works
-    across both call/return and both server/local variants.
+    `part.tool_kind == 'tool-search'` answers which tool a part belongs to, whatever its
+    outcome and whether search ran server-side or locally. To read a search result, check
+    `isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart)` instead: a failed
+    or denied return keeps its `tool_kind`, but its content is an error, not the typed result.
 
     Shadows `content` with a narrower
     [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]
@@ -346,6 +324,9 @@ class ToolSearchReturnPart(ToolReturnPart):
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (framework-emitted `search_tools` return)."""
 
+    typed_content = TypedContent(ToolSearchReturnContent)
+    """The validated tool-search result, or `None` if it doesn't fit."""
+
     @property
     def discovered_tools(self) -> list[ToolSearchMatch]:
         """Subfield accessor for `content['discovered_tools']`."""
@@ -361,50 +342,6 @@ class ToolSearchReturnPart(ToolReturnPart):
         """
         return self.content.get('message')
 
-
-_TOOL_SEARCH_CALL_ARGS_TA: pydantic.TypeAdapter[str | ToolSearchArgs | None] = pydantic.TypeAdapter(
-    Union[str, ToolSearchArgs, None]  # noqa: UP007
-)
-_TOOL_SEARCH_RETURN_CONTENT_TA: pydantic.TypeAdapter[ToolSearchReturnContent] = pydantic.TypeAdapter(
-    ToolSearchReturnContent
-)
-
-
-def _narrow_native_tool_search_call(part: NativeToolCallPart) -> NativeToolSearchCallPart:
-    if isinstance(part, NativeToolSearchCallPart):
-        return part
-    validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
-    return copy_dataclass_fields(part, NativeToolSearchCallPart, args=validated_args, tool_kind='tool-search')
-
-
-def _narrow_native_tool_search_return(part: NativeToolReturnPart) -> NativeToolSearchReturnPart:
-    if isinstance(part, NativeToolSearchReturnPart):
-        return part
-    validated_content = _TOOL_SEARCH_RETURN_CONTENT_TA.validate_python(part.content)
-    return copy_dataclass_fields(part, NativeToolSearchReturnPart, content=validated_content, tool_kind='tool-search')
-
-
-def _narrow_tool_search_call(part: ToolCallPart) -> ToolSearchCallPart:
-    if isinstance(part, ToolSearchCallPart):
-        return part
-    validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
-    return copy_dataclass_fields(part, ToolSearchCallPart, args=validated_args, tool_kind='tool-search')
-
-
-def _narrow_tool_search_return(part: ToolReturnPart) -> ToolSearchReturnPart:
-    if isinstance(part, ToolSearchReturnPart):
-        return part
-    validated_content = _TOOL_SEARCH_RETURN_CONTENT_TA.validate_python(part.content)
-    return copy_dataclass_fields(part, ToolSearchReturnPart, content=validated_content, tool_kind='tool-search')
-
-
-# Narrowers dispatch on `tool_kind` (set by the framework when it emits a typed call/return)
-# so user-defined tools that happen to share `tool_name` with a typed subclass are not
-# accidentally promoted.
-_NATIVE_CALL_NARROWERS['tool-search'] = _narrow_native_tool_search_call
-_NATIVE_RETURN_NARROWERS['tool-search'] = _narrow_native_tool_search_return
-_TOOL_CALL_NARROWERS['tool-search'] = _narrow_tool_search_call
-_TOOL_RETURN_NARROWERS['tool-search'] = _narrow_tool_search_return
 
 # Register typed-part discriminator tags so `messages._model_request_part_discriminator` /
 # `_model_response_part_discriminator` can route serialized dicts and Python instances to
@@ -539,36 +476,9 @@ def synthesize_local_tool_search_messages(
             else:
                 out.append(msg)
         elif isinstance(msg, _messages.ModelRequest):
-            # Translate any framework-emitted `ToolReturnPart` with `tool_kind='tool-search'`
-            # on requests — covers fresh code paths that constructed a base `ToolReturnPart`
-            # directly while still flagging it as framework-emitted. Dispatching on `tool_kind`
-            # rather than `tool_name` means a user tool literally named `search_tools` is left
-            # alone as a base `ToolReturnPart`.
-            #
-            # Common case: the request carries no tool-search returns at all — bail before
-            # allocating a fresh parts list.
-            if not any(isinstance(part, ToolReturnPart) and part.tool_kind == 'tool-search' for part in msg.parts):
-                out.append(msg)
-                continue
-            request_changed = False
-            new_request_parts: list[ModelRequestPart] = []
-            for part in msg.parts:
-                if (
-                    isinstance(part, ToolReturnPart)
-                    and not isinstance(part, ToolSearchReturnPart)
-                    and part.tool_kind == 'tool-search'
-                ):
-                    promoted = ToolReturnPart.narrow_type(part)
-                    if isinstance(promoted, ToolSearchReturnPart):  # pragma: no branch
-                        new_request_parts.append(promoted)
-                        request_changed = True
-                        continue
-                new_request_parts.append(part)
-            if request_changed:
-                any_changed = True
-                out.append(replace(msg, parts=new_request_parts))
-            else:
-                out.append(msg)
+            # A base `ToolReturnPart` with `tool_kind='tool-search'` was already promoted to
+            # `ToolSearchReturnPart` when its `ModelRequest` was built, so requests pass through.
+            out.append(msg)
         else:
             assert_never(msg)
 

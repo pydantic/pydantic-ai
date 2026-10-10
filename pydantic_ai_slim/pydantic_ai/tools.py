@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
-from typing import Annotated, Any, Concatenate, Generic, Literal, Self, TypeAlias, Union, cast
+from typing import TYPE_CHECKING, Annotated, Any, Concatenate, Generic, Literal, Self, TypeAlias, Union, cast, overload
 
 from pydantic import AliasChoices, Field
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
@@ -26,7 +26,7 @@ from ._json_schema import UseEnumMemberDocstrings
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import UserError
 from .function_signature import FunctionSignature
-from .messages import ToolPartKind
+from .messages import ToolKindLike, ToolPartKind
 from .native_tools import AbstractNativeTool
 
 __all__ = (
@@ -347,6 +347,7 @@ class Tool(Generic[ToolAgentDepsT]):
     sequential: bool
     requires_approval: bool
     metadata: dict[str, Any] | None
+    tool_kind: ToolPartKind | None
     timeout: float | None
     defer_loading: bool
     include_return_schema: bool | None
@@ -374,6 +375,7 @@ class Tool(Generic[ToolAgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -441,6 +443,9 @@ class Tool(Generic[ToolAgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            tool_kind: What the tool is, independent of its name: a kind registered by a typed tool part, or the typed tool part class itself.
+                Its call and return parts are then promoted to the typed parts.
+                See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
@@ -473,6 +478,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
+        self.tool_kind = _tool_kind_of(tool_kind)
         self.timeout = timeout
         self.defer_loading = defer_loading
         self.include_return_schema = include_return_schema
@@ -544,6 +550,7 @@ class Tool(Generic[ToolAgentDepsT]):
             strict=self.strict,
             sequential=self.sequential,
             metadata=self.metadata,
+            tool_kind=self.tool_kind,
             timeout=self.timeout,
             defer_loading=self.defer_loading,
             kind='unapproved' if self.requires_approval else 'function',
@@ -581,6 +588,39 @@ With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `ext
 
 ToolKind: TypeAlias = Literal['function', 'output', 'external', 'unapproved']
 """Kind of tool."""
+
+
+def _tool_kind_of(value: ToolKindLike | None) -> ToolPartKind | None:
+    """The kind a tool declares, given as the kind itself or as a typed tool part class that registers it."""
+    if not isinstance(value, type):
+        return value
+    kind = value._registered_tool_kind  # pyright: ignore[reportPrivateUsage]
+    if kind is None:
+        raise UserError(
+            f'`{value.__qualname__}` registers no tool kind; pass a typed tool part class, '
+            "e.g. one defined as `class LookupCallPart(ToolCallPart, namespace='inventory', tool_kind='lookup')`."
+        )
+    return kind
+
+
+if TYPE_CHECKING:
+
+    class _ToolKindField:
+        """How type checkers see `ToolDefinition.tool_kind`: set as a `ToolKindLike`, read as the kind.
+
+        At runtime the field is a plain `ToolPartKind | None`, which `ToolDefinition.__post_init__`
+        normalizes, so reading it costs nothing.
+        """
+
+        @overload
+        def __get__(self, obj: None, owner: type[Any]) -> None: ...
+
+        @overload
+        def __get__(self, obj: object, owner: type[Any]) -> ToolPartKind | None: ...
+
+        def __get__(self, obj: object | None, owner: type[Any]) -> ToolPartKind | None: ...
+
+        def __set__(self, obj: object, value: ToolKindLike | None) -> None: ...
 
 
 @dataclass(repr=False, kw_only=True)
@@ -698,27 +738,28 @@ class ToolDefinition:
     the wire; that's `defer_loading`'s question.
     """
 
-    # Implementation note for new typed native tools: registering a new tool_kind value
-    # requires (1) extending the ToolPartKind Literal in messages.py, (2) defining
-    # the typed subclass + narrower under pydantic_ai/<your_native_tool>.py and registering
-    # in _TOOL_CALL_NARROWERS / _NATIVE_CALL_NARROWERS / _TOOL_RETURN_NARROWERS /
-    # _NATIVE_RETURN_NARROWERS, (3) adding the (part_kind, tool_kind) → Tag entries
-    # in messages.py's _TYPED_PART_TAGS and _TYPED_PART_TAGS_BY_TYPE registries, and
-    # (4) extending the ModelResponsePart / ModelRequestPart Annotated unions with
-    # the new typed subclasses.
-    tool_kind: ToolPartKind | None = None
-    """Discriminator for a cross-provider typed call/return shape (e.g. `'tool-search'`).
+    if TYPE_CHECKING:
+        tool_kind: _ToolKindField = _ToolKindField()
+    else:
+        tool_kind: ToolPartKind | None = None
+    """What this tool is, independent of its name (e.g. `'tool-search'`), for tools with typed parts.
 
-    Set by the framework when a tool emits parts that should be promoted to a typed
-    subclass (such as [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart]
-    and [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart]). Leave as
-    `None` for user-defined function tools — they go through the standard
-    [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] /
-    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] shapes.
+    Set it to the kind, or to a typed tool part class that registers it (`tool_kind=LookupCallPart`);
+    either way it reads back as the kind string.
 
-    To detect a tool-search part regardless of execution path (native server-side vs.
-    local fallback), check `part.tool_kind == 'tool-search'` — this works across both
-    call/return and both server/local variants.
+    The tool's call and return parts carry it and are promoted to the typed subclasses
+    registered for it (such as [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart]
+    and [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart]), so code can
+    recognize the tool with `isinstance` even when it has been renamed or prefixed. The kind
+    must be registered by a typed tool part (see
+    [Typed tool parts](../tools-advanced.md#typed-tool-parts)); a run whose tools include an
+    unregistered kind raises `UserError`, while a stored definition with one still loads. Leave as
+    `None` for tools that have no typed parts.
+
+    `part.tool_kind == 'tool-search'` answers which tool a part belongs to, whatever its outcome
+    and whether search ran server-side or locally. To read a search result, check
+    `isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart)` instead: a failed or
+    denied return keeps its `tool_kind`, but its content is an error, not the typed result.
 
     Distinct from [`kind`][pydantic_ai.tools.ToolDefinition.kind], which is about invocation
     semantics (`'function'` / `'output'` / `'external'` / `'unapproved'`).
@@ -778,6 +819,10 @@ class ToolDefinition:
         supplies `name` and `description` from this tool definition.
         """
         return self.function_signature.render(body, name=self.name, description=self.description, **kwargs)
+
+    def __post_init__(self) -> None:
+        if self.tool_kind is not None and self.tool_kind.__class__ is not str:
+            self.tool_kind = _tool_kind_of(self.tool_kind)
 
     @property
     def defer(self) -> bool:

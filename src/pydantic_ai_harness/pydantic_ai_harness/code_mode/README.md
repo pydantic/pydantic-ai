@@ -585,6 +585,44 @@ for msg in result.all_messages():
             tool_returns = metadata['tool_returns']  # dict[str, ToolReturnPart]
 ```
 
+## Recognizing `run_code` calls
+
+The `run_code` tool declares the `'code_mode.run_code'` [tool kind](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#typed-tool-parts), so its call parts are promoted to `RunCodeCallPart` (from `pydantic_ai_harness.code_mode`). A hook or history processor can recognize them with `isinstance` instead of matching the tool's name, and read the submitted code from `code` (or all its arguments, validated as `RunCodeArgs`, from `typed_args`):
+
+```python
+from dataclasses import dataclass, field
+from typing import Any
+
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs, WrapToolExecuteHandler
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness.code_mode import RunCodeCallPart
+
+
+@dataclass
+class RecordSnippets(AbstractCapability[Any]):
+    snippets: list[str] = field(default_factory=list)
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        if isinstance(call, RunCodeCallPart) and call.code is not None:
+            self.snippets.append(call.code)
+        return await handler(args)
+
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(), RecordSnippets()])
+```
+
+`run_code` calls recorded before `CodeMode` declared this kind load as plain `ToolCallPart`s. `ToolCallPart.narrow_type(part, tool_kind='code_mode.run_code')` promotes one.
+
 ## Filesystem and OS access
 
 Sandboxed code starts with no access to the host's files, environment, or clock. Two parameters add

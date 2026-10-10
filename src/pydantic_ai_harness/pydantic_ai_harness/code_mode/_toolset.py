@@ -11,10 +11,10 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
-from typing import TYPE_CHECKING, Annotated, Any, Literal, NotRequired, Self, TypeGuard
+from typing import TYPE_CHECKING, Any, Literal, Self, TypeGuard
 from urllib.parse import urlsplit
 
-from pydantic import Field, TypeAdapter
+from pydantic import TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
 from typing_extensions import TypedDict, TypeIs
 
@@ -60,6 +60,7 @@ from pydantic_ai_harness._monty_exec import (
     is_sandbox_panic,
 )
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness.code_mode._parts import RunCodeArgs, RunCodeCallPart
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.code_mode._speculation import SpeculationCoordinator
@@ -322,19 +323,14 @@ def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited
     }
 
 
-class _RunCodeArguments(TypedDict):
-    code: Annotated[str, Field(description='The Python code to execute in the sandbox.')]
-    restart: NotRequired[
-        Annotated[
-            bool,
-            Field(
-                description='Set to true to reset REPL state. When false (default), state is preserved between calls.'
-            ),
-        ]
-    ]
+class _RunCodeArguments(RunCodeArgs):
+    # Keeps the schema title the model has always been sent; the fields come from `RunCodeArgs`.
+    pass
 
 
 _RUN_CODE_TOOL_NAME = 'run_code'
+_FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
+"""Kinds of the framework's control tools, which stay native to drive tool search and capability loading."""
 _RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
 _RUN_CODE_JSON_SCHEMA = _RUN_CODE_ADAPTER.json_schema()
 _RUN_CODE_ARGS_VALIDATOR: SchemaValidatorProt = _RUN_CODE_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
@@ -748,7 +744,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     Some tools always stay native rather than being sandboxed:
 
-    - Framework control tools (`tool_kind` set: tool search, capability loading).
+    - Framework control tools (`tool_kind` of `'tool-search'` or `'capability-load'`).
     - `defer_loading=True` tools, until tool search or capability loading reveals them.
     - `unless_native` tools, so `Model.prepare_request` can drop them when the
       provider supports the native tool.
@@ -925,9 +921,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         native_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in wrapped_tools.items():
             # Framework control tools (tool search, capability loading) stay native to
-            # drive protocol-level flows. `tool_kind` is the framework's discriminator
-            # for them; pydantic-ai has set it on `search_tools` since 1.95.0.
-            if tool.tool_def.tool_kind is not None:
+            # drive protocol-level flows. Any other registered `tool_kind` is an ordinary tool.
+            if tool.tool_def.tool_kind in _FRAMEWORK_CONTROL_TOOL_KINDS:
                 native_tools[name] = tool
             elif not ctx.is_tool_available(tool.tool_def):
                 # Use the run's public availability predicate so Tool Search and deferred
@@ -1002,6 +997,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 parameters_json_schema=_RUN_CODE_JSON_SCHEMA,
                 metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
                 sequential=True,
+                tool_kind=RunCodeCallPart,
                 capability_id=self._capability_id(ctx),
             ),
             max_retries=self.max_retries,

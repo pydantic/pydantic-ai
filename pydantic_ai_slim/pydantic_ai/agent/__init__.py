@@ -2730,6 +2730,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: _messages.ToolPartKind
+        | type[_messages.BaseToolCallPart | _messages.BaseToolReturnPart]
+        | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -2752,6 +2755,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: _messages.ToolPartKind
+        | type[_messages.BaseToolCallPart | _messages.BaseToolReturnPart]
+        | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -2812,6 +2818,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            tool_kind: What the tool is, independent of its name: a kind registered by a typed tool part, or the typed tool part class itself.
+                Its call and return parts are then promoted to the typed parts.
+                See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
@@ -2840,6 +2849,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                tool_kind=tool_kind,
                 timeout=timeout,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
@@ -2868,6 +2878,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: _messages.ToolPartKind
+        | type[_messages.BaseToolCallPart | _messages.BaseToolReturnPart]
+        | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -2890,6 +2903,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: _messages.ToolPartKind
+        | type[_messages.BaseToolCallPart | _messages.BaseToolReturnPart]
+        | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -2951,6 +2967,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            tool_kind: What the tool is, independent of its name: a kind registered by a typed tool part, or the typed tool part class itself.
+                Its call and return parts are then promoted to the typed parts.
+                See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
@@ -2977,6 +2996,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                tool_kind=tool_kind,
                 timeout=timeout,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,

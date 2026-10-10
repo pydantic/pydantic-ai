@@ -15,7 +15,11 @@ from pydantic_ai._instructions import (
 )
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityDescription
-from pydantic_ai.messages import CapabilityInstructionSource, InstructionId
+from pydantic_ai.messages import (
+    CapabilityInstructionSource,
+    InstructionId,
+    ToolKindLike,
+)
 from pydantic_ai.tools import (
     ArgsValidatorFunc,
     DocstringFormat,
@@ -190,6 +194,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -212,6 +217,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -234,6 +240,7 @@ class Capability(AbstractCapability[AgentDepsT]):
             sequential=sequential,
             requires_approval=requires_approval,
             metadata=metadata,
+            tool_kind=tool_kind,
             timeout=timeout,
             defer_loading=defer_loading,
             include_return_schema=include_return_schema,
@@ -260,6 +267,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -282,6 +290,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -304,6 +313,7 @@ class Capability(AbstractCapability[AgentDepsT]):
             sequential=sequential,
             requires_approval=requires_approval,
             metadata=metadata,
+            tool_kind=tool_kind,
             timeout=timeout,
             defer_loading=defer_loading,
             include_return_schema=include_return_schema,
