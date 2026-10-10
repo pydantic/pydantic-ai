@@ -329,8 +329,8 @@ async def test_native_capable_outer_model_skips_the_fallback_subagent(case: Case
 async def test_fallback_subagent_model_survives_dataclass_replace(case: Case, allow_model_requests: None):
     """`dataclasses.replace` rebuilds through `__init__`, and the copy runs the subagent it now names.
 
-    The subagent tool is derived when the toolset is requested, so `local` still holds what the
-    caller declared and the fallback-versus-`local` check sees a single fallback.
+    The subagent tool is derived from the declaration, so `local` still holds what the caller
+    declared and the fallback-versus-`local` check sees a single fallback.
     """
     original_native_tools: list[AbstractNativeTool] = []
     seen_native_tools: list[AbstractNativeTool] = []

@@ -185,7 +185,7 @@ class TestImageGenerationCapability:
             return 'image_url'  # pragma: no cover
 
         cap = ImageGeneration(local=my_gen)
-        assert isinstance(cap.local, Tool)
+        assert cap.local is my_gen
         assert cap.get_toolset() is not None
 
     def test_image_generation_accepts_direct_image_model(self):
@@ -572,6 +572,90 @@ class TestImageGenerationCapability:
 
         assert result.output == 'done'
 
+    @pytest.mark.parametrize(
+        ('native', 'kwargs', 'notice'),
+        [
+            pytest.param(
+                ImageGenerationTool(quality='high', output_format='jpeg'),
+                {},
+                '`output_format`, `quality`',
+                id='instance',
+            ),
+            pytest.param(
+                ImageGenerationTool(output_format='jpeg'),
+                {'quality': 'low'},
+                '`output_format`, `quality`',
+                id='instance_and_capability',
+            ),
+            pytest.param(ImageGenerationTool(partial_images=2), {}, '`partial_images`', id='instance_only_field'),
+        ],
+    )
+    async def test_image_generation_direct_fallback_reports_a_native_instances_native_only_settings(
+        self,
+        allow_model_requests: None,
+        direct_generation_model: FunctionModel,
+        native: ImageGenerationTool,
+        kwargs: dict[str, Any],
+        notice: str,
+    ):
+        """A declared native instance's settings go unapplied on the direct path just like the capability's own."""
+        image_model = TestImageGenerationModel()
+        capability = ImageGeneration(native=native, fallback_image_model=image_model, **kwargs)
+
+        with pytest.warns(
+            UserWarning, match=rf"ignored native-tool setting\(s\) on 'function:outer_model_fn:': {notice}\."
+        ):
+            await Agent(direct_generation_model, capabilities=[capability]).run('Generate an image')
+
+        assert image_model.last_settings == snapshot({})
+
+    async def test_image_generation_direct_fallback_is_silent_for_a_native_instance_at_its_defaults(
+        self, allow_model_requests: None, direct_generation_model: FunctionModel
+    ):
+        """An instance can't say which of its values were stated, so only values off the defaults are reported."""
+        capability = ImageGeneration(native=ImageGenerationTool(), fallback_image_model=TestImageGenerationModel())
+
+        # `filterwarnings = ['error']` turns a dropped-settings notice into the failure.
+        result = await Agent(direct_generation_model, capabilities=[capability]).run('Generate an image')
+
+        assert result.output == 'done'
+
+    async def test_image_generation_direct_fallback_warns_for_a_native_instances_model(
+        self, allow_model_requests: None, direct_generation_model: FunctionModel
+    ):
+        capability = ImageGeneration(
+            native=ImageGenerationTool(model='gpt-image-1'), fallback_image_model=TestImageGenerationModel()
+        )
+
+        with pytest.warns(UserWarning, match=r"ignored the `native` tool's `model`;"):
+            result = await Agent(direct_generation_model, capabilities=[capability]).run('Generate an image')
+
+        assert result.output == 'done'
+
+    async def test_image_generation_direct_fallback_rejects_a_native_instances_edit_action(
+        self, allow_model_requests: None, direct_generation_model: FunctionModel
+    ):
+        capability = ImageGeneration(
+            native=ImageGenerationTool(action='edit'), fallback_image_model=TestImageGenerationModel()
+        )
+
+        with pytest.raises(UserError, match='cannot honor `action="edit"`'):
+            await Agent(direct_generation_model, capabilities=[capability]).run('Edit an image')
+
+    async def test_image_generation_capability_action_overrides_a_native_instances_action(
+        self, allow_model_requests: None, direct_generation_model: FunctionModel
+    ):
+        """The capability field wins over the instance, the precedence the subagent path gives them too."""
+        capability = ImageGeneration(
+            native=ImageGenerationTool(action='edit'),
+            fallback_image_model=TestImageGenerationModel(),
+            action='generate',
+        )
+
+        result = await Agent(direct_generation_model, capabilities=[capability]).run('Generate an image')
+
+        assert result.output == 'done'
+
     def test_image_generation_rejects_local_true(self):
         """`local=True` is not an image generation strategy: the capability has no bundled local tool."""
         with pytest.raises(UserError, match=r'`local=True` is not supported'):
@@ -726,7 +810,7 @@ class TestImageGenerationCapability:
         """The copy's own geometry is what the run sends, not the geometry it was copied from.
 
         The capability's fields are the configuration and the `generate_image` tool is derived from
-        them when the toolset is requested, so nothing the original settled can outlive being
+        them for every instance, a copy included, so nothing the original settled can outlive being
         replaced.
         """
         image_model = TestImageGenerationModel()
@@ -784,6 +868,7 @@ class TestImageGenerationCapability:
             pytest.param({'action': 'edit'}, id='action'),
             pytest.param({'quality': 'high'}, id='quality'),
             pytest.param({'image_model': 'gpt-image-2'}, id='image_model'),
+            pytest.param({'aspect_ratio': '16:9'}, id='aspect_ratio'),
         ],
     )
     async def test_image_generation_replace_clears_a_setting_from_the_direct_fallback(
@@ -791,9 +876,9 @@ class TestImageGenerationCapability:
     ):
         """A setting `replace` cleared is gone from the direct fallback: it neither refuses nor reports it.
 
-        `native=True` resolves at construction to a native tool built from the capability's settings,
-        and `replace` hands that tool back as the copy's `native`. The direct fallback reads the
-        capability's own fields, so the copy runs as if the setting had never been set.
+        `native` keeps the declared `True`, so the copy builds its native tool from its own settings,
+        and the direct fallback reads the capability's fields: the copy runs as if the setting had
+        never been set.
 
         The edit refusal and both notices come before the generator runs, so this is not a VCR test.
         """
@@ -1354,7 +1439,7 @@ class TestImageGenerationCapability:
     def test_image_generation_with_fallback_subagent_model(self):
         """ImageGeneration(fallback_subagent_model=...) provides a local fallback tool.
 
-        The subagent tool is derived when the toolset is requested, so `local` keeps what was declared.
+        The subagent tool is derived from the declaration, so `local` keeps what was declared.
         """
         cap = ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4')
         assert cap.local is None

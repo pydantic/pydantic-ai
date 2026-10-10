@@ -46,13 +46,9 @@ def merge_capability_fields(
     Fields declared `compare=False` are per-run bookkeeping rather than configuration, so they are
     left as the last capability's rather than merged.
 
-    Two limits worth knowing, both from configuration that is resolved before `combine` sees it:
-    a field a `__post_init__` has already materialized (`NativeOrLocalTool` turns `native=True` into
-    a tool instance and `local=None` into its default) can no longer be told apart from one the user
-    stated, so those take the later value; and two objects that carry no meaningful equality (two
-    stores, two clients) likewise take the later. A capability that needs either reconciled — or
-    needs a numeric budget to take the *smaller* value rather than the later one — overrides
-    `combine` itself.
+    Two objects that carry no meaningful equality (two stores, two clients) take the later value. A
+    capability that needs them reconciled — or needs a numeric budget to take the *smaller* value
+    rather than the later one — overrides `combine` itself.
 
     An attribute no field declares is a harder limit, and is refused. The table above is what the
     merge promises, and its first row is the load-bearing one: a value only one side states
@@ -68,7 +64,7 @@ def merge_capability_fields(
     left alone and simply not counted against it. Nothing here re-runs `__post_init__`
     (`replace_no_init` exists precisely to skip it), so state a `__post_init__` derives is declared
     as a field and recomputed in the capability's own `combine`, the way `NativeOrLocalTool`
-    rebuilds its native tool.
+    resolves its tools again.
     """
     merged = capabilities[-1]
     field_names = {field.name for field in dataclasses.fields(merged)}
