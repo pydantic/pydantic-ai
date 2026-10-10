@@ -173,6 +173,7 @@ Finding and reading things on the open web.
 | [Exa Agent](exa-search.md) | Harness | Delegate open-ended research to the Exa Agent API |
 | [You.com Search](youdotcom.md) | Harness | Web search and page reads via [You.com](https://you.com): query-relevant excerpts or full-page markdown |
 | [You.com Research](youdotcom.md) | Harness | Cited answers and multi-step research via the You.com Answer, Research, and Finance Research APIs |
+| [Keenable Search](keenable-search.md) | Harness | Web research via [Keenable](https://keenable.ai): excerpted search and full-page reads, keyless and with no extra to install |
 | [Browser Use](browser-use.md) | Harness | Hand web tasks to an autonomous [browser-use](https://github.com/browser-use/browser-use) agent driving a real browser |
 | [Playwright Browser](playwright.md) | Harness | Drive a real Chromium page yourself: navigate, click, type, read, and inspect what the page did |
 

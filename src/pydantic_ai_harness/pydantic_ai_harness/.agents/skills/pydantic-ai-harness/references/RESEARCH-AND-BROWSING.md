@@ -1,8 +1,8 @@
 # Research and Browsing
 
 Web research and browser capabilities: `Researcher` (a ready-made research stack), `ExaSearch` /
-`ExaAgent` (Exa API), `YouSearch` / `YouResearch` (You.com API), `BrowserUse` (hand a goal to an
-autonomous browser agent), and `PlaywrightBrowser` (the model drives Chromium itself). All are
+`ExaAgent` (Exa API), `YouSearch` / `YouResearch` (You.com API), `KeenableSearch` (Keenable API, keyless),
+`BrowserUse` (hand a goal to an autonomous browser agent), and `PlaywrightBrowser` (the model drives Chromium itself). All are
 capabilities passed in `Agent(capabilities=[...])`.
 
 ## Which one to use
@@ -12,6 +12,7 @@ capabilities passed in `Agent(capabilities=[...])`.
 | Search and read public pages; follow whatever the model's provider offers | Core `WebSearch(local=True)` + `WebFetch(local=True)` from `pydantic_ai.capabilities` |
 | A research agent with cited answers, sub-question delegation, and bounded tool output, no API keys beyond the model | `Researcher` |
 | Same search behaviour on every model, excerpts per hit, domain filters, one vendor | `ExaSearch` or `YouSearch` |
+| Same search behaviour on every model with no API key and no extra to install | `KeenableSearch` |
 | Synthesized, cited answer or multi-step research in one tool call | `ExaSearch(include_deep_search=True)`, `ExaAgent`, or `YouResearch` |
 | Fuzzy goal on unknown pages ("find the Pro plan price") | `BrowserUse` |
 | Known, repeatable flows, logged-in pages, JS-rendered SPAs, deterministic actions | `PlaywrightBrowser` |
@@ -21,12 +22,13 @@ fetching is acceptable. `WebSearch()` and `WebFetch()` with no arguments are nat
 models without native support; pass `local=True` for the fallback (needs `pydantic-ai-slim[duckduckgo]`
 and `pydantic-ai-slim[web-fetch]`).
 
-Tool-name collisions: core `WebSearch` (its native tool on Anthropic models), `ExaSearch`, and `YouSearch` all expose a
-tool named `web_search`; `ExaSearch` and `YouSearch` both expose `get_page`. Use one search capability
+Tool-name collisions: core `WebSearch` (its native tool on Anthropic models), `ExaSearch`, `YouSearch`, and
+`KeenableSearch` all expose a tool named `web_search`; `ExaSearch`, `YouSearch`, and `KeenableSearch` all expose
+`get_page`. Use one search capability
 per agent, wrap extras in core `PrefixTools(wrapped=..., prefix='cb')` (a second instance of the same
 class also needs its own `id=`, since each carries a default one), or use `WebSearch(native=False, local=True)`
 (needs the `pydantic-ai-slim[duckduckgo]` extra) whose DuckDuckGo tool is `duckduckgo_search`. `Researcher` includes core `WebSearch`, so do not add
-`ExaSearch`/`YouSearch` next to it on Anthropic models without `PrefixTools`.
+`ExaSearch`/`YouSearch`/`KeenableSearch` next to it on Anthropic models without `PrefixTools`.
 
 To use the provider's native search where the model has one and Exa or You.com elsewhere, set
 `ExaSearch(native=True)` / `YouSearch(native=True)` (their `web_search` is then only sent to models without
@@ -193,6 +195,38 @@ Gotchas:
 - Durable execution records each You.com request under the default `id` (`you_search`, `you_research`),
   like Exa.
 
+## KeenableSearch
+
+`KeenableSearch` adds `web_search` (a short excerpt per hit) and `get_page` (one URL as markdown).
+It needs no extra and no API key: Keenable's public endpoints are keyless, and the client uses `httpx`,
+which the harness already depends on.
+
+```bash
+uv add pydantic-ai-harness   # KEENABLE_API_KEY is optional and only lifts rate limits
+```
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import KeenableSearch
+
+agent = Agent('anthropic:claude-sonnet-5', capabilities=[KeenableSearch(num_results=5)])
+```
+
+Fields: `num_results=5`, `max_snippet_chars=500` (per-hit excerpt cap), `max_page_chars=10_000`
+(`get_page` cap, truncation marker included), `guidance=None`, `client=None`.
+
+Gotchas:
+
+- Keenable returns whole-page text on every search hit, so `max_snippet_chars` is what keeps
+  `web_search` small; `get_page` is how the model opts into a full page.
+- Budgets must be positive integers; anything else raises `ValueError` when the capability is built.
+- `KEENABLE_API_KEY` switches to the keyed endpoints; `KEENABLE_API_URL` overrides the base URL and must
+  be `https://` (plain `http` only on loopback), or `UserError` is raised.
+- Rate limits, 5xx, a 404, a non-JSON body, and an empty page become `ModelRetry`; 401/402/403 stop
+  the run. For tests, pass `client=` a fake satisfying the exported `KeenableClient` protocol.
+- Citations under `metadata['sources']` as `KeenableSource`, like Exa.
+
 ## BrowserUse
 
 One `browse_web` tool that hands a self-contained goal to a browser-use agent driving real Chromium,
@@ -319,6 +353,7 @@ Gotchas:
 - https://pydantic.dev/docs/ai/harness/researcher/
 - https://pydantic.dev/docs/ai/harness/exa-search/
 - https://pydantic.dev/docs/ai/harness/youdotcom/
+- https://pydantic.dev/docs/ai/harness/keenable-search/
 - https://pydantic.dev/docs/ai/harness/browser-use/
 - https://pydantic.dev/docs/ai/harness/playwright/
 - https://pydantic.dev/docs/ai/capabilities/web-search/

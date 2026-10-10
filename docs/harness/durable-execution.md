@@ -178,7 +178,8 @@ Add it to the agent's capabilities next to `TemporalDurability()`. For work long
 
 - **DBOS** runs a workspace run's tool calls one at a time, so recovery replays each call's recorded result.
 - **Capabilities that make requests from their tools**, [`ExaSearch` and `ExaAgent`](exa-search.md),
-  [`YouSearch` and `YouResearch`](youdotcom.md), [`LocalStack`](localstack.md) against an external instance, and
+  [`YouSearch` and `YouResearch`](youdotcom.md), [`KeenableSearch`](keenable-search.md),
+  [`LocalStack`](localstack.md) against an external instance, and
   [`CapabilityCreation`](capability-creation.md), record each request on every engine, including DBOS,
   which otherwise runs function tools in workflow code. Recovery reuses the recorded result. The records
   are named after each capability's default `id`, so keep it stable once deployed.

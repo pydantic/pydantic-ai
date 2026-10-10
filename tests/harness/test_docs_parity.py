@@ -157,6 +157,7 @@ _CAPABILITY_PAGE_META = {
     'exa-search.md': ('exa', 'Exa Search'),
     'playwright.md': ('playwright', 'Playwright Browser'),
     'youdotcom.md': ('youdotcom', 'You.com'),
+    'keenable-search.md': ('keenable', 'Keenable Search'),
     'macroscope.md': ('macroscope', 'Macroscope'),
     'browser-use.md': ('browser_use', 'Browser Use'),
     'compaction.md': ('compaction', 'Compaction'),
