@@ -30,6 +30,8 @@ if TYPE_CHECKING:
 
 PrefixBlock = tuple[str, str]
 
+TESTS_DIR = Path(__file__).parent
+
 # Cache-write order of the request sections; a lower value is matched earlier in the provider's prompt
 # cache, so when two requests diverge on different sections the earlier one is where the prefix breaks.
 _CACHE_ORDER = {'tools': 0, 'system': 1, 'messages': 2}
@@ -255,9 +257,27 @@ def recorded_request_body(request: dict[str, Any]) -> Any:
     return body
 
 
+def load_cassette_yaml(text: str) -> Any:
+    """Parse a cassette file's YAML with libyaml's loader where available, ~30x faster than PyYAML's pure-Python one."""
+    return yaml.load(text, Loader=SafeLoader)
+
+
+def recorded_interactions(*markers: str) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Yield `('<path relative to tests/>#<index>', interaction)` for each interaction in `tests/`'s YAML cassettes.
+
+    Only cassettes whose text contains all `markers` are parsed, which skips most of them cheaply; callers still filter
+    the interactions themselves.
+    """
+    for path in sorted(TESTS_DIR.rglob('*.yaml')):
+        text = path.read_text(encoding='utf-8')
+        if all(marker in text for marker in markers):
+            for index, interaction in enumerate(load_cassette_yaml(text)['interactions']):
+                yield f'{path.relative_to(TESTS_DIR)}#{index}', interaction
+
+
 def _yaml_cassette_requests(cassette_path: Path) -> Iterator[tuple[Any, Any, Any]]:
     """Yield `(method, uri, body)` for each request in a cassette file on disk."""
-    cassette = yaml.load(cassette_path.read_text(encoding='utf-8'), Loader=SafeLoader)
+    cassette = load_cassette_yaml(cassette_path.read_text(encoding='utf-8'))
     if not is_str_dict(cassette):
         return
     raw_interactions = cassette.get('interactions')
@@ -416,7 +436,7 @@ def _get_cassette_bodies_from_yaml(path: Path) -> list[str]:
 
     Used as fallback when the cassette object is not available (e.g. CI playback).
     """
-    data: dict[str, Any] = yaml.safe_load(path.read_text(encoding='utf-8'))
+    data: dict[str, Any] = load_cassette_yaml(path.read_text(encoding='utf-8'))
     bodies: list[str] = []
     for interaction in data.get('interactions', []):
         body = recorded_request_body(interaction.get('request', {}))

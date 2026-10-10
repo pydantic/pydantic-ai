@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic_clai2.ui.rendering.splash import Splash
+from pydantic_clai2.ui.stderr_relay import relay_stderr
 
 if TYPE_CHECKING:
     from pydantic_clai2.runtime.worktrees import Worktree
@@ -103,24 +104,26 @@ def run(*, splash: Splash | None = None) -> None:
                     )
                 )
             )
-        # Before the session, so commits made during it count as changes on exit.
-        launched = worktree or _launched_worktree(relaunched=relaunched)
-        asyncio.run(
-            chat(
-                create_agent() if agent is None else agent,
-                deps=None,
-                usage_limits=UsageLimits(request_limit=settings.request_limit),
-                settings=settings,
-                store=store,
-                builtin_plugins=DEFAULT_PLUGINS if args.agent else STOCK_PLUGINS,
-                project=project,
-                resume=args.resume,
-                resume_from=args.resume_from,
-                load_plugins=agent is None,
-                worktree=worktree,
+        # `chat` relays stderr itself; this also covers the `git` calls around it.
+        with relay_stderr():
+            # Before the session, so commits made during it count as changes on exit.
+            launched = worktree or _launched_worktree(relaunched=relaunched)
+            asyncio.run(
+                chat(
+                    create_agent() if agent is None else agent,
+                    deps=None,
+                    usage_limits=UsageLimits(request_limit=settings.request_limit),
+                    settings=settings,
+                    store=store,
+                    builtin_plugins=DEFAULT_PLUGINS if args.agent else STOCK_PLUGINS,
+                    project=project,
+                    resume=args.resume,
+                    resume_from=args.resume_from,
+                    load_plugins=agent is None,
+                    worktree=worktree,
+                )
             )
-        )
-        offer_worktree_cleanup(worktree=launched)
+            offer_worktree_cleanup(worktree=launched)
     except Relaunch as relaunch:
         # Replace this process with the new build; the working directory, a worktree included, carries over.
         argv = relaunch_argv(args, executable=relaunch.executable, session_id=relaunch.session_id)

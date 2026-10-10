@@ -14,7 +14,7 @@ the session, each observed live:
 - the input transcript arrives on its own schedule, often after the response it prompted;
 - an empty `input_audio_buffer.commit` is refused;
 - a dropped connection loses whatever was in flight; a re-dial starts a fresh server session, with an
-  empty conversation (a tool output for a call it never made is refused) unless xAI resumes it.
+  empty conversation (a tool output for a call it never made is refused) that the client replays history into.
 
 Content the server can generate is driven by the simulation (`speak`, `call_tool`, `finish`, ...), so
 the trace decides *what* the model says and *when*; the server decides what the protocol makes of it.
@@ -117,8 +117,6 @@ class ServerSession:
     ended_responses: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     """The `response.done` frames sent on this session, for duplicate-terminal faults."""
     late_done: dict[str, Any] | None = None
-    resumed: bool = False
-    """An xAI re-dial that resumed the conversation."""
     answers_every_turn: bool = False
     """xAI echoes `create_response: False` back but answers anyway (see `XaiRealtimeModelSettings`)."""
     ptt_speech: str | None = None
@@ -152,10 +150,13 @@ class OpenAIServer:
     def __init__(self, *, dialect: Dialect = 'openai', model: str = 'gpt-realtime') -> None:
         self.dialect = dialect
         self.model = model
-        self.truth = GroundTruth()
+        self.truth = GroundTruth(models_every_spoken_turn=True)
         self.network = Network(self)
         self.sessions: list[ServerSession] = []
         self._armed_rejections: list[Literal['content', 'response']] = []
+        # The turn each `input_audio_buffer.cleared` cut off (if any), until the client reads the frame, by the
+        # connection it comes back on.
+        self._clears_unread: dict[int, list[str | None]] = {}
         self._next_item = 1
         # Server event id of an `error` frame -> the inputs it refused, resolved when the client reads it.
         self._refusals: dict[str, list[str]] = {}
@@ -169,11 +170,6 @@ class OpenAIServer:
         # inputs for its whole life, across re-dials, so this outlives any one server session.
         self._client_items: dict[int, str] = {}
         self._client_images: dict[int, bool] = {}
-        self._conversation_id = 'conv_simulated'
-        # What an xAI resumption replays of the conversation, in order. Assistant messages are recorded
-        # (`test_xai_ws/test_session_resumption_after_drop`, which replays no user message); function calls
-        # and their outputs are inferred: no recording has a tool round before a resumption.
-        self._finished_items: list[dict[str, Any]] = []
         # Azure OpenAI speaks the GA event names too (every `test_azure_ws` cassette does); only Voice Live, which
         # has a connection class of its own that isn't simulated, still uses the beta names.
         self._audio_delta = 'response.output_audio.delta'
@@ -185,10 +181,6 @@ class OpenAIServer:
     def on_connect(self, socket: FakeWebSocket, url: str) -> None:
         self.truth.connections += 1
         session = ServerSession(index=len(self.sessions), socket=socket)
-        # xAI resumes a conversation natively: a re-dial naming it gets the finished conversation back.
-        session.resumed = self.dialect == 'xai' and f'conversation_id={self._conversation_id}' in url
-        if session.resumed and self.sessions:
-            session.conversation = set(self.sessions[-1].conversation)
         session.answers_every_turn = self.dialect == 'xai'
         self.sessions.append(session)
         socket.emit(
@@ -209,7 +201,8 @@ class OpenAIServer:
                 {
                     'type': 'conversation.created',
                     'event_id': 'evt_conversation',
-                    'conversation': {'id': self._conversation_id, 'object': 'realtime.conversation'},
+                    # Every dial is a new conversation: a reconnect doesn't resume the dropped one.
+                    'conversation': {'id': f'conv_{socket.index}', 'object': 'realtime.conversation'},
                 },
                 immediately=True,
             )
@@ -239,6 +232,13 @@ class OpenAIServer:
             response.started_read = now
         if response is not None and response.content_read is None and frame_type.startswith(_CONTENT_FRAME_PREFIXES):
             response.content_read = now
+        if frame_type == 'input_audio_buffer.cleared' and (
+            clears := self._clears_unread.get(self._session_for(socket).index)
+        ):
+            if (cleared := clears.pop(0)) is not None:
+                self.truth.speech_cleared_read.add(cleared)
+        if frame_type == 'conversation.item.input_audio_transcription.completed':
+            self.truth.transcripts_read.setdefault(str(frame.get('transcript')), now)
         if frame_type == 'response.function_call_arguments.done' and (
             call := self.truth.tool_calls.get(frame.get('call_id', ''))
         ):
@@ -326,23 +326,6 @@ class OpenAIServer:
             config['turn_detection'] if 'turn_detection' in config else audio_input.get('turn_detection')
         )
         session.transcription = audio_input.get('transcription') is not None
-        if session.resumed:
-            # xAI replays the resumed conversation during the handshake, under fresh item ids (recorded:
-            # `test_xai_ws/test_session_resumption_after_drop`).
-            for item in self._finished_items:
-                session.socket.emit(
-                    {
-                        'type': 'conversation.item.added',
-                        'event_id': f'evt_replay_{self._next_item}',
-                        'item': {
-                            'id': self._new_item('item_replayed'),
-                            'object': 'realtime.item',
-                            'status': 'completed',
-                            **item,
-                        },
-                    },
-                    immediately=True,
-                )
         session.socket.emit(
             {'type': 'session.updated', 'event_id': 'evt_updated', 'session': {**config, 'model': self.model}},
             immediately=True,
@@ -419,6 +402,13 @@ class OpenAIServer:
                 # (Only a clear between a commit the session sent and its reply's first word.)
                 self._finish_active(session, 'cancelled')  # A clear right after a commit cancels its reply.
         session.audio_ms = 0
+        self._clears_unread.setdefault(session.index, []).append(session.speaking)
+        if (key := session.speaking) is not None:
+            self.truth.speech_cleared.add(key)
+            if self.dialect == 'xai' and session.transcription:
+                # A guess: xAI already added the turn's item when it heard speech start, and still
+                # transcribes what it had of it (no recording clears the buffer mid-speech on xAI).
+                session.pending_transcripts.append(key)
         session.speaking = None
         self._emit(session, {'type': 'input_audio_buffer.cleared'})
 
@@ -442,9 +432,6 @@ class OpenAIServer:
                 # Replayed with the rest of the history on a re-dial: already part of the conversation.
                 return
             call.output_received = True
-            self._finished_items.append(
-                {'type': 'function_call_output', 'call_id': call_id, 'output': item.get('output', '')}
-            )
             self.truth.add_input(call_id, 'tool_output')
             session.unanswered_tool_outputs.append(call_id)
             return
@@ -702,9 +689,6 @@ class OpenAIServer:
             return
         item = next(item for item in active.output if item['id'] == active.message_item)
         transcript = item['content'][0]['transcript']
-        self._finished_items.append(
-            {'type': 'message', 'role': 'assistant', 'content': [{'type': 'text', 'text': transcript}]}
-        )
         session.conversation.add(f'assistant:{transcript}')
         self._emit(
             session,
@@ -803,7 +787,6 @@ class OpenAIServer:
         }
         active.output.append(item)
         session.conversation.add(f'function_call:{call_id}')
-        self._finished_items.append({key: item[key] for key in ('type', 'call_id', 'name', 'arguments')})
         self._emit(
             session,
             {
@@ -873,13 +856,20 @@ class OpenAIServer:
             self._finish_active(session, 'cancelled', reason='turn_detected', late=late)
         return key
 
-    def speech_stop(self) -> str:
-        """Server VAD hears the user stop: the audio is committed as a user turn, and answered if configured to."""
+    def speech_stop(self, *, commit: bool = True) -> str:
+        """Server VAD hears the user stop: the audio is committed as a user turn, and answered if configured to.
+
+        `commit=False` is a stop server VAD takes back: the user goes on, and the next start opens the turn
+        the audio is committed as (a guess at semantic VAD's pauses; no recording has one).
+        """
         session = self.session
         assert session is not None and session.speaking is not None
         key, session.speaking = session.speaking, None
         item_id = f'item_{key}'
         self._emit(session, {'type': 'input_audio_buffer.speech_stopped', 'item_id': item_id, 'audio_end_ms': 1000})
+        if not commit:
+            self.truth.speech_stopped_uncommitted.add(key)
+            return key
         session.audio_ms = 0
         self.truth.speech_committed.add(key)
         if self.dialect != 'xai':

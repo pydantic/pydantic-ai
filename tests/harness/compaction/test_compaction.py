@@ -16,7 +16,7 @@ import pydantic_ai_harness
 import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryContent,
@@ -2433,6 +2433,146 @@ class TestPublicPath:
         assert summary.models == ['summarizer']
         assert outer.models == ['test']
 
+    async def test_whitespace_only_summary_is_retried(self):
+        summaries = iter(['  \n\n ', '  the summary\n'])
+        retries: list[str] = []
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            retries.extend(str(p.content) for m in messages for p in m.parts if isinstance(p, RetryPromptPart))
+            return ModelResponse(parts=[TextPart(content=next(summaries))])
+
+        sent: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
+            return ModelResponse(parts=[TextPart(content='ok')])
+
+        history: list[ModelMessage] = []
+        for i in range(5):
+            history += [_user(f'q{i}'), _assistant(f'a{i}')]
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[
+                SummarizingCompaction(
+                    FunctionModel(summarize), max_messages=4, keep_messages=1, preserve_first_user_message=False
+                )
+            ],
+        )
+
+        await agent.run('next', message_history=history)
+
+        assert retries == ['The summary was empty. Write the summary of the conversation.']
+        first = sent[-1][0]
+        assert isinstance(first, ModelRequest)
+        assert [(p.part_kind, getattr(p, 'content', None)) for p in first.parts] == [
+            ('system-prompt', f'{_SUMMARY_PREFIX}the summary'),
+            ('user-prompt', 'next'),
+        ]
+
+    async def test_persistently_empty_summary_raises_instead_of_replacing_history(self):
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content=' \n')])
+
+        sent: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+            sent.append(messages)  # the run must fail before this request
+            return ModelResponse(parts=[TextPart(content='ok')])
+
+        history: list[ModelMessage] = []
+        for i in range(5):
+            history += [_user(f'q{i}'), _assistant(f'a{i}')]
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[
+                SummarizingCompaction(
+                    FunctionModel(summarize), max_messages=4, keep_messages=1, preserve_first_user_message=False
+                )
+            ],
+        )
+
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+            await agent.run('next', message_history=history)
+        assert sent == []
+
+    @pytest.mark.parametrize('summary_text', ['', ' \n'])
+    @pytest.mark.parametrize('request_limit', [2, 3])
+    @pytest.mark.parametrize('fallback_on_usage_limit', [False, True])
+    async def test_empty_summary_fallback_with_request_limit(
+        self, summary_text: str, request_limit: int, fallback_on_usage_limit: bool
+    ):
+        summary_calls = 0
+        summary_errors: list[type[Exception]] = []
+
+        class RecordingSummarizingCompaction(SummarizingCompaction[None]):
+            async def compact(self, messages: list[ModelMessage], ctx: RunContext[None]) -> list[ModelMessage]:
+                try:
+                    return await super().compact(messages, ctx)
+                except Exception as error:
+                    summary_errors.append(type(error))
+                    raise
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal summary_calls
+            summary_calls += 1
+            return ModelResponse(parts=[TextPart(content=summary_text)])
+
+        sent: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
+            return ModelResponse(parts=[TextPart(content='ok')])
+
+        fallback_on = (
+            (UnexpectedModelBehavior, UsageLimitExceeded) if fallback_on_usage_limit else (UnexpectedModelBehavior,)
+        )
+        agent = Agent(
+            FunctionModel(respond),
+            deps_type=None,
+            capabilities=[
+                FallbackCompaction(
+                    fallback_chain=[
+                        RecordingSummarizingCompaction(
+                            FunctionModel(summarize), max_messages=4, keep_messages=1, preserve_first_user_message=False
+                        ),
+                        SlidingWindowCompaction(
+                            max_messages=4, keep_messages=1, receipts=False, preserve_first_user_message=False
+                        ),
+                    ],
+                    fallback_on=fallback_on,
+                    max_tokens=1,
+                )
+            ],
+        )
+        history: list[ModelMessage] = []
+        for i in range(5):
+            history += [_user(f'q{i}'), _assistant(f'a{i}')]
+        usage = RunUsage()
+
+        if request_limit == 2 and not fallback_on_usage_limit:
+            with pytest.raises(UsageLimitExceeded):
+                await agent.run('next', message_history=history, usage=usage, usage_limits=UsageLimits(request_limit=2))
+            assert sent == []
+            assert usage.requests == 1
+        else:
+            result = await agent.run(
+                'next', message_history=history, usage=usage, usage_limits=UsageLimits(request_limit=request_limit)
+            )
+            assert result.output == 'ok'
+            assert len(sent) == 1
+            assert len(sent[0]) == 1
+            assert isinstance(sent[0][0], ModelRequest)
+            assert len(sent[0][0].parts) == 1
+            prompt = sent[0][0].parts[0]
+            assert isinstance(prompt, UserPromptPart)
+            assert prompt.content == 'next'
+            assert usage.requests == request_limit
+
+        # The summary agent defaults to one output retry. With one request reserved for
+        # the parent, limit 2 exhausts usage first; limit 3 exhausts output retries.
+        assert summary_errors == [UsageLimitExceeded if request_limit == 2 else UnexpectedModelBehavior]
+        assert summary_calls == request_limit - 1
+
     async def test_capabilities_wired_into_agent(self):
 
         agent = Agent(
@@ -2558,6 +2698,19 @@ class TestHelperBranchCoverage:
         ]
         assert estimate_token_count(msgs) == 0
         assert _format_messages(msgs) == ''
+
+    def test_a_file_in_a_tool_return_counts_as_its_reference(self):
+        """A tool return's file is measured and summarized as the reference the model gets, not its `repr`."""
+        image = BinaryContent(data=b'\x00' * 4_000, media_type='image/png')
+        reference = f'See file {image.identifier}.'
+        bare = ToolReturnPart(tool_name='screenshot', content=image, tool_call_id='c1')
+        mixed = ToolReturnPart(tool_name='screenshot', content=['taken', image], tool_call_id='c2')
+
+        assert estimate_token_count([ModelRequest(parts=[bare])]) == len(reference) // 4
+        assert estimate_token_count([ModelRequest(parts=[mixed])]) == len(f'taken {reference}') // 4
+        assert _format_messages([ModelRequest(parts=[bare, mixed])], tool_return_max_chars=None) == (
+            f'Tool [screenshot]: {reference}\nTool [screenshot]: taken {reference}'
+        )
 
     def test_user_prompt_text_skips_non_text_content(self):
 
@@ -3284,7 +3437,7 @@ class TestSlidingWindowCompactionReceipts:
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True)
         messages: list[ModelMessage] = [_user('original task'), _assistant('a'), _user('later'), _assistant('b')]
         result = await sw.compact(messages, _make_ctx())
-        assert _receipt_parts(result)[0].startswith('[History before this point (3 messages,')
+        assert _receipt_parts(result)[0].startswith('[History before this point (2 messages,')
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -3484,8 +3637,9 @@ class TestKeepUserMessages:
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
             result = await comp.compact(messages, _make_ctx())
         assert _user_texts(result) == ['x']
+        assert result[-1] == messages[-1]
         assert comp.keep_tokens is not None
-        assert estimate_token_count(result[1:], len) <= comp.keep_tokens
+        assert estimate_token_count(result[1:-1], len) <= comp.keep_tokens
 
     async def test_older_user_is_not_retained_when_the_newest_does_not_fit(self):
         comp = SummarizingCompaction(
@@ -3502,6 +3656,64 @@ class TestKeepUserMessages:
             result = await comp.compact(messages, _make_ctx())
         assert _user_texts(result) == []
         assert result[-1] == messages[-1]
+
+    async def test_retained_user_turns_exhausting_keep_messages_preserve_current_request(self):
+        comp = SummarizingCompaction(
+            model='test:m',
+            max_messages=3,
+            keep_messages=2,
+            keep_user_messages=True,
+            bridge_prefix=False,
+        )
+        messages: list[ModelMessage] = [
+            _user('turn 1'),
+            _assistant('a'),
+            _user('turn 2'),
+            _assistant('b'),
+            _user('turn 3'),
+        ]
+        with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
+            result = await comp.compact(messages, _make_ctx())
+        assert _user_texts(result) == ['turn 1', 'turn 2', 'turn 3']
+        assert result[-1] == messages[-1]
+
+    async def test_retained_user_turns_exhausting_single_tail_slot_preserve_current_request(self):
+        comp = SummarizingCompaction(
+            model='test:m',
+            max_messages=3,
+            keep_messages=1,
+            keep_user_messages=True,
+            bridge_prefix=False,
+        )
+        messages: list[ModelMessage] = [
+            _user('turn 1'),
+            _assistant('a'),
+            _user('turn 2'),
+            _assistant('b'),
+            _user('turn 3'),
+        ]
+        with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
+            result = await comp.compact(messages, _make_ctx())
+        assert _user_texts(result) == ['turn 2', 'turn 3']
+        assert result[-1] == messages[-1]
+
+    async def test_retained_user_turns_exhausting_token_tail_budget_preserve_current_request(self):
+        comp = SummarizingCompaction(
+            model='test:m',
+            max_tokens=4,
+            keep_tokens=2,
+            keep_messages=3,
+            keep_user_messages=True,
+            bridge_prefix=False,
+            tokenizer=len,
+        )
+        messages: list[ModelMessage] = [_user('ab'), _assistant('c'), _user('d')]
+        with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
+            result = await comp.compact(messages, _make_ctx())
+        assert _user_texts(result) == ['ab', 'd']
+        assert result[-1] == messages[-1]
+        assert comp.keep_tokens is not None
+        assert estimate_token_count(result[1:-1], len) <= comp.keep_tokens
 
     async def test_pin_is_not_rebuilt_as_a_kept_user_message(self):
         comp = SummarizingCompaction(
@@ -3821,6 +4033,51 @@ class TestStructuralFeaturesThroughAgent:
         # `preserve_first_user_message` defaults on, so the real opening turn -- not the
         # receipt that now sits ahead of it -- is what gets carried forward.
         assert 'FIRST' in _user_texts(seen[1])
+
+    @pytest.mark.parametrize('preserve_first_user_message', [False, True])
+    async def test_receipt_does_not_take_the_only_kept_slot(self, preserve_first_user_message: bool):
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(
+            _recording_model(seen),
+            capabilities=[
+                SlidingWindowCompaction(
+                    max_messages=3,
+                    keep_messages=1,
+                    receipts=True,
+                    preserve_first_user_message=preserve_first_user_message,
+                )
+            ],
+        )
+        history: list[ModelMessage] = [_user('first'), _assistant('b'), _user('c'), _assistant('d')]
+        prompts = ['one', 'two', 'three']
+        for prompt in prompts:
+            history = (await agent.run(prompt, message_history=history)).all_messages()
+
+        for request, prompt in zip(seen, prompts, strict=True):
+            assert _user_texts(request)[-1] == prompt
+            assert ('first' in _user_texts(request)) is preserve_first_user_message
+            assert _receipt_parts(request[:1])
+
+    async def test_receipt_token_reservation_keeps_the_current_request(self):
+        # The token trigger reserves room for the receipt out of `keep_tokens`; the newest
+        # message must still survive even when that reservation exhausts the budget.
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(
+            _recording_model(seen),
+            capabilities=[
+                SlidingWindowCompaction(
+                    max_tokens=10, keep_tokens=5, receipts=True, preserve_first_user_message=False, tokenizer=len
+                )
+            ],
+        )
+        history: list[ModelMessage] = [_user('a' * 20), _assistant('b' * 20), _user('c' * 20)]
+        prompts = ['one', 'two', 'three']
+        for prompt in prompts:
+            history = (await agent.run(prompt, message_history=history)).all_messages()
+
+        for request, prompt in zip(seen, prompts, strict=True):
+            assert _user_texts(request)[-1] == prompt
+            assert _receipt_parts(request[:1])
 
     async def test_pin_survives_compaction_in_a_run(self):
         seen: list[list[ModelMessage]] = []

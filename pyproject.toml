@@ -210,10 +210,10 @@ logfire-api = false
 # Admit termflow-md 1.0.0 for CLAI2's live panel (`termflow.live`); later releases stay quarantined.
 # TODO: Remove after 2026-10-09 15:06 UTC.
 termflow-md = "2026-10-02T15:05:25Z"
-# Anthropic 1.9.0 is the first release listing `claude-sonnet-5-5` and the `between_tools` thinking type.
-# TODO(dsfaccini): Remove after 2026-10-05 18:04 UTC. https://github.com/pydantic/pydantic-ai/issues/8972
-# This admits only the reviewed 1.9.0 artifacts; later Anthropic artifacts remain quarantined.
-anthropic = "2026-09-28T18:04:04Z"
+# Anthropic 1.12.1 adds `claude-haiku-5-5` to `ModelParam`.
+# TODO(dsfaccini): Remove after 2026-10-15T03:42:01.588842Z. https://github.com/pydantic/pydantic-ai/issues/9997
+# This admits the reviewed 1.12.1 artifacts through one second after the last upload; later artifacts remain quarantined.
+anthropic = "2026-10-08T03:42:01.588842Z"
 # OpenAI 3.26.0 is the first release with `client.decisions`, and the `openai` floor.
 # TODO(dsfaccini): Remove after 2026-10-13 21:32 UTC.
 openai = "2026-10-06T21:31:20Z"
@@ -355,6 +355,7 @@ extend-select = [
     "I",
     "D",
     "TID251",
+    "TID253",
     "PLW1514", # https://docs.astral.sh/ruff/rules/unspecified-encoding/
     "PGH003", # https://docs.astral.sh/ruff/rules/blanket-type-ignore/
     "BLE001", # https://docs.astral.sh/ruff/rules/blind-except/
@@ -376,6 +377,23 @@ known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph", "pydanti
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[tool.ruff.lint.flake8-tidy-imports]
+# Test modules are imported during collection, once per `pytest-xdist` worker, so a heavy dependency imported at
+# module level is paid by every test run that collects the module, whether or not its tests are selected. Each of
+# these adds 100ms or more (measured with `python -X importtime` on top of what `tests/conftest.py` already imports);
+# import them inside the test or fixture that needs them. Enforced for `tests/` only, see `per-file-ignores`.
+banned-module-level-imports = [
+    "dbos",
+    "e2b",
+    "prefect",
+    "sentence_transformers",
+    "sklearn",
+    "temporalio",
+    "torch",
+    "transformers",
+    "voyageai",
+]
+
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
 "asyncio.Lock".msg = "Use anyio.Lock instead."
@@ -390,6 +408,8 @@ quote-style = "single"
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
 ".github/scripts/ci_duration.py" = ["D"]
+".github/scripts/shard_durations.py" = ["D"]
+".github/scripts/test_shard_durations.py" = ["D"]
 ".github/scripts/check_api_compatibility.py" = ["D"]
 ".github/scripts/test_ci_duration.py" = ["D"]
 ".github/scripts/test_check_api_compatibility.py" = ["D"]
@@ -406,6 +426,12 @@ quote-style = "single"
 ".github/scripts/test_ci_content_classifier.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]
+"!tests/**/*.py" = ["TID253"]
+# Modules dedicated to one of the heavy dependencies `TID253` bans need it at module level, e.g. for Temporal
+# workflow definitions; the cost is paid only where that dependency is what is being tested.
+"tests/durable_exec/**/*.py" = ["TID253"]
+"tests/**/*{temporal,dbos,prefect,durable}*.py" = ["TID253"]
+"tests/harness/e2b_sandbox/*.py" = ["TID253"]
 
 [tool.pyright]
 pythonVersion = "3.11"
@@ -463,6 +489,8 @@ markers = [
     "e2b_live: runs against a real E2B sandbox; needs credentials",
     "sprites_live: runs against a real Sprites control plane; needs credentials",
     "temporal: starts or connects to a local Temporal dev server",
+    "subprocess(reason, conditional=False): launches a Python interpreter, which the cost guard otherwise fails; reason required. `conditional=True` skips the stale-marker check for a test that only launches one on some platforms or installs",
+    "slow(reason): exempt from the per-test time budget (`PYTEST_TEST_BUDGET_SECONDS`); reason required",
 ]
 filterwarnings = [
     "error",

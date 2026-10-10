@@ -868,6 +868,7 @@ async def test_closing_an_unstarted_view_releases_its_tap() -> None:
         assert session._audio_tap_drops == 0  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.usefixtures('young_gc')
 async def test_abandoned_unstarted_view_releases_its_tap() -> None:
     chunks = [bytes([index]) for index in range(40)]
     session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
@@ -5862,6 +5863,12 @@ async def test_text_request_reserved_before_response_finishes_during_send() -> N
 
 
 async def test_send_audio_reserved_before_speech_boundary_during_send() -> None:
+    """The turn audio opens is reserved before the chunk goes out, so a boundary handled meanwhile still records it.
+
+    The chunk itself isn't in that turn: the provider drew the boundary before it had the chunk, so the chunk
+    is retained for the next turn instead.
+    """
+
     class _BoundarySend(FakeRealtimeConnection):
         async def send(self, content: RealtimeInput) -> None:
             self.sent.append(content)
@@ -5871,8 +5878,9 @@ async def test_send_audio_reserved_before_speech_boundary_during_send() -> None:
     session = RealtimeSession(conn, audio_retention='input_audio')
     await session.send_audio(b'\xaa\xbb')
     assert session.new_messages() == snapshot(
-        [ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))], timestamp=IsDatetime())]
+        [ModelRequest(parts=[SpeechPart(speaker='user')], timestamp=IsDatetime())]
     )
+    assert bytes(session._input_audio) == b'\xaa\xbb'  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_failed_sends_leave_no_phantom_history_or_audio() -> None:
@@ -5910,6 +5918,35 @@ async def test_failed_sends_leave_no_phantom_history_or_audio() -> None:
     with pytest.raises(RuntimeError, match='send failed'):
         await unretained.send_audio(b'\xaa')
     assert unretained.new_messages() == []
+
+
+async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_that_turn() -> None:
+    """A turn recorded while a chunk is still going out doesn't keep that chunk when its send then fails."""
+
+    class _TurnEndsDuringFailingSend(FakeRealtimeConnection):
+        fail = False
+
+        async def send(self, content: RealtimeInput) -> None:
+            if self.fail:
+                session._translate_event(InputTranscript(text='Hi.', is_final=True))  # pyright: ignore[reportPrivateUsage]
+                raise RuntimeError('send failed')
+            self.sent.append(content)
+
+    conn = _TurnEndsDuringFailingSend([])
+    session = RealtimeSession(conn, audio_retention='input_audio')
+    await session.send_audio(b'\xaa\xbb')
+    conn.fail = True
+    with pytest.raises(RuntimeError, match='send failed'):
+        await session.send_audio(b'\xcc\xdd')
+    assert session.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SpeechPart(speaker='user', transcript='Hi.', audio=_wav_content(b'\xaa\xbb'))],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+    assert not session._input_audio  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_transport_failure_while_sending_becomes_a_realtime_error() -> None:

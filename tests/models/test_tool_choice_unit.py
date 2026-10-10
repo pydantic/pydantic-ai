@@ -31,7 +31,7 @@ with try_import() as anthropic_available:
         AnthropicModelSettings,
         _support_tool_forcing as anthropic_support_tool_forcing,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+    from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as bedrock_available:
@@ -124,6 +124,16 @@ SIMPLE_CASES = [
         expected='required',
     ),
     dict(
+        id='list_exact_match_function_and_output_tools',
+        tool_choice=['a', 'b', 'final_result'],
+        params_kwargs={
+            'function_tools': [make_tool('a'), make_tool('b')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': True,
+        },
+        expected='required',
+    ),
+    dict(
         id='tool_or_output_empty_no_output_tools',
         tool_choice=ToolOrOutput(function_tools=[]),
         params_kwargs={'allow_text_output': True},
@@ -193,6 +203,27 @@ TUPLE_CASES = [
         params_kwargs={'function_tools': [make_tool('a'), make_tool('b'), make_tool('c')], 'allow_text_output': True},
         expected_mode='required',
         expected_tools={'a', 'c'},
+    ),
+    dict(
+        id='list_one_of_multiple_output_tools',
+        tool_choice=['result_a'],
+        params_kwargs={
+            'output_tools': [make_tool('result_a'), make_tool('result_b')],
+            'allow_text_output': True,
+        },
+        expected_mode='required',
+        expected_tools={'result_a'},
+    ),
+    dict(
+        id='list_mixed_function_and_output_subset',
+        tool_choice=['a', 'result_a'],
+        params_kwargs={
+            'function_tools': [make_tool('a'), make_tool('b')],
+            'output_tools': [make_tool('result_a'), make_tool('result_b')],
+            'allow_text_output': True,
+        },
+        expected_mode='required',
+        expected_tools={'a', 'result_a'},
     ),
     dict(
         id='tool_or_output_empty_with_output_tools_direct_output',
@@ -661,6 +692,27 @@ def test_support_tool_forcing_rejects_unsupported_model_with_adaptive_thinking()
         anthropic_support_tool_forcing(
             'test-model', AnthropicModelProfile(supports_forced_tool_choice=False), settings, ModelRequestParameters()
         )
+
+
+@skip_if_no_anthropic
+@pytest.mark.parametrize(
+    'settings',
+    [
+        pytest.param({'anthropic_thinking': {'type': 'adaptive'}, 'tool_choice': 'required'}, id='adaptive'),
+        pytest.param({'anthropic_thinking': {'type': 'disabled'}, 'tool_choice': 'required'}, id='disabled'),
+    ],
+)
+def test_haiku_5_5_supports_forced_tool_choice_with_adaptive_or_disabled_thinking(settings: AnthropicModelSettings):
+    """Haiku 5.5 accepts forced tool choice with either adaptive or disabled thinking."""
+    model_profile = anthropic_model_profile('claude-haiku-5-5')
+    assert model_profile is not None
+    profile = AnthropicModelProfile(**model_profile)
+    assert (
+        anthropic_support_tool_forcing(
+            'claude-haiku-5-5', profile, settings, ModelRequestParameters(function_tools=[make_tool('my_tool')])
+        )
+        is True
+    )
 
 
 @pytest.mark.parametrize(

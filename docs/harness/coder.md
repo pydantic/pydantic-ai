@@ -139,6 +139,8 @@ Then the plumbing, which the agent never calls directly:
    without adding a spill-retrieval tool. Its stable ID, `coder_tool_output_limits`, lets durability
    capabilities bind its inherited operations without colliding with a separately configured `ToolOutputLimits`.
 8. [`RepairToolArguments`](repair-tool-arguments.md) repairs malformed JSON tool arguments before normal validation (see below).
+9. Prompt caching, the same as [`Caching()`](../capabilities/caching.md) unless the model, the agent, or a capability listed before
+   `Coder` already sets `cache` (see below). Pass `caching=False` to leave it out.
 
 Every tool comes from `FileSystem`, `Shell`, or `SubAgents`; those pages document each one in full. Build the same
 agent from the pieces to change any setting, for example to keep content hashes, add `list_directory`,
@@ -227,11 +229,39 @@ Each attempt emits a `repair_tool_arguments` span through `ctx.tracer`, without 
 contents. Other Coder operations rely on core tool spans and on the events its `FileSystem` and `Shell`
 capabilities emit.
 
+## Prompt caching
+
+`Coder` turns on [prompt caching](../capabilities/caching.md) by setting the unified `cache` model setting to `True`. A coding run
+sends the same tool definitions and instructions, plus a conversation that only grows, on every request, so
+each request can read back the prefix the previous one wrote. See [what `cache=True` does on each
+provider](../capabilities/caching.md#unified-caching-settings) and [what caching costs](../capabilities/caching.md#cost).
+
+A `cache` value set on the model, in the agent's `model_settings`, or by a capability listed before `Coder`
+replaces this default, and so do a capability listed after it and the run's own `model_settings`. To keep the
+prompt cache for an hour, or to turn it off for one agent:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness.coder import Coder
+
+agent = Agent(
+    'anthropic:claude-opus-5-5',
+    model_settings={'cache': '1h'},  # or `False`
+    capabilities=[LocalWorkspace('.'), Coder()],
+)
+```
+
+Provider-specific cache settings, such as `anthropic_cache`, take precedence over `cache` as usual.
+`Coder(caching=False)` leaves the default out.
+
 ## Durable execution
 
 `Coder` works under Temporal, DBOS, and Prefect. [Durable execution](durable-execution.md) shows an example for each engine and what works on each.
 
 ## Upgrading
+
+`Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
 
 This release makes the workspace the single place that decides where an agent works. Removed arguments are still accepted, emit a `HarnessDeprecationWarning` naming the fix, and are ignored.
 
