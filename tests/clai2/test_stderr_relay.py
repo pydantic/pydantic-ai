@@ -66,7 +66,6 @@ def _shown(screen: int) -> bytes:
 
 
 @posix_only
-@pytest.mark.subprocess(reason='a child process must inherit the relayed stderr, which is the behavior under test')
 def test_relay_keeps_fork_notices_off_the_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(stderr_relay.sys, 'platform', 'darwin')
     screen, terminal = os.openpty()
