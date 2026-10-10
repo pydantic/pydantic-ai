@@ -75,7 +75,7 @@ playwright = ["idna>=3.4", "playwright>=1.61.0"]
 # FastMCP 3 resolves `beartype` 0.22, which imports `typing.no_type_check_decorator` (removed in 3.15).
 # The beartype line is removable once beartype 0.23.0 final is released (tracked in #9455):
 # https://github.com/beartype/beartype/issues/618
-stackone = ["fastmcp>=3.4.5,<4", "beartype>=0.23.0rc2 ; python_full_version >= '3.15'", "pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+stackone = ["fastmcp>=3.4.5,<4", "beartype>=0.23.0rc2 ; python_version >= '3.15'", "pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 ordinal = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 grain = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 day-ai = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
@@ -87,7 +87,7 @@ prompt-injection-defender = ["stackone-defender>=0.7.3,<0.8 ; python_full_versio
 # https://pypi.org/project/onnxruntime/#files
 prompt-injection-defender-ml = [
     "stackone-defender>=0.7.3,<0.8 ; python_full_version >= '3.11'",
-    "stackone-defender[onnx]>=0.7.3,<0.8 ; python_full_version >= '3.11' and python_full_version < '3.15'",
+    "stackone-defender[onnx]>=0.7.3,<0.8 ; python_full_version >= '3.11' and python_version < '3.15'",
 ]
 github = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 slack = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
