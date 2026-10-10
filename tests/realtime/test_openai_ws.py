@@ -291,6 +291,58 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     assert len(part.audio.data) > 0
 
 
+async def test_multi_item_response_late_transcript_done_one_part_per_item(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A late transcript completion updates its existing output item part."""
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Answer in two or three words.')
+
+    async with agent.realtime(model).session(audio_retention='output_audio') as session:
+        await session.send('Say a short greeting.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    messages = session.all_messages()
+    assert [type(message).__name__ for message in messages] == ['ModelRequest', 'ModelResponse']
+    response = messages[1]
+    assert isinstance(response, ModelResponse)
+    assert [type(part).__name__ for part in response.parts] == ['SpeechPart', 'SpeechPart']
+    assert [part.transcript for part in response.parts if isinstance(part, SpeechPart)] == [
+        'Hello world.',
+        'Bonjour tout le monde.',
+    ]
+
+
+async def test_multi_item_response_in_order_one_part_per_item(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """An in-order multi-item response keeps one speech part per output item."""
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Answer in two or three words.')
+
+    async with agent.realtime(model).session(audio_retention='output_audio') as session:
+        await session.send('Say a short greeting.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    messages = session.all_messages()
+    assert [type(message).__name__ for message in messages] == ['ModelRequest', 'ModelResponse']
+    response = messages[1]
+    assert isinstance(response, ModelResponse)
+    assert [type(part).__name__ for part in response.parts] == ['SpeechPart', 'SpeechPart']
+    assert [part.transcript for part in response.parts if isinstance(part, SpeechPart)] == [
+        'Hello world.',
+        'Bonjour tout le monde.',
+    ]
+
+
 async def test_text_context_waits_for_next_turn(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
 ) -> None:

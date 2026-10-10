@@ -209,6 +209,7 @@ class _Response:
     open_part_item: str | None = None
     open_transcript: str = ''
     open_audio: bytearray = field(default_factory=bytearray)
+    item_parts: dict[str, SpeechPart | TextPart] = field(default_factory=dict)
     item_details: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """What the provider said about each item of the output, for the part the item makes."""
     usage: RequestUsage = field(default_factory=RequestUsage)
@@ -502,6 +503,28 @@ class SessionCore:
         if response is None or (event.item_id is not None and event.item_id in self._replayed_items):
             return
         output_text = isinstance(event, OutputTranscript) and event.output_text
+        if isinstance(event, OutputTranscript) and event.item_id is not None:
+            recorded_part = response.item_parts.get(event.item_id)
+            if recorded_part is not None and recorded_part is not response.open_part:
+                # A late transcript updates the recorded part; a final transcript replaces accumulated deltas.
+                index = next(
+                    (index for index, existing in enumerate(response.parts) if existing is recorded_part), None
+                )
+                if index is not None:
+                    if event.is_final:
+                        new_text = event.text
+                    elif isinstance(recorded_part, TextPart):
+                        new_text, _ = accumulate_transcript(recorded_part.content, event.text)
+                    else:
+                        new_text, _ = accumulate_transcript(recorded_part.transcript or '', event.text)
+                    if isinstance(recorded_part, TextPart):
+                        updated_part = replace(recorded_part, content=new_text)
+                    else:
+                        updated_part = replace(recorded_part, transcript=new_text)
+                    updated_part = self._with_item_details(response, updated_part, event.item_id)
+                    response.parts[index] = updated_part
+                    response.item_parts[event.item_id] = updated_part
+                    return
         part = self._open_part(response, output_text=output_text, item_id=event.item_id)
         if isinstance(event, AudioDelta):
             if self._retain_output:
@@ -529,10 +552,13 @@ class SessionCore:
             elif item_id is not None and response.open_part_item is None:
                 response.open_part_item = item_id
                 part = response.open_part = self._with_item_details(response, part, item_id)
+                response.item_parts[item_id] = part
         if part is None:
             part = TextPart(content='') if output_text else SpeechPart(speaker='assistant', transcript='')
             part = response.open_part = self._with_item_details(response, part, item_id)
             response.open_part_item = item_id
+            if item_id is not None:
+                response.item_parts[item_id] = part
             response.open_transcript = ''
         return part
 
@@ -555,6 +581,8 @@ class SessionCore:
                 audio = BinaryContent(data=wav, media_type=_WAV_MEDIA_TYPE)
                 part = replace(part, audio=self._audio_budget.track(audio, len(response.open_audio), output=True))
         response.parts.append(part)
+        if response.open_part_item is not None:
+            response.item_parts[response.open_part_item] = part
         response.open_part = None
         response.open_part_item = None
         response.open_transcript = ''
