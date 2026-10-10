@@ -22,6 +22,14 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
         return 'Change the `prefix` attribute to avoid name conflicts.'
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        # Preparation uses the wrapped names, while the manager tracks retries under the exposed names.
+        prefix = f'{self.prefix}_'
+        ctx = replace(
+            ctx,
+            retries={
+                name.removeprefix(prefix): count for name, count in ctx.retries.items() if name.startswith(prefix)
+            },
+        )
         return {
             new_name: replace(
                 tool,
