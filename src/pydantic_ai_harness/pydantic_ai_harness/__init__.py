@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from .prompt_injection_defender import PromptInjectionDefender
     from .pydantic_ai_docs import PydanticAIDocs
     from .pylon import Pylon
+    from .render_sandbox import RenderSandbox, RenderSandboxBackend
     from .repo_context import RepoContext
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
@@ -121,6 +122,8 @@ __all__ = [
     'Pylon',
     'READ_ONLY_TOOL_NAMES',
     'ReportContextUsage',
+    'RenderSandbox',
+    'RenderSandboxBackend',
     'RepoContext',
     'Researcher',
     'SSHWorkspace',
@@ -182,6 +185,7 @@ _CAPABILITY_EXPORTS = {
     'PydanticAIDocs': 'pydantic_ai_docs',
     'Pylon': 'pylon',
     'ReportContextUsage': 'compaction',
+    'RenderSandbox': 'render_sandbox',
     'RepoContext': 'repo_context',
     'Researcher': 'researcher',
     'Shell': 'shell',
@@ -213,6 +217,7 @@ _CONSTANT_EXPORTS = {
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'ModalSandboxBackend': 'modal_sandbox',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
+    'RenderSandboxBackend': 'render_sandbox',
     'SpritesSandboxBackend': 'sprites_sandbox',
     'SSHWorkspaceBackend': 'ssh_workspace',
     'SubAgent': 'subagents',
