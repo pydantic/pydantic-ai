@@ -880,8 +880,90 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     assert conn.conversation_id == 'conversation-2'
 
 
-async def test_max_duration_error_is_not_reconnected(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The close after a `max_duration` error ends the session: a re-dial would resume into the same limit.
+class _StaysOpen(FakeWebSocket):
+    """Yields its frames, then stays open with nothing more to say."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        while self._incoming:
+            yield self._incoming.pop(0)
+        # The connection re-dials without reading on.
+        await asyncio.Event().wait()  # pragma: no cover
+
+
+@pytest.mark.parametrize('socket_class', [FakeWebSocket, _StaysOpen], ids=['closes', 'stays-open'])
+async def test_max_duration_error_reconnects_into_a_new_conversation(
+    monkeypatch: pytest.MonkeyPatch, socket_class: type[FakeWebSocket]
+) -> None:
+    """With a reconnect policy, a `max_duration` error re-dials into a new conversation, so the error is recoverable.
+
+    The connection doesn't wait for xAI to close the socket: whether or not it does, the re-dial closes it.
+    """
+    ended = socket_class(
+        [
+            _created(),
+            _conversation_created(),
+            _updated(),
+            json.dumps(_error_frame('max_duration', 'Maximum conversation duration exceeded.')),
+        ]
+    )
+    transcript = json.dumps({'type': 'response.output_audio_transcript.done', 'transcript': 'hi'})
+    fresh = FakeWebSocket([_created(), _conversation_created('conversation-2'), _updated(), transcript])
+    connect = _RecordingConnect([ended, fresh])
+    monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
+
+    model = _model(rt_xai.XaiRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1}))
+    async with _connect(model, 'x') as conn:
+        events = await collect_codec_events(conn)
+
+    assert events[:3] == [
+        RealtimeSessionErrorEvent(
+            message='Maximum conversation duration exceeded.',
+            type='max_duration',
+            code='max_duration',
+            recoverable=True,
+        ),
+        RealtimeSessionReconnectEvent(state_restored=False),
+        OutputTranscript(text='hi', is_final=True, response_id='response'),
+    ]
+    assert conn.conversation_id == 'conversation-2'
+    assert connect.closed[0] is ended
+
+
+async def test_session_carries_on_past_max_duration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The session reports the `max_duration` error and keeps going in the new conversation."""
+    ended = FakeWebSocket(
+        [
+            _created(),
+            _conversation_created(),
+            _updated(),
+            json.dumps(_error_frame('max_duration', 'Maximum conversation duration exceeded.')),
+        ]
+    )
+    fresh = FakeWebSocket([_created(), _conversation_created('conversation-2'), _updated()])
+    monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([ended, fresh]))
+
+    model = _model(rt_xai.XaiRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1}))
+    async with Agent().realtime(model).session() as session:
+        events = await collect_session_events(session)
+
+    assert [event for event in events if isinstance(event, (RealtimeSessionErrorEvent, RealtimeSessionReconnectEvent))][
+        :2
+    ] == [
+        RealtimeSessionErrorEvent(
+            message='Maximum conversation duration exceeded.',
+            type='max_duration',
+            code='max_duration',
+            recoverable=True,
+        ),
+        RealtimeSessionReconnectEvent(state_restored=True),
+    ]
+
+
+@pytest.mark.parametrize('reconnects_used_up', [False, True])
+async def test_max_duration_error_without_a_reconnect_ends_the_session(
+    monkeypatch: pytest.MonkeyPatch, reconnects_used_up: bool
+) -> None:
+    """Without a reconnect policy, or with its reconnects used up, a `max_duration` error ends the session.
 
     The error already reports why the session ended, so the close isn't reported again.
     """
@@ -893,10 +975,15 @@ async def test_max_duration_error_is_not_reconnected(monkeypatch: pytest.MonkeyP
             json.dumps(_error_frame('max_duration', 'Maximum conversation duration exceeded.')),
         ]
     )
-    connect = _RecordingConnect([ended, FakeWebSocket([_created(), _conversation_created(), _updated()])])
+    connect = _RecordingConnect([ended])
     monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
 
-    model = _model(rt_xai.XaiRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1}))
+    settings = (
+        rt_xai.XaiRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_reconnects': 0})
+        if reconnects_used_up
+        else None
+    )
+    model = _model(settings)
     async with _connect(model, 'x') as conn:
         events = [event async for event in conn]
         assert not conn._can_reconnect  # pyright: ignore[reportPrivateUsage]
