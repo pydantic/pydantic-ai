@@ -14,7 +14,6 @@ exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
 pydantic-monty-runtime = false
-pyarrow = "2026-10-09T08:26:26Z"
 pydantic-handlebars = false
 pydantic-extra-types = false
 pydantic = false
@@ -26,6 +25,7 @@ aiohttp = "2026-10-05T17:43:49Z"
 listentome = false
 asyncpg = "2026-10-06T20:32:41Z"
 fastavro = "2026-10-05T22:24:00Z"
+rpds-py = "2026-10-04T16:32:38Z"
 logfire = false
 pydantic-settings = false
 pydantic-monty-client = false

@@ -64,9 +64,11 @@ dependencies = [
     "modal>=1.0.4",
     # duckdb has no cp315 wheels, and a source build outlasts the CI timeout, so the 3.15 all-extras install
     # skips it. The examples don't support 3.15 until then (no classifier, no 3.15 `test-examples` cell).
-    # Marker removable once duckdb ships cp315 wheels (tracked in #9455): https://pypi.org/project/duckdb/#files
+    # `datasets` is only used by the same example (`data_analyst.py`), and on 3.15 it would pull pyarrow and
+    # xxhash bumps into the lock for nothing, so it's skipped there too.
+    # Markers removable once duckdb ships cp315 wheels (tracked in #9455): https://pypi.org/project/duckdb/#files
     "duckdb>=1.4.2; python_version < '3.15'",
-    "datasets>=4.0.0",
+    "datasets>=4.0.0; python_version < '3.15'",
     "pandas>=2.3.3",
     # Needed by the interactive cancel_and_resume example. Declaring it here also pulls prompt_toolkit
     # into the lowest-versions test env, which un-skips the CLI tests; 3.0.29 is the first release whose

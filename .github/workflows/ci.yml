@@ -1007,6 +1007,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # No 3.15: our declared minimums (pydantic-core 2.41, numpy 2.3, tiktoken 0.12, ...) have no 3.15 wheels.
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         shard: [1, 2]
     env:
@@ -1163,6 +1164,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # No 3.15: the examples need duckdb and datasets, which are skipped there (see `examples/pyproject.toml`).
         python-version: ["3.11", "3.12", "3.13", "3.14"]
     env:
       CI: true

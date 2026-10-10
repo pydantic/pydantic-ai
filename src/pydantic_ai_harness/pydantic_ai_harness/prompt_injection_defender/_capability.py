@@ -171,7 +171,8 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
         else:
             if self.semantic_detection and importlib.util.find_spec('onnxruntime') is None:
                 # The ML extra skips ONNX Runtime on 3.15, which it has no wheels for yet (tracked in #9455).
-                # A conditional expression: no single interpreter takes both arms of a version branch.
+                # A conditional expression rather than an `if`, so branch coverage doesn't need one interpreter
+                # to take both arms of this version check.
                 remedy = (
                     'ONNX Runtime has no Python 3.15 wheels yet, so semantic detection needs Python 3.14 or earlier.'
                     if sys.version_info >= (3, 15)

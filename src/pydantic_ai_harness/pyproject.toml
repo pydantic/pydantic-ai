@@ -72,7 +72,7 @@ mongodb = ["pymongo>=4.17.0"]
 skills = ["pyyaml>=6.0.2"]
 browser-use = ["browser-use>=0.13.6,<0.14 ; python_full_version >= '3.11'"]
 playwright = ["idna>=3.4", "playwright>=1.61.0"]
-# FastMCP 3 resolves `beartype` 0.22, which imports `typing.no_type_check_decorator` (removed in 3.15).
+# FastMCP 3 resolves `beartype` 0.22 (via `py-key-value-aio`), which imports `typing.no_type_check_decorator` (removed in 3.15).
 # The beartype line is removable once beartype 0.23.0 final is released (tracked in #9455):
 # https://github.com/beartype/beartype/issues/618
 stackone = ["fastmcp>=3.4.5,<4", "beartype>=0.23.0rc2 ; python_version >= '3.15'", "pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
