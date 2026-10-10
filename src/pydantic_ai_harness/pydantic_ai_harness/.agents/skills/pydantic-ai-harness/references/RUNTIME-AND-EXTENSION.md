@@ -2,7 +2,7 @@
 
 How a harness agent is persisted, made durable, configured, extended, and served. This covers saving and
 resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurability`), Absurd durable
-tasks (`AbsurdDurability`), harness capabilities under core durable execution, Logfire-managed
+tasks (`AbsurdDurability`), Render Workflows, harness capabilities under core durable execution, Logfire-managed
 instructions (`ManagedPrompt`), agent-written capabilities (`CapabilityCreation`), loading harness
 capabilities from YAML/JSON specs, serving an agent to editors over ACP, and running one as a GitHub
 Agentic Workflow.
@@ -15,6 +15,7 @@ Agentic Workflow.
 | Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
+| Use or evaluate Render Workflows for background agents with separate model/tool retries, timeouts, and compute | [`RenderWorkflows`](#renderworkflows); retrying the entry task run restarts the agent |
 | Edit, version, and roll out the system prompt from Logfire without redeploying | `ManagedPrompt` |
 | Let the agent write new capabilities that load on the next run | `CapabilityCreation` |
 | Define the agent in YAML/JSON with harness capabilities | `Agent.from_file(..., custom_capability_types=[...])` |
@@ -178,6 +179,40 @@ Rules that apply to every harness capability:
 
 The per-engine feature matrix for workspace tools (commands, background jobs, live events, delegation,
 timeouts) is in `CODING-AND-WORKSPACES.md` and the durable execution docs page.
+
+## RenderWorkflows
+
+When the user is using or evaluating Render, consider `RenderWorkflows` for background agent jobs that need
+separate retries, timeouts, or compute for model requests and tool calls. Retrying the entry task starts the
+whole agent again and can repeat completed work; the integration does not checkpoint progress or replay
+completed steps. Choose it when the application can handle repeated work. A plain Render task around
+`agent.run(...)` may be enough when the user only needs background execution. The calling application chooses which
+requests to submit, even if it runs on AWS or another platform. A submission creates a root-level task run; the
+capability starts chained task runs for supported operations through `TaskContext.run()`.
+
+Use the [Render Workflows guide](https://pydantic.dev/docs/ai/harness/render-workflows/) for installation,
+a runnable example, local execution, and deployment. Check its capability support and execution limits before
+composing an agent. The setup and constraints that affect implementation are:
+
+- Construct one `RenderWorkflows(app)` per agent and attach it in `Agent(capabilities=[...])`. Define agents
+  and tools at module load time, using the same Render `Workflows` app. Call `agent.run(...)` inside that
+  capability's `@workflows.task` entry function; a plain `@app.task` leaves agent operations inline. The live
+  app object requires Python construction rather than a JSON or YAML agent spec.
+- Give agents and registered leaf toolsets stable names and IDs, including capability-owned toolsets.
+  Task options are fixed per named toolset at registration. Use separate named toolsets for different policies; individual function tools can opt out, but cannot override their shared task settings. Return `False` from `resolve_tool_options` for `delegate_task`
+  and `read_tool_result` when using `SubAgents` and `ToolOutputLimits`, so those helpers retain the parent
+  task's live state. For a delegated agent's operations to run as chained task runs, attach its own
+  `RenderWorkflows` instance using the same app. A chained task run retry can repeat that operation's side effects, so make external writes safe
+  to repeat.
+- Inputs and results crossing a task boundary must be JSON encodable, including `deps`. Workers need
+  access to their own model credentials and external resources. Keep large artifacts in shared storage
+  and pass references that another worker can read; process-local files and live clients are not shared.
+  Model streaming and forwarded capability events are buffered at task boundaries. Tools that need an
+  immediate capability-event decision must run inline.
+- Generated operations are Render task definitions. Callers with Render API access to submit task runs can invoke them
+  directly, bypassing checks that exist only in the entry task. Keep Render credentials on the server
+  and authorize application users before submitting validated inputs. Treat Workflow API callers as
+  trusted, and account for Render's task-data retention when deciding what to send in task payloads.
 
 ## AWSLambdaDurability
 

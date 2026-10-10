@@ -1,0 +1,370 @@
+"""Process-isolated nested-agent fixture used by the local-runtime test."""
+
+from __future__ import annotations
+
+import os
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from pydantic import BaseModel, TypeAdapter
+from render.workflows import TaskContext, Workflows
+from typing_extensions import TypedDict
+
+from pydantic_ai import Agent, CustomEvent, ModelRetry, RunContext
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness import RenderWorkflows
+from pydantic_ai_harness.memory import Memory, SqliteMemoryStore
+from pydantic_ai_harness.subagents import SubAgent, SubAgents
+
+
+class RuntimeDeps(TypedDict):
+    prefix: str
+    controller_pid: int
+
+
+class TracingTaskResult(BaseModel):
+    root_pid: int
+    tool_pid: int
+    span_exported: bool
+
+
+class ToolEvidence(BaseModel):
+    pid: int
+    retry_count: int
+    value: str
+
+
+class GrandchildOutput(BaseModel):
+    model_pid: int
+    tool: ToolEvidence
+
+
+class ChildOutput(BaseModel):
+    grandchild: GrandchildOutput
+    model_pid: int
+    sibling_tools: list[ToolEvidence]
+
+
+class ParentOutput(BaseModel):
+    child: ChildOutput
+    model_pid: int
+
+
+class RuntimeEventEvidence(BaseModel):
+    label: str
+    sequence: int
+
+
+class RootTaskResult(BaseModel):
+    controller_pid: int
+    deps_prefix: str
+    events: list[RuntimeEventEvidence]
+    output: ParentOutput
+    root_pid: int
+    usage_markers: dict[str, int]
+
+
+@dataclass(kw_only=True)
+class RuntimeEffectEvent(CustomEvent, name='render_local_runtime.effect'):
+    label: str
+    sequence: int
+
+
+def _tool_returns(messages: list[ModelMessage]) -> dict[str, ToolReturnPart]:
+    """Index tool results from serialized model history by public tool name."""
+    return {part.tool_name: part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)}
+
+
+def grandchild_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Run the grandchild tool once, using only serialized history for state."""
+    del info
+    returned = _tool_returns(messages)
+    if tool := returned.get('grandchild_lookup'):
+        output = GrandchildOutput(model_pid=os.getpid(), tool=ToolEvidence.model_validate(tool.content))
+        return ModelResponse(parts=[TextPart(output.model_dump_json())])
+    return ModelResponse(parts=[ToolCallPart('grandchild_lookup', {}, tool_call_id='grandchild-lookup')])
+
+
+def child_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Run sibling tools, delegate, then finish from serialized history."""
+    del info
+    returned = _tool_returns(messages)
+    if delegated := returned.get('delegate_task'):
+        output = ChildOutput(
+            grandchild=GrandchildOutput.model_validate_json(str(delegated.content)),
+            model_pid=os.getpid(),
+            sibling_tools=[
+                ToolEvidence.model_validate(returned[name].content) for name in ('child_alpha', 'child_beta')
+            ],
+        )
+        return ModelResponse(parts=[TextPart(output.model_dump_json())])
+    if {'child_alpha', 'child_beta'} <= returned.keys():
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    'delegate_task',
+                    {'agent_name': 'runtime-grandchild', 'task': 'collect grandchild evidence'},
+                    tool_call_id='child-to-grandchild',
+                )
+            ]
+        )
+    return ModelResponse(
+        parts=[
+            ToolCallPart('child_alpha', {}, tool_call_id='child-alpha'),
+            ToolCallPart('child_beta', {}, tool_call_id='child-beta'),
+        ]
+    )
+
+
+def parent_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Delegate once and finish from the child result in serialized history."""
+    del info
+    returned = _tool_returns(messages)
+    if delegated := returned.get('delegate_task'):
+        output = ParentOutput(
+            child=ChildOutput.model_validate_json(str(delegated.content)),
+            model_pid=os.getpid(),
+        )
+        return ModelResponse(parts=[TextPart(output.model_dump_json())])
+    return ModelResponse(
+        parts=[
+            ToolCallPart(
+                'delegate_task',
+                {'agent_name': 'runtime-child', 'task': 'collect nested process evidence'},
+                tool_call_id='parent-to-child',
+            )
+        ]
+    )
+
+
+async def _stream_response(response: ModelResponse) -> AsyncIterator[DeltaToolCalls | str]:
+    """Convert one deterministic response to FunctionModel's streamed form."""
+    for index, part in enumerate(response.parts):
+        if isinstance(part, TextPart):
+            yield part.content
+        elif isinstance(part, ToolCallPart):
+            yield {
+                index: DeltaToolCall(
+                    name=part.tool_name,
+                    json_args=part.args_as_json_str(),
+                    tool_call_id=part.tool_call_id,
+                )
+            }
+
+
+async def stream_child_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+    """Stream the same history-driven child response."""
+    async for delta in _stream_response(child_model(messages, info)):
+        yield delta
+
+
+workflows = Workflows()
+grandchild_runtime = RenderWorkflows[RuntimeDeps](workflows, deps_type=RuntimeDeps)
+grandchild = Agent[RuntimeDeps, str](
+    FunctionModel(grandchild_model, model_name='runtime-grandchild-model'),
+    name='runtime-grandchild',
+    deps_type=RuntimeDeps,
+    retries=1,
+    capabilities=[grandchild_runtime],
+)
+
+
+@grandchild.tool
+async def grandchild_lookup(ctx: RunContext[RuntimeDeps]) -> ToolEvidence:
+    """Retry once, then return grandchild tool-process evidence."""
+    assert 'grandchild_lookup' in ctx.available_tool_names
+    assert ctx.is_tool_available('grandchild_lookup')
+    if ctx.retry == 0:
+        raise ModelRetry(f'retry remote grandchild attempt from pid {os.getpid()}')
+    return ToolEvidence(
+        pid=os.getpid(),
+        retry_count=ctx.retry,
+        value=f'{ctx.deps["prefix"]}:grandchild',
+    )
+
+
+_seen_events: list[RuntimeEventEvidence] = []
+child_hooks = Hooks[RuntimeDeps]()
+
+
+@child_hooks.on.event(RuntimeEffectEvent)
+async def record_runtime_effect(ctx: RunContext[RuntimeDeps], event: RuntimeEffectEvent) -> None:
+    """Record effects only after they reach the child agent's active caller."""
+    del ctx
+    _seen_events.append(RuntimeEventEvidence(label=event.label, sequence=event.sequence))
+
+
+child_runtime = RenderWorkflows[RuntimeDeps](
+    workflows,
+    deps_type=RuntimeDeps,
+    resolve_tool_options=lambda _operation, _tool, name: False if name == 'delegate_task' else None,
+)
+child = Agent[RuntimeDeps, str](
+    FunctionModel(child_model, stream_function=stream_child_model, model_name='runtime-child-model'),
+    name='runtime-child',
+    deps_type=RuntimeDeps,
+    capabilities=[
+        SubAgents(agents=[SubAgent(grandchild)], agent_folders=None),
+        child_hooks,
+        child_runtime,
+    ],
+)
+
+
+async def _sibling_effect(ctx: RunContext[RuntimeDeps], label: str, amount: int) -> ToolEvidence:
+    ctx.usage.incr(RunUsage(details={'runtime_remote_marker': amount, f'{label}_marker': amount}))
+    await ctx.emit(RuntimeEffectEvent(label=label, sequence=1))
+    await ctx.emit(RuntimeEffectEvent(label=label, sequence=2))
+    return ToolEvidence(pid=os.getpid(), retry_count=ctx.retry, value=f'{ctx.deps["prefix"]}:{label}')
+
+
+@child.tool
+async def child_alpha(ctx: RunContext[RuntimeDeps]) -> ToolEvidence:
+    """Emit alpha effects from one concurrent remote operation."""
+    return await _sibling_effect(ctx, 'alpha', 2)
+
+
+@child.tool
+async def child_beta(ctx: RunContext[RuntimeDeps]) -> ToolEvidence:
+    """Emit beta effects from one concurrent remote operation."""
+    return await _sibling_effect(ctx, 'beta', 5)
+
+
+parent_runtime = RenderWorkflows[RuntimeDeps](
+    workflows,
+    deps_type=RuntimeDeps,
+    resolve_tool_options=lambda _operation, _tool, name: False if name == 'delegate_task' else None,
+)
+parent = Agent[RuntimeDeps, str](
+    FunctionModel(parent_model, model_name='runtime-parent-model'),
+    name='runtime-parent',
+    deps_type=RuntimeDeps,
+    capabilities=[
+        SubAgents(agents=[SubAgent(child)], agent_folders=None),
+        parent_runtime,
+    ],
+)
+
+
+@parent_runtime.task(name='run-local-runtime-agent')
+async def run_local_runtime_agent(ctx: TaskContext, prompt: str, deps: RuntimeDeps) -> dict[str, object]:
+    """Run the nested public agent entry point inside a Render root task."""
+    del ctx
+    _seen_events.clear()
+    usage = RunUsage(details={'root_marker': 3})
+    validated_deps = TypeAdapter(RuntimeDeps).validate_python(deps)
+    result = await parent.run(prompt, deps=validated_deps, usage=usage)
+    payload = RootTaskResult(
+        controller_pid=validated_deps['controller_pid'],
+        deps_prefix=validated_deps['prefix'],
+        events=list(_seen_events),
+        output=ParentOutput.model_validate_json(result.output),
+        root_pid=os.getpid(),
+        usage_markers={
+            name: usage.details.get(name, 0) for name in ('runtime_remote_marker', 'alpha_marker', 'beta_marker')
+        },
+    )
+    dumped = TypeAdapter(RootTaskResult).dump_python(payload, mode='json')
+    return TypeAdapter(dict[str, object]).validate_python(dumped)
+
+
+def tracing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Exercise the public tracer in a separate tool worker."""
+    del info
+    returned = _tool_returns(messages)
+    if trace := returned.get('trace_worker'):
+        return ModelResponse(parts=[TextPart(str(trace.content))])
+    return ModelResponse(parts=[ToolCallPart('trace_worker', {})])
+
+
+tracing_exporter = InMemorySpanExporter()
+tracing_provider = TracerProvider()
+tracing_provider.add_span_processor(SimpleSpanProcessor(tracing_exporter))
+tracing_runtime = RenderWorkflows[None](workflows)
+tracing_agent = Agent[None, str](
+    FunctionModel(tracing_model, model_name='runtime-tracing-model'),
+    name='runtime-tracing',
+    deps_type=type(None),
+    capabilities=[tracing_runtime],
+)
+tracing_agent.instrument = InstrumentationSettings(tracer_provider=tracing_provider, include_content=False)
+
+
+@tracing_agent.tool
+async def trace_worker(ctx: RunContext[None]) -> str:
+    """Return evidence that a worker-local span reached its configured exporter."""
+    with ctx.tracer.start_as_current_span('render.worker') as span:
+        span.set_attribute('worker.pid', os.getpid())
+    return TracingTaskResult(
+        root_pid=0,
+        tool_pid=os.getpid(),
+        span_exported=any(span.name == 'render.worker' for span in tracing_exporter.get_finished_spans()),
+    ).model_dump_json()
+
+
+@tracing_runtime.task(name='run-local-tracing-agent')
+async def run_local_tracing_agent(ctx: TaskContext) -> dict[str, object]:
+    """Exercise tracing in a tool task that runs outside the entry process."""
+    del ctx
+    result = await tracing_agent.run('trace the worker')
+    evidence = TracingTaskResult.model_validate_json(result.output)
+    evidence.root_pid = os.getpid()
+    return evidence.model_dump(mode='json')
+
+
+@dataclass
+class MemoryDeps:
+    database: str
+    tenant: str
+    limit: int = 64
+
+
+def memory_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    returned = _tool_returns(messages)
+    if result := returned.get('tenant_read_memory'):
+        return ModelResponse(parts=[TextPart(str(result.content))])
+    prompt = next(part.content for message in messages for part in message.parts if isinstance(part, UserPromptPart))
+    if isinstance(prompt, str) and prompt.startswith('write:') and 'tenant_write_memory' not in returned:
+        return ModelResponse(parts=[ToolCallPart('tenant_write_memory', {'content': prompt.removeprefix('write:')})])
+    return ModelResponse(parts=[ToolCallPart('tenant_read_memory', {'file': 'MEMORY.md'})])
+
+
+def build_memory_agent(limit: int) -> tuple[Agent[MemoryDeps, str], RenderWorkflows[MemoryDeps]]:
+    runtime = RenderWorkflows[MemoryDeps](workflows)
+    agent = Agent(
+        FunctionModel(memory_model, model_name='runtime-memory-model'),
+        name=f'runtime-memory-{limit}',
+        deps_type=MemoryDeps,
+        capabilities=[
+            Memory[MemoryDeps](
+                store_resolver=lambda ctx: SqliteMemoryStore(database=ctx.deps.database),
+                namespace=lambda ctx: ctx.deps.tenant,
+                max_memory_size=limit,
+                inject_memory=False,
+            ).prefix_tools('tenant'),
+            runtime,
+        ],
+    )
+    return agent, runtime
+
+
+memory_agents = {limit: build_memory_agent(limit) for limit in (4, 8, 64)}
+
+
+@memory_agents[64][1].task(name='run-local-memory-agent')
+async def run_local_memory_agent(ctx: TaskContext, database: str, tenant: str, prompt: str, limit: int = 64) -> str:
+    agent, runtime = memory_agents[limit]
+    with runtime.activate(ctx):
+        return (await agent.run(prompt, deps=MemoryDeps(database, tenant, limit))).output
+
+
+if __name__ == '__main__':
+    workflows.start()
