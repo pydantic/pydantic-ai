@@ -70,11 +70,11 @@ tools. gh-aw writes the MCP server configuration outside the checkout and mounts
 read-only inside the sandbox; repository-controlled files cannot select an MCP server
 that runs with the gateway's credentials.
 
-The headless runner streams model responses so their typed events can be recorded in the
-canonical session. The engine subscribes to typed core events through the public
-`Agent.on_event` API. The inline parser selects their framed JSONL records from captured
-engine stdio, and the gh-aw runtime bootstrap writes the canonical stream to
-`agent-session.jsonl`: `session.init`,
+The headless runner streams model responses so it can record assistant messages, reasoning,
+tool calls and results (including native tools), and usage in the canonical session. The
+engine subscribes to typed core events through the public `Agent.on_event` API. The inline
+parser selects their framed JSONL records from captured engine stdio. The gh-aw runtime
+bootstrap writes the canonical stream to `agent-session.jsonl`: `session.init`,
 `user.message`, `assistant.message`, `assistant.reasoning`, `tool.execution_start`,
 `tool.execution_complete`, and `session.result`. The result includes reported usage when
 available; startup failures still record status without usage when none is available. Errors
