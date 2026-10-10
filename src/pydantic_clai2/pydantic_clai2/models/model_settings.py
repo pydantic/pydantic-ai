@@ -63,7 +63,7 @@ class ModelSettingsForm(BaseModel):
         default=None, description='Responses reasoning summary display.'
     )
     openai_text_verbosity: Literal['low', 'medium', 'high'] | None = Field(
-        default=None, description='Responses answer verbosity.'
+        default=None, description='OpenAI answer verbosity.'
     )
     anthropic_cache: bool | Literal['5m', '1h'] | None = Field(
         default=None, description='Claude conversation caching: off, on (5 minutes), or a TTL.'
