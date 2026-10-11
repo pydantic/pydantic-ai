@@ -81,6 +81,7 @@ prompt-injection-defender = ["stackone-defender>=0.7.3,<0.8 ; python_full_versio
 prompt-injection-defender-ml = ["stackone-defender[onnx]>=0.7.3,<0.8 ; python_full_version >= '3.11'"]
 github = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 slack = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+mcp-server = ["fastmcp>=3.4.5,<4", "pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 coder = ["ripgrep==14.1.0 ; sys_platform != 'android'"]
 logfire-mcp = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 linear = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]

@@ -665,6 +665,9 @@ navigation:
       - page: "ACP"
         path: "harness/acp.md"
         slug: "harness/acp"
+      - page: "MCP Server (experimental)"
+        path: "harness/mcp-server.md"
+        slug: "harness/mcp-server"
   - section: "Guides"
     slug: ""
     top-level: true
