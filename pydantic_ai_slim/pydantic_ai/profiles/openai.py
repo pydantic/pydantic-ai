@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from .._json_schema import JsonSchema, JsonSchemaTransformer
+from .._json_schema import JsonSchema, JsonSchemaTransformer, bool_schema_to_dict
 from ..exceptions import UserError
 from ..native_tools import (
     CodeExecutionTool,
@@ -653,7 +653,11 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         if self.root_ref is not None:
             result.pop('$ref', None)  # We replace references to the self.root_ref with just '#' in the transform method
             root_key = re.sub(r'^#/\$defs/', '', self.root_ref)
-            result.update(self.defs.get(root_key) or {})
+            root_def = self.defs.get(root_key)
+            if isinstance(root_def, bool):
+                # Same conversion as `JsonSchemaTransformer._walk_def`.
+                root_def = bool_schema_to_dict(root_def)
+            result.update(root_def or {})
 
         return result
 

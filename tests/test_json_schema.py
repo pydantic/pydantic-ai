@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, Tool, UserError
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer, bool_schema_to_dict
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
@@ -131,6 +131,59 @@ def test_simplify_nullable_union_with_boolean_member():
     schema = {'anyOf': [True, {'type': 'null'}]}
     result = _PassthroughTransformer(schema, simplify_nullable_unions=True).walk()
     assert result == {'anyOf': [True, {'type': 'null'}]}
+
+
+@pytest.mark.parametrize('bool_def', [True, False])
+def test_boolean_defs_entry_is_inlined(bool_def: bool):
+    """A boolean `$defs` entry is a valid schema and should inline instead of crashing."""
+
+    schema = {'type': 'object', 'properties': {'x': {'$ref': '#/$defs/X'}}, '$defs': {'X': bool_def}}
+
+    result = InlineDefsJsonSchemaTransformer(schema).walk()
+
+    assert result == {'type': 'object', 'properties': {'x': bool_schema_to_dict(bool_def)}}
+
+
+def test_boolean_defs_entry_with_sibling_keywords():
+    """`$ref` sibling keywords should combine with an inlined boolean definition."""
+
+    schema = {
+        'type': 'object',
+        'properties': {'x': {'$ref': '#/$defs/X', 'description': 'd'}},
+        '$defs': {'X': True},
+    }
+
+    result = InlineDefsJsonSchemaTransformer(schema).walk()
+
+    assert result == {'type': 'object', 'properties': {'x': {'description': 'd'}}}
+
+
+def test_boolean_defs_entry_sibling_not_overwrites():
+    """A sibling `not` overwrites the `{'not': {}}` produced for a `false` definition, like any sibling keyword."""
+
+    schema = {
+        'type': 'object',
+        'properties': {'x': {'$ref': '#/$defs/X', 'not': {'type': 'null'}}},
+        '$defs': {'X': False},
+    }
+
+    result = InlineDefsJsonSchemaTransformer(schema).walk()
+
+    assert result == {'type': 'object', 'properties': {'x': {'not': {'type': 'null'}}}}
+
+
+@pytest.mark.parametrize('bool_def', [True, False])
+def test_openai_transformer_boolean_defs_root_ref(bool_def: bool):
+    """The OpenAI transformer's root-`$ref` path should absorb a boolean definition, not crash or drop it."""
+
+    schema = {'$ref': '#/$defs/X', '$defs': {'X': bool_def}}
+
+    result = OpenAIJsonSchemaTransformer(schema).walk()
+
+    if bool_def:
+        assert result == {'$defs': {'X': True}}
+    else:
+        assert result == {'not': {}, '$defs': {'X': False}}
 
 
 def test_allof_members_are_recursed():

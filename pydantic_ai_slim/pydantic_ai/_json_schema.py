@@ -14,6 +14,11 @@ JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
 
 
+def bool_schema_to_dict(node: bool) -> JsonSchema:
+    """The dict form of a boolean schema node: `true` is `{}`, `false` is `{'not': {}}` (draft 2020-12 §4.3.2)."""
+    return {} if node else {'not': {}}
+
+
 def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
     """The schema object a local JSON-pointer `$ref` (RFC 6901) like `#/properties/from` points at, if any.
 
@@ -88,7 +93,7 @@ class JsonSchemaTransformer(ABC):
         self.prefer_inlined_defs = prefer_inlined_defs
         self.simplify_nullable_unions = simplify_nullable_unions
 
-        self.defs: dict[str, JsonSchema] = deepcopy(self.schema.get('$defs', {}))
+        self.defs: dict[str, _JsonSchemaNode] = deepcopy(self.schema.get('$defs', {}))
         self.refs_stack: list[str] = []
         self.recursive_refs = set[str]()
         self._walked_defs: dict[str, JsonSchema] = {}
@@ -196,6 +201,10 @@ class JsonSchemaTransformer(ABC):
             def_schema = resolve_json_pointer(self.schema, key)
         if def_schema is None:
             raise UserError(f'Could not find $ref definition for {key}')
+        if isinstance(def_schema, bool):
+            # A boolean definition is a valid schema node; merge its dict form so `$ref` sibling
+            # keywords combine with it.
+            def_schema = bool_schema_to_dict(def_schema)
 
         self.refs_stack.append(key)
         walked = self._handle({**deepcopy(def_schema), **siblings})
