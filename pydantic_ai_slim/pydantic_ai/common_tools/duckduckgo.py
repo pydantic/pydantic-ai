@@ -11,8 +11,10 @@ from pydantic_ai.tools import Tool
 try:
     try:
         from ddgs.ddgs import DDGS
+        from ddgs.exceptions import DDGSException
     except ImportError:  # Fallback for the legacy `duckduckgo_search` package, which `ddgs` was renamed from.
         from duckduckgo_search import DDGS
+        from duckduckgo_search.exceptions import DuckDuckGoSearchException as DDGSException
 except ImportError as _import_error:
     raise ImportError(
         'Please install `ddgs` to use the DuckDuckGo search tool, '
@@ -55,10 +57,19 @@ class DuckDuckGoSearchTool:
             query: The query to search for.
 
         Returns:
-            The search results.
+            The search results. Empty when the search finds nothing.
         """
         search = functools.partial(self.client.text, max_results=self.max_results)
-        results = await anyio.to_thread.run_sync(search, query)
+        try:
+            results = await anyio.to_thread.run_sync(search, query)
+        except DDGSException as exc:
+            # `ddgs` raises a bare `DDGSException('No results found.')` when every backend returns
+            # zero hits. That's an empty outcome, not a failure: the declared return type is a list,
+            # an empty client response already flows through as `[]`, and retrying cannot produce
+            # results. Any other message (backend errors, rate limits) keeps propagating.
+            if str(exc) != 'No results found.':
+                raise
+            results = []
         return duckduckgo_ta.validate_python(results)
 
 
