@@ -25,9 +25,17 @@ def event_ctx(ctx: RunContext[AgentDepsT], capability: str) -> RunContext[AgentD
     tools = ctx.tool_manager.tools if ctx.tool_manager is not None else None
     if ctx.tool_name is not None and tools is not None and ctx._capability is None:  # pyright: ignore[reportPrivateUsage]
         # The test core's `emit` applies: the running tool must be stamped with one of this run's
-        # capabilities. A bare toolset's tools are not, nor are renamed ones, which core looks up
-        # under their original name.
+        # capabilities. A bare toolset's tools are not. Tools renamed by `PrefixTools` — a documented
+        # transparent wrapper — belong to an active capability, but the running tool's ctx carries the
+        # original name (`PrefixedToolset.call_tool` restores it) while the tool table is keyed by the
+        # prefixed name, so resolve the rename before refusing.
         tool = tools.get(ctx.tool_name)
+        if tool is None:
+            for candidate in tools.values():
+                prefix = getattr(candidate.toolset, 'prefix', None)
+                if isinstance(prefix, str) and candidate.tool_def.name == f'{prefix}_{ctx.tool_name}':
+                    tool = candidate
+                    break
         if tool is None or tool.tool_def.capability_id not in ctx.capabilities:
             raise UserError(
                 f'The `{ctx.tool_name}` tool emits capability events, which Pydantic AI accepts only from '

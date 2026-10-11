@@ -413,6 +413,35 @@ class TestFileSystemEvents:
 
         assert not any(isinstance(event, (FileReadEvent, DirectoryListedEvent, FileWrittenEvent)) for event in events)
 
+    async def test_events_reach_the_stream_when_tools_are_prefixed(self, tmp_path: Path) -> None:
+        """`FileSystem().prefix_tools('wiki')` is a documented transparent wrapper; its events flow (#9879)."""
+        content = 'wiki\n'
+        (tmp_path / 'index.md').write_text(content)
+        events: list[AgentStreamEvent] = []
+
+        async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                events.append(event)
+
+        capability = FileSystem[None](root_dir=tmp_path, id='file_system').prefix_tools('wiki')
+        agent = Agent(
+            _tool_model('wiki_read_file', '{"path":"index.md"}'),
+            deps_type=type(None),
+            capabilities=[capability],
+        )
+        await agent.run('go', event_stream_handler=handler, workspace=LocalWorkspaceBackend(tmp_path))
+
+        assert [event for event in events if isinstance(event, FileReadEvent)] == [
+            FileReadEvent(
+                path='index.md',
+                root_dir=_root(tmp_path),
+                content_hash=_hash(content),
+                capability_id='file_system',
+                tool_call_id='call_1',
+                tool_name='read_file',
+            )
+        ]
+
 
 class TestFileChangeRequests:
     @pytest.mark.parametrize(

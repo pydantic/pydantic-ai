@@ -796,7 +796,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 (run_id for run_id, cap in self.capabilities.items() if cap is capability), capability.id
             )
         elif self.tool_name is not None and self.tool_manager is not None and self.tool_manager.tools is not None:
-            if (tool := self.tool_manager.tools.get(self.tool_name)) is not None:
+            tool = self.tool_manager.tools.get(self.tool_name)
+            if tool is None:
+                # `PrefixTools` keys the tool table by the prefixed name while the running tool's ctx
+                # carries the original name (`PrefixedToolset.call_tool` restores it): resolve the
+                # rename so the documented transparent wrapper doesn't drop capability events.
+                for candidate in self.tool_manager.tools.values():
+                    prefix = getattr(candidate.toolset, 'prefix', None)
+                    if isinstance(prefix, str) and candidate.tool_def.name == f'{prefix}_{self.tool_name}':
+                        tool = candidate
+                        break
+            if tool is not None:
                 # `CapabilityOwnedToolset` stamps the owning capability's run id on the tool definition,
                 # covering capabilities that rely on an implicit (derived) id as well as explicit ones.
                 tool_capability_id = tool.tool_def.capability_id
