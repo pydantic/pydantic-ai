@@ -614,16 +614,14 @@ def test_openai_codex_gpt_5_6():
             'openai_responses_supports_reasoning_mode': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_phase': True,
-            'openai_supports_prompt_cache_breakpoints': True,
             'openai_supports_minimal_reasoning_effort': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
             'tool_addition_mode': 'with_definitions',
             'openai_unsupported_model_settings': ('max_tokens', 'temperature', 'top_p'),
-            'default_cache_retention': timedelta(seconds=1800),
-            'supports_cache': True,
-            'supported_cache_retentions': ('30m',),
+            'supports_cache': False,
+            'supported_cache_retentions': (),
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,

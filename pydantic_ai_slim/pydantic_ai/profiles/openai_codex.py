@@ -25,7 +25,15 @@ def openai_codex_model_profile(model_name: str) -> ModelProfile:
             openai_responses_requires_streaming=True,
             openai_responses_requires_store_false=True,
             openai_supports_input_token_counting=False,
-            # Not verified against the Codex backend, which rejects fields the standard endpoint accepts.
+            # Not verified against the Codex backend, which rejects fields the standard endpoint accepts:
+            # explicit prompt caching is rejected with a 400 (#10102), so un-claim it. Clearing the breakpoint
+            # flag makes every explicit-cache surface (`cache`, `CachePoint`, `openai_cache_instructions`) a
+            # silent no-op; also clear the cache fields `OpenAIProvider.model_profile` derives from the flag,
+            # so the merged Codex profile claims no explicit cache support at all.
+            openai_supports_prompt_cache_breakpoints=False,
             openai_responses_supports_prompt_cache_diagnostics=False,
+            supports_cache=False,
+            supported_cache_retentions=(),
+            default_cache_retention=None,
         ),
     )

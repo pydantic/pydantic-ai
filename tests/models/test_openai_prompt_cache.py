@@ -71,10 +71,12 @@ with try_import() as imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
     )
+    from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_codex import OpenAICodexProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 pytestmark = [
@@ -2472,3 +2474,110 @@ async def test_openai_responses_unified_cache_stable_prefix_only_keeps_tool_resu
             'output': [{'type': 'input_text', 'text': 'result 1', 'prompt_cache_breakpoint': {'mode': 'explicit'}}],
         }
     )
+
+
+# Codex models unclaim explicit cache support (#10102): every explicit-cache surface is a silent no-op.
+
+
+def _codex_ok_stream() -> list[resp.ResponseStreamEvent]:
+    """A minimal completed Responses stream ending in a single 'done' text message."""
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-6.1-sol',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    response_usage = ResponseUsage(
+        input_tokens=2006,
+        input_tokens_details=InputTokensDetails(cached_tokens=1920, cache_write_tokens=64),
+        output_tokens=300,
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=10),
+        total_tokens=2306,
+    )
+    return [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001',
+                content=[],
+                role='assistant',
+                status='in_progress',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseTextDeltaEvent(
+            item_id='msg_001',
+            output_index=0,
+            content_index=0,
+            delta='done',
+            logprobs=[],
+            type='response.output_text.delta',
+            sequence_number=2,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed', 'usage': response_usage}),
+            type='response.completed',
+            sequence_number=3,
+        ),
+    ]
+
+
+@pytest.mark.parametrize('model_name', ['gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-astra', 'gpt-6-luna'])
+async def test_codex_unified_cache_setting_is_noop(model_name: str, allow_model_requests: None) -> None:
+    """`cache=True` emits no cache fields on Codex models; the implicit session affinity still rides along."""
+    mock_client = MockOpenAIResponses.create_mock_stream(_codex_ok_stream())
+    model = OpenAICodexModel(model_name, provider=OpenAICodexProvider(openai_client=mock_client))
+    history: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart('Earlier: order 1234.')], conversation_id='conv_123')
+    ]
+    await model.request(history, OpenAIResponsesModelSettings(cache=True), ModelRequestParameters())
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert 'prompt_cache_options' not in request
+    assert request['prompt_cache_key'] == 'conv_123'
+    assert request['extra_headers']['session-id'] == 'conv_123'
+    assert request['extra_headers']['thread-id'] == 'conv_123'
+    assert request['extra_headers']['x-client-request-id'] == 'conv_123'
+
+
+async def test_codex_cache_point_is_filtered(allow_model_requests: None) -> None:
+    """A trailing `CachePoint` adds no `prompt_cache_breakpoint` on Codex models."""
+    mock_client = MockOpenAIResponses.create_mock_stream(_codex_ok_stream())
+    model = OpenAICodexModel('gpt-6.1-sol', provider=OpenAICodexProvider(openai_client=mock_client))
+    agent = Agent(model)
+    result = await agent.run(['I like ', CachePoint(), ' pizza.'])
+    assert result.output == 'done'
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert 'prompt_cache_breakpoint' not in repr(request)
+    assert 'pizza' in repr(request['input'])
+
+
+async def test_codex_openai_cache_instructions_is_noop(allow_model_requests: None) -> None:
+    """`openai_cache_instructions` adds no breakpoint to the instructions on Codex models."""
+    mock_client = MockOpenAIResponses.create_mock_stream(_codex_ok_stream())
+    model = OpenAICodexModel('gpt-6.1-sol', provider=OpenAICodexProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        instructions='Support policies.',
+        model_settings=OpenAIResponsesModelSettings(openai_cache_instructions=True),
+    )
+    await agent.run('Where is order 1234?')
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['instructions'] == 'Support policies.'
+    assert 'prompt_cache_breakpoint' not in repr(request)
+
+
+async def test_first_party_openai_gpt6_still_sends_cache_params(allow_model_requests: None) -> None:
+    """Guard against over-clearing: first-party GPT-6 models still send `prompt_cache_options` for `cache=True`."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-6.1-sol', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model, instructions='Support policies.', model_settings=OpenAIResponsesModelSettings(cache=True))
+    await agent.run('hello')
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}

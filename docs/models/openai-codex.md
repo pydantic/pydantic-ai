@@ -141,3 +141,4 @@ To mirror the official Codex client's prompt-cache affinity, [`OpenAICodexModel`
 - The backend requires `store=false`, so every request is sent with it and an explicit `openai_store=True` is silently overridden: responses are never persisted server-side. Consequently, resuming a suspended run raises [`UserError`][pydantic_ai.exceptions.UserError], since there is no stored response to continue from.
 - `count_tokens()` raises [`UserError`][pydantic_ai.exceptions.UserError]: the input-tokens endpoint is not served under subscription auth.
 - There is no device flow: the browser login above is the only login flow the Codex client supports.
+- Explicit prompt caching has no effect: the Codex backend rejects the cache request fields, so `cache`, `CachePoint`, and `openai_cache_instructions` are silently skipped. Prompt caching stays implicit via the session identity described above.
