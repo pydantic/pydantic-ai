@@ -9,9 +9,11 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import models
 from pydantic_ai._utils import is_model_like
+from pydantic_ai.embeddings import EmbeddingModel
 from pydantic_ai.settings import ModelSettings
 
 from ..otel.span_tree import SpanQuery
+from ._similarity import StringSimilarityMetric, cosine_similarity, string_similarity
 from .agentic import ArgumentCorrectness, MaxModelRequests, MaxToolCalls, ToolCorrectness, TrajectoryMatch
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationScalar, Evaluator, EvaluatorOutput
@@ -26,6 +28,8 @@ __all__ = (
     'GEval',
     'HasMatchingSpan',
     'OutputConfig',
+    'StringSimilarity',
+    'EmbeddingSimilarity',
 )
 
 
@@ -380,6 +384,52 @@ class HasMatchingSpan(Evaluator[object, object, object]):
         return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
 
 
+@dataclass(repr=False)
+class StringSimilarity(Evaluator[object, object, object]):
+    """Check that the output is similar to the expected output under a deterministic string metric.
+
+    The score must reach `threshold` (0-1). Two stdlib metrics are available: `levenshtein` (normalized edit
+    distance) and `jaro_winkler` (which boosts strings sharing a prefix). Part of the #6526 similarity slice.
+    """
+
+    metric: StringSimilarityMetric = 'levenshtein'
+    threshold: float = 0.9
+    evaluation_name: str | None = field(default=None)
+
+    def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> dict[str, bool]:
+        if ctx.expected_output is None:
+            return {}
+        score = string_similarity(self.metric, str(ctx.output), str(ctx.expected_output))
+        return {self.metric: score >= self.threshold}
+
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
+
+
+@dataclass(repr=False)
+class EmbeddingSimilarity(Evaluator[object, object, object]):
+    """Check that the output and the expected output embed to vectors with cosine similarity >= `threshold`.
+
+    Uses any [`EmbeddingModel`][pydantic_ai.embeddings.EmbeddingModel], so the comparison is semantic rather
+    than lexical; the embedder is called once per evaluation with both texts. Part of the #6526 similarity
+    slice.
+    """
+
+    embedder: EmbeddingModel
+    threshold: float = 0.85
+    evaluation_name: str | None = field(default=None)
+
+    async def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> dict[str, bool]:
+        if ctx.expected_output is None:
+            return {}
+        result = await self.embedder.embed([str(ctx.output), str(ctx.expected_output)], input_type='document')
+        score = cosine_similarity(*result.embeddings[:2])
+        return {'cosine': score >= self.threshold}
+
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
+
+
 DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     Equals,
     EqualsExpected,
@@ -394,6 +444,8 @@ DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     MaxToolCalls,
     MaxModelRequests,
     GEval,
+    StringSimilarity,
+    EmbeddingSimilarity,
 )
 
 

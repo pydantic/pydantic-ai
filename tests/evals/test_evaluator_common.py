@@ -20,6 +20,7 @@ with try_import() as imports_successful:
     from pydantic_evals.evaluators.common import (
         DEFAULT_EVALUATORS,
         Contains,
+        EmbeddingSimilarity,
         Equals,
         EqualsExpected,
         GEval,
@@ -28,6 +29,7 @@ with try_import() as imports_successful:
         LLMJudge,
         MaxDuration,
         OutputConfig,
+        StringSimilarity,
     )
     from pydantic_evals.evaluators.llm_as_a_judge import (
         _GEvalResult,  # pyright: ignore[reportPrivateUsage]
@@ -628,3 +630,70 @@ def test_g_eval_model_instance_serialized_as_string():
     # A string model name is already serializable and passes through unchanged.
     evaluator = GEval(criteria='coherence', evaluation_steps=['step'], model='openai:gpt-5.2')
     assert evaluator.build_serialization_arguments()['model'] == 'openai:gpt-5.2'
+
+
+async def test_string_similarity_metrics():
+    """Known values for the two stdlib similarity metrics."""
+    from pydantic_evals.evaluators._similarity import jaro_winkler, levenshtein_ratio
+
+    assert levenshtein_ratio('identical', 'identical') == 1.0
+    assert levenshtein_ratio('abc', '') == 0.0
+    # 3 edits over a max length of 7.
+    assert levenshtein_ratio('kitten', 'sitting') == pytest.approx(4 / 7)
+
+    assert jaro_winkler('MARTHA', 'MARHTA') == pytest.approx(0.9611, abs=1e-4)
+    assert jaro_winkler('DIXON', 'DICKSONX') == pytest.approx(0.8133, abs=1e-4)
+    assert jaro_winkler('abc', '') == 0.0
+
+
+async def test_string_similarity_evaluator():
+    """StringSimilarity passes when the metric reaches the threshold."""
+    evaluator = StringSimilarity(metric='levenshtein', threshold=0.9)
+    assert evaluator.evaluate(MockContext(output='hello world', expected_output='hello word')) == {'levenshtein': True}
+    assert evaluator.evaluate(MockContext(output='hello world', expected_output='goodbye moon')) == {
+        'levenshtein': False
+    }
+
+    jw = StringSimilarity(metric='jaro_winkler', threshold=0.95)
+    assert jw.evaluate(MockContext(output='MARTHA', expected_output='MARHTA')) == {'jaro_winkler': True}
+
+    # No expected output: nothing to compare, like EqualsExpected.
+    assert evaluator.evaluate(MockContext(output='hello world')) == {}
+
+
+async def test_embedding_similarity_evaluator():
+    """EmbeddingSimilarity compares the two embeddings' cosine similarity against the threshold."""
+    from pydantic_ai.embeddings import EmbeddingModel, EmbeddingResult
+
+    class FakeEmbedder(EmbeddingModel):
+        """Returns fixed vectors keyed by input text, so similarity is controlled per test."""
+
+        def __init__(self, vectors: dict[str, list[float]]):
+            self.vectors = vectors
+
+        @property
+        def model_name(self) -> str:
+            return 'fake'
+
+        @property
+        def system(self) -> str:
+            return 'fake'
+
+        async def embed(self, inputs, *, input_type, settings=None):
+            return EmbeddingResult(
+                embeddings=[self.vectors[str(text)] for text in inputs],
+                inputs=list(inputs),
+                input_type=input_type,
+                model_name='fake',
+                provider_name='fake',
+            )
+
+    same_direction = FakeEmbedder({'a': [1.0, 0.0], 'b': [2.0, 0.0]})
+    evaluator = EmbeddingSimilarity(embedder=same_direction, threshold=0.9)
+    assert await evaluator.evaluate(MockContext(output='a', expected_output='b')) == {'cosine': True}
+
+    orthogonal = FakeEmbedder({'a': [1.0, 0.0], 'b': [0.0, 1.0]})
+    evaluator = EmbeddingSimilarity(embedder=orthogonal, threshold=0.9)
+    assert await evaluator.evaluate(MockContext(output='a', expected_output='b')) == {'cosine': False}
+
+    assert await evaluator.evaluate(MockContext(output='a')) == {}

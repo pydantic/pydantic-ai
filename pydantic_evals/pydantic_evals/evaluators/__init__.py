@@ -10,6 +10,7 @@ from .agentic import (
 )
 from .common import (
     Contains,
+    EmbeddingSimilarity,
     Equals,
     EqualsExpected,
     GEval,
@@ -18,6 +19,7 @@ from .common import (
     LLMJudge,
     MaxDuration,
     OutputConfig,
+    StringSimilarity,
 )
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationResult, Evaluator, EvaluatorFailure, EvaluatorOutput, EvaluatorSpec
@@ -40,6 +42,8 @@ __all__ = (
     'GEval',
     'HasMatchingSpan',
     'OutputConfig',
+    'StringSimilarity',
+    'EmbeddingSimilarity',
     # agentic
     'ToolCorrectness',
     'TrajectoryMatch',
