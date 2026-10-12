@@ -66,6 +66,12 @@ def test_zai_provider_pass_openai_client() -> None:
     assert provider.client == openai_client
 
 
+def test_zai_provider_openai_client_base_url() -> None:
+    openai_client = AsyncOpenAI(api_key='api-key', base_url='https://api.z.ai/api/coding/paas/v4/')
+    provider = ZaiProvider(openai_client=openai_client)
+    assert provider.base_url == 'https://api.z.ai/api/coding/paas/v4/'
+
+
 def test_zai_provider_openai_client_and_base_url_are_exclusive() -> None:
     openai_client = AsyncOpenAI(api_key='api-key')
     with pytest.raises(UserError, match='Cannot provide both `openai_client` and `base_url`'):
