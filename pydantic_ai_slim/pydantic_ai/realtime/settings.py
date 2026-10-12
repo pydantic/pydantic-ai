@@ -28,6 +28,10 @@ does not report speech-end boundaries, so its user part contains everything sent
 response completed through the current response completion, including silence sent while the model
 is responding. Retention records the microphone stream only; it does not mix the model's output audio
 into the user's part unless that output is present in the microphone input itself.
+
+How much retained audio a session keeps is bounded by `retain_audio_max_seconds` on
+[`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session]; the oldest is evicted first, keeping
+its transcript.
 """
 
 
@@ -74,8 +78,10 @@ class RealtimeModelSettings(TypedDict, total=False):
     parallel_tool_calls: bool
     """Whether to allow parallel tool calls.
 
-    Supported by: OpenAI, Azure OpenAI, and OpenAI GPT-Live, where it applies to the delegated backend
-    unless `openai_live_delegation` sets its own `parallel_tool_calls`. xAI accepts it but ignores it.
+    Supported by: OpenAI, Azure OpenAI, Azure AI Voice Live (where `True` leaves the model's default,
+    since some models can't call tools in parallel), and OpenAI GPT-Live, where it applies to the
+    delegated backend unless `openai_live_delegation` sets its own `parallel_tool_calls`. xAI accepts it
+    but ignores it.
     """
 
     async_tool_calls: bool | None
@@ -194,9 +200,9 @@ class RealtimeModelSettings(TypedDict, total=False):
     [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from iteration.
 
     What server-side state survives a reconnect depends on the provider (see
-    [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy]). Setting a policy enables native
-    session resumption on the providers that offer it: xAI always, and Gemini unless
-    `google_enable_session_resumption=False` is set explicitly — that combination raises
+    [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy]). Setting a policy enables Gemini's
+    native session resumption unless `google_enable_session_resumption=False` is set explicitly — that
+    combination raises
     [`UserError`][pydantic_ai.exceptions.UserError] at connect time, since a re-dial without
     resumption would lose the conversation.
 
@@ -239,10 +245,10 @@ class ReconnectPolicy(TypedDict, total=False):
     On a dropped connection the session is re-dialed and its configuration (instructions, tools,
     voice, ...) re-applied, emitting a
     [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] event. What server-side state
-    survives depends on the provider: OpenAI Realtime and Azure OpenAI keep no server state across
-    connections, so the session replays its finalized message history into the new one (prior turns
-    survive; buffered input audio and a reply in flight do not), while Gemini Live and xAI restore prior
-    turns through native session resumption, enabled automatically whenever a reconnect policy is set
+    survives depends on the provider: OpenAI Realtime, Azure OpenAI and xAI Grok Voice have the session
+    replay its finalized message history into the new connection (prior turns survive; buffered input
+    audio and a reply in flight do not), while Gemini Live restores prior turns through native session
+    resumption, enabled automatically whenever a reconnect policy is set
     (Gemini honors an explicit `google_enable_session_resumption=False` opt-out by refusing the
     combination with a [`UserError`][pydantic_ai.exceptions.UserError]).
     """

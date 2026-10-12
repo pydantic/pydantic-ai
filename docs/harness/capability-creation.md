@@ -85,6 +85,17 @@ Authored capabilities persist to disk: each is one `<directory>/<name>.py` file,
 
 Capability names must be lowercase letters, digits, and underscores, starting with a letter. Reusing a name replaces the previous capability of that name. A code that imports but fails validation is still written to disk (so it can be inspected) and recorded with its `last_error` set; `load_active()` skips it.
 
+## Durable execution
+
+Under [durable execution](durable-execution.md), each authoring, listing, and disabling
+call to the store is recorded, so a recovered run reuses the result instead of
+writing the authored module and manifest again. Temporal and Prefect record
+each tool call in its own activity or task. DBOS runs function tools in
+workflow code, so there the store call runs as its own step.
+
+The records are named after the capability's `id`, which defaults to
+`capability_creation`, so durable execution needs no configuration.
+
 ## Trust boundary
 
 `CapabilityCreation` imports model-written Python into the agent's own process, on this

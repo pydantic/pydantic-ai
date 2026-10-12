@@ -7,7 +7,7 @@ from typing import Any, Literal, cast
 from prefect.context import FlowRunContext
 
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversation_id_from_run_id
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import (
     DurableOperationId,
@@ -114,11 +114,14 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         if context is None:
             return None
         assert context.flow_run is not None
-        key = 'pydantic_ai:workspace_run_id'
+        key = 'pydantic_ai:default_run_id'
         sequence = context.task_run_dynamic_keys.get(key, 0)
         assert isinstance(sequence, int)
         context.task_run_dynamic_keys[key] = sequence + 1
         return f'{context.flow_run.id}:{sequence}'
+
+    def _default_conversation_id(self, run_id: str) -> str | None:
+        return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
     def get_durable_operation_backend(self) -> DurableOperationBackend[TaskConfig]:
         def tool_config(

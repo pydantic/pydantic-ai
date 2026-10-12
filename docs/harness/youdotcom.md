@@ -191,10 +191,12 @@ and `research`. `finance_research` takes only its input and `finance_effort`.
 
 ## Multiple instances
 
-Two instances of the same capability register the same tool names, which is an
+Two instances of the same capability register the same tool names, and share
+the default `id` (`you_search` or `you_research`), so two that differ raise an
 error. To run more than one setup in a single agent -- say one `YouSearch` over
-the open web and one limited to a few domains -- wrap the extra ones in core's
-`PrefixTools` capability. It puts a prefix in front of their tool names:
+the open web and one limited to a few domains -- give each extra one a distinct
+`id` and wrap it in core's `PrefixTools` capability. It puts a prefix in front
+of their tool names:
 
 ```python
 from pydantic_ai import Agent
@@ -207,7 +209,7 @@ agent = Agent(
     capabilities=[
         YouSearch(),  # web_search, get_page
         PrefixTools(
-            wrapped=YouSearch(include_domains=['sec.gov'], guidance=''),
+            wrapped=YouSearch(include_domains=['sec.gov'], guidance='', id='sec_search'),
             prefix='sec',
         ),  # sec_web_search, sec_get_page
     ],
@@ -217,6 +219,25 @@ agent = Agent(
 Set `guidance=''` on the wrapped instance (or replace it with text that tells
 the model when to use the prefixed tools), since each instance otherwise
 contributes the same default research guidance.
+
+## Durable execution
+
+Under [durable execution](durable-execution.md), each You.com request is recorded, so a
+recovered run reuses the result instead of making the request again. Temporal
+and Prefect record each tool call in its own activity or task. DBOS runs
+function tools in workflow code, so there the request runs as its own step.
+
+On Temporal an activity has 60 seconds by default, which `research` can
+exceed: it waits up to `timeout_ms`, 600 seconds by default. Give the tool calls
+longer with
+`TemporalDurability(toolset_activity_config={'you_research': ActivityConfig(...)})`,
+keyed by the capability's `id`,
+as in [Temporal timeouts](durable-execution.md#temporal-timeouts).
+
+The records are named after the capability's `id`, which defaults to
+`you_search` for `YouSearch` and `you_research` for `YouResearch`, so durable
+execution needs no configuration. Changing an `id` renames the records, which
+in-flight runs then cannot find.
 
 ## Custom client
 
