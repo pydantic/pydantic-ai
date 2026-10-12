@@ -1,10 +1,13 @@
 """The Coder folder list and local directory browser, run on the menu worker."""
 
+from __future__ import annotations
+
+import re
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from sqlite3 import Error as SQLiteError
-from typing import Generic, Literal
+from typing import TYPE_CHECKING, Generic, Literal
 
 from rich.console import Console
 from rich.text import Text
@@ -14,7 +17,6 @@ from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.terminal import terminal_size
 from termflow.tui.textinput import TextInput
 
-from pydantic_clai2.builtin_plugins.coder import CoderSettings, CoderSource, is_folder_name
 from pydantic_clai2.plugins import DepsT
 from pydantic_clai2.ui.menus.field_menu import (
     TERMINAL,
@@ -27,6 +29,21 @@ from pydantic_clai2.ui.menus.field_menu import (
 )
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.rendering._rendering import markdown_style
+
+if TYPE_CHECKING:
+    from pydantic_clai2.builtin_plugins.coder import CoderSource
+
+_FOLDER_NAME = re.compile(r'[A-Za-z0-9_-]+')
+
+
+def is_folder_name(value: str) -> bool:
+    """Whether an entry expands to project and home folders rather than a single path."""
+    return _FOLDER_NAME.fullmatch(value) is not None
+
+
+def is_project_relative(value: str) -> bool:
+    """Whether a path entry resolves against whichever project CLAI runs in, rather than one fixed place."""
+    return not value.startswith('~') and not Path(value).is_absolute()
 
 
 def _display(text: str) -> str:
@@ -136,7 +153,8 @@ class DirectoryPicker:
                     (f'{problem or self.error}\n\n' if problem or self.error else '')
                     + f'Current directory\n{self.current}\n\n'
                     + (f'Open\n{item.value}' if isinstance(item.value, Path) else item.label)
-                    + '\n\nEnter opens a folder; Use this directory selects it. Esc returns without changing settings.'
+                    + '\n\nEnter opens a folder; Use this directory saves its absolute path, '
+                    'the same in every project. Esc returns without changing settings.'
                 )
             )
             .on_key('left', lambda _menu, _item: MenuResult(item=MenuItem('', value=self.current.parent)))
@@ -203,7 +221,7 @@ class FolderMenu(Generic[DepsT]):
         self.notice = ''
 
     def folders(self) -> list[str]:
-        return self.source.host.settings(CoderSettings).agent_folders
+        return self.source.agent_folders()
 
     def details(self, item: MenuItem) -> str:
         return _preview((f'{self.notice}\n\n' if self.notice else '') + self._details(item))
@@ -213,22 +231,28 @@ class FolderMenu(Generic[DepsT]):
             return 'Changes are already saved. Return to Coder settings.'
         if isinstance(item.value, int):
             value = self.folders()[item.value]
-            paths = CoderSettings(agent_folders=[value]).folders(home=Path.home())
             if is_folder_name(value):
-                details = f'Folder name: {value}\n\nProject, then home:\n' + '\n'.join(paths)
+                details = f'Folder name: {value}\n\nProject, then home:\n' + '\n'.join(self.source.expand_folder(value))
                 details += '\n\nMissing named locations are skipped.'
             else:
                 try:
                     path = self.path(value)
-                    details = f'Directory path\n{value}\n\nResolved location\n{path}\n\n'
-                    details += _directory_problem(path) or 'Directory is readable.'
+                    problem = _directory_problem(path)
                 except (OSError, RuntimeError, ValueError) as exc:
-                    details = f'{value}\n\nCannot open directory: {exc}'
+                    return f'{value}\n\nCannot open directory: {exc}'
+                if is_project_relative(value):
+                    details = f'Relative path\n{value}\n\nIn this project\n{path}\n\n'
+                    details += f'{problem} Skipped in this project.' if problem else 'Directory is readable.'
+                    details += '\n\nResolved against each project CLAI runs in.'
+                else:
+                    details = f'Directory path\n{value}\n\nResolved location\n{path}\n\n'
+                    details += problem or 'Directory is readable.'
             return details
         return (
             'Load sub-agent definitions (*.md and *.toml), not files for code search.\n\n'
             'Add a directory path, browse local directories, or add a folder name such as agents or global. '
-            'Names search .agents, .claude and .codex in the project and home.\n\n'
+            'Names search .agents, .claude and .codex in the project and home. '
+            'Relative paths resolve in each project; absolute and ~ paths are the same everywhere.\n\n'
             'Changes save immediately. Removing an entry never deletes files.'
         )
 
@@ -244,7 +268,7 @@ class FolderMenu(Generic[DepsT]):
         ]
         if not folders:
             items.append(MenuItem('No folders selected. Disk agents are off.', disabled=True))
-        if not self.source.host.settings(CoderSettings).sub_agents:
+        if not self.source.sub_agents_enabled():
             items.append(MenuItem('Sub-agents are disabled in Coder settings.', disabled=True))
         items += [
             MenuItem('+ Add directory path...', value=FolderAction(kind='path')),
@@ -310,16 +334,14 @@ class FolderMenu(Generic[DepsT]):
                     continue
                 try:
                     other = existing if is_folder_name(existing) else self.path(existing)
-                    duplicate = (
-                        candidate.samefile(other)
-                        if isinstance(candidate, Path) and isinstance(other, Path)
-                        else candidate == other
-                    )
                 except (OSError, RuntimeError, ValueError):
                     continue
-                if duplicate:
+                if candidate == other or (
+                    isinstance(candidate, Path) and isinstance(other, Path) and _same_directory(candidate, other)
+                ):
                     return 'This folder is already in the list.'
-            if not named:
+            # A relative path may exist only in other projects, so only fixed locations must exist now.
+            if not named and not is_project_relative(value):
                 return _directory_problem(self.path(value))
         except (OSError, RuntimeError, ValueError) as exc:
             return f'Invalid directory: {exc}'
@@ -334,7 +356,7 @@ class FolderMenu(Generic[DepsT]):
             .style(markdown_style())
             .prompt('Name: ' if named else 'Path: ')
             .initial(_safe_initial(self.folders()[index]) if index is not None else '')
-            .placeholder('agents or global' if named else './team-agents or ~/my-agents (relative to project)')
+            .placeholder('agents or global' if named else './team-agents (in each project) or ~/my-agents')
             .validator(lambda text: self.problem(text, named=named, index=index))
             .footer_hint('Enter save | Esc cancel | Empty never removes')
             .key_source(menu_key)
@@ -406,6 +428,13 @@ class FolderMenu(Generic[DepsT]):
             self.notice = problem
             return None
         return value
+
+
+def _same_directory(first: Path, second: Path) -> bool:
+    try:
+        return first.samefile(second)
+    except OSError:
+        return False
 
 
 def run_coder_flow(source: CoderSource[DepsT], *, runners: Runners = TERMINAL) -> list[str]:

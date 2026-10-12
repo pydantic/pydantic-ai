@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Generic
@@ -21,17 +20,12 @@ from pydantic import (
 
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.coder import Coder
+from pydantic_clai2.builtin_plugins.coder_folders import is_folder_name, run_coder_flow
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost
 from pydantic_clai2.ui.menus.field_menu import FieldRow, first_error
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 
-_FOLDER_NAME = re.compile(r'[A-Za-z0-9_-]+')
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
-
-
-def is_folder_name(value: str) -> bool:
-    """Whether an entry expands to project and home folders rather than a single path."""
-    return _FOLDER_NAME.fullmatch(value) is not None
 
 
 class CoderSettings(BaseModel):
@@ -139,6 +133,16 @@ class CoderSource(Generic[DepsT]):
     def _updated(self, row: FieldRow, raw: str) -> CoderSettings:
         return self._with(row.key, _JSON.validate_json(raw))
 
+    def agent_folders(self) -> list[str]:
+        return self.host.settings(CoderSettings).agent_folders
+
+    def sub_agents_enabled(self) -> bool:
+        return self.host.settings(CoderSettings).sub_agents
+
+    def expand_folder(self, value: str) -> list[str]:
+        """The locations one entry searches, in the order the Coder plugin passes them on."""
+        return CoderSettings(agent_folders=[value]).folders(home=Path.home())
+
     def save_agent_folders(self, folders: list[str]) -> None:
         """Persist the folder list, keeping every other Coder preference."""
         self.host.save_settings(self._with('agent_folders', list[JsonValue](folders)))
@@ -180,7 +184,5 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
     async def configure(self) -> str:
         if not self.host.console.is_terminal:
             return 'Configure Coder from a terminal: /plugins configure coder'
-        from .coder_folders import run_coder_flow
-
         messages = await run_worker(lambda: run_coder_flow(CoderSource(self.host)))
         return '\n'.join(messages) or 'No Coder settings changed.'

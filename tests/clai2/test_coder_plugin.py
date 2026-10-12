@@ -24,7 +24,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.subagents import SubAgents
-from pydantic_clai2.builtin_plugins import coder as coder_plugin, coder_folders
+from pydantic_clai2.builtin_plugins import coder as coder_plugin
 from pydantic_clai2.builtin_plugins.coder import CoderPlugin, CoderSettings, CoderSource
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
@@ -119,7 +119,7 @@ async def test_configure_runs_the_field_menu(monkeypatch: pytest.MonkeyPatch, me
         assert source.host is plugin.host
         return messages
 
-    monkeypatch.setattr(coder_folders, 'run_coder_flow', run_flow)
+    monkeypatch.setattr(coder_plugin, 'run_coder_flow', run_flow)
     monkeypatch.setattr(coder_plugin, 'run_worker', run_worker)
     assert await plugin.configure() == ('\n'.join(messages) or 'No Coder settings changed.')
 

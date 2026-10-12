@@ -170,8 +170,8 @@ def test_keyboard_add_edit_remove_and_empty_state(
         ('no/such/name', True, 'Use letters'),
         ('bad\x00path', False, 'control characters'),
         ('bad\x1bpath', False, 'control characters'),
-        ('./missing', False, 'does not exist'),
-        ('./file.txt', False, 'not a directory'),
+        ('~/missing', False, 'does not exist'),
+        ('~/file.txt', False, 'not a directory'),
         ('agents', True, 'already in the list'),
     ],
 )
@@ -179,7 +179,7 @@ def test_rejected_input_does_not_mutate_settings(
     folders: FolderMenu[object], text: str, named: bool, error: str, keyboard: Keyboard
 ) -> None:
     folders.source.apply(folders_row(folders), '["agents"]')
-    (folders.project / 'file.txt').write_text('not a directory')
+    (Path.home() / 'file.txt').write_text('not a directory')
     assert error in (folders.problem(text, named=named, index=None) or '')
     keyboard.press(['enter', 'escape'])
     editor = folders.editor(named=named, index=None)
@@ -205,6 +205,24 @@ def test_duplicate_aliases_and_editing_current_entry(folders: FolderMenu[object]
     assert folders.value(' shared ', named=False) == './shared'
     assert folders.value('~', named=False) == str(Path.home())
     assert folders.value('~/shared', named=False) == '~/shared'
+    # An entry whose location cannot be resolved never blocks others, and an unresolvable candidate is reported.
+    folders.source.host.save_settings(CoderSettings(agent_folders=['~nosuchuser-coder/agents']))
+    assert folders.problem('./shared', named=False, index=None) is None
+    assert 'Invalid directory' in (folders.problem('~nosuchuser-coder/other', named=False, index=None) or '')
+
+
+def test_relative_paths_are_saved_for_projects_that_have_them(folders: FolderMenu[object]) -> None:
+    script = Script(
+        lists=[pick(FolderAction(kind='path')), MenuResult(cancelled=True)], choices=[], texts=[typed('team-agents')]
+    )
+    assert folders.run(runners=script.runners) == ['Agent folder saved.']
+    assert folders.folders() == ['./team-agents']
+    assert folders.problem('./team-agents/', named=False, index=None) == 'This folder is already in the list.'
+    details = ' '.join(folders.details(MenuItem('', value=0)).split())
+    assert 'does not exist or is not a directory. Skipped in this project.' in details
+    assert 'Resolved against each project CLAI runs in.' in details
+    (folders.project / 'team-agents').mkdir()
+    assert 'Directory is readable.' in ' '.join(folders.details(MenuItem('', value=0)).split())
 
 
 def test_cancellation_at_each_level_keeps_saved_values(folders: FolderMenu[object], keyboard: Keyboard) -> None:
@@ -238,6 +256,7 @@ def test_browser_navigation_hidden_folders_and_empty_selection(folders: FolderMe
     keyboard.menu(picker.build())
     rendered = Text.from_ansi(keyboard.transcript).plain
     assert 'No subdirectories.' in rendered
+    assert 'absolute' in rendered
     assert 'ignored.txt' not in rendered
     keyboard.press([*'.agents', 'enter', 'enter'])
     assert DirectoryPicker(start=folders.project, project=folders.project).run(runners=keyboard.runners) == hidden
@@ -307,7 +326,7 @@ def test_browser_unreadable_directory_is_recoverable(
     rendered = Text.from_ansi(keyboard.transcript).plain
     assert 'Cannot read directory:' in rendered
     assert 'denied' in rendered
-    assert 'Cannot read directory' in (folders.problem('./', named=False, index=None) or '')
+    assert 'Cannot read directory' in (folders.problem(str(folders.project), named=False, index=None) or '')
 
 
 def test_previews_wrap_long_paths_and_escape_controls(
@@ -345,7 +364,7 @@ def test_symlink_loop_does_not_block_other_edits(folders: FolderMenu[object], ke
     loop = folders.project / 'loop'
     loop.symlink_to(loop, target_is_directory=True)
     folders.source.host.save_settings(CoderSettings(agent_folders=['./loop'], sub_agents=False))
-    assert folders.problem('./loop', named=False, index=None) is not None
+    assert folders.problem(str(loop), named=False, index=None) is not None
     details = ' '.join(folders.details(MenuItem('', value=0)).split())
     assert 'Cannot open directory' in details or 'not a directory' in details
     assert folders.problem('./home', named=False, index=None) is None
