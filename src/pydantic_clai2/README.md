@@ -511,7 +511,8 @@ and runs one turn through tools to completion. Only the final answer is printed
 to stdout, without Markdown rendering, wrapping, banners, thinking, or tool output.
 Errors go to stderr with a nonzero exit status; Ctrl-C exits with status 130.
 The turn is saved and can be resumed. With `-p`, `--resume` requires an explicit
-session ID; the browser cannot open. Prompt text is literal, not a slash command.
+session ID; the browser cannot open. `--session-id` and `--fork-session` work as
+interactively. Prompt text is literal, not a slash command.
 
 `-m` is the short form of `--model`. It overrides the saved, project, and
 `CLAI_MODEL` model for this invocation without changing your saved preference.
@@ -1065,13 +1066,13 @@ Older branches must receive this fix too. The minimum read-side backport is
 `model_settings_from_json`; keep the form itself strict. Also backport preservation
 of unknown keys on save and the shell's model-settings validation error handler.
 
-The editor offers OpenAI reasoning effort, Responses reasoning context, mode,
-summary, and verbosity, and Claude classic/adaptive thinking and effort.
+The editor offers OpenAI reasoning effort and verbosity, Responses reasoning
+context, mode, and summary, and Claude classic/adaptive thinking and effort.
 The editor hides generic request fields such as timeouts and penalties.
 Reasoning GPT models do not show sampling controls. Previously saved overrides
 remain visible so they can be reset. Choices depend on the model and API: Chat Completions does not get Responses
-controls. OpenRouter and vLLM GPT routes expose Chat Completions reasoning effort
-and service tier, not Responses-only controls. `all_turns` appears only on compatible models, and adaptive Claude
+controls. OpenRouter and vLLM GPT routes expose Chat Completions reasoning effort,
+verbosity, and service tier, not Responses-only controls. `all_turns` appears only on compatible models, and adaptive Claude
 models do not get a token budget. Classic thinking budgets must be at least
 1024 and below an explicit `max_tokens`. Without one, Pydantic AI
 leaves room for the answer beyond the budget. Other unset fields
@@ -1381,7 +1382,17 @@ to a fresh session ID; it does not delete the previous session.
 ```bash
 clai2 --resume                 # browse saved sessions
 clai2 --resume SESSION-ID      # restore one session
+clai2 --session-id UUID        # start a new session saved under this ID
+clai2 --resume SESSION-ID --fork-session [--session-id UUID]  # continue in a copy
 ```
+
+These flags take the same shapes as Claude Code's, so tools that drive several
+coding agents can manage CLAI sessions the same way. `--session-id` must be a UUID
+that no saved session uses yet; the session is saved under it with its first
+prompt. `--fork-session` copies the restored session to a new ID, the given
+`--session-id` or a random one, and continues there; the original stays as it was.
+With the browser (`--resume` without an ID), the selected session is copied.
+`--session-id` combines with `--resume` only together with `--fork-session`.
 
 Inside CLAI, `/resume` opens the same browser and `/resume SESSION-ID` restores a
 session directly. Opening or restoring a session does not call the coding model
