@@ -621,13 +621,17 @@ class UsageLimits:
                 )
             )
 
-    def check_tokens(self, usage: RunUsage, *, warn_if_usage_unavailable: bool = True) -> None:
+    def check_tokens(self, usage: RunUsage) -> None:
         """Raises a `UsageLimitExceeded` exception if the usage exceeds any of the token limits.
 
-        Args:
-            usage: The accumulated run usage to check.
-            warn_if_usage_unavailable: Whether to warn when some responses omitted usage information.
+        Warns with [`UsageLimitUnavailableWarning`][pydantic_ai.exceptions.UsageLimitUnavailableWarning] when some
+        responses omitted usage information and a token or cost limit is configured.
         """
+        self._check_token_limits(usage)
+        self._warn_if_usage_unavailable(usage)
+
+    def _check_token_limits(self, usage: RunUsage) -> None:
+        """Raise `UsageLimitExceeded` if the usage exceeds any of the token limits, without warning about omitted usage."""
         input_tokens = usage.input_tokens
         if self.input_tokens_limit is not None and input_tokens > self.input_tokens_limit:
             raise UsageLimitExceeded(f'Exceeded the input_tokens_limit of {self.input_tokens_limit} ({input_tokens=})')
@@ -641,9 +645,6 @@ class UsageLimits:
         total_tokens = usage.total_tokens
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
             raise UsageLimitExceeded(f'Exceeded the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})')
-
-        if warn_if_usage_unavailable:
-            self._warn_if_usage_unavailable(usage)
 
     def _warn_if_usage_unavailable(self, usage: RunUsage) -> None:
         if usage.unmeasured_requests and (self.has_token_limits() or self.cost_limit is not None):
