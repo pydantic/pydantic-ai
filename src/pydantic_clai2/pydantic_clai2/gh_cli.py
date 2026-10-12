@@ -62,6 +62,7 @@ def gh_token(hostname: str) -> str | None:
             [*_gh(), 'auth', 'token', '--hostname', hostname],
             capture_output=True,
             text=True,
+            encoding='utf-8',
             env=_environment(),
             stdin=subprocess.DEVNULL,
             check=False,
@@ -123,6 +124,7 @@ def start_login(hostname: str, *, stopping: Callable[[], bool] = lambda: False) 
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        encoding='utf-8',
         env=_environment(),
     )
     output: queue.Queue[str | None] = queue.Queue()
