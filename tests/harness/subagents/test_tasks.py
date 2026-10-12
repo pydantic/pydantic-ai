@@ -38,6 +38,7 @@ from pydantic_ai_harness.subagents import (
     SubAgent,
     SubAgents,
 )
+from tests.harness.conftest import CountingModel
 
 WAIT = 10
 
@@ -774,6 +775,97 @@ async def test_child_cost_budget_counts_from_the_spend_at_launch() -> None:
             await parent.run('go', conversation_id='root', usage=usage)
             (record,) = owner.records.values()
             assert record.outcome == 'ok'
+
+
+@pytest.mark.parametrize('contain_errors', [False, True])
+async def test_child_drops_inherited_token_counting_its_model_cannot_do(tmp_path: Path, contain_errors: bool) -> None:
+    # The fallback runs ahead of containment, so the child completes instead of becoming a contained crash.
+    owner = DelegationTasks(directory=tmp_path / 'tasks', step_store=FileStepStore(tmp_path / 'steps'))
+    child = Agent(TestModel(custom_output_text='evidence'), deps_type=object, name='worker')
+    usage = RunUsage()
+    async with owner.opened():
+        with owner.bind():
+            parent = Agent(
+                CountingModel(parent_model()),
+                capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None, contain_errors=contain_errors)],
+            )
+            result = await parent.run(
+                'go', conversation_id='root', usage=usage, usage_limits=UsageLimits(count_tokens_before_request=True)
+            )
+            assert result.output == 'parent finished'
+            assert usage.requests == 3
+            (record,) = owner.records.values()
+            assert record.outcome == 'ok'
+            prompts = [
+                part for message in record.messages for part in message.parts if isinstance(part, UserPromptPart)
+            ]
+            assert len(prompts) == 1
+
+
+async def test_child_counts_inherited_tokens_before_its_request_when_its_model_can() -> None:
+    owner = DelegationTasks()
+    child_model = TestModel(custom_output_text='evidence')
+    child = Agent(CountingModel(child_model, input_tokens=5_000), deps_type=object, name='worker')
+    async with owner.opened():
+        with owner.bind():
+            parent = Agent(
+                CountingModel(parent_model()),
+                capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)],
+            )
+            await parent.run(
+                'go',
+                conversation_id='root',
+                usage_limits=UsageLimits(count_tokens_before_request=True, per_request_input_tokens_limit=1_000),
+            )
+            (record,) = owner.records.values()
+            assert record.outcome == 'failed'
+            assert record.output.startswith('UsageLimitExceeded: ')
+            assert 'per_request_input_tokens_limit' in record.output
+    assert child_model.last_model_request_parameters is None
+
+
+async def test_child_is_not_rerun_after_a_request_when_it_raises_not_implemented() -> None:
+    owner = DelegationTasks()
+    child = Agent(CountingModel(TestModel()), deps_type=object, name='worker')
+    probes = 0
+
+    @child.tool_plain
+    def probe() -> str:
+        nonlocal probes
+        probes += 1
+        raise NotImplementedError('probe is not implemented')
+
+    async with owner.opened():
+        with owner.bind():
+            parent = Agent(
+                CountingModel(parent_model()),
+                capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)],
+            )
+            await parent.run('go', conversation_id='root', usage_limits=UsageLimits(count_tokens_before_request=True))
+            (record,) = owner.records.values()
+            assert record.output == 'NotImplementedError: probe is not implemented'
+    assert probes == 1
+
+
+async def test_child_keeps_token_counting_its_own_budget_asks_for() -> None:
+    owner = DelegationTasks()
+    child = Agent(TestModel(custom_output_text='evidence'), deps_type=object, name='worker')
+    async with owner.opened():
+        with owner.bind():
+            parent = Agent(
+                parent_model(),
+                capabilities=[
+                    SubAgents(
+                        agents=[SubAgent(child, usage_limits=UsageLimits(count_tokens_before_request=True))],
+                        agent_folders=None,
+                    )
+                ],
+            )
+            await parent.run('go', conversation_id='root')
+            (record,) = owner.records.values()
+            assert record.output == (
+                'NotImplementedError: Token counting ahead of the request is not supported by TestModel'
+            )
 
 
 async def test_rejects_cyclic_persisted_ancestry(tmp_path: Path) -> None:

@@ -158,6 +158,9 @@ Gotchas:
 - Timeout, own-budget exhaustion, and `max_calls` exhaustion are soft: a steering message comes back as
   the tool result. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
   crashes abort the parent unless `contain_errors=True`.
+- Under `DelegationTasks`, a child inheriting `count_tokens_before_request=True` whose model has no
+  `count_tokens` is started once more without it (only if no request was counted yet). A
+  `SubAgent.usage_limits` that sets the flag itself is kept and fails like a top-level run.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartEvent`,
   `DelegationEndEvent` (`outcome` is `ok`/`timeout`/`budget`/`failed`/`contained`).
@@ -284,6 +287,8 @@ Gotchas:
 - A `Model` instance, a non-default `output_type`, or `max_uses` on OpenRouter select local execution.
 - Local path: the advisor sees only the consultation prompt (plus completed history with
   `forward_history=True`), never the executor's deps or tools. Its usage counts toward parent limits.
+  A parent `count_tokens_before_request=True` is kept on an advisor model that implements
+  `count_tokens` and dropped (limits checked after the response) on one that does not.
 - One `Advisor` per agent (tool name `advisor`). For durable runs use `mode='native'`; local
   execution is unsupported there.
 
