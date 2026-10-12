@@ -82,8 +82,9 @@ agent = Agent(
 Non-matching tools remain regular tool calls. Some tools stay native whatever `tools` selects:
 framework control tools, undiscovered deferred (`defer_loading=True`) tools, native fallbacks, and tools
 whose metadata declares `code_mode_native=True` -- every `Shell` tool, `DynamicWorkflow`'s `run_workflow`,
-`CapabilityCreation`'s `author_capability`, and the ACP terminal's `run_command`. A tool with `code_arg_name` metadata and no
-`code_mode_native` key also stays native. All `FileSystem` tools are folded in.
+`CapabilityCreation`'s `author_capability`, and the ACP terminal's `run_command`.
+A tool with `code_arg_name` metadata and no `code_mode_native` key also stays native.
+All `FileSystem` tools are folded in.
 Provider-native tools (`native=True`) execute server-side and never reach `run_code`.
 
 Keep a whole capability's tools native without naming them with `CodeMode(native_capabilities=[FileSystem])`.
