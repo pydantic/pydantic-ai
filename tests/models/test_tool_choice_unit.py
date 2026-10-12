@@ -124,6 +124,16 @@ SIMPLE_CASES = [
         expected='required',
     ),
     dict(
+        id='list_exact_match_function_and_output_tools',
+        tool_choice=['a', 'b', 'final_result'],
+        params_kwargs={
+            'function_tools': [make_tool('a'), make_tool('b')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': True,
+        },
+        expected='required',
+    ),
+    dict(
         id='tool_or_output_empty_no_output_tools',
         tool_choice=ToolOrOutput(function_tools=[]),
         params_kwargs={'allow_text_output': True},
@@ -193,6 +203,27 @@ TUPLE_CASES = [
         params_kwargs={'function_tools': [make_tool('a'), make_tool('b'), make_tool('c')], 'allow_text_output': True},
         expected_mode='required',
         expected_tools={'a', 'c'},
+    ),
+    dict(
+        id='list_one_of_multiple_output_tools',
+        tool_choice=['result_a'],
+        params_kwargs={
+            'output_tools': [make_tool('result_a'), make_tool('result_b')],
+            'allow_text_output': True,
+        },
+        expected_mode='required',
+        expected_tools={'result_a'},
+    ),
+    dict(
+        id='list_mixed_function_and_output_subset',
+        tool_choice=['a', 'result_a'],
+        params_kwargs={
+            'function_tools': [make_tool('a'), make_tool('b')],
+            'output_tools': [make_tool('result_a'), make_tool('result_b')],
+            'allow_text_output': True,
+        },
+        expected_mode='required',
+        expected_tools={'a', 'result_a'},
     ),
     dict(
         id='tool_or_output_empty_with_output_tools_direct_output',
