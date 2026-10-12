@@ -5,6 +5,9 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
@@ -15,17 +18,20 @@ from pydantic_ai.messages import (
     ModelResponse,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.compaction import (
     FallbackCompaction,
     SlidingWindowCompaction,
     SummarizingCompaction,
-    estimate_token_count,
+    estimate_message_tokens,
 )
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import DEFAULT_PLUGINS, Session, chat
@@ -67,7 +73,7 @@ REPLY = 'hi, ' + 'here is what I found. ' * 10
 
 
 def two_turns() -> list[ModelMessage]:
-    """Two request/response pairs; the chain always keeps the newest pair intact."""
+    """Two request/response pairs, the second prompt long enough that summarizing it saves tokens."""
     return [
         ModelRequest.user_text_prompt('hello there'),
         ModelResponse(parts=[TextPart(REPLY)]),
@@ -98,7 +104,7 @@ async def test_compact_sends_the_history_and_focus_to_the_summariser(focus: str)
         assert prompt.endswith(f'Give particular weight to: {focus}')
     else:
         assert 'Give particular weight to:' not in prompt
-    assert notice == 'Compacted 4 messages down to 3; about 47 of 61 tokens saved.'
+    assert notice == 'Compacted 4 messages down to 3; about 48 of 60 tokens saved.'
     summary, first_request, last_response = transcript.messages
     assert isinstance(summary, ModelRequest) and isinstance(first_request, ModelRequest)
     [summary_part], [request_part] = summary.parts, first_request.parts
@@ -138,13 +144,13 @@ def tool_rounds(rounds: int, return_chars: int) -> list[ModelMessage]:
 async def test_compact_shrinks_a_history_just_over_the_protected_tail(strategy: str) -> None:
     """186 messages a little over 50,000 tokens once became 187 with nothing saved; now half is compacted."""
     before = tool_rounds(92, 2160)
-    assert len(before) == 186 and estimate_token_count(before) == 50_127
+    assert len(before) == 186 and sum(estimate_message_tokens(before)) == 50_107
     transcript = Transcript(messages=before, model=TestModel(custom_output_text='the gist'))
     notice = await make_plugin(transcript, strategy=strategy).commands.execute_async('/compact')
     after = transcript.messages
-    saved = 50_127 - estimate_token_count(after)
-    assert len(after) < 100 and 24_000 < saved < 25_063
-    assert notice == f'Compacted 186 messages down to {len(after)}; about {saved:,} of 50,127 tokens saved.'
+    saved = 50_107 - sum(estimate_message_tokens(after))
+    assert len(after) < 100 and 24_000 < saved < 25_053
+    assert notice == f'Compacted 186 messages down to {len(after)}; about {saved:,} of 50,107 tokens saved.'
 
 
 async def test_compact_keeps_the_history_when_the_summary_is_no_smaller() -> None:
@@ -155,6 +161,39 @@ async def test_compact_keeps_the_history_when_the_summary_is_no_smaller() -> Non
     assert notice == 'Nothing to compact: compacting would not make the conversation smaller.'
     assert summary_run, 'the summary was written, then discarded'
     assert transcript.messages == before and len(before) == 4
+
+
+async def test_compact_counts_tokens_the_provider_reported() -> None:
+    """Thinking that came back without text is most of this history; the protected tail and report count it."""
+    history: list[ModelMessage] = [ModelRequest.user_text_prompt('start')]
+    for turn in range(6):
+        history.append(
+            ModelResponse(
+                parts=[ThinkingPart(content='', signature='sig'), TextPart('ok')],
+                usage=RequestUsage(input_tokens=100 + 10_000 * turn, output_tokens=9_000),
+            )
+        )
+        history.append(ModelRequest.user_text_prompt(f'next {turn}'))
+    transcript = Transcript(messages=history, model=TestModel(custom_output_text='the gist'))
+    notice = await make_plugin(transcript, protected_tokens=15_000).commands.execute_async('/compact')
+    assert notice == 'Compacted 13 messages down to 5; about 49,989 of 59,002 tokens saved.'
+    summary, first, *tail = transcript.messages
+    assert isinstance(summary.parts[0], SystemPromptPart) and first is history[0]
+    assert tail == history[-3:], 'the last 15,000 reported tokens are kept verbatim'
+
+
+async def test_compact_is_traced_with_the_global_agent_instrumentation() -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    Agent.instrument_all(InstrumentationSettings(tracer_provider=provider))
+    try:
+        transcript = Transcript(messages=two_turns(), model=TestModel(custom_output_text='the gist'))
+        await make_plugin(transcript, protected_tokens=0).commands.execute_async('/compact')
+    finally:
+        Agent.instrument_all(False)
+    names = {span.name for span in exporter.get_finished_spans()}
+    assert {'compact_messages', 'invoke_agent summarizing_compaction'} <= names
 
 
 def assert_truncated_without_a_summary(transcript: Transcript) -> None:

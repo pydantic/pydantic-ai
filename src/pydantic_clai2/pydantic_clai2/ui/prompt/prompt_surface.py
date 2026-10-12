@@ -4,7 +4,6 @@ import io
 import math
 import re
 import time
-import webbrowser
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from threading import RLock, Thread
@@ -13,6 +12,7 @@ from typing import IO
 from termflow.live import Rect, ScreenBuffer, render_diff
 from termflow.tui.layout import truncate
 
+from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.prompt.prompt_selection import LEFT, WHEEL_DOWN, WHEEL_UP, Selection, mouse_report, url_at
 from pydantic_clai2.ui.prompt.prompt_transcript import MarkdownBlock, Render, TranscriptBuffer
 from pydantic_clai2.ui.prompt.text_clipboard import copy_text
@@ -42,7 +42,7 @@ WHEEL_ROWS = 3
 
 def open_in_browser(url: str) -> None:
     """Open `url` without stalling input on a slow browser launch."""
-    Thread(target=webbrowser.open, args=(url,), daemon=True).start()
+    Thread(target=open_browser, args=(url,), daemon=True).start()
 
 
 class PromptSurface(io.StringIO):
