@@ -2214,8 +2214,9 @@ plugin list. Use `/plugins list` to print it. Plugins are trusted code running a
 
 Every CLAI on your machine shares one settings database, so another worktree or
 branch may have saved a plugin setting this one cannot run. When a saved setting
-names a feature this build lacks, CLAI skips just that setting, uses the default,
-and tells you once at startup:
+names a feature this build lacks, CLAI skips just that setting and uses the default.
+Startup stays quiet about it; the plugin's row in `/plugins`, and `/plugins enable`
+or `reload` for that plugin, show what was skipped:
 
 ```text
 coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.
