@@ -171,10 +171,9 @@ class TestDurability:
     async def test_from_agent_without_capability_returns_none(self) -> None:
         assert AbsurdDurability.from_agent(Agent(_make_model(), name='a')) is None
 
-    async def test_from_agent_multiple_raises(self) -> None:
-        agent = Agent(_make_model(), name='a', capabilities=[AbsurdDurability(), AbsurdDurability()])
-        with pytest.raises(UserError, match='at most one'):
-            AbsurdDurability.from_agent(agent)
+    async def test_a_second_engine_is_refused(self) -> None:
+        with pytest.raises(UserError, match='can have only one durable execution engine'):
+            Agent(_make_model(), name='a', capabilities=[AbsurdDurability(), AbsurdDurability()])
 
     async def test_run_outside_task_is_transparent(self) -> None:
         counter = {'calls': 0}

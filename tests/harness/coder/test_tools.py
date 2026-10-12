@@ -7,11 +7,13 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ValidatedToolArgs
+from pydantic_ai.capabilities import AbstractCapability, Caching, LocalWorkspace, ValidatedToolArgs
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import CacheSetting, ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend
 from pydantic_ai_harness.coder import Coder
@@ -135,6 +137,51 @@ class TestCoder:
             await agent.run('Inspect tools', capabilities=[Coder()])
         result = await agent.run('Inspect tools', capabilities=[Coder(sub_agents=False)])
         assert result.output == 'success (no tool calls)'
+
+    @pytest.mark.parametrize(
+        ('caching', 'before', 'after', 'model_settings', 'agent_settings', 'run_settings', 'expected'),
+        [
+            pytest.param(True, [], [], None, None, None, True, id='default'),
+            pytest.param(False, [], [], None, None, None, None, id='left-out'),
+            pytest.param(True, [], [], {'cache': False}, None, None, False, id='model-disables'),
+            pytest.param(True, [], [], None, {'cache': False}, None, False, id='agent-disables'),
+            pytest.param(True, [], [], None, {'cache': '1h'}, None, '1h', id='agent-configures'),
+            pytest.param(True, [Caching('1h')], [], None, None, None, '1h', id='caching-before'),
+            pytest.param(True, [], [Caching(False)], None, None, None, False, id='caching-after'),
+            pytest.param(True, [], [], None, None, {'cache': False}, False, id='run-disables'),
+        ],
+    )
+    async def test_caching(
+        self,
+        tmp_path: Path,
+        caching: bool,
+        before: list[AbstractCapability[object]],
+        after: list[AbstractCapability[object]],
+        model_settings: ModelSettings | None,
+        agent_settings: ModelSettings | None,
+        run_settings: ModelSettings | None,
+        expected: CacheSetting | None,
+    ) -> None:
+        """Prompt caching is on unless the model, the agent, a capability, or the run configures `cache`."""
+        seen: list[CacheSetting | None] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(info.model_request_parameters.cache)
+            return ModelResponse(parts=[TextPart('done')])
+
+        model = FunctionModel(
+            respond,
+            profile=ModelProfile(supports_cache=True, supported_cache_retentions=('5m', '1h')),
+            settings=model_settings,
+        )
+        coder = Coder[object](repo_context=False, caching=caching)
+        agent = Agent(
+            model,
+            model_settings=agent_settings,
+            capabilities=[LocalWorkspace(tmp_path), *before, coder, *after],
+        )
+        await agent.run('go', model_settings=run_settings)
+        assert seen == [expected]
 
     @pytest.mark.parametrize('extra_instructions', [None, '', 'Keep new files under 400 lines.'])
     async def test_instructions(self, tmp_path: Path, extra_instructions: str | None) -> None:

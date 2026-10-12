@@ -37,14 +37,16 @@ from __future__ import annotations
 
 import inspect
 import re
+from collections import Counter
 from collections.abc import Sequence
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import cache
-from typing import Annotated, Any
+from heapq import nsmallest
+from typing import Annotated, Any, assert_never
 
 from pydantic import Field, TypeAdapter, ValidationError
-from typing_extensions import TypedDict, assert_never
+from typing_extensions import TypedDict
 
 from .._run_context import AgentDepsT, RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
@@ -331,6 +333,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     a retry.
     """
 
+    _keyword_corpus: tuple[tuple[str, str | None], ...] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    _keyword_postings: dict[str, list[int]] = field(
+        default_factory=dict[str, list[int]], init=False, repr=False, compare=False
+    )
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
@@ -470,25 +479,32 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         if not terms:
             raise ModelRetry('Please provide at least one non-empty search query.')
 
-        scored_matches: list[tuple[bool, int, ToolSearchMatch]] = []
-        for tool_def in search_tool.corpus:
-            tool_terms = self._search_terms(tool_def.name, tool_def.description)
-            score = len(terms & tool_terms)
-            if score == 0:
-                continue
-            scored_matches.append(
-                (tool_def.name not in search_tool.discovered_tool_names, score, {'name': tool_def.name})
-            )
+        corpus = tuple((tool.name, tool.description) for tool in search_tool.corpus)
+        if corpus != self._keyword_corpus:
+            postings: dict[str, list[int]] = {}
+            for index, (name, description) in enumerate(corpus):
+                for term in self._search_terms(name, description):
+                    postings.setdefault(term, []).append(index)
+            self._keyword_corpus = corpus
+            self._keyword_postings = postings
 
-        if not scored_matches:
+        scores: Counter[int] = Counter()
+        for term in terms:
+            scores.update(self._keyword_postings.get(term, ()))
+        if not scores:
             return self._empty_return()
 
         # Undiscovered-first is the PRIMARY key, relevance the tiebreak: an already-discovered
         # tool must never displace an undiscovered match when `max_results` trims — it only
-        # fills whatever slots are left over.
-        scored_matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        matches = [match for _, _, match in scored_matches[: self.max_results]]
-        return self._build_return(matches)
+        # fills whatever slots are left over. Corpus order breaks remaining ties.
+        # A negative `max_results` keeps its slice semantics (drop that many from the end), so it
+        # ranks every match before slicing.
+        indices = nsmallest(
+            len(scores) if self.max_results < 0 else self.max_results,
+            scores,
+            key=lambda index: (corpus[index][0] in search_tool.discovered_tool_names, -scores[index], index),
+        )[: self.max_results]
+        return self._build_return([{'name': corpus[index][0]} for index in indices])
 
     async def _run_search_fn(
         self,

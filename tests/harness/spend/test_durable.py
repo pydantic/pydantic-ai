@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Generator, Mapping, Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -49,7 +49,7 @@ class AdvancingClock:
         self.calls = 0
 
     def __call__(self) -> datetime:
-        value = datetime(2026, 8, 1, tzinfo=timezone.utc) + timedelta(days=self.calls)
+        value = datetime(2026, 8, 1, tzinfo=UTC) + timedelta(days=self.calls)
         self.calls += 1
         return value
 

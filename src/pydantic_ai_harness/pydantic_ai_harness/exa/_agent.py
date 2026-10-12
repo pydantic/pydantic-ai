@@ -3,19 +3,21 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator
-from dataclasses import dataclass, field
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import uuid4
 
 import httpx
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._durable import RetryRequest, raise_retry, retry_as_result
 from pydantic_ai_harness.exa._toolset import (
     _AUTH_STATUS_RE,  # pyright: ignore[reportPrivateUsage]
     _recoverable,  # pyright: ignore[reportPrivateUsage]
@@ -38,12 +40,14 @@ RUN_ID_METADATA_KEY = 'exa_agent_run_id'
 """Key under which the Exa run ID is stored in a deferred call's metadata."""
 
 _OWNER_METADATA_KEY = 'exa_agent_owner_id'
-"""Key under which the owning capability instance's token is stored in a deferred call's metadata.
+"""Key under which the owning capability's token is stored in a deferred call's metadata.
 
 The inline resolver claims a deferred call by this token rather than by tool
 name, so wrapper capabilities that rename or prefix tools (e.g. `PrefixTools`)
 do not break resolution, and multiple `ExaAgent` instances in one agent never
 claim each other's calls (each has its own `output_schema` and poll settings).
+The token is the capability's `id`, which also holds in a process that
+recovers a durable run.
 """
 
 _AGENT_TOOL_NAME = 'exa_agent'
@@ -141,8 +145,34 @@ def agent_run_result(
     )
 
 
+async def _create_run(
+    runs: ExaAgentRuns,
+    *,
+    query: str,
+    system_prompt: str | None,
+    output_schema: type[BaseModel] | dict[str, object] | None,
+    effort: AgentEffort | None,
+    previous_run_id: str | None,
+) -> str:
+    """Create an Exa agent run and return its ID."""
+    run = await runs.create(
+        query=query,
+        system_prompt=system_prompt,
+        output_schema=output_schema,
+        effort=effort,
+        previous_run_id=previous_run_id,
+    )
+    assert isinstance(run, AgentRun)
+    return run.id
+
+
 class ExaAgentToolset(FunctionToolset[AgentDepsT]):
-    """Provides the `exa_agent` tool: create an Exa agent run and defer the call until it finishes."""
+    """Provides the `exa_agent` tool: create an Exa agent run and defer the call until it finishes.
+
+    `ExaAgent` passes `create_run` so that creating the Exa run is one of its
+    durable operations, whose result durable execution records instead of
+    creating another run on recovery.
+    """
 
     def __init__(
         self,
@@ -152,13 +182,16 @@ class ExaAgentToolset(FunctionToolset[AgentDepsT]):
         output_schema: type[BaseModel] | dict[str, object] | None,
         system_prompt: str | None,
         owner_id: str,
+        id: str | None = None,
+        create_run: Callable[[str, str | None], Awaitable[str | RetryRequest]] | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(id=id)
         self._runs = runs
         self._effort: AgentEffort | None = effort
         self._output_schema = output_schema
         self._system_prompt = system_prompt
         self._owner_id = owner_id
+        self._create_run = create_run
         self.add_function(self.exa_agent, name=_AGENT_TOOL_NAME)
 
     @_recoverable
@@ -173,15 +206,18 @@ class ExaAgentToolset(FunctionToolset[AgentDepsT]):
         Returns:
             The agent's cited result, with its run ID.
         """
-        run = await self._runs.create(
-            query=query,
-            system_prompt=self._system_prompt,
-            output_schema=self._output_schema,
-            effort=self._effort,
-            previous_run_id=previous_run_id,
-        )
-        assert isinstance(run, AgentRun)
-        raise CallDeferred(metadata={RUN_ID_METADATA_KEY: run.id, _OWNER_METADATA_KEY: self._owner_id})
+        if self._create_run is not None:
+            run_id = raise_retry(await self._create_run(query, previous_run_id))
+        else:
+            run_id = await _create_run(
+                self._runs,
+                query=query,
+                system_prompt=self._system_prompt,
+                output_schema=self._output_schema,
+                effort=self._effort,
+                previous_run_id=previous_run_id,
+            )
+        raise CallDeferred(metadata={RUN_ID_METADATA_KEY: run_id, _OWNER_METADATA_KEY: self._owner_id})
 
 
 @dataclass
@@ -205,6 +241,10 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
 
     Authentication comes from the `EXA_API_KEY` environment variable by
     default; pass `runs` to configure it explicitly.
+
+    Creating a run and polling it to completion are durable operations, so
+    under durable execution a recovered run reuses the recorded run ID and
+    result instead of creating or polling the Exa run again.
     """
 
     effort: AgentEffort | None = None
@@ -251,9 +291,12 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
     API key explicitly or substitute a fake in tests.
     """
 
-    _owner_id: str = field(default_factory=lambda: uuid4().hex, init=False, repr=False, compare=False)
-    """Per-instance token stamped into deferred-call metadata so the inline
-    resolver only claims this instance's calls (see `_OWNER_METADATA_KEY`)."""
+    _: KW_ONLY
+    id: str | None = 'exa_agent'
+    """Stable identity for durable execution, which records each Exa run's creation and result under it."""
+
+    _instance_token: str = field(default_factory=lambda: uuid4().hex, init=False, repr=False, compare=False)
+    """Owner token for a capability constructed with `id=None`, which has no stable one."""
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Static delegation guidance: when to hand a task to `exa_agent`, and run ID continuation.
@@ -265,6 +308,11 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
             return self.guidance or None
         return _INSTRUCTIONS
 
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one configuration stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
+
     def get_toolset(self) -> ExaAgentToolset[AgentDepsT]:
         """Build the toolset providing the `exa_agent` tool."""
         return ExaAgentToolset[AgentDepsT](
@@ -272,7 +320,24 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
             effort=self.effort,
             output_schema=self.output_schema,
             system_prompt=self.system_prompt,
-            owner_id=self._owner_id,
+            owner_id=self._owner_token,
+            id=self.id,
+            create_run=self._create_run,
+        )
+
+    @durable_operation('create_run')
+    async def _create_run(self, query: str, previous_run_id: str | None) -> str | RetryRequest:
+        return await retry_as_result(self._start_run(query, previous_run_id))
+
+    @_recoverable
+    async def _start_run(self, query: str, previous_run_id: str | None) -> str:
+        return await _create_run(
+            self._resolved_runs(),
+            query=query,
+            system_prompt=self.system_prompt,
+            output_schema=self.output_schema,
+            effort=self.effort,
+            previous_run_id=previous_run_id,
         )
 
     async def handle_deferred_tool_calls(
@@ -288,38 +353,42 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         resolve; the Exa run ID is available in
         `requests.metadata[tool_call_id][RUN_ID_METADATA_KEY]`.
 
-        Calls are claimed by the instance token in the deferred-call metadata
+        Calls are claimed by the owner token in the deferred-call metadata
         rather than by tool name, so tool renaming or prefixing wrappers (e.g.
         `PrefixTools`) do not break inline resolution.
         """
         if self.execution != 'inline':
             return None
-        runs = self._resolved_runs()
         calls: dict[str, ToolReturn[str] | ModelRetry] = {}
         for call in requests.calls:
             metadata = requests.metadata.get(call.tool_call_id, {})
             run_id = metadata.get(RUN_ID_METADATA_KEY)
-            if metadata.get(_OWNER_METADATA_KEY) == self._owner_id and isinstance(run_id, str):
-                calls[call.tool_call_id] = await self._resolve_run(runs, run_id)
+            if metadata.get(_OWNER_METADATA_KEY) == self._owner_token and isinstance(run_id, str):
+                result = await self._resolve_run(run_id)
+                calls[call.tool_call_id] = ModelRetry(result.message) if isinstance(result, RetryRequest) else result
         if not calls:
             return None
         return DeferredToolResults(calls=calls)
 
-    async def _resolve_run(self, runs: ExaAgentRuns, run_id: str) -> ToolReturn[str] | ModelRetry:
+    @durable_operation('resolve_run')
+    async def _resolve_run(self, run_id: str) -> ToolReturn[str] | RetryRequest:
         """Poll one Exa run and render its tool result, mapping failures to retry results.
 
         Exceptions raised here would abort the whole agent run: the deferred-call
         pipeline only converts a `ModelRetry` *result* (in `DeferredToolResults.calls`)
         into a retry prompt, not a raised one. So a structured-output mismatch is
-        returned as its `ModelRetry`, and a polling failure (timeout, network, or
-        transient API error) becomes a `ModelRetry` that carries the run ID, since
+        returned as a `RetryRequest`, and a polling failure (timeout, network, or
+        transient API error) becomes a `RetryRequest` that carries the run ID, since
         the run may still finish server-side and the model can follow up with
-        `previous_run_id`. Auth failures propagate as configuration errors.
+        `previous_run_id`. `handle_deferred_tool_calls` turns each into its
+        `ModelRetry` result. Auth failures propagate as configuration errors.
         """
         try:
-            run = await runs.poll_until_finished(run_id, poll_interval=self.poll_interval, timeout_ms=self.timeout_ms)
+            run = await self._resolved_runs().poll_until_finished(
+                run_id, poll_interval=self.poll_interval, timeout_ms=self.timeout_ms
+            )
         except (TimeoutError, httpx.HTTPError) as error:
-            return ModelRetry(
+            return RetryRequest(
                 f'Waiting for Exa agent run {run_id} failed: {error}. '
                 f'The run may still finish server-side; you can follow up by calling the tool '
                 f'again with previous_run_id={run_id!r}.'
@@ -327,7 +396,7 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         except ValueError as error:
             if _AUTH_STATUS_RE.search(str(error)):
                 raise
-            return ModelRetry(
+            return RetryRequest(
                 f'Waiting for Exa agent run {run_id} failed: {error}. '
                 f'The run may still finish server-side; you can follow up by calling the tool '
                 f'again with previous_run_id={run_id!r}.'
@@ -335,7 +404,16 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         try:
             return agent_run_result(run, output_schema=self.output_schema)
         except ModelRetry as retry:
-            return retry
+            return RetryRequest(retry.message)
+
+    @property
+    def _owner_token(self) -> str:
+        """The token stamped into deferred-call metadata so the inline resolver only claims this capability's calls.
+
+        The capability's `id`, which a process that recovers a durable run gives it too, unlike a
+        per-instance token: replaying the run there must claim the same calls the original did.
+        """
+        return self.id if self.id is not None else self._instance_token
 
     def _resolved_runs(self) -> ExaAgentRuns:
         return self.runs if self.runs is not None else _default_runs()
@@ -351,6 +429,7 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         poll_interval: int = 1000,
         timeout_ms: int = 3_600_000,
         guidance: str | None = None,
+        id: str | None = 'exa_agent',
     ) -> ExaAgent[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -367,4 +446,5 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
             poll_interval=poll_interval,
             timeout_ms=timeout_ms,
             guidance=guidance,
+            id=id,
         )
