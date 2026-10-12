@@ -6,6 +6,7 @@ import socket
 import threading
 import webbrowser
 from collections.abc import AsyncIterator, Callable
+from functools import partial
 
 import anyio
 import httpx
@@ -173,9 +174,10 @@ async def test_the_shared_command(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 async def oauth_server() -> AsyncIterator[str]:
     """A local MCP server behind OAuth; its authorization endpoint approves at once, as a signed-in user would."""
-    with socket.socket() as probe:
-        probe.bind(('127.0.0.1', 0))
-        port = probe.getsockname()[1]
+    # The server is handed the socket it will serve on, so no other process can take the port in between.
+    reserved = socket.socket()
+    reserved.bind(('127.0.0.1', 0))
+    port = reserved.getsockname()[1]
     base = f'http://127.0.0.1:{port}'
     server = FastMCP(
         'signed',
@@ -186,13 +188,15 @@ async def oauth_server() -> AsyncIterator[str]:
     def ping() -> str:
         return 'pong'  # pragma: no cover -- listed, never called
 
-    running = uvicorn.Server(uvicorn.Config(server.http_app(), host='127.0.0.1', port=port, log_level='error'))
-    async with anyio.create_task_group() as tasks:
-        tasks.start_soon(running.serve)
-        while not running.started:
-            await anyio.sleep(0.01)
-        yield f'{base}/mcp'
-        running.should_exit = True
+    running = uvicorn.Server(uvicorn.Config(server.http_app(), log_level='error'))
+    with reserved:
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(partial(running.serve, sockets=[reserved]))
+            with anyio.fail_after(10):
+                while not running.started:
+                    await anyio.sleep(0.01)
+            yield f'{base}/mcp'
+            running.should_exit = True
     # Collect the stream the server leaves now, under this test's warning filter, not during a later test.
     gc.collect()
 
