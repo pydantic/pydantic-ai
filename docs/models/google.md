@@ -415,7 +415,7 @@ Note that Model Armor screening — both prompt and response templates — only 
 
 ### Context caching (`google_cached_content`)
 
-When you've created a Gemini [cached content resource](https://ai.google.dev/gemini-api/docs/caching), pass its resource name through [`google_cached_content`][pydantic_ai.models.google.GoogleModelSettings.google_cached_content] to reuse it across requests:
+When you've created a Gemini [cached content resource](https://ai.google.dev/gemini-api/docs/caching), pass its resource name through [`google_cached_content`][pydantic_ai.models.google.GoogleModelSettings.google_cached_content] to reuse it across requests. (Gemini also caches prompts implicitly, so the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting, which configures request-side caching on other providers, adds nothing to a Google request.)
 
 ```python
 from pydantic_ai import Agent

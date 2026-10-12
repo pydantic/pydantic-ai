@@ -2,7 +2,10 @@
 
 The default-enabled `observability` plugin: Logfire instrumentation owned by the plugin, not the process.
 
-With `ui_events` on, the same instance also records CLAI's UI interactions (see `pydantic_clai2.ui.telemetry`).
+The same instance records failures CLAI reports and recovers from: startup plugin load failures, failed turns,
+failed slash commands other than usage errors, and failing plugin handlers; with `include_content` off, these
+keep only the exception's type. With `ui_events` on, it also records
+CLAI's UI interactions (see `pydantic_clai2.ui.telemetry`).
 With `token` naming a `/keys` entry, everything goes to that key's Logfire project, such as one a team shares.
 
 `configure` opens the settings menu (turning the plugin on, `c` in `/plugins`, or `/plugins configure
@@ -13,18 +16,19 @@ next run uses it. Its first row runs the project setup in `logfire_setup`.
 import os
 from collections.abc import Callable, Sequence
 from dataclasses import replace
-from pathlib import Path
-from typing import Annotated, Literal, Self
+from typing import Annotated, ClassVar, Literal, Self
 
 import logfire
 from anyio import CancelScope, to_thread
+from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor, HTTPXClientInstrumentor
 from opentelemetry.propagate import get_global_textmap, set_global_textmap
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
 from pydantic_ai.capabilities import AgentCapability, Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_clai2.builtin_plugins.logfire_destination import logfire_dir, parse_destination, remembered
 from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_email
-from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, run_setup
+from pydantic_clai2.builtin_plugins.logfire_setup import Setup, run_setup
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
 from pydantic_clai2.plugins import Plugin, PluginHost, PluginLoadFailed, SessionEnd, SessionStart, TurnEnd
 from pydantic_clai2.ui import telemetry
@@ -41,6 +45,10 @@ class LogfireAccount(BaseModel):
     token: KeyReference
 
 
+def _base_url(text: str) -> str:
+    return parse_destination(text).base_url
+
+
 class LogfireSettings(BaseModel):
     """Non-secret telemetry options; a token stays in `LOGFIRE_TOKEN`, Logfire's credential file, or `/keys`."""
 
@@ -52,7 +60,7 @@ class LogfireSettings(BaseModel):
     user_tag: Literal['logfire-account', 'git-email', False] = Field(
         default='logfire-account',
         description='Tag session roots with the email of the Logfire account that signed in during project setup, '
-        'or with git config user.email. Never added to child spans or logs.',
+        'or with git config user.email. Only the root and its `CLAI session opened` log carry it.',
     )
     account: LogfireAccount | None = Field(
         default=None,
@@ -64,10 +72,14 @@ class LogfireSettings(BaseModel):
         description='A /keys entry holding the Logfire write token to send with, instead of LOGFIRE_TOKEN or the '
         'credentials file; its project receives the telemetry.',
     )
-    base_url: Annotated[str, AfterValidator(https_origin)] | None = Field(
+    base_url: Annotated[str, AfterValidator(_base_url)] | None = Field(
         default=None,
-        description='The Logfire to send to, as the setup menu saves it. Unset, the SDK uses LOGFIRE_BASE_URL, '
-        'else the region the token names.',
+        description='The Logfire to send to, as the setup menu saves it: a host, its URL, or its MCP URL, saved as '
+        'its https origin. Unset, the SDK uses LOGFIRE_BASE_URL, else the region the token names.',
+    )
+    httpx: bool = Field(
+        default=False,
+        description='Also trace HTTP requests made with httpx or httpx2. With message content included, capture headers and request and response bodies.',
     )
     ui_events: bool = Field(
         default=True,
@@ -79,9 +91,13 @@ class LogfireSettings(BaseModel):
 class LogfirePlugin(Plugin[LogfireSettings]):
     """Core instrumentation, without changing the supplied agent or global OTel providers."""
 
+    _active_httpx: ClassVar[list['LogfirePlugin']] = []
+    """Live opt-in instances, ordered so HTTPX instrumentation can move to a remaining instance on unload."""
+
     def __init__(self, host: PluginHost[None], settings: LogfireSettings) -> None:
         super().__init__(host, settings)
         self._unsubscribe: Callable[[], None] | None = None
+        self._httpx_instrumentors: list[HTTPXClientInstrumentor | HTTPX2ClientInstrumentor] = []
         token, send_to_logfire = _destination(settings, host)
         private_dir = logfire_dir()
         propagator = get_global_textmap()
@@ -92,10 +108,15 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 token=token,
                 service_name=settings.service_name,
                 console=False,
+                # CLAI passes attributes, never f-strings. Inspecting the caller's source fails once that file
+                # changes on disk mid-session, and the warning it prints to stderr tears through the live display.
+                inspect_arguments=False,
                 config_dir=private_dir,
                 data_dir=private_dir,
-                # UI events name settings and keys, such as `sessions.naming` or `OPENAI_API_KEY`, that look like secrets.
-                scrubbing=logfire.ScrubbingOptions(callback=telemetry.keep_names) if settings.ui_events else None,
+                # UI events and handled errors name settings, keys, plugins, and events, such as `sessions.naming`,
+                # `OPENAI_API_KEY`, or `SessionEnd`, that look like secrets. The callback only keeps those names, and
+                # only on CLAI's own records, so everything else is scrubbed as usual.
+                scrubbing=logfire.ScrubbingOptions(callback=telemetry.keep_names),
                 advanced=logfire.AdvancedOptions(base_url=settings.base_url) if settings.base_url else None,
             )
         finally:
@@ -120,7 +141,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     @classmethod
     def from_host(cls, host: PluginHost[None]) -> Self:
         """Tag the identity settings so older builds sharing the database can ignore them."""
-        requires = {'user_tag': ['logfire-user-tag'], 'account': ['logfire-user-tag']}
+        requires = {'user_tag': ['logfire-user-tag'], 'account': ['logfire-user-tag'], 'httpx': ['logfire-httpx']}
         return cls(host, host.settings(LogfireSettings, requires=requires))
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
@@ -138,27 +159,62 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     # The UI lifecycle goes only to this plugin's own instance: every enabled copy of the plugin hears these events.
     async def on_session_start(self, event: SessionStart) -> None:
         self._session_tracing.start(await _user_email(self.settings))
+        if self.settings.httpx:
+            if not self._active_httpx:
+                self._instrument_httpx()
+            self._active_httpx.append(self)
+        # Subscribed even without `ui_events`, so handled errors are recorded and the root is bound as soon as
+        # startup selects the conversation.
+        self._unsubscribe = telemetry.subscribe(
+            self._clai2,
+            root=self._session_tracing.root,
+            include_content=self.settings.include_content,
+            ui_events=self.settings.ui_events,
+        )
         if self.settings.ui_events:
-            self._unsubscribe = telemetry.subscribe(
-                self._clai2, root=self._session_tracing.root, include_content=self.settings.include_content
-            )
             model = event.settings.model or 'agent default'
             with telemetry.parent_span(self._session_tracing.root()):
                 self._clai2.log('info', 'session started', attributes={'model': model})
 
+    def _instrument_httpx(self) -> None:
+        instrumentors = (HTTPXClientInstrumentor(), HTTPX2ClientInstrumentor())
+        available = [
+            instrumentor for instrumentor in instrumentors if not instrumentor.is_instrumented_by_opentelemetry
+        ]
+        self.instance.instrument_httpx(capture_all=self.settings.include_content)
+        self._httpx_instrumentors = [
+            instrumentor for instrumentor in available if instrumentor.is_instrumented_by_opentelemetry
+        ]
+
     async def on_plugin_load_failed(self, event: PluginLoadFailed) -> None:
         with telemetry.parent_span(self._session_tracing.root()):
-            self._clai2.log(
-                'error', 'Plugin {plugin!r} failed to load', attributes={'plugin': event.plugin}, exc_info=event.error
+            telemetry.log_error(
+                self._clai2,
+                'Plugin {plugin!r} failed to load',
+                event.error,
+                content=self.settings.include_content,
+                attributes={'plugin': event.plugin},
             )
 
     async def on_turn_end(self, event: TurnEnd) -> None:
-        if self.settings.ui_events:
-            with telemetry.parent_span(self._session_tracing.root()):
+        with telemetry.parent_span(self._session_tracing.root()):
+            # An error that left the agent run is already on the run's span; this records the rest, such as a
+            # model that could not be resolved or a failing `on_turn_start`, which fail the turn before the run.
+            if event.error is not None and not self._session_tracing.raised_in_run(event.error):
+                telemetry.log_error(self._clai2, 'Turn failed', event.error, content=self.settings.include_content)
+            if self.settings.ui_events:
                 self._clai2.log('info', 'turn {outcome}', attributes={'outcome': event.outcome})
 
     async def on_session_end(self, event: SessionEnd) -> None:
-        # Stop receiving UI events before the instance shuts down.
+        # HTTPX instrumentors are global: if another plugin instance remains, point them at its live provider.
+        if self in self._active_httpx:
+            self._active_httpx.remove(self)
+        if self._httpx_instrumentors:
+            for instrumentor in self._httpx_instrumentors:
+                instrumentor.uninstrument()
+            self._httpx_instrumentors.clear()
+            if self._active_httpx:
+                self._active_httpx[-1]._instrument_httpx()
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
@@ -180,14 +236,6 @@ async def _user_email(settings: LogfireSettings) -> str | None:
     if settings.user_tag == 'logfire-account' and account is not None and account.token == settings.token:
         return account.email
     return None
-
-
-def logfire_dir() -> Path:
-    """CLAI's private Logfire SDK directory: configuration and credentials are read only from here."""
-    config_home = Path(os.getenv('XDG_CONFIG_HOME', '')).expanduser()
-    if not config_home.is_absolute():
-        config_home = Path.home() / '.config'
-    return config_home / 'pydantic-clai2' / 'logfire'
 
 
 CREDENTIALS_FILE = 'logfire_credentials.json'
@@ -212,10 +260,18 @@ _INCLUDED = {'true': 'included', 'false': 'left out'}
 _PROJECT_ROW = FieldRow(
     key=PROJECT,
     label='Logfire project',
-    description=(
-        'Enter signs in to Logfire (US, EU, or self-hosted), picks a project, and saves its write token in /keys; '
-        'only the key name and the account email are kept here. R goes back to LOGFIRE_TOKEN or the credentials '
-        'file in ~/.config/pydantic-clai2/logfire/ (or under $XDG_CONFIG_HOME).'
+    # One short line each: the preview panel cuts long lines off.
+    description='\n'.join(
+        [
+            'The Logfire project traces go to.',
+            'Enter: choose a Logfire (US, EU, or another),',
+            '  sign in in your browser, and pick a project.',
+            '  Its write token is saved in /keys; only the',
+            '  key name and your email are kept here.',
+            'R: forget it, and use LOGFIRE_TOKEN or the',
+            '  credentials file in pydantic-clai2/logfire/',
+            '  under ~/.config (or $XDG_CONFIG_HOME).',
+        ]
     ),
     default='LOGFIRE_TOKEN or credentials file',
 )
@@ -264,6 +320,15 @@ _ROWS = (
         allow_custom=False,
     ),
     FieldRow(
+        key='httpx',
+        label='HTTP requests',
+        description=LogfireSettings.model_fields['httpx'].description or '',
+        default='false',
+        choices=_BOOLEAN,
+        choice_labels={'true': 'recorded', 'false': 'off'},
+        allow_custom=False,
+    ),
+    FieldRow(
         key='ui_events',
         label='UI events',
         description=LogfireSettings.model_fields['ui_events'].description or '',
@@ -300,7 +365,8 @@ class LogfireSource:
         if row.key == PROJECT:
             if settings.token is None:
                 return row.default
-            return settings.token.name + (f' at {settings.base_url}' if settings.base_url else '')
+            where = f' at {parse_destination(settings.base_url).label}' if settings.base_url else ''
+            return settings.token.name + where
         value: object = getattr(settings, row.key)
         return str(value).lower() if isinstance(value, bool) else str(value)
 
@@ -345,14 +411,16 @@ SETUP: Callable[[PluginHost[None]], Setup] = _announce
 async def _configure(host: PluginHost[None], setup: Setup) -> str:
     """The setup menu; saving new settings makes the loader load the plugin again, now sending to the project."""
     config = host.settings(LogfireSettings)
-    chosen = await run_setup(setup, current=config.base_url, owned=config.token)
+    # Highlight the Logfire this plugin sends to, else the one last set up here or in `logfire_mcp`.
+    current = parse_destination(config.base_url) if config.base_url else await to_thread.run_sync(remembered)
+    chosen = await run_setup(setup, current=current, owned=config.token)
     if chosen is None:
         return 'Logfire setup cancelled; settings unchanged.'
     # Setting up a project means sending to it, even if sending had been turned off.
     email = chosen.account_email
     update = {
         'token': chosen.token,
-        'base_url': chosen.base_url,
+        'base_url': chosen.destination.base_url,
         'account': LogfireAccount(email=email, token=chosen.token) if email else None,
         'send_to_logfire': 'if-token-present',
     }

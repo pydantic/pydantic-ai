@@ -71,6 +71,7 @@ def test_settings_form_validates_and_converts() -> None:
         'parallel_tool_calls': True,
         'thinking': True,
         'service_tier': 'flex',
+        'cache': '1h',
     }
     assert model_settings_from_json(everything).to_model_settings() == everything
     with pytest.raises(ValidationError):
@@ -197,8 +198,8 @@ async def test_open_add_model_menu_and_settings_reach_the_run(tmp_path: Path) ->
     assert await open_add_model_menu(context, run=lambda menu: []) == 'No changes.'
     assert await open_add_model_menu(context, run=lambda menu: [menu.choose('test')]) == 'Saved model. Applied.'
     context.store.save_model_settings('test', {'max_tokens': 3, 'seed': 7})
-    assert context.model_settings('test') == {'max_tokens': 3, 'seed': 7}
-    assert context.model_settings('other') is None
+    assert context.model_settings('test') == {'max_tokens': 3, 'seed': 7, 'cache': True}
+    assert context.model_settings('other') == {'cache': True}
     seen: list[ModelSettings | None] = []
     hooks = Hooks[None]()
 
@@ -210,7 +211,7 @@ async def test_open_add_model_menu_and_settings_reach_the_run(tmp_path: Path) ->
     session = Session(Agent(TestModel(custom_output_text='ok')), deps=None, plugins=[hooks])
     session.model_settings = context.model_settings('test')
     assert (await session.prompt('hi')).output == 'ok'
-    assert seen == [{'max_tokens': 3, 'seed': 7}]
+    assert seen == [{'max_tokens': 3, 'seed': 7, 'cache': True}]
 
 
 def test_live_model_overrides_follow_saves_and_keep_the_last_valid_ones(tmp_path: Path) -> None:
