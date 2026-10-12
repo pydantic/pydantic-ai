@@ -776,6 +776,37 @@ async def test_child_cost_budget_counts_from_the_spend_at_launch() -> None:
             assert record.outcome == 'ok'
 
 
+async def test_child_tool_call_budget_counts_from_the_calls_approved_at_launch() -> None:
+    # The parent's `tool_calls_limit` reserves its in-flight `delegate_task` call against the shared usage;
+    # that call is the parent's, so it doesn't eat into the child's own budget of two calls.
+    owner = DelegationTasks()
+    child = Agent(TestModel(custom_output_text='evidence'), deps_type=object, name='worker')
+
+    @child.tool_plain
+    def first() -> str:
+        return 'one'
+
+    @child.tool_plain
+    def second() -> str:
+        return 'two'
+
+    usage = RunUsage()
+    async with owner.opened():
+        with owner.bind():
+            parent = Agent(
+                parent_model(),
+                capabilities=[
+                    SubAgents(
+                        agents=[SubAgent(child, usage_limits=UsageLimits(tool_calls_limit=2))], agent_folders=None
+                    )
+                ],
+            )
+            await parent.run('go', conversation_id='root', usage=usage, usage_limits=UsageLimits(tool_calls_limit=3))
+            (record,) = owner.records.values()
+            assert record.outcome == 'ok'
+    assert usage.tool_calls == 3
+
+
 async def test_rejects_cyclic_persisted_ancestry(tmp_path: Path) -> None:
     for identity, parent in [('a' * 32, 'b' * 32), ('b' * 32, 'a' * 32)]:
         (tmp_path / f'{identity}.json').write_text(

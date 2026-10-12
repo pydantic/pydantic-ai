@@ -15,6 +15,10 @@ import anyio
 from typing_extensions import TypeIs
 
 from pydantic_ai import AgentStreamEvent
+
+# Private import: pydantic-ai has no public way to read the tool calls that runs sharing a
+# `RunUsage` have approved against `tool_calls_limit` but not yet finished.
+from pydantic_ai._tool_call_reservations import reserved_tool_calls
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AgentCapability, HookTimeoutError
 from pydantic_ai.exceptions import (
@@ -701,7 +705,9 @@ def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: Usage
 
     Managed children never hide usage in a private counter until completion. A child's
     relative budget becomes an absolute ceiling at launch; concurrent spend can reach it
-    earlier, but cannot bypass the parent's ceiling.
+    earlier, but cannot bypass the parent's ceiling. Tool calls count from the calls already
+    approved at launch, the delegation itself included, since core checks a child's tool
+    calls against those too.
     """
     parent = parent or UsageLimits(request_limit=None)
 
@@ -717,7 +723,9 @@ def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: Usage
         cost = absolute_cost if cost is None else min(cost, absolute_cost)
     return UsageLimits(
         request_limit=limit(parent.request_limit, child.request_limit, usage.requests),
-        tool_calls_limit=limit(parent.tool_calls_limit, child.tool_calls_limit, usage.tool_calls),
+        tool_calls_limit=limit(
+            parent.tool_calls_limit, child.tool_calls_limit, usage.tool_calls + reserved_tool_calls(usage)
+        ),
         input_tokens_limit=limit(parent.input_tokens_limit, child.input_tokens_limit, usage.input_tokens),
         output_tokens_limit=limit(parent.output_tokens_limit, child.output_tokens_limit, usage.output_tokens),
         total_tokens_limit=limit(parent.total_tokens_limit, child.total_tokens_limit, usage.total_tokens),
