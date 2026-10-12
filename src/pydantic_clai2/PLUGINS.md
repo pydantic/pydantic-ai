@@ -2264,7 +2264,8 @@ The contract:
   declaration, in their own table. Your settings JSON never holds them.
 - **A build that lacks a feature, or does not know its name, ignores that one
   setting.** It uses the built-in declaration's value, or your model's default,
-  keeps your other settings, and prints one line per plugin:
+  and keeps your other settings. It says so in the plugin's `/plugins` row and in
+  the result of `/plugins enable` or `reload`, not at startup:
   `coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.`
   Reading never rewrites the database, and saving from that build keeps the
   ignored value and its tag. A tag goes away only when its value changes.
