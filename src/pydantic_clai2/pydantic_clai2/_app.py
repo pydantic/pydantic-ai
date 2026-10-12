@@ -31,7 +31,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_clai2 import warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
-from pydantic_clai2.cli.self_update import Relaunch, Updates
+from pydantic_clai2.cli.self_update import Relaunch, Updates, installed
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
     Command,
@@ -107,6 +107,7 @@ from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 from pydantic_clai2.ui.rendering.usage_report import cost_line, session_usage
+from pydantic_clai2.ui.stderr_relay import relay_stderr
 from pydantic_clai2.ui.telemetry_log import telemetry_log
 
 if TYPE_CHECKING:
@@ -313,7 +314,10 @@ async def chat(
         )
     fresh = False
     warming: Thread | None = None
-    with telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console):
+    with (
+        telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console),
+        relay_stderr() if console.is_terminal else nullcontext(),
+    ):
         async with agent:
             while True:
                 reason: SessionEndReason = 'error'
@@ -1375,9 +1379,10 @@ class _Shell(Generic[DepsT, OutputT]):
 
 
 def _print_welcome(project: ProjectSettings, console: Console, *, worktree: Worktree | None = None) -> None:
-    """The banner and hints a fresh launch shows, which `/clear` returns to without the launch's worktree notice."""
+    """The banner, version, and hints a fresh launch shows, which `/clear` returns to without the worktree notice."""
     console.print()
     print_banner(console)
+    console.print(f'pydantic-clai2 {installed().label}', style=theme.color(theme.MUTED))
     if worktree is not None:
         # Soft wrap keeps the path copyable: hard wrapping would break it with newlines.
         console.print(worktree.notice, style=theme.color(theme.MUTED), markup=False, highlight=False, soft_wrap=True)

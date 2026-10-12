@@ -1,5 +1,6 @@
 """The live panel paints frames from the transcript, on the alternate screen, and prints the session on close."""
 
+import asyncio
 import io
 from collections.abc import Callable
 
@@ -29,6 +30,14 @@ from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
 
 ROWS = ('TOP', 'DRAFT', 'BOTTOM', 'FOOTER')
+
+
+def test_terminal_fixture_returns_on_main_screen_newlines_only() -> None:
+    terminal = SurfaceTerminal(width=4, height=3)
+    terminal.write('abcdef\nxy')
+    assert terminal.lines() == ['abcd', 'ef', 'xy']
+    terminal.write('\x1b[?1049h\x1b[1;1Hab\ncd')
+    assert terminal.lines() == ['ab', '  cd', '']
 
 
 class Screen:
@@ -198,7 +207,9 @@ async def test_close_prints_the_session_into_the_main_screen_once() -> None:
     screen.surface.restore()
     assert not screen.terminal.alternate
     assert screen.lines()[:3] == ['$ clai2', 'banner', 'linked answer']
-    printed = Text.from_ansi(screen.terminal.getvalue().rsplit(LEAVE, 1)[1])
+    # The surface prints CRLF rows, and Rich 15.0.0's `from_ansi` blanks each one:
+    # https://github.com/Textualize/rich/issues/4090
+    printed = Text.from_ansi(screen.terminal.getvalue().rsplit(LEAVE, 1)[1].replace('\r\n', '\n'))
     assert printed.get_style_at_offset(Console(), 0).link == 'https://example.com', 'scrollback keeps links'
     screen.surface.restore()
     assert screen.lines()[:4] == ['$ clai2', 'banner', 'linked answer', '']
@@ -399,6 +410,23 @@ async def test_drain_settles_a_partial_line_once() -> None:
     await surface.drain()
     assert [Text.from_ansi(row).plain for row in surface.transcript.frame(width=80, height=5).rows] == ['partial', '']
     assert surface.isatty() is False
+
+
+async def test_a_burst_of_wheel_reports_paints_once_after_the_input_callback() -> None:
+    screen = Screen(height=10)
+    screen.surface.paint(ROWS)
+    for index in range(40):
+        screen.write(f'line {index}\n')
+    newest = int(screen.lines()[0].split()[1])
+    frames = screen.terminal.getvalue().count('\x1b[?2026h')
+    for _ in range(5):
+        screen.surface.transcript_key('mouse', '\x1b[<64;1;1M')
+    assert screen.terminal.getvalue().count('\x1b[?2026h') == frames, 'nothing paints mid-burst'
+    await asyncio.sleep(0)
+    assert screen.terminal.getvalue().count('\x1b[?2026h') == frames + 1, 'one frame shows the whole burst'
+    assert screen.lines()[0] == f'line {newest - 5 * WHEEL_ROWS}'
+    await asyncio.sleep(0)
+    assert screen.terminal.getvalue().count('\x1b[?2026h') == frames + 1
 
 
 def test_scroll_before_open_and_during_a_hold_does_not_paint() -> None:
@@ -644,7 +672,7 @@ def test_a_url_wrapped_inside_markdown_opens_whole() -> None:
 
 def test_opening_a_url_does_not_wait_for_the_browser(monkeypatch: pytest.MonkeyPatch) -> None:
     opened: list[str] = []
-    monkeypatch.setattr('webbrowser.open', opened.append)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.prompt_surface.open_browser', opened.append)
     monkeypatch.setattr('pydantic_clai2.ui.prompt.prompt_surface.Thread', _Inline)
     open_in_browser('https://ai.pydantic.dev')
     assert opened == ['https://ai.pydantic.dev']

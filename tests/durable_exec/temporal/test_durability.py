@@ -2270,6 +2270,7 @@ class ComplexDurableAgentLogfireWorkflow:
         return result.output
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_durability_complex_agent_logfire_span_tree(
     allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire
 ):

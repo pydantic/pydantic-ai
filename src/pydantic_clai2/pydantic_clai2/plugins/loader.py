@@ -95,6 +95,8 @@ _RETIRED_BUILTINS: dict[str, PluginSettings] = {
 """Former built-in declarations. A stored copy of one loads the built-in now declared under its id."""
 
 
+FAILED_SESSION_END_TIMEOUT = 5.0
+"""Seconds a plugin that failed to load may spend in `on_session_end` before loading continues without it."""
 TURN_NOTICE = 'The running turn keeps the plugins it started with; the agent sees the change on the next prompt.'
 
 
@@ -108,8 +110,12 @@ class PluginError(Exception):
         self.error = error
 
 
-class PluginSettingsError(PluginError):
-    """A plugin rejected its settings while activating, so `/plugins add` does not save them."""
+class PluginSettingsError(PluginError, ValueError):
+    """A plugin rejected its settings while activating, so `/plugins add` does not save them.
+
+    A usage error, like other `ValueError`s from a command, so its message, which can quote a pasted secret, is
+    not recorded as a handled error.
+    """
 
 
 @dataclass(kw_only=True)
@@ -529,9 +535,7 @@ class PluginLoader(Generic[DepsT]):
                     await asyncio.wait({cleanup})
                     raise
                 if (error := cleanup.result()) is not None:
-                    self._console.print(
-                        str(PluginError(entry.name, error)), style=theme.color(theme.ERROR), markup=False
-                    )
+                    self._report(entry.name, error, SessionEnd)
         finally:
             self._drop(entry)
         await checkpoint()
@@ -559,7 +563,7 @@ class PluginLoader(Generic[DepsT]):
         try:
             await loaded.dispatch(SessionEnd(reason=reason))
         except Exception as exc:  # noqa: BLE001 -- unloading must finish even if the plugin misbehaves.
-            self._console.print(str(PluginError(name, exc)), style=theme.color(theme.ERROR), markup=False)
+            self._report(name, exc, SessionEnd)
 
     @property
     def in_turn(self) -> bool:
@@ -605,7 +609,12 @@ class PluginLoader(Generic[DepsT]):
             except Exception as exc:
                 if isinstance(event, TurnStart):
                     raise PluginError(name, exc) from exc
-                self._console.print(str(PluginError(name, exc)), style=theme.color(theme.ERROR), markup=False)
+                self._report(name, exc, type(event))
+
+    def _report(self, name: str, error: BaseException, event: type[HostEvent]) -> None:
+        """Show a plugin handler's failure, which CLAI carries on from, and record it as a handled error."""
+        self._console.print(str(PluginError(name, error)), style=theme.color(theme.ERROR), markup=False)
+        telemetry.handled_error('Plugin {plugin!r} failed handling {event}', error, plugin=name, event=event.__name__)
 
     async def enable(self, name: str) -> None:
         """Remember the plugin as enabled and load it now."""
@@ -892,7 +901,7 @@ def _same_plugin(declaration: PluginSettings, shipped: PluginSettings | None) ->
 async def _end_failed_session(plugin: Plugin[BaseModel, DepsT]) -> BaseException | None:
     """Return the handler's failure rather than raising it."""
     try:
-        with fail_after(5):
+        with fail_after(FAILED_SESSION_END_TIMEOUT):
             await plugin.on_session_end(SessionEnd(reason='error'))
     except (Exception, asyncio.CancelledError) as exc:  # noqa: BLE001 -- reported by the caller.
         return exc

@@ -16,6 +16,34 @@ including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
 this shortcut; legacy and modified-key encodings are supported.
 
+## Undo and redo
+
+Ctrl+Z undoes the last change to your draft on macOS, Linux, and Windows. It
+brings back text removed with Backspace, Delete, word deletion, Ctrl+U, Ctrl+K,
+or Ctrl+C, and takes back a paste or a history recall. Typing undoes a word at a
+time, and a run of Backspace or Delete presses undoes in one step. Ctrl+Y or
+Ctrl+Shift+Z redoes. CLAI keeps the last 100 steps; submitting a message starts
+the next draft with none.
+
+The editor reads keys in raw mode, so Ctrl+Z reaches CLAI instead of suspending
+it to the shell. CLAI has no suspend shortcut; quit with Ctrl+D or `/exit`.
+Without kitty or xterm modified-key reporting, a terminal sends Ctrl+Shift+Z
+as Ctrl+Z, so use Ctrl+Y to redo there.
+
+Cmd+Z and Cmd+Shift+Z undo and redo too, when the terminal passes them on. CLAI
+asks for kitty keyboard reporting, which reports Cmd as Super, but most macOS
+terminals keep Cmd shortcuts for their own menus:
+
+- kitty passes Cmd+Z on with no setup.
+- Ghostty uses Cmd+Z to reopen a closed tab or split. Add
+  `keybind = cmd+z=text:\x1a` and `keybind = cmd+shift+z=csi:122;10u` to its config.
+- WezTerm: set `config.enable_kitty_keyboard = true`, or map SUPER+z to
+  `wezterm.action.SendString '\x1a'`.
+- iTerm2: in Settings > Profiles > Keys > Key Mappings, map Cmd+Z to
+  *Send Hex Codes* `0x1a`, and Cmd+Shift+Z to *Send Escape Sequence* `[122;10u`.
+- Terminal.app, VS Code, and tmux: use Ctrl+Z, or map Cmd+Z to `0x1a` in the
+  outer terminal as above.
+
 ## Interrupting a turn
 
 Press Ctrl-C once to cancel the active agent turn and return to input. Tool cleanup

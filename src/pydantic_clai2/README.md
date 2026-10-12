@@ -33,7 +33,8 @@ configuration in your editor, and switch on OAuth sign-in for remote servers.
 lists them all. Saved servers are available to the agent from the next prompt,
 with tool names prefixed by the server name. A server connects on the first
 prompt that needs it (or `/mcp start`) and stays connected; one that cannot
-connect is marked `error` and left out rather than failing the prompt. A
+connect is marked `error` and left out rather than failing the prompt. An OAuth
+server signs in only with `/mcp auth NAME`, never in the middle of a prompt. A
 repository's Claude Code-style `.mcp.json` (or `.clai/mcp_servers.json`) loads
 once you review it and run `/mcp trust accept`. See
 [Connect MCP servers](PLUGINS.md#connect-mcp-servers) for storage, secrets, OAuth,
@@ -155,6 +156,34 @@ Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W
 including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
 this shortcut; legacy and modified-key encodings are supported.
+
+## Undo and redo
+
+Ctrl+Z undoes the last change to your draft on macOS, Linux, and Windows. It
+brings back text removed with Backspace, Delete, word deletion, Ctrl+U, Ctrl+K,
+or Ctrl+C, and takes back a paste or a history recall. Typing undoes a word at a
+time, and a run of Backspace or Delete presses undoes in one step. Ctrl+Y or
+Ctrl+Shift+Z redoes. CLAI keeps the last 100 steps; submitting a message starts
+the next draft with none.
+
+The editor reads keys in raw mode, so Ctrl+Z reaches CLAI instead of suspending
+it to the shell. CLAI has no suspend shortcut; quit with Ctrl+D or `/exit`.
+Without kitty or xterm modified-key reporting, a terminal sends Ctrl+Shift+Z
+as Ctrl+Z, so use Ctrl+Y to redo there.
+
+Cmd+Z and Cmd+Shift+Z undo and redo too, when the terminal passes them on. CLAI
+asks for kitty keyboard reporting, which reports Cmd as Super, but most macOS
+terminals keep Cmd shortcuts for their own menus:
+
+- kitty passes Cmd+Z on with no setup.
+- Ghostty uses Cmd+Z to reopen a closed tab or split. Add
+  `keybind = cmd+z=text:\x1a` and `keybind = cmd+shift+z=csi:122;10u` to its config.
+- WezTerm: set `config.enable_kitty_keyboard = true`, or map SUPER+z to
+  `wezterm.action.SendString '\x1a'`.
+- iTerm2: in Settings > Profiles > Keys > Key Mappings, map Cmd+Z to
+  *Send Hex Codes* `0x1a`, and Cmd+Shift+Z to *Send Escape Sequence* `[122;10u`.
+- Terminal.app, VS Code, and tmux: use Ctrl+Z, or map Cmd+Z to `0x1a` in the
+  outer terminal as above.
 
 ## Option keys on macOS
 
@@ -389,6 +418,7 @@ in a workspace you trust. CLAI does not add a sandbox or approval layer.
 
 The startup splash adapts Code Puppy's stdlib-only, alternate-screen Pydantic
 pyramid, with CLAI lettering. The persistent `CLAI 2.0` banner uses `ansi_shadow`.
+Below it, CLAI prints its version, or the short commit for a `bleeding` build.
 The splash is disabled for redirected output, CLI arguments, small terminals,
 Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
 
@@ -539,7 +569,7 @@ takes its place, and a run's own `workspace=` replaces it for that run. Commands
 this process's environment minus LLM provider API keys. Model names resolve as in
 `clai2`, the agent's own and any a run passes, so `openai-codex:` and `github-copilot:`
 use the sign-ins saved with `/login`. CLAI's per-model defaults apply too, such as
-Anthropic prompt caching. Without `model`, every run must pass one.
+prompt caching. Without `model`, every run must pass one.
 
 Nothing else you saved for `clai2` applies: no saved, drop-in, or project plugins, no
 `.clai/settings.json`, no `/model settings`, and no `chain:` fallback chains. `ask_user`
@@ -1008,10 +1038,12 @@ from the model's next request, even in a running turn. `r` resets a field; Esc
 or Ctrl-C goes back. Fixed choices
 open a picker; numeric fields accept typed values, and empty input resets.
 
-CLAI2 enables Anthropic conversation, static-instruction, and tool-schema caching by default:
-`anthropic:` and `gateway/anthropic:` use a 5-minute TTL, while `claude-code:` uses 1 hour.
-These are CLI defaults only; plain Pydantic AI agents are unchanged. Saved cache settings override
-the defaults. Automatic caching advances to the last cacheable block, including tool results.
+CLAI2 enables prompt caching by default for every model, with the unified `Prompt Caching`
+setting (`cache`). It covers Claude on the Anthropic API, `claude-code:`, Amazon Bedrock and
+OpenRouter, Nova on Bedrock, OpenRouter's Gemini routes, and OpenAI's GPT-5.6 and later; providers
+that cache implicitly or not at all ignore it. Set it to `false` to turn caching off for a model, or
+to `1h` to keep the cache longer. Saved `anthropic_cache*` settings still apply and take precedence
+over it. These are CLI defaults only; plain Pydantic AI agents are unchanged.
 
 `/effort` shows the active model's configured reasoning effort and supported values.
 `/effort high` (or another listed value) saves it for that model; `/effort reset`
@@ -1546,7 +1578,7 @@ The built-in `compaction` plugin is on by default, with or without `coder`.
 It uses harness's `FallbackCompaction` with
 `SummarizingCompaction` first and `SlidingWindowCompaction` as the fallback.
 It protects the most recent 50,000 tokens (`protected_tokens`) from summarising and
-truncation. `coder`'s own tool-result clearing is separate: above 70% of the window it
+truncation, counted as the provider reported them, thinking included. `coder`'s own tool-result clearing is separate: above 70% of the window it
 still empties tool results older than its last three tool calls. `ModelAPIError`,
 `FallbackExceptionGroup`, and `UsageLimitExceeded` during summarisation fall
 back to truncation; other exceptions propagate. The summary request is billed
@@ -1558,8 +1590,8 @@ threshold, but it protects at most half the conversation, so it always has older
 messages to summarise. Add free text to say what the summary must keep, for example
 `/compact don't lose the "auth" decisions`. The focus is passed to the summariser
 as written, including quotes, backslashes, and line breaks; no shell escaping is needed.
-You get one line with the message counts before and after and an estimate of the
-tokens saved out of the total. When compacting would not make the conversation
+You get one line with the message counts before and after and the tokens saved out
+of the total, counted as the provider reported them where the history has them. When compacting would not make the conversation
 smaller, for example because the summary is longer than what it replaces, the
 conversation is left as it was and you are told so. An empty or one-message
 conversation sends nothing.
@@ -2166,9 +2198,11 @@ it again. CLAI builds from before this
 check apply every saved setting as they always did.
 
 `/plugins enable notion` gives the agent Notion's hosted MCP tools and opens its
-settings menu (`/plugins configure notion` reopens it). The token is picked from
-`/keys` by name (a new one is saved there as `NOTION_API_KEY`); without one, it
-signs in through the browser. Plugin settings never hold the token. See
+settings menu (`/plugins configure notion` reopens it). It uses a browser sign-in
+by default, made with `/notion login`, or a token picked from `/keys` by name (a new
+one is saved there as `NOTION_API_KEY`). Plugin settings never hold the token.
+No built-in plugin opens a browser while loading or during a prompt: each signs in
+only from its settings menu or its `login` command, and Esc cancels the wait. See
 [PLUGINS.md](PLUGINS.md#notion-workspace-tools).
 
 `/plugins enable linear` gives the agent Linear's hosted MCP tools, read-only by
@@ -2209,14 +2243,25 @@ shows how to put a different one, a web form for instance, in its place.
 The stock CLI enables the built-in `observability` plugin by default. It adds Pydantic
 AI's [`Instrumentation`](https://pydantic.dev/docs/ai/capabilities/overview/)
 capability to CLAI turns for agent, model-request, and tool
-spans, including timing, token usage, and failures. It adds CLAI's own UI spans
-only when `ui_events` is on (see below). HTTP client instrumentation is off by
-default; agent instrumentation does not affect unrelated agents globally.
+spans, including timing, token usage, and failures. While it is loaded it also
+turns on Pydantic AI instrumentation for every agent (`Agent.instrument_all`), so
+agents CLAI does not run itself, such as the compaction summariser,
+sub-agents, and session naming, are traced to the same place, and `/compact` records a
+`compact_messages` span. Unloading restores the previous setting. It adds CLAI's
+own UI spans only when `ui_events` is on (see below). HTTP client instrumentation
+is off by default.
 
 Startup plugin load failures reported in the terminal are also sent through the configured
 Logfire instance, including their exception and traceback, even when `ui_events` is off. Failures are
 reported after loading finishes, including those that happened before observability
 loaded. Disabling the plugin leaves these failures as terminal messages only.
+
+Other errors CLAI shows you and recovers from are sent the same way: a failed turn
+(for example, a model provider you have not logged in to), a slash command that
+fails unexpectedly (for example, `/update` hitting a GitHub rate limit), and a plugin
+handler that fails. Usage errors, such as a mistyped command, are not sent. An error
+inside the agent run is already on the run's span, so it is not sent twice. With
+`include_content` off, these records and load failures keep only the exception's type.
 
 This plugin was previously named `logfire`. Existing enabled/disabled choices,
 settings, and saved token references carry over without reconfiguration. Existing
@@ -2351,8 +2396,10 @@ and shuts down that instance without shutting down application-global providers.
 The existing global propagator is preserved. Logfire's SDK may install shared
 executor context-propagation helpers; those SDK hooks are not removed on unload.
 The plugin does not mutate a supplied agent. While enabled, its explicit per-run
-`Instrumentation` takes precedence over that agent's instrumentation settings;
-disabling it leaves the agent's original configuration in effect. Custom
+`Instrumentation` takes precedence over that agent's instrumentation settings, and
+`Agent.instrument_all` points agents without their own settings at the plugin's
+instance; disabling it leaves the agent's original configuration and the previous
+`Agent.instrument_all` setting in effect. Custom
 `chat()` launchers only get built-ins when passed `builtin_plugins=DEFAULT_PLUGINS`.
 
 - [Pydantic AI agent execution and events](https://pydantic.dev/docs/ai/core-concepts/agent/)

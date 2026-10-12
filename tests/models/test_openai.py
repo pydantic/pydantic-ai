@@ -5912,6 +5912,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'failed_attempts': None,
                 'workspace_ref': None,
             }
         ]
@@ -6762,6 +6763,7 @@ async def test_openai_malformed_tool_args_degraded_on_the_wire(allow_model_reque
     assert json.loads(assistant_message['tool_calls'][0]['function']['arguments']) == {INVALID_JSON_KEY: bad_args}
 
 
+@pytest.mark.subprocess(reason='asserts what a fresh interpreter has imported after model construction')
 def test_model_construction_preloads_lazy_dependencies():
     """Constructing a model resolves the deferred imports that stalled the first request's event loop (#7405).
 

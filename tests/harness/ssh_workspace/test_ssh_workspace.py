@@ -21,7 +21,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
+from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend, _backend as ssh_backend
 from pydantic_ai_harness.ssh_workspace._backend import _STOP  # pyright: ignore[reportPrivateUsage]
 
 from .._fake_remote_tools import FakeRemoteTools, install_fake_remote_tools
@@ -98,7 +98,7 @@ async def test_timeouts_and_output_limits_keep_only_the_commands_stderr(tools: F
     await backend.working_dir()
 
     with pytest.raises(WorkspaceTimeoutError) as timeout:
-        await backend.run('printf partial >&2; sleep 30', shell=True, timeout=1)
+        await backend.run('printf partial >&2; sleep 30', shell=True, timeout=0.5)
     with pytest.raises(WorkspaceOutputLimitError, match='SSH workspace output exceeded') as limit:
         await backend.run('printf big >&2; head -c 11000000 /dev/zero', shell=True)
 
@@ -173,14 +173,18 @@ async def test_a_login_banner_stays_out_of_the_output(tools: FakeRemoteTools) ->
     assert (result.stdout, result.stderr) == ('out', 'err')
 
 
-async def test_resolving_the_working_dir_counts_against_the_first_timeout(tools: FakeRemoteTools) -> None:
-    # The stop after the timeout reaches a host that stalls too, so it gives up after its 2 second grace period.
+async def test_resolving_the_working_dir_counts_against_the_first_timeout(
+    tools: FakeRemoteTools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The stop after the timeout reaches a host that stalls too (for 30 seconds), so it gives up
+    # after its grace period, shortened here from 2 seconds.
+    monkeypatch.setattr(ssh_backend, '_STOP_TIMEOUT', 0.5)
     started = anyio.current_time()
 
     with pytest.raises(WorkspaceTimeoutError):
-        await SSHWorkspaceBackend('slow').run(['true'], timeout=1)
+        await SSHWorkspaceBackend('slow').run(['true'], timeout=0.5)
 
-    assert anyio.current_time() - started < 4.5
+    assert anyio.current_time() - started < 2.5
 
 
 async def test_stderr_from_a_background_child_after_the_command_is_kept(tools: FakeRemoteTools) -> None:

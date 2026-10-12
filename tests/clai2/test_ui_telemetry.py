@@ -9,12 +9,14 @@ from functools import partial
 from pathlib import Path
 
 import anyio
+import httpx
 import logfire
 import pytest
 from opentelemetry import propagate
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import create_pipe_input
@@ -25,13 +27,16 @@ from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.textinput import TextInput, TextInputResult
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.cli.self_update import Installed, Updates, latest
 from pydantic_clai2.commands import Command, Commands
-from pydantic_clai2.config import Settings
+from pydantic_clai2.config import Settings, UpdateChannel
 from pydantic_clai2.config.api_keys import delete_key, prompt_api_key, rename_key, save_key
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginError, PluginSettingsError
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow, Runners, run_flow
@@ -254,7 +259,7 @@ def test_only_the_newest_subscriber_records(exporter: InMemorySpanExporter, tmp_
     assert recorded(exporter) == [('after', {})]
 
 
-def test_a_root_only_subscriber_is_told_of_selection_but_records_nothing(
+def test_a_root_only_subscriber_is_told_of_selection_but_gets_no_ui_telemetry(
     content_exporter: InMemorySpanExporter,
 ) -> None:
     selected: list[str] = []
@@ -283,6 +288,123 @@ def test_nothing_is_recorded_without_a_subscriber() -> None:
     telemetry.record('ignored', value=1)
     with telemetry.span('ignored') as span:
         span.set('value', 1)
+    telemetry.handled_error('ignored', RuntimeError('not recorded'))
+
+
+async def test_unexpected_command_errors_are_recorded_under_the_command(content_exporter: InMemorySpanExporter) -> None:
+    def rate_limited(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={'message': 'API rate limit exceeded'})
+
+    def main_channel() -> UpdateChannel:
+        return 'main'
+
+    updates = Updates(
+        channel=main_channel,
+        current=Installed(version='1.0.0', tool=True),
+        fetch=partial(latest, transport=httpx.MockTransport(rate_limited)),
+    )
+
+    def sign_in(args: list[str]) -> str:
+        raise UserError('Not signed in. Run /login.')
+
+    commands = Commands()
+    commands.register(Command(name='update', description='Update', handler=updates.command))
+    commands.register(Command(name='login', description='Sign in', handler=sign_in))
+    with pytest.raises(httpx.HTTPStatusError, match='403'):
+        await commands.execute_async('/update')
+    with pytest.raises(ValueError, match='Usage'):
+        await commands.execute_async('/update now')
+    with pytest.raises(UserError):
+        await commands.execute_async('/login')
+    # Usage errors keep only their type on the command's span; the unexpected failure is logged with its traceback.
+    assert recorded(content_exporter) == [
+        ('command /update failed', {'command': 'update'}),
+        ('command /update', {'command': 'update', 'arguments': 0, 'error': 'HTTPStatusError'}),
+        ('command /update', {'command': 'update', 'arguments': 1, 'error': 'ValueError'}),
+        ('command /login', {'command': 'login', 'arguments': 0, 'error': 'UserError'}),
+    ]
+    failed, command, *usage = content_exporter.get_finished_spans()
+    assert failed.parent == command.context
+    assert failed.status.status_code is StatusCode.ERROR
+    [exception] = failed.events
+    attributes = exception.attributes or {}
+    assert attributes['exception.type'] == 'httpx.HTTPStatusError'
+    assert '403 Forbidden' in str(attributes['exception.message'])
+    assert 'self_update.py' in str(attributes['exception.stacktrace'])
+    assert all(not span.events for span in (command, *usage))
+
+
+async def test_rejected_plugin_settings_are_usage_errors(
+    content_exporter: InMemorySpanExporter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / 'site' / 'clai_strict_telemetry'
+    package.mkdir(parents=True)
+    (package / '__init__.py').write_text(
+        'from pydantic import BaseModel, ConfigDict\n'
+        'from pydantic_clai2.plugins import Plugin, SessionStart\n'
+        'class Settings(BaseModel):\n'
+        "    model_config = ConfigDict(extra='forbid')\n"
+        '    fail_on_start: bool = False\n'
+        'class Strict(Plugin[Settings]):\n'
+        '    async def on_session_start(self, event: SessionStart) -> None:\n'
+        '        if self.settings.fail_on_start:\n'
+        "            raise RuntimeError('could not start')\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
+    harness = Harness(tmp_path)
+    harness.commands.register(Command(name='plugins', description='Plugins', handler=harness.loader.command))
+    with pytest.raises(PluginSettingsError):
+        await harness.commands.execute_async("""/plugins add strict clai_strict_telemetry '{"secret":"s3cr3t"}'""")
+    with pytest.raises(PluginError, match='could not start'):
+        await harness.commands.execute_async("""/plugins add strict clai_strict_telemetry '{"fail_on_start":true}'""")
+    # Rejected settings can quote a pasted secret, so only a plugin that fails to start is recorded with its message.
+    assert recorded(content_exporter) == [
+        ('command /plugins', {'command': 'plugins', 'arguments': 4, 'error': 'PluginSettingsError'}),
+        ('command /plugins failed', {'command': 'plugins'}),
+        ('command /plugins', {'command': 'plugins', 'arguments': 4, 'error': 'PluginError'}),
+    ]
+    events = [dict(event.attributes or {}) for span in content_exporter.get_finished_spans() for event in span.events]
+    assert [event['exception.message'] for event in events] == ["Plugin 'strict': RuntimeError: could not start"]
+    assert 's3cr3t' not in json.dumps(events)
+
+
+@pytest.mark.parametrize('content', [True, False])
+def test_handled_errors_do_not_need_ui_events(exporter: InMemorySpanExporter, tmp_path: Path, content: bool) -> None:
+    other = InMemorySpanExporter()
+    propagator = propagate.get_global_textmap()
+    errors_only = logfire.configure(
+        local=True,
+        send_to_logfire=False,
+        console=False,
+        metrics=False,
+        config_dir=tmp_path / 'errors',
+        data_dir=tmp_path / 'errors',
+        additional_span_processors=[SimpleSpanProcessor(other)],
+        advanced=logfire.AdvancedOptions(emit_configuration_span=False),
+    )
+    propagate.set_global_textmap(propagator)
+    unsubscribe = telemetry.subscribe(
+        logfire.Logfire(config=errors_only.config, otel_scope=telemetry.SCOPE), ui_events=False, include_content=content
+    )
+    try:
+        telemetry.record('a UI event')
+        telemetry.handled_error('plugin {plugin} failed', RuntimeError('handler failed'), plugin='alpha')
+    finally:
+        unsubscribe()
+        errors_only.shutdown(timeout_millis=3000)
+    # UI records skip a subscriber without `ui_events`, which still gets the newest handled errors.
+    assert recorded(exporter) == [('a UI event', {})]
+    [error] = other.get_finished_spans()
+    assert error.status.status_code is StatusCode.ERROR
+    assert recorded(other) == [('plugin alpha failed', {'plugin': 'alpha'})]
+    assert (error.attributes or {})['logfire.level_num'] == 17
+    if not content:
+        # Without content the event keeps only the type: a handler's message can quote the prompt.
+        assert [dict(event.attributes or {}) for event in error.events] == [
+            {'exception.type': 'RuntimeError', 'exception.escaped': 'False'}
+        ]
+        return
+    assert [(event.attributes or {}).get('exception.message') for event in error.events] == ['handler failed']
 
 
 async def test_settings_and_keys_record_names_not_secrets(
