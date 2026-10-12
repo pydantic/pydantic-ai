@@ -19,7 +19,8 @@ _FETCH_TIMEOUT = 30.0
 """Per-request timeout (seconds) for the remote markdown fetch."""
 
 
-class PydanticAIDocsTopic(str, Enum):
+# Preserve string formatting of existing public enum members.
+class PydanticAIDocsTopic(str, Enum):  # noqa: UP042
     """A Pydantic AI documentation page that `read_pyai_docs` can return.
 
     The value is the topic name the model passes. `_PAGES` maps it to the page's

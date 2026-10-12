@@ -29,9 +29,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, TypeGuard, cast
-
-from typing_extensions import assert_never
+from typing import TYPE_CHECKING, Any, TypeGuard, assert_never, cast
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapRunHandler
 from pydantic_ai.exceptions import (

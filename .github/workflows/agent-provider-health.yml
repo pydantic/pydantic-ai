@@ -1,0 +1,120 @@
+name: Agent Provider Health
+
+on:
+  # zizmor: ignore[dangerous-triggers] -- workflow_run only handles allowlisted agent artifacts;
+  # it checks out the default-branch controller, parses artifacts as data, and receives no Z.AI key.
+  workflow_run:
+    workflows:
+      - Pydantic AI Attention Triage
+      - Pydantic AI Bug Hunter
+      - Pydantic AI Community Demand
+      - Pydantic AI Docs Drift
+      - Pydantic AI Feature Digest
+      - CI Review
+      - Pydantic AI Provider Mapping Sweep
+      - Pydantic AI Provider Parity Explore
+      - Pydantic AI Regression Detector
+      - Pydantic AI Round-Trip Sweep
+      - Pydantic AI Stale Issues Finder
+      - Pydantic AI Streaming Resilience Sweep
+      - Pydantic AI UI Security Review
+    types: [completed]
+  schedule:
+    - cron: '13 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      recover_issue:
+        description: Incident issue number to verify before recovery
+        required: true
+        type: number
+
+permissions: {}
+
+concurrency:
+  group: agent-provider-health-reconciliation
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  monitor:
+    # Fork pull_request runs have no provider secret; their unknown quota cannot establish an outage.
+    if: >-
+      github.repository == 'pydantic/pydantic-ai' &&
+      (github.event_name != 'workflow_run' ||
+       github.event.workflow_run.event != 'pull_request' ||
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Check out trusted provider-health controller
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts/agent_provider_health.py
+          sparse-checkout-cone-mode: false
+      - name: Download provider-health decision
+        if: github.event_name == 'workflow_run'
+        id: health-artifact
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: provider-health
+          path: provider-health
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Download terminal agent result
+        if: github.event_name == 'workflow_run'
+        id: agent-artifact
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: agent
+          path: agent
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Represent a blocked or missing agent artifact
+        if: github.event_name == 'workflow_run' && steps.agent-artifact.outcome != 'success'
+        run: |
+          mkdir -p agent
+          : > agent/agent-stdio.log
+      - name: Reconcile completed agent workflow
+        if: github.event_name == 'workflow_run' && steps.health-artifact.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: >-
+          python3 .github/scripts/agent_provider_health.py monitor
+          --repository "$GITHUB_REPOSITORY"
+          --run-id "$RUN_ID"
+          --run-attempt "$RUN_ATTEMPT"
+          --conclusion "$CONCLUSION"
+          --health-artifact provider-health/provider-health.json
+          --agent-artifact agent/agent-stdio.log
+      - name: Check quota and recover known elapsed provider windows
+        if: github.event_name == 'schedule'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- scheduled recovery only; workflow_run receives no Z.AI key.
+        run: python3 .github/scripts/agent_provider_health.py monitor --repository "$GITHUB_REPOSITORY"
+      - name: Verify requested incident recovery
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- requested recovery only; workflow_run receives no Z.AI key.
+          ISSUE_NUMBER: ${{ inputs.recover_issue }}
+        run: >-
+          python3 .github/scripts/agent_provider_health.py monitor
+          --repository "$GITHUB_REPOSITORY"
+          --recover-issue "$ISSUE_NUMBER"

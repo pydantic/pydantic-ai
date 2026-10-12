@@ -43,6 +43,7 @@ _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-opus-4-8',
     'claude-opus-5',
     'claude-sonnet-5-5',
+    'claude-haiku-5-5',
 )
 """Models that honor a `{'role': 'system'}` entry inside the Messages API's `messages` array.
 
@@ -67,6 +68,7 @@ _TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (
     'claude-opus-4-8',
     'claude-opus-5',
     'claude-sonnet-5-5',
+    'claude-haiku-5-5',
 )
 """Models that accept `tool_addition` / `tool_removal` blocks on a `{'role': 'system'}` entry.
 
@@ -75,8 +77,8 @@ to match `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES` — the two remain separate sett
 separate features, one GA and one beta, that could diverge again. Models predating the beta reject
 the blocks with `requires a model that supports ...`, and `claude-sonnet-5` rejects them outright
 (`tool_addition/tool_removal is not supported on this model`) rather than accepting and ignoring them
-the way it does a plain system entry. Verified live per model except `claude-mythos-5`, which isn't
-reachable with our credentials and is included on the strength of the published list.
+the way it does a plain system entry. Verified live per model, including `claude-haiku-5-5`, except
+`claude-mythos-5`, which isn't reachable with our credentials and is included on the strength of the published list.
 """
 
 
@@ -117,6 +119,16 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             # rendering, as it did before this was supported anywhere.
             AnthropicModelProfile(
                 supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
+            ),
+            # Prompt caching is likewise a fact about the Messages API rather than the model family.
+            # `AnthropicModel` narrows `supports_auto_cache` per client (the Bedrock and Vertex SDK clients don't
+            # support the top-level automatic caching parameter), and `supported_cache_retentions` on Bedrock, which
+            # grants the 1-hour TTL to only a subset of Claude models. Anthropic documents the 1-hour TTL on Vertex
+            # for all active models: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+            AnthropicModelProfile(
+                supports_cache=True,
+                supported_cache_retentions=('5m', '1h'),
+                supports_auto_cache=True,
             ),
             AnthropicModelProfile(tool_addition_mode='by_reference')
             if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)

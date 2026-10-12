@@ -42,7 +42,7 @@ try:
         UserMessage,
     )
     from browser_use.llm.views import ChatInvokeCompletion, ChatInvokeUsage
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'browser-use is required for BrowserUse. Install it with: pip install "pydantic-ai-harness[browser-use]"'
     ) from _import_error

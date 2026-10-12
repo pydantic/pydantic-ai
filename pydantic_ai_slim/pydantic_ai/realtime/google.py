@@ -22,12 +22,12 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager, suppress
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, cast
 
 from anyio import Lock
 from anyio.lowlevel import RunVar
 from pydantic_core import to_json
-from typing_extensions import TypedDict, assert_never
+from typing_extensions import TypedDict
 
 try:
     import websockets
@@ -1359,9 +1359,7 @@ class GoogleRealtimeModel(RealtimeModel):
                     # where a level-triggered scope would cancel that close too and leak the socket.
                     try:
                         session = await asyncio.wait_for(opening.__aenter__(), timeout=handshake_timeout)
-                    except asyncio.TimeoutError as e:
-                        # On Python 3.10, `asyncio.TimeoutError` isn't the built-in `TimeoutError` that
-                        # the initial dial and a reconnect's retry both handle.
+                    except TimeoutError as e:
                         raise TimeoutError(f'no setup_complete within {handshake_timeout} seconds') from e
             cm = opening
             return session
