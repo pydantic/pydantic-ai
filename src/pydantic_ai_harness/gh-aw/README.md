@@ -363,4 +363,4 @@ A harness release does not move the engine. `engine.version` is an ordinary line
 the file, so a new release reaches consumers only once a pull request bumps it --
 and lint refuses a pin that is not on PyPI, so that pull request is green only after
 the release is published. The release workflow opens that pull request when the
-harness version it just published and the pinned version differ.
+harness version it just published is newer than the version pinned on the default branch.

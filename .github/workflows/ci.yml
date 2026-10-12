@@ -262,6 +262,7 @@ jobs:
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
           .github/scripts/test_ci_content_classifier.py
+          .github/scripts/test_gh_aw_engine_pin_bump.py
           .github/scripts/test_shard_durations.py
 
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
@@ -1835,7 +1836,7 @@ jobs:
   # gh-aw workflow installs, and consumers compile the definition straight from the default branch.
   # Shipping a bump is therefore an ordinary pull request against that file, and this job publishes
   # nothing: when the harness release just cut is not the release the definition names, it opens
-  # that pull request for a maintainer to merge.
+  # that pull request for a maintainer to merge when the released version is newer than the pin.
   #
   # The writes use a `pydantic-docs` App installation token, not GITHUB_TOKEN: GitHub starts no
   # workflow runs for a pull request opened with GITHUB_TOKEN, so the pull request would arrive
@@ -1849,7 +1850,6 @@ jobs:
     timeout-minutes: 10
     permissions: {}
     env:
-      PINNED: ${{ needs.gh-aw-engine-pin.outputs.version }}
       # The harness releases as `0.<minor>.<patch>` with every tag, so the tag name is not
       # the version the engine installs.
       RELEASED: ${{ needs.release-build.outputs.harness-version }}
@@ -1861,10 +1861,6 @@ jobs:
           # release apart, and a pre-release is not a pin consumers should move to.
           if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "${GITHUB_REF_NAME} is not a final release."
-            exit 0
-          fi
-          if [ "$PINNED" = "$RELEASED" ]; then
-            echo "The gh-aw engine definition already pins ${RELEASED}."
             exit 0
           fi
           echo "bump=true" >> "$GITHUB_OUTPUT"
@@ -1908,6 +1904,43 @@ jobs:
 
           # Only the frontmatter's `engine.version`: `runtimes.python.version` is another
           # `version:` key, and the body's usage example opens a second `engine:` block.
+          if ! PINNED=$(awk '
+            NR == 1 { frontmatter = ($0 == "---") }
+            NR > 1 && frontmatter && $0 == "---" { frontmatter = 0 }
+            frontmatter && /^[^ #]/ { engine = ($0 == "engine:") }
+            frontmatter && engine && /^  version:/ {
+              value = $0
+              sub(/^  version:[[:space:]]*/, "", value)
+              if (value ~ /^['\''"]/) {
+                quote = substr(value, 1, 1)
+                if (substr(value, length(value), 1) != quote) exit 1
+                value = substr(value, 2, length(value) - 2)
+              }
+              print value
+              found = 1
+              exit
+            }
+            END { if (!found) exit 1 }
+          ' "$current"); then
+            echo "::error::${definition} on ${DEFAULT_BRANCH} has no readable engine.version line in its frontmatter."
+            exit 1
+          fi
+          if ! [[ "$PINNED" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$RELEASED" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Cannot compare gh-aw engine versions: expected numeric major.minor.patch values, got '${PINNED}' and '${RELEASED}'."
+            exit 1
+          fi
+          if ! awk -v pinned="$PINNED" -v released="$RELEASED" 'BEGIN {
+            split(pinned, p, "[.]")
+            split(released, r, "[.]")
+            for (i = 1; i <= 3; i++) {
+              if (r[i] + 0 > p[i] + 0) exit 0
+              if (r[i] + 0 < p[i] + 0) exit 1
+            }
+            exit 1
+          }'; then
+            echo "${definition} on ${DEFAULT_BRANCH} already pins ${PINNED} or a newer version."
+            exit 0
+          fi
           if ! awk -v released="$RELEASED" '
             NR == 1 { frontmatter = ($0 == "---") }
             NR > 1 && frontmatter && $0 == "---" { frontmatter = 0 }
