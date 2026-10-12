@@ -195,8 +195,8 @@ async def resolve_model_name(resolve: ModelNameResolver, model_id: str) -> Model
     return infer_model(model) if model != model_id else None
 
 
-def _agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapability[DepsT]]:
-    """The capabilities the agent was built with, so a sandbox configured on it counts too.
+def agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapability[DepsT]]:
+    """The capabilities the agent was built with, so a sandbox or guardrail configured on it counts too.
 
     A run-level `LocalWorkspace` would be asked before the agent's own sandbox and win.
     """
@@ -631,7 +631,7 @@ class Session(Generic[DepsT, OutputT]):
                                 )
                             )
                         workspace: Literal['new'] | None = None
-                        configured = [*_agent_capabilities(self.agent), *self.plugins]
+                        configured = [*agent_capabilities(self.agent), *self.plugins]
                         if (local := local_workspace(configured, self.workspace)) is not None:
                             capabilities.append(local)
                             if _stale_local_workspace(previous, self.workspace):

@@ -68,6 +68,7 @@ from pydantic_clai2.runtime._session import (
     Session,
     SessionModels,
     StockAgent,
+    agent_capabilities,
     current_session_id,
     local_workspace,
     resolve_model_name,
@@ -980,7 +981,7 @@ class _Shell(Generic[DepsT, OutputT]):
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)
-        return (*bound, *self.speculation.capabilities((self.agent.root_capability, *granted)))
+        return (*bound, *self.speculation.capabilities((*agent_capabilities(self.agent), *granted)))
 
     def capability_failed(self, error: CapabilitySetupError) -> None:
         """Report that a failing settings-built capability is left out of later turns."""

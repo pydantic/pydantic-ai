@@ -14,7 +14,14 @@ import anyio
 from rich.console import Console
 
 from pydantic_ai import Agent, AgentRunResultEvent, ModelRetry, PartStartEvent, RunContext, Tool
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, DynamicCapability, LocalWorkspace
+from pydantic_ai.agent import AbstractAgent, WrapperAgent
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    AgentCapability,
+    CombinedCapability,
+    DynamicCapability,
+    LocalWorkspace,
+)
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -352,6 +359,14 @@ def allow(call: object) -> GuardrailResult:
     return GuardrailResult.allow()  # pragma: no cover -- only inspected, never run.
 
 
+class OpaqueAgent(WrapperAgent[None, str]):
+    """A custom agent that does not expose its capability tree."""
+
+    @property
+    def root_capability(self) -> CombinedCapability[None]:
+        raise NotImplementedError
+
+
 def mount(granted: Sequence[AgentCapability[None]]) -> str | None:
     """The mount the sandbox gets beside `granted`, as its guidance describes it."""
     [speculative] = [
@@ -400,18 +415,23 @@ class TestWorkspaceMount:
         assert mount([coder, guardrail]) == expected
 
     @pytest.mark.parametrize(
-        ('own', 'expected'),
-        [([], 'read-write'), ([ToolGuardrail[None](hidden=['shell'])], 'read-only')],
-        ids=['unguarded', 'guarded'],
+        ('agent', 'expected'),
+        [
+            (Agent(TestModel(), deps_type=type(None)), 'read-write'),
+            (Agent(TestModel(), deps_type=type(None), capabilities=[ToolGuardrail(hidden=['shell'])]), 'read-only'),
+            # An agent that does not expose its capabilities leaves the mount to the plugins.
+            (OpaqueAgent(Agent(TestModel(), deps_type=type(None))), 'read-write'),
+        ],
+        ids=['unguarded', 'guarded', 'opaque'],
     )
     def test_shell_mount_follows_the_agents_own_guardrails(
-        self, tmp_path: Path, own: list[AbstractCapability[None]], expected: str
+        self, tmp_path: Path, agent: AbstractAgent[None, str], expected: str
     ) -> None:
         """A supplied agent's `ToolGuardrail` limits the mount as a plugin's does."""
         store = SettingsStore(tmp_path / 'config.db')
         store.set('run.code_mode', True)
         shell = create_shell(
-            Agent(TestModel(), deps_type=type(None), capabilities=own),
+            agent,
             deps=None,
             plugins=[Coder[None](unrestricted_filesystem=True, repo_context=False)],
             usage_limits=None,
