@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Annotated, Protocol
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from typing_extensions import TypedDict
+
+from pydantic_ai.messages import ToolCallPart
 
 MAX_QUESTIONS = 10
 """Most questions one `ask_user_question` call may carry."""
@@ -99,13 +102,37 @@ def require_unique_headers(questions: list[Question]) -> list[Question]:
     return questions
 
 
+Questions = Annotated[
+    list[Question],
+    Field(min_length=1, max_length=MAX_QUESTIONS),
+    AfterValidator(require_unique_headers),
+]
+"""The `questions` argument of `ask_user_question`."""
+
+
+class _ToolArguments(TypedDict):
+    questions: Questions
+
+
+_TOOL_ARGUMENTS = TypeAdapter(_ToolArguments)
+
+
 @dataclass(frozen=True, kw_only=True)
 class AskUserRequest:
     """One `ask_user_question` call, handed to the `Answerer` and carried by `AskUserRequestedEvent`."""
 
     questions: tuple[Question, ...]
     id: str = field(default_factory=lambda: uuid4().hex)
-    """Distinguishes concurrent or repeated calls; a UI matches its reply to it."""
+    """Distinguishes concurrent or repeated calls; a UI matches its reply to it.
+
+    A deferred request uses the tool call ID, so `from_tool_call` rebuilds the same request.
+    """
+
+    @classmethod
+    def from_tool_call(cls, call: ToolCallPart) -> AskUserRequest:
+        """Rebuild the request behind a deferred `ask_user_question` call, to put it to the user."""
+        arguments = _TOOL_ARGUMENTS.validate_python(call.args_as_dict())
+        return cls(questions=tuple(arguments['questions']), id=call.tool_call_id)
 
 
 @dataclass(frozen=True, kw_only=True)

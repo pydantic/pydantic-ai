@@ -21,16 +21,17 @@ from pydantic_clai2.mcp import (
     PROJECT_MCP_FILE,
     HTTPServer,
     MCPCommand,
+    MCPPlugin,
     MCPServers,
+    MCPSettings,
     MCPStore,
     ServerForm,
     SSEServer,
     StdioServer,
-    activate,
     edit_in_editor,
     run_form,
 )
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import PluginHost, collect
 from tests.clai2.menu_script import Script, pick, typed
 
 ESC = MenuResult(cancelled=True)
@@ -221,6 +222,7 @@ async def test_edit_prefills_renames_and_cancels(tmp_path: Path) -> None:
     assert await command(['edit', 'renamed']) == 'No changes.'
 
 
+@pytest.mark.subprocess(reason='starts a real stdio MCP server written in Python')
 async def test_edit_restarts_a_running_server(tmp_path: Path) -> None:
     server = tmp_path / 'server.py'
     server.write_text(
@@ -244,6 +246,7 @@ async def test_edit_refuses_servers_mcp_does_not_own(tmp_path: Path) -> None:
         await command(['edit', 'legacy'])
 
 
+@pytest.mark.subprocess(reason='runs Python scripts as the `$VISUAL`/`$EDITOR` commands')
 def test_editor_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     edit = tmp_path / 'edit.py'
     edit.write_text('import sys, pathlib\npathlib.Path(sys.argv[1]).write_text("{\\"command\\": \\"edited\\"}")\n')
@@ -450,9 +453,9 @@ async def test_completion(tmp_path: Path) -> None:
 async def test_registered_completion_through_the_command_registry(tmp_path: Path) -> None:
     host: PluginHost[None] = PluginHost(name='mcp', console=Console(file=io.StringIO()), settings={})
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
-    activate(host, store=store)
+    loaded = collect(MCPPlugin(host, MCPSettings(), store=store))
     registry = Commands()
-    registry.register_many(host.commands)
+    registry.register_many(loaded.commands)
     store.put('local', stdio())
     [mcp] = list(registry)
     assert 'local' in mcp.complete(['logs', ''])
@@ -510,6 +513,7 @@ async def test_symlinked_project_file_is_never_trusted(tmp_path: Path) -> None:
     assert store.trust_state(project) == 'untrusted' and store.project_servers() == {}
 
 
+@pytest.mark.subprocess(reason='starts a real stdio MCP server written in Python')
 async def test_revoke_disconnects_project_servers(tmp_path: Path) -> None:
     server = tmp_path / 'server.py'
     server.write_text('from mcp.server.fastmcp import FastMCP\nFastMCP("t").run()\n')

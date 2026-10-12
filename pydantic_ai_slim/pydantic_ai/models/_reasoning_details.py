@@ -9,10 +9,9 @@ any provider that speaks it.
 
 from __future__ import annotations as _annotations
 
-from typing import Literal
+from typing import Literal, assert_never
 
 from pydantic import BaseModel
-from typing_extensions import assert_never
 
 from ..messages import ThinkingPart
 

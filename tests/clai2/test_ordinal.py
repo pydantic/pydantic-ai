@@ -38,8 +38,8 @@ from pydantic_clai2.builtin_plugins.ordinal import (
     URL,
     USAGE,
     OrdinalAuth,
+    OrdinalPlugin,
     OrdinalSource,
-    activate,
 )
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
@@ -48,7 +48,7 @@ from pydantic_clai2.config.credential_store import delete_credentials, load_code
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import OAUTH_TIMEOUT, TokenStore
-from pydantic_clai2.plugins import PluginHost, SessionStart
+from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, load_plugin
 from pydantic_clai2.plugins.loader import (
     _RETIRED_BUILTINS,  # pyright: ignore[reportPrivateUsage]
     PluginError,
@@ -157,7 +157,11 @@ def plugin_host(settings: dict[str, JsonValue] | None = None) -> PluginHost[None
     return PluginHost[None](name='ordinal', console=Console(file=io.StringIO()), settings=settings or {})
 
 
-async def run(plugin: PluginHost[None], *args: str) -> str:
+def load_ordinal(plugin_host: PluginHost[None]) -> LoadedPlugin[None]:
+    return load_plugin(OrdinalPlugin, plugin_host)
+
+
+async def run(plugin: LoadedPlugin[None], *args: str) -> str:
     [command] = list(plugin.commands)
     result = command.handler(list(args))
     return result if isinstance(result, str) else await result
@@ -356,8 +360,7 @@ async def test_each_sign_in_method_is_used_alone(vault: Vault, tmp_path: Path, m
 
 async def test_status_names_the_credential_in_use(vault: Vault, monkeypatch: pytest.MonkeyPatch) -> None:
     async def status(**settings: JsonValue) -> str:
-        plugin = plugin_host(settings)
-        activate(plugin)
+        plugin = load_ordinal(plugin_host(settings))
         return await run(plugin)
 
     setup = 'Run /plugins configure ordinal to choose how it signs in.'
@@ -379,8 +382,7 @@ async def test_logout_ends_the_browser_session(vault: Vault, monkeypatch: pytest
     token = OAuthToken(access_token='access', token_type='Bearer', refresh_token='refresh', expires_in=3600)
     await TokenStorageAdapter(TokenStore(TOKENS), server_url=URL).set_tokens(token)
     terminal(monkeypatch, attached=False)
-    plugin = plugin_host({'sign_in': 'browser'})
-    activate(plugin)
+    plugin = load_ordinal(plugin_host({'sign_in': 'browser'}))
     assert await run(plugin) == 'Ordinal: signed in through the browser. /ordinal logout signs out.'
     [auth] = plugin.capabilities
     assert isinstance(auth, OrdinalAuth)
@@ -396,8 +398,7 @@ async def test_logout_ends_the_browser_session(vault: Vault, monkeypatch: pytest
 
 
 async def test_unreadable_keyring_is_reported(vault: Vault, monkeypatch: pytest.MonkeyPatch) -> None:
-    plugin = plugin_host()
-    activate(plugin)
+    plugin = load_ordinal(plugin_host())
 
     def locked(service: str, account: str) -> str | None:
         if account == KEY_ACCOUNT:
@@ -410,8 +411,7 @@ async def test_unreadable_keyring_is_reported(vault: Vault, monkeypatch: pytest.
 
 async def test_invalid_saved_choice_fails_closed(vault: Vault) -> None:
     save_codex_credentials(account=KEY_ACCOUNT, value='{"token": "a raw secret"}')
-    plugin = plugin_host()
-    activate(plugin)
+    plugin = load_ordinal(plugin_host())
     [auth] = plugin.capabilities
     assert isinstance(auth, OrdinalAuth)
     with pytest.raises(UserError, match='/plugins configure ordinal'):
@@ -430,8 +430,7 @@ async def test_settings_cannot_hold_a_secret_or_invalid_options(
 
 
 async def test_command_usage_and_completion(vault: Vault) -> None:
-    plugin = plugin_host()
-    activate(plugin)
+    plugin = load_ordinal(plugin_host())
     [command] = list(plugin.commands)
     assert command.name == 'ordinal'
     assert await run(plugin, 'nope') == USAGE
@@ -459,13 +458,12 @@ async def test_without_a_terminal_only_the_chosen_method_counts(vault: Vault, mo
     terminal(monkeypatch, attached=False)
     monkeypatch.setenv(KEY_NAME, 'token')
     with pytest.raises(UserError, match='sign-in `key`'):
-        activate(plugin_host({'sign_in': 'key'}))
-    plugin = plugin_host({'sign_in': 'environment'})
-    activate(plugin)
+        load_ordinal(plugin_host({'sign_in': 'key'}))
+    plugin = load_ordinal(plugin_host({'sign_in': 'environment'}))
     assert len(plugin.capabilities) == 1
     monkeypatch.delenv(KEY_NAME)
     with pytest.raises(UserError, match='sign-in `environment`'):
-        activate(plugin_host({'sign_in': 'environment'}))
+        load_ordinal(plugin_host({'sign_in': 'environment'}))
 
 
 async def test_add_replacing_the_builtin_opens_the_menu(

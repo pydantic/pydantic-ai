@@ -13,6 +13,12 @@ import anyio
 import logfire_api
 from typing_extensions import ParamSpec, TypeIs
 
+# Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
+try:
+    import sniffio as _sniffio
+except ModuleNotFoundError:  # pragma: no cover - exercised by the clean-import test in a subprocess
+    _sniffio = None
+
 _logfire = logfire_api.Logfire(otel_scope='pydantic-evals')
 logfire_api.add_non_user_code_prefix(Path(__file__).parent.absolute())
 
@@ -89,6 +95,26 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
+
+
+def running_on_asyncio() -> bool:
+    """Whether the caller runs on asyncio rather than Trio.
+
+    Inspired by AnyIO's private `current_async_library`. With `sniffio` installed, ask it: Trio records itself
+    there, so the answer holds even for Trio guest mode on an asyncio loop. Without it, Trio cannot be running,
+    because Trio depends on `sniffio`, so a running asyncio loop means asyncio. If Trio ever drops `sniffio`,
+    only guest mode would be misread, as AnyIO would misread it too.
+    """
+    if _sniffio is None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return True
+    try:
+        return _sniffio.current_async_library() == 'asyncio'
+    except _sniffio.AsyncLibraryNotFoundError:
+        return False
 
 
 def run_until_complete(coro: Awaitable[T]) -> T:

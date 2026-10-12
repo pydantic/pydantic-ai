@@ -2,7 +2,9 @@
 
 # pydantic requires typing_extensions.TypedDict (not typing.TypedDict) for
 # schema generation on Python < 3.12; typing_extensions ships with pydantic.
-from typing_extensions import NotRequired, TypedDict
+from typing import NotRequired
+
+from typing_extensions import TypedDict
 
 from .shared import attach_context, resolve
 

@@ -1,4 +1,6 @@
-"""The built-in `notion` plugin: harness `Notion`, connected with a named key from `/keys` or a browser sign-in.
+"""Use Notion, signed in with a key from /keys or in the browser.
+
+The built-in `notion` plugin: harness `Notion`, connected with a named key from `/keys` or a browser sign-in.
 
 Plugin settings are plaintext SQLite, so they hold only `Notion`'s non-secret options, all edited in the menu
 `/plugins configure notion` opens. Its key row picks or enters a key in the named keystore and saves only the
@@ -7,21 +9,24 @@ plugin that shares it, and a deleted key fails the run rather than connecting.
 """
 
 import asyncio
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from functools import partial
 from typing import Generic, Literal
 
+import anyio
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
 from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness.notion import Notion
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyReference, resolve_key, save_key_connection
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials
 from pydantic_clai2.mcp import OAUTH_TIMEOUT, TokenStore, http_client, sign_in
-from pydantic_clai2.plugins import DepsT, PluginHost, SessionStart
+from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.key_picker import pick_key
 from pydantic_clai2.ui.menus.menu_worker import run_worker
@@ -72,14 +77,38 @@ def select_key(reference: KeyReference) -> None:
     save_key_connection(account=ACCOUNT, token=reference, value=_Selection(token=reference).model_dump_json())
 
 
-def activate(host: PluginHost[DepsT]) -> None:
+class NotionPlugin(Plugin[NotionSettings, DepsT]):
     """Choose the connection per run, so a new key or a logout applies without a reload."""
-    settings = host.settings(NotionSettings)
 
-    async def connect(_: RunContext[DepsT]) -> Notion[DepsT]:
-        reference = None if settings.auth == 'oauth' else await asyncio.to_thread(selected_key)
+    def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
+        return (self._connect,)
+
+    def get_commands(self) -> Sequence[Command]:
+        return (
+            Command(
+                name='notion', description='Sign out of Notion (/notion logout).', handler=_command, complete=_complete
+            ),
+        )
+
+    async def configure(self) -> str:
+        return await _configure(NotionSource(self.host))
+
+    async def on_session_start(self, event: SessionStart) -> None:
+        # Here rather than on load, so the keyring read does not block the shell's loop.
+        if self.settings.auth == 'key' and await anyio.to_thread.run_sync(selected_key, abandon_on_cancel=True) is None:
+            self.host.console.print(
+                f'Notion has no key selected, so runs fail. {SETUP}',
+                style=theme.color(theme.WARNING),
+                markup=False,
+            )
+
+    async def _connect(self, _: RunContext[DepsT]) -> Notion[DepsT]:
+        settings = self.settings
+        reference = (
+            None if settings.auth == 'oauth' else await anyio.to_thread.run_sync(selected_key, abandon_on_cancel=True)
+        )
         if reference is not None:
-            token = await asyncio.to_thread(resolve_key, token=reference)
+            token = await anyio.to_thread.run_sync(partial(resolve_key, token=reference), abandon_on_cancel=True)
             return Notion[DepsT](
                 auth=token, read_only=settings.read_only, include_instructions=settings.include_instructions
             )
@@ -93,28 +122,6 @@ def activate(host: PluginHost[DepsT]) -> None:
             read_only=settings.read_only,
             include_instructions=settings.include_instructions,
         )
-
-    host.add(connect)
-
-    @host.configure
-    async def configure() -> str:
-        return await _configure(NotionSource(host))
-
-    if settings.auth == 'key':
-
-        @host.on('session_start')
-        async def warn_without_key(_: SessionStart) -> None:
-            # A handler rather than `activate` itself, so the keyring read does not block the shell's loop.
-            if await asyncio.to_thread(selected_key) is None:
-                host.console.print(
-                    f'Notion has no key selected, so runs fail. {SETUP}',
-                    style=theme.color(theme.WARNING),
-                    markup=False,
-                )
-
-    host.commands.register(
-        Command(name='notion', description='Sign out of Notion (/notion logout).', handler=_command, complete=_complete)
-    )
 
 
 _KEY = FieldRow(
@@ -245,8 +252,8 @@ async def _configure(source: NotionSource[DepsT]) -> str:
 async def _command(args: list[str]) -> str:
     if args != ['logout']:
         raise ValueError('Usage: /notion logout (settings and the key: /plugins configure notion)')
-    await asyncio.to_thread(TOKENS.forget)
-    await asyncio.to_thread(delete_credentials, account=ACCOUNT)
+    await anyio.to_thread.run_sync(TOKENS.forget, abandon_on_cancel=True)
+    await anyio.to_thread.run_sync(partial(delete_credentials, account=ACCOUNT), abandon_on_cancel=True)
     return 'Signed out of Notion and cleared the selected key. The key itself stays in /keys.'
 
 

@@ -7,6 +7,7 @@ from string import Template
 from typing import Annotated, Literal
 
 import httpx
+from mcp.shared._httpx_utils import create_mcp_http_client
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, HttpUrl, TypeAdapter, model_validator
 
 ServerName = Annotated[str, Field(pattern=r'^[A-Za-z][A-Za-z0-9-]{0,63}$')]
@@ -112,20 +113,21 @@ def http_client(
 ) -> httpx.AsyncClient:
     """Do not let a configured endpoint redirect MCP requests to another server.
 
+    The MCP SDK builds the client, so it is the HTTPX the installed FastMCP drives: legacy `httpx` under
+    FastMCP 3, `httpx2` under FastMCP 4, where a browser sign-in (`SignIn`) is an `httpx2.Auth` that a legacy
+    client rejects. The annotations name legacy `httpx`, the generation this workspace locks.
     FastMCP passes `follow_redirects=True` to every client factory; it is accepted and overridden.
     """
     del follow_redirects
-    return httpx.AsyncClient(
-        headers=headers, timeout=timeout or httpx.Timeout(30, read=300), auth=auth, follow_redirects=False
-    )
+    client = create_mcp_http_client(headers=headers, timeout=timeout, auth=auth)
+    client.follow_redirects = False
+    return client
 
 
 def references(server: Server) -> list[str]:
     """Environment variables named by `$VAR` in `env` values or `headers`, in first-use order."""
     values = server.env if isinstance(server, StdioServer) else server.headers
-    # `Template.get_identifiers` is 3.11+; this is its implementation for the default pattern.
-    matches = (match for value in (values or {}).values() for match in Template.pattern.finditer(value))
-    names = (name for match in matches if (name := match['named'] or match['braced']))
+    names = (name for value in (values or {}).values() for name in Template(value).get_identifiers())
     return list(dict.fromkeys(names))
 
 
