@@ -742,9 +742,19 @@ class _PlainModel(Model):
         return 'plain'
 
 
-class _OwnEqualityModel(_PlainModel):
+@dataclass(eq=False)
+class _IdentityDataclassModel(_PlainModel):
+    """A `@dataclass(eq=False)` subclass, which keeps identity hashing."""
+
+    tag: str = 'model'
+
+
+class _OwnMethodsModel(_PlainModel):
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, _OwnEqualityModel)
+        return isinstance(other, _OwnMethodsModel)
+
+    def __repr__(self) -> str:
+        return 'own repr'
 
 
 def test_models_that_differ_only_in_settings_or_profile_are_not_equal():
@@ -769,7 +779,16 @@ def test_a_model_without_dataclass_fields_compares_by_identity():
     assert model == model
     assert model != _PlainModel()
     assert {model: 'kept'}[model] == 'kept'
-    assert _OwnEqualityModel() == _OwnEqualityModel(), "a subclass's own `__eq__` is kept"
+
+    identity_dataclass = _IdentityDataclassModel()
+    assert identity_dataclass == identity_dataclass
+    assert identity_dataclass != _IdentityDataclassModel(), 'equal models must hash equal, and these hash by identity'
+
+
+def test_a_model_subclass_keeps_its_own_eq_and_repr():
+    """Not a VCR test: equality and `repr` make no request."""
+    assert _OwnMethodsModel() == _OwnMethodsModel()
+    assert repr(_OwnMethodsModel()) == 'own repr'
 
 
 def test_model_repr_shows_its_name_settings_and_profile():
@@ -777,8 +796,7 @@ def test_model_repr_shows_its_name_settings_and_profile():
 
     Not a VCR test: `repr` makes no request.
     """
-    with patch.dict(os.environ, {'OPENAI_API_KEY': 'x'}):
-        model = OpenAIChatModel('gpt-5', settings={'temperature': 1.0})
+    model = OpenAIChatModel('gpt-5', provider=openai.OpenAIProvider(api_key='x'), settings={'temperature': 1.0})
 
     assert repr(model) == "OpenAIChatModel(model_name='gpt-5', settings={'temperature': 1.0})"
     assert repr(TestModel(seed=1, profile=ModelProfile(supports_tools=False))) == (
