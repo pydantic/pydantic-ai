@@ -386,7 +386,8 @@ unknown key would break their plugin loading.
 - A build that lists every feature a setting needs applies it as saved.
 - A build that lacks one, or does not recognize a name, ignores that one setting. It uses the
   shipped declaration's value (for a built-in) or the plugin's own default, keeps every other
-  setting, and prints one line per plugin, such as
+  setting. Startup stays quiet; the plugin's /plugins row and the result of /plugins enable
+  or reload show one line, such as
   coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.
 - Reading never rewrites anything. When that build saves the plugin's settings, it writes the
   ignored values back unchanged, still tagged. A tag only goes away when its value changes.

@@ -48,6 +48,18 @@ def speculation(tmp_path: Path, console: Console | None = None) -> Speculation:
     return Speculation(context=context, console=console or Console(file=io.StringIO()))
 
 
+class TestDefaults:
+    @pytest.fixture
+    def native_tools(self) -> None:
+        """The shipped defaults, not the suite's code-mode-off stand-in."""
+
+    def test_code_mode_on_and_speculation_off(self) -> None:
+        assert (Settings().code_mode, Settings().speculative_code_mode) == (True, False)
+        # Older settings never saved `run.code_mode`, so they get it; a saved speculation choice stands.
+        assert resolve_settings({'run.speculative_code_mode': True}).code_mode is True
+        assert resolve_settings({'run.code_mode': False}).code_mode is False
+
+
 class TestSwitch:
     def test_off_by_default_and_older_settings_load(self) -> None:
         assert Settings().speculative_code_mode is False
@@ -94,7 +106,7 @@ class TestSwitch:
         switch.toggle()
         monkeypatch.setitem(sys.modules, 'pydantic_clai2.runtime.speculative_mode', None)
         assert switch.capabilities([]) == []
-        assert 'Speculative execution is unavailable' in output.getvalue()
+        assert 'Code mode is unavailable' in output.getvalue()
 
     def test_sandbox_dependency_ships_with_clai(self) -> None:
         """A plain `pydantic-clai2` install must bring Monty, not leave it behind a harness extra."""

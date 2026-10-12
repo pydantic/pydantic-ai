@@ -1,10 +1,11 @@
-"""The Speculative Execution switch, its session counters, and the pinned row they paint.
+"""The code mode and Speculative Execution switches, the session counters, and the pinned row they paint.
 
-The switch is the `run.speculative_code_mode` setting, off by default. `Ctrl+X Ctrl+S` flips
-it and saves it at once. Core binds a run's tools when it starts, so a turn already running keeps
+`run.code_mode`, on by default, folds tools into an eager `run_code` sandbox. The speculation switch
+is the `run.speculative_code_mode` setting, off by default; it also launches read-only calls early,
+and turns on code mode for its runs. `Ctrl+X Ctrl+S` flips it and saves it at once. Core binds a run's tools when it starts, so a turn already running keeps
 the tools it started with and the next prompt uses the new value; meanwhile the pinned row keeps
 counting for the running turn and says the change is pending. The wiring itself lives in
-`speculative_mode`, imported only while the switch is on so Monty stays out of startup.
+`speculative_mode`, imported only when a run binds it so Monty stays out of startup.
 """
 
 from collections.abc import Generator, Sequence
@@ -112,21 +113,22 @@ class Speculation:
         state = 'on' if self.enabled else 'off'
         return f'{self.counters.row()}    {theme.sgr(theme.MUTED)}{state} from the next prompt\x1b[0m'
 
-    def capabilities(self, granted: Sequence[AgentCapability[AgentDepsT]]) -> 'list[AbstractCapability[AgentDepsT]]':
-        """The speculative CodeMode bundle for one run, or nothing while the switch is off.
+    def capabilities(
+        self, granted: Sequence[AgentCapability[AgentDepsT]] | None
+    ) -> 'list[AbstractCapability[AgentDepsT]]':
+        """The CodeMode bundle for one run, speculating while the switch is on, or nothing with code mode off.
 
-        `granted` is the run's other capabilities; the sandbox mounts only what their `FileSystem` allows.
+        `granted` is the run's other capabilities; the sandbox mounts only what their `FileSystem` allows,
+        and nothing when they are unknown (`None`).
         """
-        if not self.enabled:
+        if not (self.enabled or self.context.settings.code_mode):
             return []
         try:
             from pydantic_clai2.runtime.speculative_mode import speculative_capabilities
         except ImportError as exc:
-            self.console.print(
-                f'Speculative execution is unavailable: {exc}', style=theme.color(theme.WARNING), markup=False
-            )
+            self.console.print(f'Code mode is unavailable: {exc}', style=theme.color(theme.WARNING), markup=False)
             return []
-        return speculative_capabilities(self.counters, granted)
+        return speculative_capabilities(self.counters, granted, speculate=self.enabled)
 
 
 def _lit(on: bool, text: str, role: str) -> str:
