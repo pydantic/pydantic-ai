@@ -749,13 +749,6 @@ class _IdentityDataclassModel(_PlainModel):
     tag: str = 'model'
 
 
-@dataclass(init=False)
-class _SelfReferencingModel(TestModel):
-    """A model whose field reaches back to it, as a routing model holding an agent built on it would."""
-
-    itself: Model | None = None
-
-
 class _OwnMethodsModel(_PlainModel):
     def __eq__(self, other: object) -> bool:
         return isinstance(other, _OwnMethodsModel)
@@ -812,6 +805,17 @@ def test_model_repr_shows_its_name_settings_and_profile():
     )
     assert repr(_PlainModel()) == "_PlainModel(model_name='plain')"
 
+
+@dataclass(init=False)
+class _SelfReferencingModel(TestModel):
+    """A model whose field reaches back to it, as a routing model holding an agent built on it would."""
+
+    itself: Model | None = None
+
+
+def test_a_self_referencing_model_repr_does_not_recurse():
+    """Not a VCR test: `repr` makes no request."""
     model = _SelfReferencingModel()
     model.itself = model
+
     assert repr(model).endswith('itself=...)')

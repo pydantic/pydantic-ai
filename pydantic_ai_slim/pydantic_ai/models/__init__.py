@@ -581,9 +581,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def __repr__(self) -> str:
         shown = [f'model_name={self.model_name!r}']
         if is_dataclass(self):
-            shown.extend(
-                f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr and f.name != 'model_name'
-            )
+            shown.extend(f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr)
         if self._settings is not None:
             shown.append(f'settings={self._settings!r}')
         if self._profile is not None:
