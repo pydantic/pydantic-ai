@@ -981,7 +981,9 @@ class _Shell(Generic[DepsT, OutputT]):
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)
-        return (*bound, *self.speculation.capabilities((*agent_capabilities(self.agent), *granted)))
+        own = agent_capabilities(self.agent)
+        # An agent that hides its capabilities may guard tools a mount would bypass, so it gets none.
+        return (*bound, *self.speculation.capabilities(None if own is None else (*own, *granted)))
 
     def capability_failed(self, error: CapabilitySetupError) -> None:
         """Report that a failing settings-built capability is left out of later turns."""

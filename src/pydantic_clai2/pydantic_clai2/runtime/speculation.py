@@ -113,10 +113,13 @@ class Speculation:
         state = 'on' if self.enabled else 'off'
         return f'{self.counters.row()}    {theme.sgr(theme.MUTED)}{state} from the next prompt\x1b[0m'
 
-    def capabilities(self, granted: Sequence[AgentCapability[AgentDepsT]]) -> 'list[AbstractCapability[AgentDepsT]]':
+    def capabilities(
+        self, granted: Sequence[AgentCapability[AgentDepsT]] | None
+    ) -> 'list[AbstractCapability[AgentDepsT]]':
         """The CodeMode bundle for one run, speculating while the switch is on, or nothing with code mode off.
 
-        `granted` is the run's other capabilities; the sandbox mounts only what their `FileSystem` allows.
+        `granted` is the run's other capabilities; the sandbox mounts only what their `FileSystem` allows,
+        and nothing when they are unknown (`None`).
         """
         if not (self.enabled or self.context.settings.code_mode):
             return []

@@ -419,13 +419,13 @@ class TestWorkspaceMount:
         [
             (Agent(TestModel(), deps_type=type(None)), 'read-write'),
             (Agent(TestModel(), deps_type=type(None), capabilities=[ToolGuardrail(hidden=['shell'])]), 'read-only'),
-            # An agent that does not expose its capabilities leaves the mount to the plugins.
-            (OpaqueAgent(Agent(TestModel(), deps_type=type(None))), 'read-write'),
+            # An agent that does not expose its capabilities may guard tools too, so it gets no mount.
+            (OpaqueAgent(Agent(TestModel(), deps_type=type(None))), None),
         ],
         ids=['unguarded', 'guarded', 'opaque'],
     )
     def test_shell_mount_follows_the_agents_own_guardrails(
-        self, tmp_path: Path, agent: AbstractAgent[None, str], expected: str
+        self, tmp_path: Path, agent: AbstractAgent[None, str], expected: str | None
     ) -> None:
         """A supplied agent's `ToolGuardrail` limits the mount as a plugin's does."""
         store = SettingsStore(tmp_path / 'config.db')

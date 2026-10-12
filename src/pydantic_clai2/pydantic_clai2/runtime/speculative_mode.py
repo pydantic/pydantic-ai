@@ -225,7 +225,7 @@ def _is_capability(capability: AgentCapability[AgentDepsT]) -> TypeGuard[Abstrac
     return isinstance(capability, AbstractCapability)
 
 
-def _mount_mode(granted: Sequence[AgentCapability[AgentDepsT]]) -> _MountMode | None:
+def _mount_mode(granted: Sequence[AgentCapability[AgentDepsT]] | None) -> _MountMode | None:
     """Mount only what the run's `FileSystem` already lets its tools reach, or nothing.
 
     `pathlib` calls on a mount never pass through `FileSystem`'s checks, so an unconditional
@@ -237,8 +237,11 @@ def _mount_mode(granted: Sequence[AgentCapability[AgentDepsT]]) -> _MountMode | 
     leaves the sandbox unmounted, as do zero or several file systems and any capability function
     or `DynamicCapability`, which may only resolve to a file system at run time. A `ToolGuardrail`
     is a restriction `pathlib` would bypass too: one over `read_file` leaves nothing mounted, and
-    one over a tool that writes, `run_code` included, keeps the mount read-only.
+    one over a tool that writes, `run_code` included, keeps the mount read-only. `granted` is `None`
+    when the agent does not expose its capabilities, which may guard tools too: nothing is mounted.
     """
+    if granted is None:
+        return None
     leaves: list[AbstractCapability[AgentDepsT]] = []
     for capability in granted:
         if not _is_capability(capability):
@@ -473,11 +476,15 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
 
 
 def speculative_capabilities(
-    counters: SpeculationCounters, granted: Sequence[AgentCapability[AgentDepsT]], *, speculate: bool = True
+    counters: SpeculationCounters,
+    granted: Sequence[AgentCapability[AgentDepsT]] | None,
+    *,
+    speculate: bool = True,
 ) -> 'list[AbstractCapability[AgentDepsT]]':
     """Fold tools into `run_code` with eager execution, and read-only speculation when `speculate`.
 
-    `granted` is every other capability the run binds; the sandbox mount follows its `FileSystem`.
+    `granted` is every other capability the run binds, or `None` when they are not all known; the
+    sandbox mount follows their `FileSystem` and guardrails.
     """
     mode = _mount_mode(granted)
     return [
