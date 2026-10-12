@@ -590,7 +590,7 @@ agent = Agent(
 )
 ```
 
-The run fails at its start if no workspace is attached. `Path.rename` is not supported, since the workspace has no atomic move. Paths under a `mount` still reach the host, and `os_access` keeps answering environment and clock calls, but no longer sees file calls.
+The run fails at its start if no workspace is attached. `Path.rename`, `Path.unlink`, and `Path.rmdir` are not supported, since the workspace has no atomic move and its only delete is recursive; use `Shell` or `FileSystem` for those. Writes and appends to one file take turns across runs sharing the workspace in this process, but not with other writers such as shell commands. Paths under a `mount` still reach the host, and `os_access` keeps answering environment and clock calls, but no longer sees file calls.
 
 ### `mount` -- share host directories
 

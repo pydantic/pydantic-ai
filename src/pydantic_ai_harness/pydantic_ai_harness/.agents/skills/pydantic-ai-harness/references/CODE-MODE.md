@@ -156,7 +156,7 @@ When a generated example keeps failing, check these restrictions before changing
 `CodeMode(workspace_files=True)` routes sandboxed `pathlib` and `open()` calls to the run's workspace, so
 `run_code` sees the same files as `Shell` and `FileSystem`, including in a remote sandbox. Relative paths
 resolve against the workspace's working directory. The run fails at its start without a workspace;
-`Path.rename` raises `OSError` in the sandbox. Paths under a `mount` still reach the host, and `os_access`
+`Path.rename`, `Path.unlink`, and `Path.rmdir` raise `OSError` in the sandbox. Paths under a `mount` still reach the host, and `os_access`
 still answers environment and clock calls but no longer sees file calls. Prefer this over `mount` whenever
 the agent has a workspace.
 

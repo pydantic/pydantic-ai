@@ -593,8 +593,8 @@ controlled filesystem, environment, or clock behavior.
 **`workspace_files` -- use the run's workspace.** Reach for this when sandboxed code should work on
 the same files as `Shell` and `FileSystem`, locally or in a remote sandbox such as `ModalSandbox`.
 Sandboxed `pathlib` and `open()` calls go to the run's workspace, and relative paths resolve against
-its working directory. The run fails at its start without a workspace, and `Path.rename` is not
-supported. Paths under a `mount` still reach the host, and `os_access` keeps answering environment
+its working directory. The run fails at its start without a workspace, and `Path.rename`,
+`Path.unlink`, and `Path.rmdir` are not supported. Paths under a `mount` still reach the host, and `os_access` keeps answering environment
 and clock calls but no longer sees file calls.
 
 ```python

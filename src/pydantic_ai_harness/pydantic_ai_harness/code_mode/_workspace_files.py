@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import errno
 import posixpath
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from stat import S_IFDIR, S_IFREG
 from typing import TYPE_CHECKING
 
+import anyio
 from pydantic_monty import (
     ExternalException,
     ExternalReturnValue,
@@ -20,6 +22,7 @@ from pydantic_monty import (
 from pydantic_monty.os_access import path_from_arg
 
 from pydantic_ai.workspaces import FileEntry, Workspace
+from pydantic_ai_harness._workspace import innermost_backend
 
 if TYPE_CHECKING:
     from ._toolset import CodeModeMount
@@ -49,6 +52,20 @@ _FILE_FUNCTIONS = frozenset(
         'Path.absolute',
     }
 )
+
+
+@dataclass
+class _PathLock:
+    """The lock one file's writes take turns on, and how many calls hold or await it."""
+
+    lock: anyio.Lock = field(default_factory=anyio.Lock)
+    users: int = 0
+
+
+# One lock per file a write is in progress on, keyed by the identity of the workspace's innermost
+# backend and the resolved path, so runs sharing a backend take turns too. An entry lives only while
+# a call holds or awaits it, and that call keeps the backend alive, so the identity cannot be reused.
+_write_locks: dict[tuple[int, str], _PathLock] = {}
 
 
 @dataclass(kw_only=True)
@@ -81,7 +98,7 @@ class WorkspaceFiles:
             PurePosixPath(posixpath.normpath(path)).is_relative_to(mount.virtual_path) for mount in mounts
         )
 
-    async def _call(self, name: str, path: str, args: tuple[object, ...], kwargs: dict[str, object]) -> object:  # noqa: C901
+    async def _call(self, name: str, path: str, args: tuple[object, ...], kwargs: dict[str, object]) -> object:
         workspace = self.workspace
         match name:
             case 'Path.exists':
@@ -108,24 +125,13 @@ class WorkspaceFiles:
                 encoded = data.encode() if isinstance(data, str) else _bytes(data)
                 # Characters for text, bytes for binary, and only what this call adds.
                 written = len(data) if isinstance(data, str) else len(encoded)
-                if name.startswith('Path.append'):
-                    encoded = await self._read_or_empty(path) + encoded
-                await self._write(path, encoded)
+                async with self._changing(path):
+                    if name.startswith('Path.append'):
+                        encoded = await self._read_or_empty(path) + encoded
+                    await self._write(path, encoded)
                 return written
             case 'Path.mkdir':
                 await self._mkdir(path, parents=kwargs.get('parents') is True, exist_ok=kwargs.get('exist_ok') is True)
-                return None
-            case 'Path.unlink':
-                if (await workspace.stat(path)).is_dir:
-                    raise IsADirectoryError(errno.EISDIR, 'Is a directory', path)
-                await workspace.remove(path)
-                return None
-            case 'Path.rmdir':
-                if not (await workspace.stat(path)).is_dir:
-                    raise NotADirectoryError(errno.ENOTDIR, 'Not a directory', path)
-                if await workspace.list_dir(path):
-                    raise OSError(errno.ENOTEMPTY, 'Directory not empty', path)
-                await workspace.remove(path)
                 return None
             case 'Path.iterdir':
                 return [PurePosixPath(path) / entry.name for entry in await workspace.list_dir(path)]
@@ -137,6 +143,8 @@ class WorkspaceFiles:
                 return await workspace.resolve(path)
             case _:
                 # `Path.rename`: the workspace API has no atomic move, and a copy-then-delete could half-apply.
+                # `Path.unlink` and `Path.rmdir`: its only delete is recursive, so a check made before it
+                # can't stop it from taking a directory or file that replaced the checked entry.
                 raise OSError(errno.ENOTSUP, f'`{name}` is not supported on the run workspace', path)
 
     async def _stat_or_none(self, path: str) -> FileEntry | None:
@@ -175,19 +183,40 @@ class WorkspaceFiles:
     async def _open(self, path: str, mode: str) -> MontyFileHandle:
         # Built first so a malformed mode fails before any side effect, as `OSAccess.path_open` does.
         handle = MontyFileHandle(path, mode)
-        entry = await self._stat_or_none(path)
-        if entry is not None and entry.is_dir:
-            raise IsADirectoryError(errno.EISDIR, 'Is a directory', path)
-        match handle.mode[0]:
-            case 'r':
-                if entry is None:
-                    raise FileNotFoundError(errno.ENOENT, 'No such file or directory', path)
-            case 'w':
-                await self._write(path, b'')
-            case _:  # 'a': create if missing, keep existing content
-                if entry is None:
+        async with self._changing(path):
+            entry = await self._stat_or_none(path)
+            if entry is not None and entry.is_dir:
+                raise IsADirectoryError(errno.EISDIR, 'Is a directory', path)
+            match handle.mode[0]:
+                case 'r':
+                    if entry is None:
+                        raise FileNotFoundError(errno.ENOENT, 'No such file or directory', path)
+                case 'w':
                     await self._write(path, b'')
+                case _:  # 'a': create if missing, keep existing content
+                    if entry is None:
+                        await self._write(path, b'')
         return handle
+
+    @asynccontextmanager
+    async def _changing(self, path: str) -> AsyncGenerator[None]:
+        """Let one call at a time read and replace the file at `path` in this workspace's backend.
+
+        The workspace has no append, so an append (which every write to an open file is) reads the
+        file and writes it back whole; without this, two appends through runs sharing a backend both
+        start from the same content and the later write drops the earlier one. Writers outside this
+        process, such as shell commands, don't take these turns.
+        """
+        key = (id(innermost_backend(self.workspace)), await self.workspace.resolve(path))
+        entry = _write_locks.setdefault(key, _PathLock())
+        entry.users += 1
+        try:
+            async with entry.lock:
+                yield
+        finally:
+            entry.users -= 1
+            if not entry.users:
+                del _write_locks[key]
 
     async def _mkdir(self, path: str, *, parents: bool, exist_ok: bool) -> None:
         entry = await self._stat_or_none(path)

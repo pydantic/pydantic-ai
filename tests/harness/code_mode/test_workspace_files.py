@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
+import anyio
 import pytest
 from pydantic_monty import MountDir, OSAccess
 
@@ -20,9 +21,10 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.workspaces import FileEntry
+from pydantic_ai.workspaces import FileEntry, Workspace
 from pydantic_ai_harness import CodeMode
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
+from pydantic_ai_harness.code_mode._workspace_files import WorkspaceFiles
 
 from ...workspace_fakes import FakeWorkspace
 
@@ -94,9 +96,8 @@ async def test_open_modes() -> None:
         ("from pathlib import Path\nPath('sub').mkdir()", 'FileExistsError'),
         ("from pathlib import Path\nPath('nope/deeper').mkdir()", 'FileNotFoundError'),
         ("from pathlib import Path\nPath('file.txt/child').mkdir()", 'NotADirectoryError'),
-        ("from pathlib import Path\nPath('sub').unlink()", 'IsADirectoryError'),
-        ("from pathlib import Path\nPath('file.txt').rmdir()", 'NotADirectoryError'),
-        ("from pathlib import Path\nPath('sub').rmdir()", 'Directory not empty'),
+        ("from pathlib import Path\nPath('file.txt').unlink()", '`Path.unlink` is not supported'),
+        ("from pathlib import Path\nPath('sub').rmdir()", '`Path.rmdir` is not supported'),
         ("from pathlib import Path\nPath('file.txt').rename('moved.txt')", '`Path.rename` is not supported'),
         ("from pathlib import Path\nPath('missing/new.txt').write_text('x')", 'FileNotFoundError'),
         ("from pathlib import Path\nPath('file.txt/new.txt').write_bytes(b'x')", 'NotADirectoryError'),
@@ -109,6 +110,7 @@ async def test_errors_reach_the_sandbox(code: str, error: str) -> None:
     result = await run_one(workspace, code)
     assert isinstance(result, str)
     assert error in result
+    assert workspace.files == {'/workspace/file.txt': b'x', '/workspace/sub/inner.txt': b'y'}
 
 
 async def test_directories_and_metadata() -> None:
@@ -122,8 +124,6 @@ async def test_directories_and_metadata() -> None:
         "appended = [Path('c/log.txt').append_text('x'), Path('c/log.txt').append_bytes(b'yz')]\n"
         "listed = sorted(str(p) for p in Path('.').iterdir())\n"
         "logged = Path('c/log.txt').read_text()\n"
-        "Path('c/log.txt').unlink()\n"
-        "Path('c').rmdir()\n"
         "[listed, appended, logged, Path('c').exists(), Path('file.txt').stat().st_size, Path('a').stat().st_size,\n"
         " Path('file.txt').is_file(), Path('a').is_file(), Path('a').is_dir(), Path('missing').is_dir(),\n"
         " Path('file.txt').is_symlink(), Path('/').is_symlink(), str(Path('a/../file.txt').resolve())]",
@@ -132,7 +132,7 @@ async def test_directories_and_metadata() -> None:
         ['a', 'c', 'file.txt'],
         [1, 2],
         'xyz',
-        False,
+        True,
         5,
         0,
         True,
@@ -143,6 +143,39 @@ async def test_directories_and_metadata() -> None:
         False,
         '/workspace/file.txt',
     ]
+
+
+class _GatedWorkspace(FakeWorkspace):
+    """Holds the first file read until released, so another writer can try to slip in between."""
+
+    def __init__(self, name: str, files: dict[str, bytes]) -> None:
+        super().__init__(name, files)
+        self.first_read = anyio.Event()
+        self.release = anyio.Event()
+
+    async def read_bytes(self, path: str) -> bytes:
+        data = await super().read_bytes(path)
+        if not self.first_read.is_set():
+            self.first_read.set()
+            await self.release.wait()
+        return data
+
+
+async def test_appends_through_a_shared_backend_take_turns() -> None:
+    backend = _GatedWorkspace('shared', {'/workspace/log.txt': b'initial\n'})
+
+    async def append(text: str) -> None:
+        # A facade per run, as each agent run wraps the backend it is given.
+        files = WorkspaceFiles(workspace=Workspace(backend))
+        await files.answer('Path.append_text', (PurePosixPath('/workspace/log.txt'), text), {})
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(append, 'first\n')
+        await backend.first_read.wait()
+        tg.start_soon(append, 'second\n')
+        await anyio.wait_all_tasks_blocked()
+        backend.release.set()
+    assert backend.files['/workspace/log.txt'] == b'initial\nfirst\nsecond\n'
 
 
 class _UnsizedWorkspace(FakeWorkspace):

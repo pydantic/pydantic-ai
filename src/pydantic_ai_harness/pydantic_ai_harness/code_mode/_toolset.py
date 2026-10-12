@@ -423,7 +423,8 @@ _OS_ENABLED_NOTE = (
 )
 _WORKSPACE_FILES_NOTE = (
     "- **Workspace filesystem**: `pathlib.Path` operations and `open()` act on the run's workspace, the same "
-    'files your other tools read and write. Relative paths resolve against its working directory.'
+    'files your other tools read and write. Relative paths resolve against its working directory. '
+    '`Path.rename`, `Path.unlink`, and `Path.rmdir` are not supported.'
 )
 _WORKSPACE_MOUNT_NOTE = ' Paths under the configured mount point(s) are routed to the host instead.'
 _WORKSPACE_OS_NOTE = (
