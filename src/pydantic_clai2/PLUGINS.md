@@ -994,14 +994,17 @@ saves `unrestricted_filesystem` in the `coder` declaration. Supplied agents are 
 are still run-level capabilities, so self-delegation requires binding `Coder` and
 the capabilities it should carry when constructing that agent.
 
-`agent_folders` is a JSON list of folder names or paths for disk-defined agents
-(Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
+`agent_folders` is stored as a JSON list of folder names or paths for disk-defined
+agents (Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
 `.claude/<name>`, and `.codex/<name>` in the project, then your home directory;
-project definitions win. A path loads exactly that folder; `[]` disables disk
-agents. The stock CLI uses `["agents"]`. Saved `coder` declarations that omit
-`agent_folders` keep disk agents off, so an upgrade never loads new definitions
-without your say. Old `pydantic_ai_harness.coder:Coder` declarations load
-through this module and are not rewritten.
+project definitions win. A path loads exactly that folder: a relative one in
+each project CLAI runs in, an absolute or `~/` one everywhere. Missing folders
+are skipped; `[]` disables disk agents. The stock CLI uses `["agents"]`. Saved
+`coder` declarations that omit `agent_folders` keep disk agents off, so an
+upgrade never loads new definitions without your say. Old
+`pydantic_ai_harness.coder:Coder` declarations load through this module and are
+not rewritten. `/plugins configure coder` edits this list; see
+[Agent folders](README.md#agent-folders).
 
 Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
 host hooks. The shell keeps plugin resources alive until children settle; `/plugins`
