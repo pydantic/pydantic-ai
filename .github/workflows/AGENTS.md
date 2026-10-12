@@ -10,7 +10,7 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 | `CI Review` | `pydantic-ai-pr-review.md` | automatically, once the `CI` workflow **succeeds** on the PR's current head. Z.AI Coding Plan engine, submits a formal `APPROVE`/`REQUEST_CHANGES` verdict. Same-repo PRs only. |
 | `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`) and Claude Opus 5.5. Deletes the label when it finishes. Posts inline findings and a formal `APPROVE` or `REQUEST_CHANGES` review for the reviewed head. |
 
-`douwebot` requests changes when a completed review finds a blocking issue. It approves when a completed review finds no blocking issues, including reviews with non-blocking suggestions. It submits no verdict when the review is incomplete or the PR head changes before publication. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review.
+`douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It requests changes while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It approves after a complete review with no outstanding blocking findings; optional findings may remain. It submits no verdict when the review is incomplete or the PR head changes before publication. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review.
 
 **They are independent.** Neither reads the other's state, and the label suppresses
 nothing: `douwebot` is an on-demand deep pass on top of `CI Review`, requested when a
@@ -158,6 +158,26 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 - **Recompilation is required for anything the lock bakes in:** a source's frontmatter (`on:` triggers, `permissions`, `tools`, `safe-outputs`, jobs, path/`detect` filters) and its `imports:` shared fragments (`shared/*.md`) are inlined into the lock at compile time.
 - **Exception — runtime-resolved prompts need no recompile.** Agent prompts under `shared/prompts/` are fetched at run time (via the `fetch-dynamic-prompt` action / a Logfire-managed variable), not baked into the lock, so editing one takes effect on the next run without recompiling.
 
+## Shared Z.AI account limits
+
+Treat Pydanty and these workflows as consumers of one Z.AI account.
+The GitHub `ZAI_API_KEY` and Pydanty's production credential use that account.
+Correlate overlapping workflow and Pydanty requests when investigating rate-limit failures.
+Include delegates and SDK retries in the request timeline.
+
+Record the endpoint, model, HTTP status, provider `error.code`, and any `Retry-After` or quota reset time.
+For abnormal streaming termination without an error code, record `finish_reason`.
+Use [Z.AI's error codes](https://docs.z.ai/api-reference/api-code) to distinguish
+`1302` request rate limits, `1305` temporary overload, and quota exhaustion such as `1308` or `1310`.
+HTTP 429 alone does not identify the failure.
+
+Check the [Coding Plan usage policy](https://docs.z.ai/devpack/usage-policy) for concurrency.
+Check the [usage credit allowance](https://docs.z.ai/devpack/overview#usage-credit-allowance) for 5-hour and weekly quotas.
+Concurrency changes with plan tier and resource availability.
+Read account-specific values from the [rate-limit console](https://z.ai/manage-apikey/rate-limits).
+Do not infer an account limit from Pydanty's observed concurrency or the provider's project-count recommendations.
+A healthy usage-quota check does not establish spare request concurrency.
+
 ## Z.AI provider health
 
 Every Z.AI-backed workflow must import `shared/provider-health.md` and include
@@ -175,6 +195,13 @@ and the `provider-health` artifact on blocked decisions. A blocked gate must ski
 inference without emitting a passing review or other fabricated agent result. The
 non-model provider-health monitor owns incident issue creation and recovery; do not
 enable gh-aw's generic failure-as-issue reporting for these workflows.
+
+Older compiled workflows that pass `MINIMAX_API_KEY` without a `ZAI_API_KEY`
+environment entry are intentionally blocked without an operational incident.
+They fetch this controller from the default branch, so the skip applies even
+before their branch receives the provider migration. Update the branch from
+`main` to restore agent runs. An empty or missing Z.ai credential in current
+configuration still follows the normal provider-health checks.
 
 The controller keeps one assigned operational incident for a matching failure
 scope and marks it with both `agentic-workflows` and `pydanty:meta`. Leave both labels

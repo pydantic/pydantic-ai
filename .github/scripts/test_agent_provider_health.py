@@ -897,6 +897,7 @@ def test_check_command_reads_zai_quota_and_writes_secret_free_artifact(
     monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     key = 'private-zai-fixture-key'
     monkeypatch.setenv('ZAI_API_KEY', key)
+    monkeypatch.setenv('MINIMAX_API_KEY', 'retired-fixture-key')
     monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI CI Review')
     monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'task-1')
     monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'workflow_run')
@@ -926,6 +927,97 @@ def test_check_command_reads_zai_quota_and_writes_secret_free_artifact(
         assert 'weekly: 84% remaining; resets at 2026-10-08T14:54:29Z' in summary.read_text()
     else:
         assert 'interval: ' not in summary.read_text()
+
+
+@pytest.mark.parametrize('minimax_key', ['', 'retired-fixture-key'])
+@pytest.mark.parametrize('conclusion', ['success', 'failure'])
+def test_retired_provider_configuration_skips_without_an_incident(
+    minimax_key: str, conclusion: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Old locks skip inference and incident reporting without querying provider health."""
+    client = FakeGitHub()
+
+    def unexpected_quota(_key: str) -> health.Quota:
+        raise AssertionError('retired configuration must not query Z.ai')
+
+    def unexpected_incidents() -> list[health.Issue]:
+        raise AssertionError('retired configuration must not query operational incidents')
+
+    monkeypatch.setattr(health, '_fetch_zai_quota', unexpected_quota)
+    monkeypatch.setattr(client, 'open_incidents', unexpected_incidents)
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.delenv('ZAI_API_KEY', raising=False)
+    monkeypatch.setenv('MINIMAX_API_KEY', minimax_key)
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI UI Security Review')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'old-head')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'pull_request')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    github_output = tmp_path / 'output'
+    summary = tmp_path / 'summary'
+    monkeypatch.setenv('GITHUB_OUTPUT', str(github_output))
+    monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(summary))
+    artifact = tmp_path / 'provider-health.json'
+
+    assert health.main(['check', '--output', str(artifact)]) == 0
+    decision = _health_from_json(json.loads(artifact.read_text()))
+    assert decision.ready is False
+    assert 'retired `MINIMAX_API_KEY` instead of `ZAI_API_KEY`' in decision.reason
+    assert 'update the workflow from `main`' in decision.reason
+    assert 'ready=false' in github_output.read_text()
+    assert decision.reason in summary.read_text()
+    assert 'retired-fixture-key' not in artifact.read_text()
+    assert (
+        health.main(
+            [
+                'monitor',
+                '--run-id',
+                '43',
+                '--run-attempt',
+                '1',
+                '--conclusion',
+                conclusion,
+                '--health-artifact',
+                str(artifact),
+            ]
+        )
+        == 0
+    )
+    assert client.posts == []
+
+
+@pytest.mark.parametrize(('zai_key', 'minimax_key'), [(None, None), ('', None), ('', 'retired-fixture-key')])
+def test_current_configuration_with_missing_credentials_still_creates_an_incident(
+    zai_key: str | None, minimax_key: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Missing current credentials remain an outage even when a retired key is available."""
+    client = FakeGitHub()
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    for name, value in [('ZAI_API_KEY', zai_key), ('MINIMAX_API_KEY', minimax_key)]:
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI UI Security Review')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'current-head')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'pull_request')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    monkeypatch.delenv('GITHUB_OUTPUT', raising=False)
+    monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
+    artifact = tmp_path / 'provider-health.json'
+
+    assert health.main(['check', '--output', str(artifact)]) == 0
+    decision = _health_from_json(json.loads(artifact.read_text()))
+    assert decision.ready is False
+    assert decision.reason == 'Z.ai quota health is unknown'
+    assert health.main(['monitor', '--run-id', '43', '--run-attempt', '1', '--health-artifact', str(artifact)]) == 0
+    assert len(client.posts) == 1
+    assert _marker_from_payload(client.posts[0]) == health.IncidentMarker(
+        'provider', 'zai', 'quota_unknown', '43', None
+    )
 
 
 def test_scope_rules_for_typed_and_untyped_failures() -> None:

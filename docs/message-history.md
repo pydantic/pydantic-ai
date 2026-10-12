@@ -416,9 +416,11 @@ _(This example is complete, it can be run "as is")_
     A [multi-modal item][pydantic_ai.messages.MultiModalContent] in a tool return is reconstructed
     as its own type wherever it sits — on its own, in a list, or nested at any depth inside a
     mapping, including one whose own keys happen to look like ours. A URL-based item is
-    reconstructed only when its mapping carries `media_type`, which every history Pydantic AI dumps
-    does; without one it stays the plain mapping your tool returned, so a URL Pydantic AI cannot
-    read a media type out of never becomes a file that then fails to dump. A
+    reconstructed only when its mapping carries `media_type`, which a dump with the default arguments
+    always writes; without it the item stays the plain mapping your tool returned. A URL whose media type
+    Pydantic AI can't infer from the URL is serialized with `media_type: null`, which validates
+    back into the URL part's default (no media type) and dumps `null` again, in a tool return as
+    anywhere else. A
     [`BinaryContent`][pydantic_ai.messages.BinaryContent] or
     [`UploadedFile`][pydantic_ai.messages.UploadedFile] item is recognized by the fields its own type
     requires. A mapping that merely reuses one of our `kind` values stays a plain mapping, and
@@ -1075,12 +1077,14 @@ Pydantic AI fills the window size from [genai-prices](https://github.com/pydanti
 
 #### Scheduling maintenance into cache-cold windows
 
+See [Caching](capabilities/caching.md#prefix-stability-guarantees) for the full prefix-stability contract and monitoring guidance.
+
 History-mutating maintenance (summarizing, pruning, repair) has two costs: the work itself, and a *cache cost* — the next request re-writes the entire prompt prefix at full input price, since a mutated prefix can no longer hit the provider's prompt cache. That cache cost is only real while the cache is still warm. Once a conversation has been idle longer than the provider retains the prefix, the next request pays full price anyway, so that turn is a free moment to run any deferrable maintenance.
 
 Providers publish retention windows for their prompt caches. Pydantic AI records the documented default at the provider layer as [`ModelProfile.default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention]: 5 minutes for Anthropic, 30 minutes for OpenAI's GPT-5.6 and later. Where a provider's retention depends on account configuration rather than the model — as OpenAI's does for earlier models, where the default hinges on whether the organization has zero data retention enabled — the default is left unset, and the outlook is `'unknown'` unless you pass `retention=` yourself. [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] uses it to predict, from a message history alone, whether the next request is likely to hit a warm cache:
 
 ```python {title="cache_cold_maintenance.py"}
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -1088,7 +1092,7 @@ from pydantic_ai.profiles import prompt_cache_outlook
 
 profile = AnthropicModel('claude-sonnet-4-6').profile
 
-now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 history = [
     ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=now - timedelta(minutes=30)),
     ModelResponse(parts=[TextPart(content='Hello!')], timestamp=now - timedelta(minutes=30)),
@@ -1102,7 +1106,7 @@ print(outlook)
 
 A `'cold'` outlook is the signal to flush pending maintenance for free; `'warm'` means the mutation would sacrifice a live cache hit, so defer it if it can wait; `'unknown'` (no documented retention, or a history without timestamps) should be treated like `'warm'` — never mutate on a guess.
 
-Retention you request through model settings, such as `anthropic_cache='1h'` or `openai_prompt_cache_retention='24h'`, replaces the provider's default. [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention] works it out from the settings a request is made with, returning `None` when they don't ask for anything, so passing its result as `retention=` keeps the profile's default in that case. A [`before_model_request`](hooks.md) hook has both the model and the request's settings at hand, so it can decide whether to do the expensive work this turn:
+Retention you request through model settings, such as the unified [`cache='1h'`][pydantic_ai.settings.ModelSettings.cache], `anthropic_cache='1h'` or `openai_prompt_cache_retention='24h'` on OpenAI models before GPT-5.6, replaces the provider's default. [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention] works it out from the settings a request is made with, returning `None` when they don't ask for anything, so passing its result as `retention=` keeps the profile's default in that case. A [`before_model_request`](hooks.md) hook has both the model and the request's settings at hand, so it can decide whether to do the expensive work this turn:
 
 ```python {title="cache_cold_hook.py"}
 from pydantic_ai import Agent, ModelRequestContext, RunContext
@@ -1138,7 +1142,7 @@ agent = Agent(
 
 1. With the 1-hour cache requested, the outlook only turns `'cold'` after an hour of idleness rather than Anthropic's default 5 minutes.
 
-`CachePoint(ttl='1h')` markers in history extend the boundary in the same way, when the provider supports them. Azure and providers without a single documented default leave the field `None`, producing `'unknown'` unless the settings request a retention or you pass one explicitly.
+`CachePoint(ttl='1h')` markers in history extend the boundary in the same way, when the provider supports that retention (one of the profile's [`supported_cache_retentions`][pydantic_ai.profiles.ModelProfile.supported_cache_retentions]): OpenAI ignores `CachePoint.ttl`, so a `'1h'` marker doesn't extend GPT-5.6's 30 minutes. Azure and providers without a single documented default leave the field `None`, producing `'unknown'` unless the settings request a retention or you pass one explicitly.
 
 ### Testing History Processors
 

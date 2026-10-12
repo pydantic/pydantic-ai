@@ -3,10 +3,9 @@ from __future__ import annotations as _annotations
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import ClassVar, Literal, cast
+from typing import ClassVar, Literal, assert_never, cast
 
 from pydantic import JsonValue
-from typing_extensions import assert_never
 
 from .._http import to_httpx2_timeout
 from .._warnings import PydanticAIDeprecationWarning
@@ -217,6 +216,8 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to TypeSafe's Decisions API."""
+        if request.images:
+            raise UserError('TypeSafe does not support image input.')
         questions = {name: _to_typesafe_question(question) for name, question in request.questions.items()}
         timeout = model_settings.get('timeout')
         try:

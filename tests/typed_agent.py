@@ -6,11 +6,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import partial
-from typing import Annotated, Any, Literal, TypeAlias, TypeVar
+from typing import Annotated, Any, Literal, TypeAlias, TypeVar, assert_type
 
 from pydantic import Field
 from starlette.requests import Request
-from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, RunUsage, Tool
 from pydantic_ai.agent import AgentRun, AgentRunResult

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Caching
 
 
 # Define the dependencies class
@@ -28,6 +29,7 @@ roulette_agent = Agent(
     instructions=(
         'Use the `roulette_wheel` function to determine if the customer has won based on the number they bet on.'
     ),
+    capabilities=[Caching()],
 )
 
 

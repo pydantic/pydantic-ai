@@ -28,6 +28,8 @@ import websockets
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 from websockets.frames import Close
 
+from ._truth import GroundTruth
+
 SendFault = Literal['lost', 'ambiguous']
 """How an injected send failure behaves.
 
@@ -41,6 +43,8 @@ _HANDSHAKE_FRAME_TYPES = frozenset({'session.update', 'session.start'})
 
 class WireServer(Protocol):
     """What a simulated server exposes to its transport."""
+
+    truth: GroundTruth
 
     def on_connect(self, socket: FakeWebSocket, url: str) -> None:
         """A new socket was dialed at `url`; emit whatever the provider sends first."""
@@ -111,8 +115,11 @@ class FakeWebSocket:
             self.break_connection()
             raise ConnectionClosedError(None, Close(1006, 'simulated send failure'))
         self.sent.append(frame)
+        truth = self.network.server.truth
+        received = len(truth.inputs)
         self.network.server.on_client_frame(self, frame)
         if fault == 'ambiguous':
+            truth.ambiguous_inputs.update(input_.key for input_ in truth.inputs[received:])
             self.break_connection()
             raise ConnectionClosedError(None, Close(1006, 'simulated send failure'))
 
