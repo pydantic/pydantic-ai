@@ -97,7 +97,8 @@ class SessionTracing(AbstractCapability[None]):
     def _rotate(self) -> None:
         """End every open root while Logfire still accepts it, even in a session left idle until exit."""
         self._rotation = None
-        for span in self._roots.values():
+        # A snapshot: a worker thread can open a root meanwhile.
+        for span in tuple(self._roots.values()):
             if span.is_recording():
                 span.end()
 
