@@ -117,8 +117,9 @@ class UsageBase:
     unmeasured_requests: Annotated[int, Field(exclude_if=lambda value: value == 0)] = 0
     """Number of responses that omitted usage information.
 
-    When non-zero, token totals and any known cost are lower bounds for the run. This count does not imply a
-    particular number of missing tokens, cost, or usage details.
+    When non-zero, token totals and any known cost are lower bounds. On a `RequestUsage`, it is non-zero when the
+    response omitted usage, so its token counts carry no information. This count does not imply a particular number
+    of missing tokens, cost, or usage details.
     """
 
     input_audio_tokens: int = 0
@@ -282,7 +283,10 @@ class UsageBase:
         return NotImplemented
 
     def has_values(self) -> bool:
-        """Whether any values are set and non-zero."""
+        """Whether any usage values (token counts, details, or cost) are set and non-zero.
+
+        `unmeasured_requests` is not a usage value: it records that usage was omitted.
+        """
         return any(self.details.values()) or any(
             v for k, v in self.__dict__.items() if k not in {'details', 'unmeasured_requests'}
         )
