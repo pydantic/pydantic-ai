@@ -26,7 +26,7 @@ from pydantic import TypeAdapter, ValidationError
 WORKFLOW = Path(__file__).parents[1] / 'workflows' / 'ci.yml'
 
 # Job-level env vars that put a check on specific legs; each such leg must run on a pull request.
-LANE_VARS = ('COLLECT_COVERAGE', 'BLOCKBUSTER_ENABLED', 'PYTEST_TEST_BUDGET_SECONDS')
+LANE_VARS = ('COLLECT_COVERAGE', 'BLOCKBUSTER_ENABLED', 'PYTEST_TEST_BUDGET_SECONDS', 'PYTEST_COLLECT_BUDGET_SECONDS')
 REDUCED_JOBS = ('test', 'test-all-extras', 'test-durable-exec', 'test-lowest-versions', 'test-examples')
 
 Leg = dict[str, object]
@@ -222,13 +222,13 @@ def _expand(job_name: str, event_name: str) -> list[Leg]:
     """The legs of a job's matrix, following GitHub's product, then `exclude`, then `include` order."""
     context: dict[str, object] = {
         'github': {'event_name': event_name},
-        # The full path: a `pydantic-clai2`-only change is a separate, narrower route.
-        'needs': {'classify': {'outputs': {'clai2_only': 'false'}}},
+        # The full path: a `pydantic-clai2`- or `pydantic-ai-harness`-only change is a separate, narrower route.
+        'needs': {'classify': {'outputs': {'clai2_only': 'false', 'harness_only': 'false'}}},
     }
     matrix = _mapping(_mapping(_job(job_name)['strategy'])['matrix'])
     excludes = [_mapping(entry) for entry in _list(matrix.pop('exclude', []))]
-    includes = [_mapping(entry) for entry in _list(matrix.pop('include', []))]
-    dimensions = {key: [_render(value, context) for value in _list(values)] for key, values in matrix.items()}
+    includes = [_mapping(entry) for entry in _values(matrix.pop('include', []), context)]
+    dimensions = {key: _values(values, context) for key, values in matrix.items()}
     legs: list[Leg] = [dict(zip(dimensions, values)) for values in itertools.product(*dimensions.values())]
     legs = [leg for leg in legs if not any(_matches(leg, entry) for entry in excludes)]
     for entry in includes:
@@ -241,6 +241,13 @@ def _expand(job_name: str, event_name: str) -> list[Leg]:
         else:
             legs.append(dict(entry))
     return legs
+
+
+def _values(values: object, context: Mapping[str, object]) -> list[object]:
+    """A matrix list, given either as a YAML list of (possibly templated) values or as one expression."""
+    if isinstance(values, str):
+        return _list(_render(values, context))
+    return [_render(value, context) for value in _list(values)]
 
 
 def _identity(leg: Leg) -> str:
