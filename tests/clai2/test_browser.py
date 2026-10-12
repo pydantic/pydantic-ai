@@ -72,6 +72,14 @@ def test_failing_opener_reports_not_opened(
     assert capfd.readouterr() == ('', '')
 
 
+def test_option_like_url_is_not_passed_to_the_opener(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, opened: Path
+) -> None:
+    use_opener(monkeypatch, tmp_path, f'echo "$1" > {opened}')
+    assert open_browser(' --help') is False
+    assert not opened.exists()
+
+
 def test_missing_opener_reports_not_opened(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv('BROWSER', str(tmp_path / 'missing'))
     assert open_browser(URL) is False

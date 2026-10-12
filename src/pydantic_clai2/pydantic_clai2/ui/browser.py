@@ -24,6 +24,10 @@ def open_browser(url: str) -> bool:
         return webbrowser.open(url)
 
     sys.audit('webbrowser.open', url)
+    # Like `webbrowser`'s own check in recent Python releases: a URL that starts with `-` would reach the command
+    # as an option.
+    if url.lstrip().startswith('-'):
+        return False
     background = isinstance(browser, webbrowser.BackgroundBrowser)
     try:
         process = subprocess.Popen(
