@@ -1059,7 +1059,12 @@ class XaiStreamedResponse(StreamedResponse):
             self.finish_reason = finish_reason
 
     def _collect_reasoning_events(
-        self, chunk: chat_types.Chunk, encrypted_contents: dict[int, str], tool_output_indices: set[int]
+        self,
+        chunk: chat_types.Chunk,
+        encrypted_contents: dict[int, str],
+        tool_output_indices: set[int],
+        tool_output_calls: dict[int, str],
+        tool_return_parts: dict[str, NativeToolReturnPart],
     ) -> Iterator[ModelResponseStreamEvent]:
         """Collect thinking events from this chunk's output deltas, one thinking part per output.
 
@@ -1068,8 +1073,8 @@ class XaiStreamedResponse(StreamedResponse):
         `XaiModel._process_response` builds one `ThinkingPart` per output. `encrypted_contents` accumulates each
         output's encrypted content, which can arrive in pieces, as the signature replaces the previous one.
 
-        A `ROLE_TOOL` output's encrypted content is the tool's result, not reasoning: it is accumulated here but
-        attached to the return part once the stream ends.
+        A `ROLE_TOOL` output's encrypted content is the tool's result, not reasoning: it goes on the return part of
+        the call it answers, kept up to date as pieces arrive so a stream cut short still records what it got.
         """
         for output in chunk.proto.outputs:
             delta = output.delta
@@ -1080,6 +1085,8 @@ class XaiStreamedResponse(StreamedResponse):
             if delta.encrypted_content:
                 encrypted_contents[output.index] = encrypted_contents.get(output.index, '') + delta.encrypted_content
             if output.index in tool_output_indices:
+                if delta.encrypted_content and (tool_call_id := tool_output_calls.get(output.index)):
+                    _attach_encrypted_result(tool_return_parts[tool_call_id], encrypted_contents[output.index])
                 continue
             signature = encrypted_contents.get(output.index)
             yield from self._parts_manager.handle_thinking_delta(
@@ -1100,6 +1107,7 @@ class XaiStreamedResponse(StreamedResponse):
         seen_tool_return_ids: set[str],
         last_tool_return_content: dict[str, dict[str, Any] | str | None],
         x_search_return_parts: dict[str, NativeToolReturnPart],
+        encrypted_contents: dict[int, str],
         tool_output_calls: dict[int, str],
         tool_return_parts: dict[str, NativeToolReturnPart],
     ) -> Iterator[ModelResponseStreamEvent]:
@@ -1147,8 +1155,10 @@ class XaiStreamedResponse(StreamedResponse):
             if builtin_tool_name == XSearchTool.kind:
                 x_search_return_parts[return_vendor_id] = return_part
             # `xai_sdk` pairs a tool output with its first call, so only that return part carries the result.
-            tool_output_calls.setdefault(output_index, tool_call.id)
+            first_call_id = tool_output_calls.setdefault(output_index, tool_call.id)
             tool_return_parts[tool_call.id] = return_part
+            if first_call_id == tool_call.id and (encrypted_result := encrypted_contents.get(output_index)):
+                _attach_encrypted_result(return_part, encrypted_result)
             yield self._parts_manager.handle_part(vendor_part_id=return_vendor_id, part=return_part)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -1166,8 +1176,8 @@ class XaiStreamedResponse(StreamedResponse):
             x_search_return_parts: dict[str, NativeToolReturnPart] = {}
             last_citations: Sequence[str] = ()
             # A server-side tool's encrypted result arrives on its `ROLE_TOOL` output, possibly in pieces. Track
-            # those outputs, the call each one answers, and the latest return part per call, so the whole result
-            # can be attached once the stream completes.
+            # those outputs, the call each one answers, and that call's latest return part, which carries the result
+            # received so far.
             tool_output_indices: set[int] = set()
             tool_output_calls: dict[int, str] = {}
             tool_return_parts: dict[str, NativeToolReturnPart] = {}
@@ -1176,7 +1186,9 @@ class XaiStreamedResponse(StreamedResponse):
                 self._update_response_state(response)
                 last_citations = response.citations
 
-                for event in self._collect_reasoning_events(chunk, encrypted_contents, tool_output_indices):
+                for event in self._collect_reasoning_events(
+                    chunk, encrypted_contents, tool_output_indices, tool_output_calls, tool_return_parts
+                ):
                     yield event
 
                 # Handle text content (property filters for ROLE_ASSISTANT)
@@ -1209,6 +1221,7 @@ class XaiStreamedResponse(StreamedResponse):
                                 seen_tool_return_ids=seen_tool_return_ids,
                                 last_tool_return_content=last_tool_return_content,
                                 x_search_return_parts=x_search_return_parts,
+                                encrypted_contents=encrypted_contents,
                                 tool_output_calls=tool_output_calls,
                                 tool_return_parts=tool_return_parts,
                             ):
@@ -1250,8 +1263,6 @@ class XaiStreamedResponse(StreamedResponse):
             # tracked in `x_search_return_parts`, so the mutation is reflected in the final
             # `ModelResponse` without emitting a duplicate `PartStartEvent` at the same index.
             _attach_x_search_citations(x_search_return_parts.values(), last_citations)
-            # Same in-place approach for each server-side tool's encrypted result.
-            _attach_encrypted_results(tool_output_calls, tool_return_parts, encrypted_contents)
 
     @property
     def model_name(self) -> str:
@@ -1484,17 +1495,6 @@ def _extract_usage(
 def _attach_encrypted_result(part: NativeToolReturnPart, encrypted_result: str) -> None:
     """Store a server-side tool's encrypted result on its return part, for `_map_response_parts` to replay."""
     part.provider_details = {**(part.provider_details or {}), 'encrypted_content': encrypted_result}
-
-
-def _attach_encrypted_results(
-    tool_output_calls: dict[int, str],
-    tool_return_parts: dict[str, NativeToolReturnPart],
-    encrypted_contents: dict[int, str],
-) -> None:
-    """Attach each streamed `ROLE_TOOL` output's accumulated encrypted result to the return part of its call."""
-    for index, tool_call_id in tool_output_calls.items():
-        if encrypted_result := encrypted_contents.get(index):
-            _attach_encrypted_result(tool_return_parts[tool_call_id], encrypted_result)
 
 
 def _attach_x_search_citations(

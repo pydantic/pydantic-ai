@@ -18,10 +18,12 @@ from pydantic_ai import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartStartEvent,
     TextPart,
     ThinkingPart,
     UserPromptPart,
     WebSearchTool,
+    capture_run_messages,
 )
 from pydantic_ai.capabilities import NativeTool
 
@@ -108,6 +110,47 @@ async def test_xai_streamed_tool_result_split_across_chunks(allow_model_requests
     return_part = response.parts[1]
     assert isinstance(return_part, NativeToolReturnPart)
     assert return_part.provider_details == {'encrypted_content': 'result-part-1-result-part-2'}
+
+
+async def test_xai_interrupted_stream_keeps_tool_result(allow_model_requests: None):
+    """A stream cut short right after a tool result arrives still records the result on the return part."""
+    in_progress = _web_search_call('call_1', chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_IN_PROGRESS)
+    completed = _web_search_call('call_1', chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED)
+    stream = [
+        (
+            _accumulated(),
+            _chunk(0, chat_pb2.Delta(role=chat_pb2.MessageRole.ROLE_ASSISTANT, tool_calls=[in_progress])),
+        ),
+        (
+            _accumulated(),
+            _chunk(
+                1,
+                chat_pb2.Delta(role=chat_pb2.MessageRole.ROLE_TOOL, tool_calls=[completed], encrypted_content='result'),
+            ),
+        ),
+        (
+            _accumulated(),
+            _chunk(
+                2,
+                chat_pb2.Delta(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content='done'),
+                finish_reason=sample_pb2.FinishReason.REASON_STOP,
+            ),
+        ),
+    ]
+    model = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=MockXai.create_mock_stream([stream])))
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool())])
+
+    with capture_run_messages() as messages, pytest.raises(RuntimeError, match='stop'):
+        async with agent.run_stream_events('Search for pydantic') as events:
+            async for event in events:
+                if isinstance(event, PartStartEvent) and isinstance(event.part, NativeToolReturnPart):
+                    raise RuntimeError('stop')
+
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'interrupted'
+    assert [type(part).__name__ for part in response.parts] == snapshot(['NativeToolCallPart', 'NativeToolReturnPart'])
+    assert response.parts[1].provider_details == {'encrypted_content': 'result'}
 
 
 def _search(tool_call_id: str) -> NativeToolCallPart:
