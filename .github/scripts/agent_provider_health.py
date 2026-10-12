@@ -750,6 +750,7 @@ def _create_or_reuse_incident(
     *,
     dry_run: bool,
     marker_override: IncidentMarker | None = None,
+    quota: Quota | None = None,
 ) -> Issue | None:
     scope, key, kind = _scope_for(result)
     marker = marker_override or IncidentMarker(
@@ -779,7 +780,8 @@ def _create_or_reuse_incident(
     else:
         existing = _matching_incident(matching_key, client.open_incidents())
     if existing is not None:
-        print(f'Reusing operational incident #{existing.number}: {existing.html_url}')
+        suffix = _quota_diagnostic_suffix(quota) if quota is not None else ''
+        print(f'Reusing operational incident #{existing.number}: {existing.html_url}{suffix}')
         return existing
     title = f'Agent workflow {marker.scope} failure: {result.workflow}'
     body = _incident_body(marker, result.workflow, result.task_key, run_id, repo, reason)
@@ -942,6 +944,7 @@ def _monitor_command(args: argparse.Namespace) -> int:
                     health.reason + _quota_diagnostic_suffix(health.quota),
                     dry_run=args.dry_run,
                     marker_override=marker,
+                    quota=health.quota,
                 )
             else:
                 print(
@@ -1050,6 +1053,7 @@ def _reconcile_recovery(client: GitHubClient, args: argparse.Namespace) -> int:
                 'Z.ai quota could not be confirmed healthy' + _quota_diagnostic_suffix(quota),
                 dry_run=False,
                 marker_override=marker,
+                quota=quota,
             )
             print(f'Provider quota remains {quota.status}{_quota_diagnostic_suffix(quota)}')
         else:

@@ -395,6 +395,7 @@ def test_zai_quota_probe_classifies_encoding_error_without_payload_text(monkeypa
 
     assert quota.diagnostic == 'invalid_encoding'
     assert quota.http_status == 200
+    assert 'private-response-sentinel' not in repr(quota)
 
 
 def test_zai_quota_probe_does_not_request_without_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -498,6 +499,8 @@ def test_check_writes_blocked_artifact_for_out_of_range_zai_reset(
     result = _health_from_json(json.loads(artifact))
     assert not result.ready
     assert result.quota.status == 'unknown'
+    assert result.quota.diagnostic == 'invalid_reset_time'
+    assert result.quota.http_status == 200
     assert secret not in artifact
 
 
@@ -1256,12 +1259,13 @@ def test_monitor_existing_incident_reuse_prints_quota_diagnostic(
     assert client.posts == []
 
 
+@pytest.mark.parametrize('existing_run_id', ['43', '99'], ids=['exact-marker', 'same-scope-different-run'])
 def test_monitor_reuses_matching_quota_incident_with_safe_diagnostic(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    existing_run_id: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A matching quota incident is reused and the safe diagnostic is logged."""
     quota = health.Quota('unknown', diagnostic='timeout', http_status=503)
-    marker = health.IncidentMarker('provider', 'zai', 'quota_unknown', '43', quota.reset_at)
+    marker = health.IncidentMarker('provider', 'zai', 'quota_unknown', existing_run_id, quota.reset_at)
     client = FakeGitHub([_issue(77, marker)])
     monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
