@@ -518,8 +518,9 @@ jobs:
         python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
         # A single-value dimension, so the `exclude` below can drop the legs a pull request skips:
         # 3.11 and 3.14 collect coverage, 3.13 detects blocking calls and 3.15 is the newest, so only
-        # 3.12 goes. The merge queue and `main` run every leg (see `merge_group` in `on:`).
-        pull_request: ["${{ github.event_name == 'pull_request' }}"]
+        # 3.12 goes. The merge queue and `main` run every leg (see `merge_group` in `on:`). The value
+        # is the string `'true'`, not the boolean `==` yields: `exclude` doesn't match `"true"` to `true`.
+        pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         install:
           - name: pydantic-ai-slim
             command: "--package pydantic-ai-slim"
@@ -708,7 +709,7 @@ jobs:
         shard: [1, 2]
         # 3.11 and 3.14 collect coverage, 3.13 enforces the per-test budget and 3.15 is the newest,
         # so a pull request skips only 3.12 (see the `test` job's matrix).
-        pull_request: ["${{ github.event_name == 'pull_request' }}"]
+        pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         include:
           - python-version: "3.11"
             shard: 3
@@ -929,7 +930,7 @@ jobs:
         # A pull request runs only the legs that collect coverage (see `COLLECT_COVERAGE`), which
         # include one `lowest` leg (see the `test` job's matrix), and the 3.15 `locked` leg below,
         # the newest Python.
-        pull_request: ["${{ github.event_name == 'pull_request' }}"]
+        pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         exclude:
           - pull_request: "true"
             python-version: "3.11"
@@ -1049,7 +1050,7 @@ jobs:
         shard: [1, 2]
         # A pull request runs only 3.14, the version that collects coverage (see the `test` job's
         # matrix).
-        pull_request: ["${{ github.event_name == 'pull_request' }}"]
+        pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         exclude:
           - pull_request: "true"
             python-version: "3.11"
@@ -1215,7 +1216,7 @@ jobs:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         # A pull request imports the examples on the oldest and newest versions only (see the
         # `test` job's matrix).
-        pull_request: ["${{ github.event_name == 'pull_request' }}"]
+        pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         exclude:
           - pull_request: "true"
             python-version: "3.12"

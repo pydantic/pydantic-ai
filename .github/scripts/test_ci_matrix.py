@@ -212,7 +212,8 @@ def _matches(leg: Leg, pattern: Mapping[str, object]) -> bool:
             actual_mapping = _maybe_mapping(actual)
             if actual_mapping is None or not _matches(actual_mapping, expected_mapping):
                 return False
-        elif _text(actual) != _text(expected):
+        # Actions compares typed values: a boolean `true` leg doesn't match an `exclude` entry's string `"true"`.
+        elif type(actual) is not type(expected) or actual != expected:
             return False
     return True
 
