@@ -155,7 +155,7 @@ def chain_cleanup_exception(exc: BaseException, cleanup_exc: BaseException) -> N
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:
-    """Extract the arguments of a Union type if `response_type` is a union, otherwise return an empty tuple."""
+    """Extract the arguments of a Union type if `tp` is a union, otherwise return `(tp,)`."""
     # similar to `pydantic_ai_slim/pydantic_ai/_result.py:get_union_args`
     if typing_objects.is_typealiastype(tp):
         tp = tp.__value__  # pragma: no cover
@@ -171,7 +171,7 @@ def unpack_annotated(tp: Any) -> tuple[Any, list[Any]]:
     """Strip `Annotated` from the type if present.
 
     Returns:
-        `(tp argument, ())` if not annotated, otherwise `(stripped type, annotations)`.
+        `(tp, [])` if not annotated, otherwise `(stripped type, annotations)`.
     """
     origin = get_origin(tp)
     if typing_objects.is_annotated(origin):
