@@ -1,6 +1,6 @@
 """The Speculative Execution switch, its session counters, and the pinned row they paint.
 
-The switch is the `run.speculative_code_mode` setting, on by default. `Ctrl+X Ctrl+S` flips
+The switch is the `run.speculative_code_mode` setting, off by default. `Ctrl+X Ctrl+S` flips
 it and saves it at once. Core binds a run's tools when it starts, so a turn already running keeps
 the tools it started with and the next prompt uses the new value; meanwhile the pinned row keeps
 counting for the running turn and says the change is pending. The wiring itself lives in
@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 
 from rich.console import Console
 
-from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_clai2.cli.command_context import CommandContext
@@ -21,13 +20,6 @@ from pydantic_clai2.ui.rendering import theme
 
 SETTING = 'run.speculative_code_mode'
 TOGGLE_KEYS = 'Ctrl+X Ctrl+S'
-SPECULATION_ID = 'clai_speculative_execution'
-"""The capability id the speculative bundle runs under, so other capabilities can tell it is on."""
-
-
-def speculating(ctx: RunContext[AgentDepsT]) -> bool:
-    """Whether this run binds the speculative bundle, checked without importing Monty."""
-    return SPECULATION_ID in ctx.capabilities
 
 
 @dataclass(kw_only=True)

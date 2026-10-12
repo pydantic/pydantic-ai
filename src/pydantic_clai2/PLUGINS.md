@@ -325,15 +325,10 @@ there are no background workers to stop.
 ## SystemOne: rank context with a decision model
 
 The default-enabled `system_one` plugin (`pydantic_clai2.builtin_plugins.system_one`)
-only does something while speculative execution is on. Then it adds a
-`rank_relevance(question, candidates)` function inside `run_code`, and asks the
-model to use it when gathering context. It sends a yes/no question and each
-candidate text to a decision model, and returns each candidate's probability of
-yes, most relevant first. The model ranks grep hits or files this way, then reads
-only the best ones. With a model on this machine (Ollama at a loopback URL), the
-sandbox may start `rank_relevance` speculatively, like `read_file` and `grep`.
-With Jev or a remote Ollama it waits for the snippet to reach it, so a branch the
-snippet never takes sends no text and spends no quota.
+adds a `rank_relevance(question, candidates)` tool, and asks the model to use it
+when gathering context. It sends a yes/no question and each candidate text to a
+decision model, and returns each candidate's probability of yes, most relevant
+first. The model ranks grep hits or files this way, then reads only the best ones.
 
 It uses core `SystemOneModel` over the `/v1/systemone` API, picking a backend on
 every call:
@@ -881,7 +876,7 @@ settings using the former import paths are redirected to the new modules.
 | `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
 | `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_clai2.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
-| `system_one` | `pydantic_clai2.builtin_plugins.system_one` | `{}` | while speculative execution is on, `rank_relevance` for ranking context with Jev or Ollama's Nimble; see [above](#systemone-rank-context-with-a-decision-model) |
+| `system_one` | `pydantic_clai2.builtin_plugins.system_one` | `{}` | `rank_relevance` for ranking context with Jev or Ollama's Nimble; see [above](#systemone-rank-context-with-a-decision-model) |
 | `slack` (off until enabled) | `pydantic_clai2.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)

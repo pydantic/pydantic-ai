@@ -37,7 +37,7 @@ class Settings(BaseModel):
         ),
     )
     speculative_code_mode: bool = Field(
-        default=True,
+        default=False,
         description=(
             'Fold tools into a sandboxed run_code that executes and speculates while the model writes. '
             'Ctrl+X Ctrl+S toggles it.'

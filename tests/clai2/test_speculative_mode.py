@@ -14,7 +14,7 @@ import anyio
 from rich.console import Console
 
 from pydantic_ai import Agent, AgentRunResultEvent, ModelRetry, PartStartEvent, RunContext, Tool
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, DynamicCapability, Hooks, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, DynamicCapability, LocalWorkspace
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -37,16 +37,14 @@ from pydantic_ai_harness.code_mode import (
 )
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_ai_harness.guardrails import GuardrailResult, ToolGuardrail
 from pydantic_clai2 import Session, StreamRenderer
 from pydantic_clai2._app import create_stock_agent
-from pydantic_clai2.builtin_plugins.system_one import SystemOneContext
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.runtime.eager_timing import EagerExecutionCompletedEvent
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
-from pydantic_clai2.runtime.speculation import SPECULATION_ID, Speculation, SpeculationCounters
+from pydantic_clai2.runtime.speculation import Speculation, SpeculationCounters
 from pydantic_clai2.runtime.speculative_mode import (
     NATIVE_TOOLS,
     SPECULATIVE_TOOLS,
@@ -144,14 +142,7 @@ class TestFold:
         agent: Agent[None, str] = Agent(
             FunctionModel(respond),
             deps_type=type(None),
-            capabilities=[
-                Coder[None](repo_context=False),
-                customization_guide(),
-                SystemOneContext[None](),
-                # `rank_relevance` is offered only beside the speculative bundle, which runs under this id.
-                Hooks[None](id=SPECULATION_ID),
-                LocalWorkspace(tmp_path),
-            ],
+            capabilities=[Coder[None](repo_context=False), customization_guide(), LocalWorkspace(tmp_path)],
         )
         await agent.run('hi')
         assert {*SPECULATIVE_TOOLS, *NATIVE_TOOLS} <= set(seen)
@@ -306,10 +297,6 @@ seen
 """
 
 
-def allow(call: object) -> GuardrailResult:
-    return GuardrailResult.allow()  # pragma: no cover -- only inspected, never run.
-
-
 def mount(granted: Sequence[AgentCapability[None]]) -> str | None:
     """The mount the sandbox gets beside `granted`, as its guidance describes it."""
     [speculative] = [
@@ -338,24 +325,6 @@ class TestWorkspaceMount:
     )
     def test_write_limits_mount_read_only(self, file_system: FileSystem[None]) -> None:
         assert mount([file_system]) == 'read-only'
-
-    @pytest.mark.parametrize(
-        ('guardrail', 'expected'),
-        [
-            (ToolGuardrail[None](guard=allow, tools=['grep']), 'read-write'),
-            (ToolGuardrail[None](hidden=['grep']), 'read-write'),
-            (ToolGuardrail[None](guard=allow, tools=['write_file', 'edit_file']), 'read-only'),
-            (ToolGuardrail[None](guard=allow, tools=['run_code']), 'read-only'),
-            (ToolGuardrail[None](hidden=['shell']), 'read-only'),
-            (ToolGuardrail[None](result_guard=allow, tools=['read_file']), None),
-            (ToolGuardrail[None](guard=allow), None),
-        ],
-        ids=['other_tool', 'other_hidden', 'writes', 'run_code', 'hidden_shell', 'reads', 'every_tool'],
-    )
-    def test_guardrails_limit_the_mount(self, guardrail: ToolGuardrail[None], expected: str | None) -> None:
-        """`pathlib` on a mount bypasses a guardrail as it bypasses `FileSystem`'s own checks."""
-        coder = Coder[None](unrestricted_filesystem=True, repo_context=False)
-        assert mount([coder, guardrail]) == expected
 
     def test_patterns_or_ambiguity_leave_nothing_mounted(self, tmp_path: Path) -> None:
         def dynamic(ctx: RunContext[None]) -> FileSystem[None]:

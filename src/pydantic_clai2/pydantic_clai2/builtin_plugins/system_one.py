@@ -1,32 +1,28 @@
 """Rank candidate context with a fast SystemOne decision model: TypeSafe's Jev, or Nimble on Ollama.
 
-The built-in `system_one` plugin. While speculative execution is on, it adds `rank_relevance`, a
-read-only tool, and guidance to gather context with it. The `run_code` sandbox may start it
-speculatively only while its model runs on this machine: a launch for a branch the snippet never
-takes must not send text to a remote API or spend its quota. Jev answers when a key named `JEV_API_KEY` is saved in `/keys` (or set in the environment);
-otherwise Nimble on a local Ollama does (`ollama pull nimble`). Both speak the `/v1/systemone` API
-through core `SystemOneModel`.
+The built-in `system_one` plugin adds `rank_relevance`, a tool that scores candidate texts against a
+yes/no question, and guidance to gather context with it. Jev answers when a key named `JEV_API_KEY`
+is saved in `/keys` (or set in the environment); otherwise Nimble on a local Ollama does
+(`ollama pull nimble`). Both speak the `/v1/systemone` API through core `SystemOneModel`.
 """
 
 import os
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field, replace
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from functools import partial
 from typing import Annotated
-from urllib.parse import urlsplit
 
 import anyio
 from anyio import to_thread
 from pydantic import BaseModel, ConfigDict, Field
 
-from pydantic_ai import ModelRetry, RunContext, Tool
+from pydantic_ai import ModelRetry, Tool
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
-from pydantic_ai.tools import AgentDepsT, ToolDefinition
+from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_clai2.config.api_keys import load_keys
 from pydantic_clai2.plugins import DepsT, Plugin
-from pydantic_clai2.runtime.speculation import speculating
 
 JEV_KEY = 'JEV_API_KEY'
 """The `/keys` name (or environment variable) holding a TypeSafe API key for Jev."""
@@ -35,16 +31,15 @@ MAX_CANDIDATES = 64
 MAX_CHARS = 12_000
 """Per-candidate text cap, well under Ollama's 64 KiB request and Jev's 32k-token state."""
 _CONCURRENCY = 4
-_LOOPBACK = frozenset({'localhost', '127.0.0.1', '::1'})
 
 GUIDANCE = """\
 SystemOne decision models (TypeSafe's Jev, or Nimble on a local Ollama) are available for
-context gathering through `rank_relevance`, a function inside `run_code`. They answer a yes/no
-question about a text with a probability, much faster and cheaper than reading the text yourself.
-Prefer them whenever you have more candidates than you want to read:
+context gathering through the `rank_relevance` tool. They answer a yes/no question about a text
+with a probability, much faster and cheaper than reading the text yourself. Prefer them whenever
+you have more candidates than you want to read:
 
 1. Collect candidates cheaply: `list_files`, `grep` hits, or the first lines of files.
-2. Rank them: `await rank_relevance(question="Does this code parse the settings file?",
+2. Rank them: `rank_relevance(question="Does this code parse the settings file?",
    candidates={"path/a.py": text_a, "path/b.py": text_b})`. Write the question as a yes/no about
    ONE candidate. Candidate keys are your own labels, such as paths or symbols.
 3. Read only the top-ranked candidates in full.
@@ -79,11 +74,6 @@ class Backend:
     url: str
     model: str
     api_key: str | None = None
-
-    @property
-    def local(self) -> bool:
-        """Whether requests stay on this machine, so a discarded speculative launch discloses nothing."""
-        return urlsplit(self.url).hostname in _LOOPBACK
 
 
 def backend(settings: SystemOneSettings) -> Backend:
@@ -156,28 +146,15 @@ async def score(chosen: Backend, question: str, candidates: dict[str, str]) -> d
 
 @dataclass
 class SystemOneContext(AbstractCapability[AgentDepsT]):
-    """`rank_relevance` and its guidance, offered only on runs with speculative execution on."""
+    """`rank_relevance` and guidance to gather context with it."""
 
     settings: SystemOneSettings = field(default_factory=SystemOneSettings)
 
     def get_toolset(self) -> FunctionToolset[AgentDepsT]:
-        """The one read-only tool, hidden on runs without the speculative sandbox."""
-        return FunctionToolset[AgentDepsT]([Tool(self.rank_relevance, prepare=self._prepare)])
+        return FunctionToolset[AgentDepsT]([Tool(self.rank_relevance)])
 
-    async def _prepare(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
-        """Offer the tool only beside the sandbox, and let it speculate only with a local model."""
-        if not speculating(ctx):
-            return None
-        chosen = await to_thread.run_sync(partial(backend, self.settings))
-        return replace(tool_def, metadata={**(tool_def.metadata or {}), 'read_only': chosen.local})
-
-    def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], str]:
-        """Encourage ranking candidates with a decision model, only when the tool is offered."""
-
-        def describe(ctx: RunContext[AgentDepsT]) -> str:
-            return GUIDANCE if speculating(ctx) else ''
-
-        return describe
+    def get_instructions(self) -> str:
+        return GUIDANCE
 
     async def rank_relevance(self, question: str, candidates: dict[str, str]) -> dict[str, float] | str:
         """Score how relevant each candidate text is to a yes/no question, with a fast SystemOne decision model.
@@ -202,7 +179,7 @@ class SystemOneContext(AbstractCapability[AgentDepsT]):
 
 
 class SystemOnePlugin(Plugin[SystemOneSettings, DepsT]):
-    """Rank candidate context with a SystemOne decision model while speculative execution is on."""
+    """Rank candidate context with a SystemOne decision model."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         return (SystemOneContext[DepsT](settings=self.settings),)

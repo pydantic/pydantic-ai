@@ -355,8 +355,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `plugins/keys.py` | `choose_key`, `browser_sign_in`, and `on_loop`: a plugin settings menu's credential rows, Esc-cancellable |
 | `pkce.py` | `PKCESignIn`: browser sign-in for a registered public OAuth client (PKCE, no secret), with tokens in the credential store and locked refresh; built on core's `OAuthFlow` |
 | `runtime/agent_instrumentation.py` | reads core's process-wide `Agent.instrument_all` setting (core has no getter) and its tracer; `claim`/`release` hand it between live `observability` instances, outside the plugin module so `/plugins reload` keeps the claims |
-| `runtime/speculation.py` | the `run.speculative_code_mode` switch (on by default; tests default it off in `conftest.py`), `SPECULATION_ID` and `speculating(ctx)`, `Ctrl+X Ctrl+S` toggle, session counters and pinned row |
-| `builtin_plugins/system_one.py` | the default-enabled `system_one` plugin: `rank_relevance` over core `SystemOneModel` (Jev with `JEV_API_KEY` from `/keys`, else Ollama's Nimble), offered only on runs carrying the speculative bundle's `SPECULATION_ID` |
+| `runtime/speculation.py` | the `run.speculative_code_mode` switch, `Ctrl+X Ctrl+S` toggle, session counters and pinned row |
+| `builtin_plugins/system_one.py` | the default-enabled `system_one` plugin: the `rank_relevance` tool over core `SystemOneModel` (Jev with `JEV_API_KEY` from `/keys`, else Ollama's Nimble), independent of code mode and speculation |
 | `runtime/speculative_mode.py` | harness `CodeMode` wiring (native writes, read-only speculation allowlist, guidance), imported only while on |
 | `runtime/eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |
 | `runtime/sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |

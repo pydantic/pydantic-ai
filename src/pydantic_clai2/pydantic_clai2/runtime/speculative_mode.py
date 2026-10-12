@@ -45,9 +45,7 @@ from pydantic_ai_harness.code_mode import (
     SpeculativeCallMissedEvent,
 )
 from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_ai_harness.guardrails import ToolGuardrail
 from pydantic_ai_harness.subagents import DelegationTasks, SubAgents
-from pydantic_clai2.builtin_plugins.system_one import SystemOneContext
 from pydantic_clai2.customization import CustomizationGuide, read_clai_customization_guide
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL, EagerExecutionCompletedEvent, EagerTiming
 from pydantic_clai2.runtime.sandbox_calls import (
@@ -55,7 +53,7 @@ from pydantic_clai2.runtime.sandbox_calls import (
     SandboxCallFinishedEvent,
     SandboxCallStartedEvent,
 )
-from pydantic_clai2.runtime.speculation import SPECULATION_ID, SpeculationCounters
+from pydantic_clai2.runtime.speculation import SpeculationCounters
 
 if TYPE_CHECKING:
     # Typing only: `pydantic_ai.models.anthropic` loads the Anthropic SDK.
@@ -66,15 +64,12 @@ SPECULATIVE_TOOLS: Mapping[str, type[object]] = {
     'read_file': FileSystem,
     'grep': FileSystem,
     read_clai_customization_guide.__name__: CustomizationGuide,
-    SystemOneContext.rank_relevance.__name__: SystemOneContext,
 }
 """Tools that are pure with respect to the workspace, so safe to start early, re-run, or discard,
 keyed to the capability that must provide them.
 
 A plugin or MCP tool can share one of these names when `Coder` is off, so the name alone does not
 vouch for it. The customization guide reads a file shipped inside the package and takes no arguments.
-`rank_relevance` only asks a decision model about the text it is given. A launch can still send that
-text somewhere, so it declares itself speculatable only while its model runs on this machine.
 """
 
 NATIVE_TOOLS = frozenset({'write_file', 'edit_file'})
@@ -205,9 +200,7 @@ def _mount_mode(granted: Sequence[AgentCapability[AgentDepsT]]) -> _MountMode | 
     `pathlib` reads any file's content. It is writable only when it may also write every file there: `write_file` registered, not `read_only`, and no
     `read_only_patterns`. A mount cannot express `allowed_patterns` or `denied_patterns`, so either one
     leaves the sandbox unmounted, as do zero or several file systems and any capability function
-    or `DynamicCapability`, which may only resolve to a file system at run time. A `ToolGuardrail`
-    is a restriction `pathlib` would bypass too: one over `read_file` leaves nothing mounted, and
-    one over a tool that writes, `run_code` included, keeps the mount read-only.
+    or `DynamicCapability`, which may only resolve to a file system at run time.
     """
     leaves: list[AbstractCapability[AgentDepsT]] = []
     for capability in granted:
@@ -221,30 +214,8 @@ def _mount_mode(granted: Sequence[AgentCapability[AgentDepsT]]) -> _MountMode | 
     tools = set(file_system.tools)
     if file_system.allowed_patterns or file_system.denied_patterns or 'read_file' not in tools:
         return None
-    if _guarded(leaves, frozenset({'read_file'})):
-        return None
-    writable = (
-        'write_file' in tools
-        and not file_system.read_only
-        and not file_system.read_only_patterns
-        and not _guarded(leaves, _WRITING_TOOLS)
-    )
+    writable = 'write_file' in tools and not file_system.read_only and not file_system.read_only_patterns
     return 'read-write' if writable else 'read-only'
-
-
-_WRITING_TOOLS = frozenset({'write_file', 'edit_file', 'shell', 'run_code'})
-"""Tools whose guard a writable mount would bypass; eager `pathlib` writes run before `run_code`'s."""
-
-
-def _guarded(leaves: Sequence[AbstractCapability[AgentDepsT]], names: frozenset[str]) -> bool:
-    """Whether a `ToolGuardrail` checks or hides any tool in `names`."""
-    for leaf in leaves:
-        if not isinstance(leaf, ToolGuardrail):
-            continue
-        checks = leaf.guard is not None or leaf.result_guard is not None
-        if not names.isdisjoint(leaf.hidden) or (checks and (leaf.tools is None or not names.isdisjoint(leaf.tools))):
-            return True
-    return False
 
 
 async def _workspace_mount(workspace: Workspace, mode: _MountMode | None) -> MountDir | None:
@@ -298,18 +269,13 @@ def _declarations(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> dict
 
     Only a `SPECULATIVE_TOOLS` entry from its expected capability is declared read-only; every
     other tool's own `read_only` or MCP `readOnlyHint` claim is overridden, so the allowlist stays
-    Code Puppy's rather than whatever a plugin or MCP server says about itself. An allowlisted
-    tool may still withdraw for a run by declaring `read_only=False`; nothing can add itself.
+    Code Puppy's rather than whatever a plugin or MCP server says about itself.
     """
     metadata: dict[str, object] = dict(tool_def.metadata or {})
     if tool_def.name in FOLDED_CODE_TOOLS:
         metadata.pop('code_arg_name', None)
     owner = SPECULATIVE_TOOLS.get(tool_def.name)
-    trusted = (
-        owner is not None
-        and isinstance(ctx.capabilities.get(tool_def.capability_id or ''), owner)
-        and metadata.get('read_only') is not False
-    )
+    trusted = owner is not None and isinstance(ctx.capabilities.get(tool_def.capability_id or ''), owner)
     metadata['read_only'] = trusted
     annotations: Mapping[str, object] | None = tool_def.metadata and tool_def.metadata.get('annotations')
     if annotations and not trusted:
@@ -465,7 +431,6 @@ def speculative_capabilities(
             os_access=OSAccess(),
         ),
         EagerTiming(),
-        # The id lets other capabilities, such as the `system_one` plugin's, see that speculation is on.
-        SpeculativeExecution(counters, mode, id=SPECULATION_ID),
+        SpeculativeExecution(counters, mode),
         ShowSandboxCalls(),
     ]
