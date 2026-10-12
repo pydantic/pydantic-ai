@@ -327,7 +327,8 @@ def pytest_runtest_makereport(
         state.setup_seconds = report.duration
     elif report.when == 'call':
         budget = item.config.stash[_BUDGET_KEY]
-        spent = max(state.setup_seconds - state.shared_setup_seconds, 0) + report.duration
+        # Shared fixtures can also be set up during the call, through `request.getfixturevalue`.
+        spent = max(state.setup_seconds + report.duration - state.shared_setup_seconds, 0)
         if budget and spent > budget and report.passed and item.get_closest_marker('slow') is None:
             _fail_report(report, _over_budget_message(item, spent, budget, state))
 
