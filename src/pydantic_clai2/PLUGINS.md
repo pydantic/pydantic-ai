@@ -326,6 +326,28 @@ no notification-specific telemetry.
 to restore the built-in default. Normal plugin unloading discards its handlers;
 there are no background workers to stop.
 
+## SystemOne: rank context with a decision model
+
+The default-enabled `system_one` plugin (`pydantic_clai2.builtin_plugins.system_one`)
+adds a `rank_relevance(question, candidates)` tool, and asks the model to use it
+when gathering context. It sends a yes/no question and each candidate text to a
+decision model, and returns each candidate's probability of yes, most relevant
+first. The model ranks grep hits or files this way, then reads only the best ones.
+
+It uses core `SystemOneModel` over the `/v1/systemone` API, picking a backend on
+every call:
+
+- **Jev:** save a TypeSafe API key named `JEV_API_KEY` in `/keys` (or set the
+  `JEV_API_KEY` environment variable). Calls go to `https://api.typesafe.ai` with
+  `jev-latest`.
+- **Nimble on Ollama:** without a Jev key, calls go to Ollama at
+  `http://localhost:11434` with no API key, not even `SYSTEM_ONE_API_KEY`.
+  Install Ollama 0.35 or later and run `ollama pull nimble`.
+
+When neither answers, the tool tells the model to ask you to set one up, and the
+model carries on with the other tools. Settings: `jev_model`, `jev_url`,
+`ollama_model`, and `ollama_url`. `/plugins disable system_one` turns it off.
+
 ## Observability: default agent tracing
 
 The built-in `observability` plugin (`pydantic_clai2.builtin_plugins.logfire`) is enabled by default in
@@ -868,6 +890,7 @@ settings using the former import paths are redirected to the new modules.
 | `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
 | `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_clai2.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
+| `system_one` | `pydantic_clai2.builtin_plugins.system_one` | `{}` | `rank_relevance` for ranking context with Jev or Ollama's Nimble; see [above](#systemone-rank-context-with-a-decision-model) |
 | `slack` (off until enabled) | `pydantic_clai2.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
