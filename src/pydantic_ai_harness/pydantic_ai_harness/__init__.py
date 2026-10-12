@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from .browser_use import BrowserUse
     from .bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
     from .capability_creation import CapabilityCreation
+    from .capability_storage import CapabilityStorage
     from .code_mode import CodeMode
     from .coder import Coder
     from .compaction import (
@@ -80,6 +81,7 @@ __all__ = [
     'BubblewrapSandbox',
     'BubblewrapWorkspace',
     'CapabilityCreation',
+    'CapabilityStorage',
     'ClampOversizedMessages',
     'ClearToolResults',
     'CodeMode',
@@ -156,6 +158,7 @@ _CAPABILITY_EXPORTS = {
     'BrowserUse': 'browser_use',
     'BubblewrapSandbox': 'bubblewrap_sandbox',
     'CapabilityCreation': 'capability_creation',
+    'CapabilityStorage': 'capability_storage',
     'ClampOversizedMessages': 'compaction',
     'ClearToolResults': 'compaction',
     'CodeMode': 'code_mode',
