@@ -972,14 +972,15 @@ class _Shell(Generic[DepsT, OutputT]):
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
         """Capabilities bound to the next run: supplied, plugin-registered (guarded), then speculation.
 
-        Speculation sees the others unguarded, so its sandbox mount stays within their `FileSystem`.
+        Speculation sees the others unguarded, and the agent's own capabilities too, so its sandbox
+        mount stays within every `FileSystem` and `ToolGuardrail` the run has.
         """
         granted = (*self.plugins, *self.loader.capabilities())
         bound = (*self.plugins, *self.loader.run_capabilities())
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)
-        return (*bound, *self.speculation.capabilities(granted))
+        return (*bound, *self.speculation.capabilities((self.agent.root_capability, *granted)))
 
     def capability_failed(self, error: CapabilitySetupError) -> None:
         """Report that a failing settings-built capability is left out of later turns."""

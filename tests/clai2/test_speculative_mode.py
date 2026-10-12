@@ -39,8 +39,9 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolGuardrail
 from pydantic_clai2 import Session, StreamRenderer
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2._app import create_shell, create_stock_agent
 from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.runtime.eager_timing import EagerExecutionCompletedEvent
@@ -397,6 +398,34 @@ class TestWorkspaceMount:
         """`pathlib` on a mount bypasses a guardrail as it bypasses `FileSystem`'s own checks."""
         coder = Coder[None](unrestricted_filesystem=True, repo_context=False)
         assert mount([coder, guardrail]) == expected
+
+    @pytest.mark.parametrize(
+        ('own', 'expected'),
+        [([], 'read-write'), ([ToolGuardrail[None](hidden=['shell'])], 'read-only')],
+        ids=['unguarded', 'guarded'],
+    )
+    def test_shell_mount_follows_the_agents_own_guardrails(
+        self, tmp_path: Path, own: list[AbstractCapability[None]], expected: str
+    ) -> None:
+        """A supplied agent's `ToolGuardrail` limits the mount as a plugin's does."""
+        store = SettingsStore(tmp_path / 'config.db')
+        store.set('run.code_mode', True)
+        shell = create_shell(
+            Agent(TestModel(), deps_type=type(None), capabilities=own),
+            deps=None,
+            plugins=[Coder[None](unrestricted_filesystem=True, repo_context=False)],
+            usage_limits=None,
+            console=Console(file=io.StringIO()),
+            settings=store.load(),
+            store=store,
+            builtin_plugins=(),
+            project=ProjectSettings(),
+            headless=True,
+        )
+        mounts = [
+            capability.mount for capability in shell.run_plugins() if isinstance(capability, SpeculativeExecution)
+        ]
+        assert mounts == [expected]
 
     def test_patterns_or_ambiguity_leave_nothing_mounted(self, tmp_path: Path) -> None:
         def dynamic(ctx: RunContext[None]) -> FileSystem[None]:
