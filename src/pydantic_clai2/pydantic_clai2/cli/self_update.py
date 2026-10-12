@@ -29,6 +29,7 @@ from pydantic import StringConstraints, TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_clai2.config import UpdateChannel
+from pydantic_clai2.ui.stderr_relay import terminal_stderr
 
 if TYPE_CHECKING:
     import httpx
@@ -253,8 +254,8 @@ def _in_thread(work: Callable[[], None]) -> None:
 
 
 async def _run_uv(command: Sequence[str]) -> int:
-    # Inherit the terminal so uv's progress shows; slash commands run with the editor suspended.
-    result = await run_process(command, stdout=None, stderr=None, check=False)
+    # Use the terminal so uv's progress shows; slash commands run with the editor suspended.
+    result = await run_process(command, stdout=None, stderr=terminal_stderr(), check=False)
     return result.returncode
 
 

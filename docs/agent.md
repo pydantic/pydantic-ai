@@ -66,6 +66,9 @@ print(result.output)
 !!! tip "Agents are designed for reuse, like FastAPI Apps"
     You can instantiate one agent and use it globally throughout your application, as you would a small [FastAPI][fastapi.FastAPI] app or an [APIRouter][fastapi.APIRouter], or dynamically create as many agents as you want. Both are valid and supported ways to use agents.
 
+!!! tip "Add prompt caching to your agents"
+    Pass `capabilities=[Caching()]` (the [`Caching`][pydantic_ai.capabilities.Caching] capability) to your agents. Several providers, including Anthropic, cache nothing unless the request asks them to, so without it every request pays full price for the instructions, tools and conversation. See [Caching](capabilities/caching.md) for what it costs and when to cache only the stable prefix instead.
+
 ## Running Agents
 
 There are five ways to run an agent:
@@ -1061,7 +1064,7 @@ except UsageLimitExceeded as e:
     """
 ```
 
-Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling:
+Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling. The request count, [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests], counts the model responses the agent acts on, one per turn of the agent loop, rather than every request sent to the provider: attempts a [fallback model](models/overview.md#fallback-model) moved on from, the continuation requests that complete a turn a provider paused (Anthropic `pause_turn`, OpenAI background mode), and [provider SDK and transport retries](retries.md#retry-multiplication) aren't counted. The tokens and cost of a response a fallback model rejected, and of continuation requests, still count towards the token and cost limits.
 
 ```py
 from typing_extensions import TypedDict

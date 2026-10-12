@@ -48,7 +48,8 @@ class _RecordingHttpServer(ThreadingHTTPServer):
 @contextmanager
 def http_server(responses: Sequence[HttpResponse], *, port: int | None = None) -> Generator[RunningHttpServer]:
     server = _RecordingHttpServer(responses, port)
-    thread = Thread(target=server.serve_forever, daemon=True)
+    # A short poll interval: `shutdown()` blocks until `serve_forever` next polls (0.5s by default).
+    thread = Thread(target=server.serve_forever, kwargs={'poll_interval': 0.01}, daemon=True)
     thread.start()
     bound_port = server.server_port
     try:

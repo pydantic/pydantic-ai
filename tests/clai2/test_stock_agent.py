@@ -177,16 +177,7 @@ async def test_model_names_resolve_through_clai(tmp_path: Path, monkeypatch: pyt
         await agent.run('hello', model='openai:gpt-6')
     assert requests == snapshot(
         [
-            (
-                'anthropic:claude-sonnet-4-6',
-                {
-                    'anthropic_cache': '5m',
-                    'anthropic_cache_instructions': '5m',
-                    'anthropic_cache_tool_definitions': '5m',
-                    'anthropic_effort': 'high',
-                    'anthropic_thinking': {'type': 'adaptive'},
-                },
-            ),
+            ('anthropic:claude-sonnet-4-6', {}),
             (
                 'openai:gpt-6',
                 {
@@ -275,16 +266,7 @@ async def test_approval_gated_host_configuration(tmp_path: Path, monkeypatch: py
         )
     [(name, settings, tools)] = requests
     assert name == 'gateway/anthropic:claude-opus-5-5'
-    assert settings == snapshot(
-        {
-            'anthropic_cache': '5m',
-            'anthropic_cache_instructions': '5m',
-            'anthropic_cache_tool_definitions': '5m',
-            'anthropic_effort': 'high',
-            'anthropic_thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}},
-            'thinking': 'high',
-        }
-    )
+    assert settings == snapshot({'thinking': 'high'})
     assert 'delegate_task' not in tools
     assert isinstance(result.output, str)
     assert 'HOST_VARIABLE=forwarded' in result.output

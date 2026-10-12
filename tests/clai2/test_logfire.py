@@ -23,11 +23,13 @@ from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins import logfire as logfire_plugin
-from pydantic_clai2.builtin_plugins.logfire import CREDENTIALS_FILE, PROJECT, LogfirePlugin, LogfireSource, logfire_dir
+from pydantic_clai2.builtin_plugins.logfire import CREDENTIALS_FILE, PROJECT, LogfirePlugin, LogfireSource
+from pydantic_clai2.builtin_plugins.logfire_destination import logfire_dir
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.api_keys import save_key
@@ -433,6 +435,78 @@ async def test_failed_and_cancelled_runs_finish_their_spans(recorder: Recorder, 
         assert any(span.status.status_code is trace.StatusCode.ERROR for span in spans)
 
 
+async def test_a_failure_inside_the_run_is_not_logged_again_by_a_second_copy(recorder: Recorder) -> None:
+    """With two copies enabled, `combine` keeps one copy's `wrap_run`; neither logs the run's error as `Turn failed`."""
+    first, second = load_logfire(make_host()), load_logfire(make_host())
+    agent = Agent(TestModel(), deps_type=type(None))
+
+    @agent.tool_plain
+    def work() -> str:
+        raise RuntimeError('tool failure')
+
+    try:
+        for plugin in (first, second):
+            await plugin.dispatch(SessionStart(agent=agent, settings=Settings()))
+        with pytest.raises(RuntimeError) as in_run:
+            await agent.run('run the tool', capabilities=[*first.capabilities, *second.capabilities])
+        for plugin in (first, second):
+            await plugin.dispatch(TurnEnd(text='a prompt', outcome='failed', error=in_run.value))
+    finally:
+        await close(first)
+        await close(second)
+    assert not [span for span in recorder.spans() if (span.attributes or {}).get('logfire.msg') == 'Turn failed']
+
+
+@pytest.mark.parametrize('content', [True, False])
+async def test_turn_failures_outside_the_run_are_recorded_with_their_traceback(
+    recorder: Recorder, content: bool
+) -> None:
+    plugin = load_logfire(make_host(include_content=content))
+    agent = Agent(TestModel(), deps_type=type(None), name='failure_test')
+
+    @agent.tool_plain
+    def work() -> str:
+        raise RuntimeError('tool failure')
+
+    def resolve_model() -> None:
+        raise UserError('No Claude Code login. Run /login claude-code.')
+
+    try:
+        await plugin.dispatch(SessionStart(agent=agent, settings=Settings()))
+        with pytest.raises(RuntimeError) as in_run:
+            await agent.run('run the tool', capabilities=plugin.capabilities)
+        with pytest.raises(UserError) as before_run:
+            resolve_model()
+        # The same exception instance failing a later turn outside a run, as a plugin reusing one might, is logged.
+        for error in (in_run.value, before_run.value, in_run.value):
+            await plugin.dispatch(TurnEnd(text='a private prompt', outcome='failed', error=error))
+    finally:
+        await close(plugin)
+    spans = recorder.spans()
+    root = next(span for span in spans if span.name == 'CLAI session')
+    run = next(span for span in spans if operation(span) == 'invoke_agent')
+    # The run's own span already holds the error that left it, so only turns that failed outside a run are logged.
+    assert [(event.attributes or {}).get('exception.type') for event in run.events] == ['RuntimeError']
+    failed, reused = [span for span in spans if (span.attributes or {}).get('logfire.msg') == 'Turn failed']
+    assert failed.parent == root.context
+    assert failed.status.status_code is trace.StatusCode.ERROR
+    assert failed.instrumentation_scope is not None and failed.instrumentation_scope.name == 'clai2'
+    if not content:
+        # Like core's agent spans, the event keeps only the type: the message and traceback can quote the prompt.
+        assert [dict(event.attributes or {}) for span in (failed, reused) for event in span.events] == [
+            {'exception.type': 'pydantic_ai.exceptions.UserError', 'exception.escaped': 'False'},
+            {'exception.type': 'RuntimeError', 'exception.escaped': 'False'},
+        ]
+        return
+    assert [(event.attributes or {}).get('exception.type') for event in reused.events] == ['RuntimeError']
+    [exception] = failed.events
+    attributes = exception.attributes or {}
+    assert exception.name == 'exception'
+    assert attributes['exception.type'] == 'pydantic_ai.exceptions.UserError'
+    assert attributes['exception.message'] == 'No Claude Code login. Run /login claude-code.'
+    assert 'resolve_model' in str(attributes['exception.stacktrace'])
+
+
 async def test_flush_timeout_still_stops_providers(recorder: Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
     host = make_host()
     plugin = load_logfire(host)
@@ -530,7 +604,8 @@ async def test_ui_events_can_be_explicitly_disabled(recorder: Recorder) -> None:
         telemetry.record('setting {setting} changed', setting='display.theme', value='default')
     finally:
         await close(plugin)
-    assert messages(recorder) == ['CLAI session']
+    # The root's announcement is not a UI event: it is sent either way.
+    assert messages(recorder) == ['CLAI session opened', 'CLAI session']
 
 
 @pytest.mark.parametrize('model', [Settings().model, None])
@@ -551,13 +626,14 @@ async def test_ui_events_follow_the_plugin_and_keep_setting_names(
         await close(plugin)
     telemetry.record('after the plugin unloaded')
     assert messages(recorder) == [
+        'CLAI session opened',
         'session started',
         'turn cancelled',
         'setting sessions.naming changed',
         'not a UI event',
         'CLAI session',
     ]
-    started, _, changed, other, _ = recorder.spans()
+    _, started, _, changed, other, _ = recorder.spans()
     # The exemption covers only UI records: another span's `setting` is scrubbed as usual.
     assert (other.attributes or {})['setting'] == "[Scrubbed due to 'password']"
     assert (started.attributes or {})['model'] == (model or 'agent default')
@@ -604,13 +680,14 @@ async def test_token_from_keys_chooses_the_project(
     assert ('CLAI2_LOGFIRE_TOKEN is not in /keys' in output.getvalue()) == (not saved and send is not False)
 
 
-async def test_self_hosted_base_url_reaches_the_sdk(recorder: Recorder) -> None:
-    await close(load_logfire(make_host(base_url='logfire.example.com/')))
+@pytest.mark.parametrize('base_url', ['logfire.example.com/', 'https://logfire.example.com/mcp'])
+async def test_self_hosted_base_url_reaches_the_sdk(recorder: Recorder, base_url: str) -> None:
+    await close(load_logfire(make_host(base_url=base_url)))
     assert recorder.options[0]['base_url'] == 'https://logfire.example.com'
 
 
 def test_base_url_must_be_an_https_origin(recorder: Recorder) -> None:
-    with pytest.raises(ValidationError, match='https URL with no path'):
+    with pytest.raises(ValidationError, match='Type a host'):
         load_logfire(make_host(base_url='http://logfire.example.com'))
     assert not recorder.instances
 
@@ -728,7 +805,9 @@ def test_project_row_names_the_chosen_key_and_resets_to_the_environment() -> Non
     source = LogfireSource(host)
     project = source.rows()[0]
     assert project.note == '', 'a chosen key replaces the environment, so no note about it'
-    assert source.current(project) == 'LOGFIRE_TOKEN_TEAM at https://logfire.example.com'
+    assert source.current(project) == 'LOGFIRE_TOKEN_TEAM at logfire.example.com'
+    eu = LogfireSource(make_host(token={'name': 'LOGFIRE_TOKEN_EU'}, base_url='https://logfire-eu.pydantic.dev'))
+    assert eu.current(eu.rows()[0]) == 'LOGFIRE_TOKEN_EU at Logfire EU'
     hosted = LogfireSource(make_host(token={'name': 'LOGFIRE_TOKEN_US'}))
     assert hosted.current(hosted.rows()[0]) == 'LOGFIRE_TOKEN_US'
     assert source.reset(project) == 'Reset Logfire project.'

@@ -5,7 +5,7 @@ uv sync --frozen
 uv run pytest tests/benchmarks --codspeed --codspeed-mode=walltime
 ```
 
-Run these commands from the repository root. For a correctness check without timing, omit the CodSpeed flags.
+Run these commands from the repository root. For a correctness check without timing, omit the CodSpeed flags. Without CodSpeed, each benchmark runs only its smallest workload: the larger workloads are marked `codspeed_only` and deselected by [`conftest.py`](conftest.py), because they reach the same code paths and would only slow down the regular test jobs, which collect this directory too.
 
 The [CodSpeed workflow](../../.github/workflows/benchmark.yml) measures wall time on CodSpeed's dedicated ARM64 Graviton runners, with Python 3.14. It runs on pull requests and pushes to `main`. Fixed hardware avoids the CPU differences of GitHub-hosted runners, while isolation reduces timing noise.
 
@@ -38,6 +38,8 @@ uv run pytest tests/benchmarks/test_tool_search.py --codspeed --codspeed-mode=wa
 The workloads contain 256 or 8,192 deferred tools and perform one or five sequential searches. Repeated searches must return successive pages of undiscovered tools. Stable-corpus cases keep metadata unchanged. Changing-corpus cases update one prepared description using a new dependency value on every run. The first tool alternates between matching and not matching the query, and assertions verify the resulting page shift. A unique revision suffix prevents a cache from treating the changing corpus as two warmed snapshots. This includes any future index construction or invalidation in the measured operation rather than assuming a prebuilt index is free.
 
 Fixture warmup removes startup costs. It does not move the measured run's tool preparation or search calls outside the benchmark. The five-search workload includes its first search as well as subsequent searches.
+
+The parallel-search cases send five or twenty `search_tools` calls in one model response. They measure two model requests, the first search and subsequent searches over one prepared corpus, tool execution, and result handling. Every call sees the same pre-discovery snapshot, so assertions require identical first-page matches for all calls. These cases complement sequential discovery and keep any future index construction inside the measured run.
 
 ## Stress testing
 
