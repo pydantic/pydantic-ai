@@ -52,7 +52,8 @@ except UserError as e:
 
 Combined capability: default instructions + `FileSystem` + `Shell` + `RepoContext` + `SubAgents` +
 `ClearToolResults(max_fraction=0.7)`, `WarnNearLimits(max_context_fraction=0.9)`, a `ToolOutputLimits`
-that truncates any tool result to 64,000 chars (no `read_tool_result`), `RepairToolArguments`.
+that truncates any tool result to 64,000 chars (no `read_tool_result`), `RepairToolArguments`, and
+prompt caching (unified `cache=True`).
 
 ```bash
 uv add "pydantic-ai-harness[coder]"   # installs ripgrep (rg) on the agent host
@@ -86,7 +87,7 @@ log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outl
 
 Keyword-only options: `instructions=None` (appended to the default guidance),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
-`repo_context=True`, `sub_agents=True`.
+`repo_context=True`, `sub_agents=True`, `caching=True`.
 
 - **Bind `Coder` on the `Agent`**: passing it to `run(capabilities=...)` raises `UserError` unless
   `sub_agents=False`. Delegates re-run the bound agent (same model, workspace, and neighbouring
@@ -97,6 +98,13 @@ Keyword-only options: `instructions=None` (appended to the default guidance),
 - File tools stay in the working directory with `.git`, `.env*`, keys, and `secrets*` read-only; `shell`
   bypasses all of that. To change a bundled setting (hashes, allowlist, `list_directory`), compose
   `FileSystem`/`Shell`/`RepoContext`/`SubAgents` yourself.
+- **Prompt caching is on by default** (`cache=True`): a coding run resends the same tools and
+  instructions plus a growing conversation on every request, so each request reads back the previous
+  one's prefix. What it does per provider and what it costs:
+  <https://pydantic.dev/docs/ai/capabilities/caching/#unified-caching-settings>. A `cache` set on
+  the model, in `Agent(model_settings=...)`, or by a `Caching` listed before `Coder` wins, as do a later
+  capability and run-level `model_settings`: `model_settings={'cache': False}` turns it off,
+  `{'cache': '1h'}` keeps it longer. `Coder(caching=False)` leaves the default out.
 - Your own `ClearToolResults` / `TieredCompaction` / `WarnNearLimits` next to `Coder` run as well (no id
   clash), each at its own trigger. List your `ToolOutputLimits` **after** `Coder` so it sees raw returns;
   listed before, it sees Coder's 64,000-char result. For `shell`, bands must sit under ~16,000 chars.

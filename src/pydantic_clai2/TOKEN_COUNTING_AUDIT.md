@@ -60,9 +60,11 @@ Finding 6 accounts for the remaining overestimates.
 Tool results were counted as `str(part.content)`. When a tool returns an image or a document (MCP
 image results, browser screenshots, any tool returning `BinaryContent`), that string spells out the
 bytes: a 300 KB PNG estimated at about 215,000 tokens. A single screenshot could fire tool result
-clearing, the near-limit warning, and a summarizing compaction on the next request. Tool results are
-now counted as `model_response_str()`, the text the provider receives. Files are left out, as
-`FilePart` and user-prompt images already were, and structured results count as their JSON.
+clearing, the near-limit warning, and a summarizing compaction on the next request. For
+`ToolReturnPart`, #9632 fixed this on `main`: a returned file counts as the `See file <identifier>.`
+reference a text-only tool result carries in its place. This PR does the same for files returned by
+provider-side tools: `NativeToolReturnPart` is now counted as `model_response_str()`, which leaves
+files out, as `FilePart` and user-prompt images already were.
 
 ## Not fixed: recommendations
 
