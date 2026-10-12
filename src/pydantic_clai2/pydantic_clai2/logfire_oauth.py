@@ -37,6 +37,7 @@ from pydantic import (
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 ACCOUNT = 'logfire-oauth'
@@ -270,7 +271,7 @@ def _pkce() -> tuple[str, str]:
 
 def _open(url: str) -> bool:
     try:
-        return webbrowser.open(url)
+        return open_browser(url)
     except webbrowser.Error:
         return False
 
