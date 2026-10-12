@@ -92,7 +92,7 @@ CASES = [
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Paris')],
-                    usage=RequestUsage(unmeasured_requests=1),
+                    usage=RequestUsage(cost=Decimal('0.00')),
                     model_name='meta-llama/llama-3.1-8b-instruct',
                     timestamp=IsDatetime(),
                     provider_name='huggingface',
