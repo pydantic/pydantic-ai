@@ -51,7 +51,7 @@ QuotaDiagnostic = Literal[
     'invalid_reset_time',
     'missing_windows',
 ]
-FailureKind = Literal['authentication', 'rate_limit', 'request_limit', 'timeout', 'other']
+FailureKind = Literal['authentication', 'rate_limit', 'request_limit', 'time_limit', 'timeout', 'other']
 
 
 @dataclass(frozen=True)
@@ -630,7 +630,7 @@ def _failure_from(value: object) -> Failure | None:
     if data is None:
         return None
     kind = data.get('kind')
-    if kind not in ('authentication', 'rate_limit', 'request_limit', 'timeout', 'other'):
+    if kind not in ('authentication', 'rate_limit', 'request_limit', 'time_limit', 'timeout', 'other'):
         return None
     status = data.get('http_status')
     if status is not None and (isinstance(status, bool) or not isinstance(status, int) or not 100 <= status <= 599):
@@ -715,6 +715,7 @@ def _failure_reason(failure: Failure | None) -> str:
         'authentication': 'Z.ai rejected the configured credentials',
         'rate_limit': 'Z.ai rate limits stopped the run',
         'request_limit': 'The agent reached its per-run request limit',
+        'time_limit': 'The agent reached its per-run time limit',
         'timeout': 'A provider request timed out',
         'other': 'The provider request failed with a typed error',
     }
@@ -732,11 +733,15 @@ def _incident_body(marker: IncidentMarker, workflow: str, task_key: str, run_id:
         'reset_at': marker.reset_at,
     }
     run_url = f'https://github.com/{repo}/actions/runs/{urllib.parse.quote(run_id)}'
+    check = (
+        'The run stopped at its own limit, not on a provider error. Find out why it needed more than the limit.'
+        if marker.kind in ('request_limit', 'time_limit')
+        else 'Confirm provider credentials, configuration, and quota health.'
+    )
     return (
         f'## Operational failure\n\n{reason}\n\n'
         f'- Workflow: `{workflow}`\n- Task: `{task_key}`\n- First failing run: {run_url}\n\n'
-        'Confirm provider credentials, configuration, and quota health. Close this incident after the cause is '
-        'fixed and the required recovery check passes.\n\n'
+        f'{check} Close this incident after the cause is fixed and the required recovery check passes.\n\n'
         f'{MARKER_PREFIX}{json.dumps(marker_data, separators=(",", ":"))} -->\n'
     )
 
