@@ -887,6 +887,7 @@ def test_file_part_serialization_roundtrip():
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'failed_attempts': None,
                 'workspace_ref': None,
             }
         ]
@@ -1981,6 +1982,7 @@ assert type(content) is dict, content
 """
 
 
+@pytest.mark.subprocess(reason='needs an interpreter where no pydantic plugin has been registered')
 def test_tool_return_gate_holds_without_a_pydantic_plugin():
     """The gate must not depend on whether anything registered a pydantic plugin.
 
@@ -3128,6 +3130,7 @@ def test_speech_part_serialization_roundtrip():
                 'conversation_id': None,
                 'metadata': None,
                 'workspace_ref': None,
+                'failed_attempts': None,
                 'state': 'complete',
             },
         ]

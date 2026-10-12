@@ -208,7 +208,10 @@ class RealtimeCassette:
 
     @classmethod
     def load(cls, path: Path) -> RealtimeCassette:
-        raw = cast('dict[str, Any]', yaml.safe_load(path.read_text(encoding='utf-8')))
+        # libyaml's loader where PyYAML was built with it: the pure-Python one takes a noticeable share of a
+        # second over a cassette's thousands of frames.
+        loader = getattr(yaml, 'CSafeLoader', yaml.SafeLoader)
+        raw = cast('dict[str, Any]', yaml.load(path.read_text(encoding='utf-8'), Loader=loader))
         interactions: list[RealtimeCassetteInteraction] = []
         for item in cast('list[dict[str, Any]]', raw.get('interactions', [])):
             at = item.get('at')
@@ -354,6 +357,12 @@ class _SentFrameNormalizer:
 # making progress never comes near it.
 _REPLAY_PROGRESS_GRACE = 2.0
 
+# Outbound frames a session sends once it has stopped reading, to end the provider session: GPT-Live's
+# `session.close`. Whatever the provider sent before it is read afterwards, by the same code that waits
+# for the provider to confirm the close, so on replay the close overtakes those frames instead of
+# waiting for a reader that only starts once the send returns.
+_SESSION_END_TYPES = frozenset({'session.close'})
+
 
 class ReplayWebSocket:
     """Replay a recorded WebSocket conversation, validating outbound frames as they are sent.
@@ -364,13 +373,19 @@ class ReplayWebSocket:
     """
 
     def __init__(self, cassette: RealtimeCassette, *, hold_open: bool = False) -> None:
-        self._interactions = cassette.interactions
+        # A copy: a session-ending send reorders it (see `_SESSION_END_TYPES`), and the cassette is the recording.
+        self._interactions = list(cassette.interactions)
         self._hold_open = hold_open
         self._position = 0
         cassette._replay = self  # pyright: ignore[reportPrivateUsage]
         self._normalizer = _SentFrameNormalizer()
         self._condition = asyncio.Condition()
         self._readers = 0
+        # Whether the connection streams its own idle audio (see `_patched_idle_audio`), whose recorded
+        # frames other sends must wait behind rather than claim. Set once the pump starts. A recording in
+        # which the application also streams audio can't tell its frames from the pump's, so replay only
+        # supports the pump in sessions that send no audio of their own.
+        self.pumps_audio = False
         self._closed = False
         self._now = 0.0
         # When each inbound frame handed out and not yet taken up by `begin_handling_frame()` was recorded.
@@ -384,6 +399,8 @@ class ReplayWebSocket:
         text = message.decode('utf-8') if isinstance(message, bytes) else message
         actual = _truncate_audio(self._normalizer.normalize(_scrub(json.loads(text))))
         async with self._condition:
+            if actual.get('type') in _SESSION_END_TYPES:
+                self._take_next_send_ahead_of_unread_frames()
             interaction = self._peek()
             # A caller that keeps sending (streaming a microphone) runs ahead of the recorded inbound
             # frames sitting between its sends. Let the reader drain those first rather than failing the
@@ -391,8 +408,13 @@ class ReplayWebSocket:
             # that calls `recv()` directly (GPT-Live keeps a single read in flight as its own task) is
             # only visible by the frames it consumes, so wait while it keeps consuming them. With nobody
             # consuming them at all, this is the genuine "sent a frame the recording doesn't have" case.
-            while isinstance(interaction, CassetteMessage) and interaction.direction == 'received':
-                if self._readers:
+            # A recorded frame of idle audio belongs to the connection's pump, which sends it on its own
+            # turn: another send waits for it to go out first, then drains whatever follows it the same way.
+            while isinstance(interaction, CassetteMessage) and (
+                interaction.direction == 'received'
+                or (self.pumps_audio and not _is_audio_send(actual) and _is_audio_send(interaction.data))
+            ):
+                if interaction.direction == 'received' and self._readers:
                     await self._condition.wait()
                 elif not await self._progressed():
                     break
@@ -449,6 +471,20 @@ class ReplayWebSocket:
             ):
                 if not await self._progressed():
                     return
+
+    async def wait_for_pumped_audio_turn(self) -> None:
+        """Wait until the recording's next interaction is a frame of idle audio, which the pump then sends.
+
+        Stands in for the pump's real-time wait, so replay sends exactly the frames the recording has, in
+        their recorded places. Once none are left, the pump waits for good, until the connection cancels it.
+        """
+        async with self._condition:
+            while not (
+                isinstance(upcoming := self._peek(), CassetteMessage)
+                and upcoming.direction == 'sent'
+                and _is_audio_send(upcoming.data)
+            ):
+                await self._condition.wait()
 
     async def _progressed(self) -> bool:
         """Wait for the replay position to move, reporting whether it did within the grace period."""
@@ -536,6 +572,15 @@ class ReplayWebSocket:
         at = self._delivered.popleft()
         if at is not None:
             self._now = max(self._now, at)
+
+    def _take_next_send_ahead_of_unread_frames(self) -> None:
+        """Move the next recorded send in front of the inbound frames recorded before it. Call with the condition held."""
+        for index in range(self._position, len(self._interactions)):
+            interaction = self._interactions[index]
+            if not (isinstance(interaction, CassetteMessage) and interaction.direction == 'received'):
+                if isinstance(interaction, CassetteMessage):
+                    self._interactions.insert(self._position, self._interactions.pop(index))
+                return
 
     def _advance(self) -> None:
         """Consume the next interaction. Call with the condition held."""
@@ -657,7 +702,41 @@ def patched_ws_connect(
                 cassette.bind_disconnect(disconnect)
                 yield recording
 
-    with mock.patch.object(target, attr, connect), _patched_turn_clock(provider, replay):
+    with (
+        mock.patch.object(target, attr, connect),
+        _patched_turn_clock(provider, replay),
+        _patched_idle_audio(provider, replay),
+    ):
+        yield
+
+
+@contextmanager
+def _patched_idle_audio(provider: ProviderName, replay: ReplayWebSocket | None) -> Generator[None]:
+    """Pace GPT-Live's idle-audio pump by the recording rather than by the clock.
+
+    The pump sends a frame of silence every 100 ms of wall-clock time, and replay runs far faster than the
+    recording did, so on the real clock it would send a different number of frames in different places.
+    Instead each frame waits for the recording's next idle-audio frame to come up.
+    """
+    if replay is None or provider != 'openai_live':
+        yield
+        return
+    from pydantic_ai.realtime import openai_live as rt_openai_live
+
+    connection = rt_openai_live.OpenAILiveConnection
+    start_idle_audio = connection._start_idle_audio  # pyright: ignore[reportPrivateUsage]
+
+    def start_pumping(self: rt_openai_live.OpenAILiveConnection) -> None:
+        replay.pumps_audio = True
+        start_idle_audio(self)
+
+    async def wait_for_recorded_frame(self: rt_openai_live.OpenAILiveConnection) -> None:
+        await replay.wait_for_pumped_audio_turn()
+
+    with (
+        mock.patch.object(connection, '_start_idle_audio', start_pumping),
+        mock.patch.object(connection, '_wait_for_idle_frame', wait_for_recorded_frame),
+    ):
         yield
 
 

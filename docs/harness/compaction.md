@@ -115,7 +115,8 @@ agent = Agent(
 With a usage anchor, the provider-reported usage covers everything billed for the anchored request,
 including its instructions, tool definitions, and `FilePart` payloads. For the suffix after the
 anchor, and for a whole history with no usage anchor, the estimator uses `tokenizer` when supplied
-or a ~4-characters-per-token heuristic. That estimated portion cannot see `FilePart` payloads.
+or a ~4-characters-per-token heuristic. That estimated portion cannot see `FilePart` payloads, and
+counts a file inside a tool return as the `See file <identifier>.` reference that stands in for it.
 Pending tool schemas newly revealed for the request are conservatively estimated by the
 implementation, since they are not covered by the earlier anchor.
 
@@ -451,6 +452,8 @@ SlidingWindowCompaction(max_messages=80, keep_messages=40, receipts=True)
 The receipt text carries no timestamp, so it is a pure function of the compaction. The message part still has its ordinary request timestamp.
 
 Wording follows what actually survived. `SummarizingCompaction` leaves a summary, so its receipt says the summary above is secondhand; `SlidingWindowCompaction` drops history outright, so its receipt says that context is gone. The blank-in-place strategies (`ClearToolResults`, `DeduplicateFileReads`, `ClampOversizedMessages`) keep every message and cross no boundary, so they emit no receipt.
+
+`SlidingWindowCompaction` counts its receipt toward `keep_messages`, so `keep_messages=40` keeps the receipt and 39 messages. The receipt never takes the last slot: `keep_messages=1` keeps the receipt and the newest message.
 
 Attach any capability exposing `compaction_transcript_handle() -> str | None` -- the `TranscriptHandleProvider` protocol -- and the receipt gains a `Persisted run handle: <handle>` pointer. `StepPersistence` implements it, returning its `run_id`, so attaching it is enough. Each receipt is also emitted as a `compaction.receipt` event on the `compact_messages` span, carrying `compaction.receipt.strategy`, `compaction.receipt.messages_dropped`, `compaction.receipt.tokens_dropped`, `compaction.receipt.by`, and `compaction.receipt.handle` when a handle was found.
 

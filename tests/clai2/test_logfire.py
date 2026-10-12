@@ -23,6 +23,7 @@ from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
@@ -432,6 +433,78 @@ async def test_failed_and_cancelled_runs_finish_their_spans(recorder: Recorder, 
     assert all(span.end_time is not None for span in spans)
     if not cancelled:
         assert any(span.status.status_code is trace.StatusCode.ERROR for span in spans)
+
+
+async def test_a_failure_inside_the_run_is_not_logged_again_by_a_second_copy(recorder: Recorder) -> None:
+    """With two copies enabled, `combine` keeps one copy's `wrap_run`; neither logs the run's error as `Turn failed`."""
+    first, second = load_logfire(make_host()), load_logfire(make_host())
+    agent = Agent(TestModel(), deps_type=type(None))
+
+    @agent.tool_plain
+    def work() -> str:
+        raise RuntimeError('tool failure')
+
+    try:
+        for plugin in (first, second):
+            await plugin.dispatch(SessionStart(agent=agent, settings=Settings()))
+        with pytest.raises(RuntimeError) as in_run:
+            await agent.run('run the tool', capabilities=[*first.capabilities, *second.capabilities])
+        for plugin in (first, second):
+            await plugin.dispatch(TurnEnd(text='a prompt', outcome='failed', error=in_run.value))
+    finally:
+        await close(first)
+        await close(second)
+    assert not [span for span in recorder.spans() if (span.attributes or {}).get('logfire.msg') == 'Turn failed']
+
+
+@pytest.mark.parametrize('content', [True, False])
+async def test_turn_failures_outside_the_run_are_recorded_with_their_traceback(
+    recorder: Recorder, content: bool
+) -> None:
+    plugin = load_logfire(make_host(include_content=content))
+    agent = Agent(TestModel(), deps_type=type(None), name='failure_test')
+
+    @agent.tool_plain
+    def work() -> str:
+        raise RuntimeError('tool failure')
+
+    def resolve_model() -> None:
+        raise UserError('No Claude Code login. Run /login claude-code.')
+
+    try:
+        await plugin.dispatch(SessionStart(agent=agent, settings=Settings()))
+        with pytest.raises(RuntimeError) as in_run:
+            await agent.run('run the tool', capabilities=plugin.capabilities)
+        with pytest.raises(UserError) as before_run:
+            resolve_model()
+        # The same exception instance failing a later turn outside a run, as a plugin reusing one might, is logged.
+        for error in (in_run.value, before_run.value, in_run.value):
+            await plugin.dispatch(TurnEnd(text='a private prompt', outcome='failed', error=error))
+    finally:
+        await close(plugin)
+    spans = recorder.spans()
+    root = next(span for span in spans if span.name == 'CLAI session')
+    run = next(span for span in spans if operation(span) == 'invoke_agent')
+    # The run's own span already holds the error that left it, so only turns that failed outside a run are logged.
+    assert [(event.attributes or {}).get('exception.type') for event in run.events] == ['RuntimeError']
+    failed, reused = [span for span in spans if (span.attributes or {}).get('logfire.msg') == 'Turn failed']
+    assert failed.parent == root.context
+    assert failed.status.status_code is trace.StatusCode.ERROR
+    assert failed.instrumentation_scope is not None and failed.instrumentation_scope.name == 'clai2'
+    if not content:
+        # Like core's agent spans, the event keeps only the type: the message and traceback can quote the prompt.
+        assert [dict(event.attributes or {}) for span in (failed, reused) for event in span.events] == [
+            {'exception.type': 'pydantic_ai.exceptions.UserError', 'exception.escaped': 'False'},
+            {'exception.type': 'RuntimeError', 'exception.escaped': 'False'},
+        ]
+        return
+    assert [(event.attributes or {}).get('exception.type') for event in reused.events] == ['RuntimeError']
+    [exception] = failed.events
+    attributes = exception.attributes or {}
+    assert exception.name == 'exception'
+    assert attributes['exception.type'] == 'pydantic_ai.exceptions.UserError'
+    assert attributes['exception.message'] == 'No Claude Code login. Run /login claude-code.'
+    assert 'resolve_model' in str(attributes['exception.stacktrace'])
 
 
 async def test_flush_timeout_still_stops_providers(recorder: Recorder, monkeypatch: pytest.MonkeyPatch) -> None:

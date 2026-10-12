@@ -2,12 +2,14 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import gc
 import importlib.util
 import logging
 import os
 import re
 import secrets
 import sys
+import warnings
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
@@ -52,7 +54,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from . import cassette_hooks
+from . import cassette_hooks, cost_guards
 from ._inline_snapshot import Builder, Custom, customize
 from .cassette_utils import check_cache_prefix_stability
 
@@ -101,6 +103,7 @@ os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    config.pluginmanager.register(cost_guards, cost_guards.PLUGIN_NAME)
     config.addinivalue_line(
         'markers',
         'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
@@ -653,6 +656,22 @@ def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
         asyncio.set_event_loop(original_loop)
 
 
+@pytest.fixture
+def young_gc() -> Iterator[None]:
+    """Limit the test's `gc.collect()` calls to the objects it creates.
+
+    A full collection walks every object the worker has accumulated, which takes seconds per call
+    late in a CI run. Freezing everything that exists before the test keeps it out of the collector's
+    reach until teardown, so collections stay cheap, and garbage leaked by an earlier test can't be
+    finalized (and raise an unraisable exception or `ResourceWarning`) in the middle of this one.
+    """
+    gc.freeze()
+    try:
+        yield
+    finally:
+        gc.unfreeze()
+
+
 @pytest.fixture(autouse=True)
 def no_instrumentation_by_default():
     Agent.instrument_all(False)
@@ -700,6 +719,35 @@ try:
 
 except ImportError:
     pass
+
+
+@pytest.fixture(scope='session')
+def prefect_test_server() -> Iterator[None]:
+    """A Prefect test server with an isolated database, shared by every Prefect test in the worker.
+
+    Starting one takes 15-25s on a CI runner, so tests that run Prefect flows request this fixture
+    and share the `prefect` xdist group, starting a single server per job instead of one per module
+    or test. The implicit ephemeral server would instead use the shared default `PREFECT_HOME` and a
+    short connect timeout that flakes on slow runners.
+    """
+    pytest.importorskip('prefect')
+    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
+    from prefect.testing.utilities import prefect_test_harness
+
+    # The task-run recorder is a background writer against the same sqlite file the flows write to.
+    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
+    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
+    # here reads what it records: task run states reach the API through the task engine.
+    with (
+        temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}),
+        prefect_test_harness(server_startup_timeout=120),
+    ):
+        yield
+    # Prefect's test server leaves client sockets for GC on Python 3.14; collect them here, where the
+    # warning is expected, rather than in whichever test the collector happens to run in.
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message='unclosed.*socket', category=ResourceWarning)
+        gc.collect()
 
 
 def raise_if_exception(e: Any) -> None:
