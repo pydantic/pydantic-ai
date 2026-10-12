@@ -567,7 +567,10 @@ the web UI's own limit, so `--request-limit` and `run.request_limit` do not appl
 The server listens on `127.0.0.1` only. The link's token signs your browser in: opening
 it sets a cookie, and any request without that cookie is refused, so other users and
 programs on the machine cannot run tools through the server. Pydantic AI's web UI also
-refuses requests from other websites. Do not expose the port through a proxy or tunnel.
+refuses requests from other websites. Browsers send a cookie to every port on a host,
+so a web page served from another port on `127.0.0.1` receives it too: while the server
+runs, open only local web pages you trust in that browser. Do not expose the port
+through a proxy or tunnel.
 The page loads the chat UI from a CDN, so the browser needs internet access.
 
 ## The stock agent in your own code

@@ -401,8 +401,9 @@ requests, the web UI's own limit.
 
 The server listens on `127.0.0.1` only. The link carries a random token that signs
 your browser in with a cookie; requests without it are refused, so other users and
-programs on the machine cannot run tools through the server. Do not expose the port
-through a proxy or tunnel.
+programs on the machine cannot run tools through the server. Browsers also send that
+cookie to other ports on `127.0.0.1`, so while the server runs, open only local web pages
+you trust in that browser. Do not expose the port through a proxy or tunnel.
 
 ## The stock agent in your own code
 

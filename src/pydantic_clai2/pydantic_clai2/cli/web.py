@@ -33,6 +33,10 @@ class TokenGate:
     the loopback port and would run tools as this user. The link carries a random `token`; opening
     it sets the token as an `HttpOnly`, `SameSite=Strict` cookie and redirects to the same page
     without it. Every other request must carry the cookie.
+
+    Cookies are not scoped to a port, so the browser also sends this one to other services on
+    `127.0.0.1`. Keeping the token origin-scoped instead (`sessionStorage` plus a request header)
+    would need core's chat UI to send that header; the README asks users to open only trusted local pages.
     """
 
     app: ASGIApp
