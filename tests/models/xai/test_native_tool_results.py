@@ -142,7 +142,7 @@ async def test_xai_interrupted_stream_keeps_tool_result(allow_model_requests: No
 
     with capture_run_messages() as messages, pytest.raises(RuntimeError, match='stop'):
         async with agent.run_stream_events('Search for pydantic') as events:
-            async for event in events:
+            async for event in events:  # pragma: no branch
                 if isinstance(event, PartStartEvent) and isinstance(event.part, NativeToolReturnPart):
                     raise RuntimeError('stop')
 
