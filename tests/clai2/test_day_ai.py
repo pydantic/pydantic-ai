@@ -23,7 +23,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.day_ai import DayAI
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2.builtin_plugins.day_ai import SETUP, DayAISource
+from pydantic_clai2.builtin_plugins.day_ai import SETUP, DayAISettings, DayAISource
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings, api_keys
 from pydantic_clai2.config.api_keys import KeyReference, SavedKey
@@ -154,7 +154,7 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(
             'Saved Server instructions.',
         ]
     )
-    assert f'Day AI is not connected. {SETUP}' in shell.output.getvalue()
+    assert 'Not signed in to Day AI. Run /day_ai login to sign in.' in shell.output.getvalue()
     assert labels == ['Day AI access token (saved in /keys as DAY_AI_ACCESS_TOKEN)']
     assert shown.opened == ['list', 'choice', 'list', 'choice', 'list']
     assert api_keys.load_keys()['DAY_AI_ACCESS_TOKEN'].get_secret_value() == 'day-secret'
@@ -165,9 +165,9 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(
     await shell.loader.close('exit')
 
 
-async def test_conventional_key_is_used_and_resolved_on_every_run(tmp_path: Path) -> None:
+async def test_a_chosen_key_is_resolved_on_every_run(tmp_path: Path) -> None:
     api_keys.save_key(name='DAY_AI_ACCESS_TOKEN', value='first')
-    shell = Shell(tmp_path)
+    shell = Shell(tmp_path, settings={'auth': {'name': 'DAY_AI_ACCESS_TOKEN'}})
     await shell.loader.enable('day_ai')
     assert shell.loader.capabilities() == with_key()
     token = SavedKey(name='DAY_AI_ACCESS_TOKEN', setup=SETUP)
@@ -197,38 +197,44 @@ async def test_reconfigure_picks_another_saved_key_without_reinstalling(
     await shell.loader.close('exit')
 
 
-async def test_choosing_the_browser_signs_in_and_sticks_with_the_conventional_key_saved(
+async def test_browser_sign_in_is_the_default_even_with_the_conventional_key_saved(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     api_keys.save_key(name='DAY_AI_ACCESS_TOKEN', value='shared-with-another-tool')
     shell = Shell(tmp_path, terminal=True)
     await shell.loader.enable('day_ai')
+    assert await shell.run_capability() is None, 'a run without a sign-in leaves Day AI out'
+    assert SignIn.attempts == 0, 'neither loading nor a run signs in'
+    assert 'Not signed in to Day AI. Run /day_ai login to sign in.' in shell.output.getvalue()
     source = DayAISource(shell.host())
-    assert source.rows()[0].note == 'uses DAY_AI_ACCESS_TOKEN'
+    [auth, _] = source.rows()
+    assert source.current(auth) == 'oauth' and auth.note == ''
     script(monkeypatch, lists=[pick('auth')], choices=[pick('oauth'), UNTIL_CLOSED])
     assert await shell.loader.configure('day_ai') == 'Saved Sign-in.\nSigned in to Day AI.'
     assert shell.saved() == {'auth': 'oauth', 'include_instructions': True}
     assert isinstance(await shell.client(), Client)
     assert SignIn.attempts == 1
-    assert 'Not signed in' not in shell.output.getvalue()
     await shell.loader.close('exit')
 
 
-async def test_automatic_uses_a_stored_sign_in_without_the_browser(tmp_path: Path) -> None:
+async def test_a_stored_sign_in_is_used_without_the_browser(tmp_path: Path) -> None:
     await store_sign_in()
     shell = Shell(tmp_path)
     await shell.loader.enable('day_ai')
     assert isinstance(await shell.client(), Client)
-    assert SignIn.attempts == 0
-    assert DayAISource(shell.host()).rows()[0].note == 'uses the stored browser sign-in'
+    assert SignIn.attempts == 0 and shell.output.getvalue() == ''
     await shell.loader.close('exit')
 
 
-async def test_nothing_chosen_loads_no_capability_and_says_how_to_connect(tmp_path: Path) -> None:
-    shell = Shell(tmp_path)
+async def test_automatic_saved_by_an_earlier_build_means_the_browser(tmp_path: Path) -> None:
+    assert DayAISettings.model_validate({'auth': None}) == DayAISettings()
+    await store_sign_in()
+    shell = Shell(tmp_path, settings={'auth': None, 'include_instructions': False})
     await shell.loader.enable('day_ai')
-    assert shell.loader.capabilities() == []
-    assert DayAISource(shell.host()).rows()[0].note == 'not connected'
+    source = DayAISource(shell.host())
+    assert source.current(source.rows()[0]) == 'oauth'
+    capability = await shell.run_capability()
+    assert capability is not None and not capability.include_instructions
     assert SignIn.attempts == 0
     await shell.loader.close('exit')
 
@@ -323,9 +329,6 @@ async def test_choosing_the_browser_when_already_signed_in_does_not_open_it(
     assert await shell.loader.configure('day_ai') == 'Saved Sign-in.'
     assert isinstance(await shell.client(), Client)
     assert SignIn.attempts == 0
-    script(monkeypatch, lists=[pick('auth')], choices=[pick('automatic')])
-    assert await shell.loader.configure('day_ai') == 'Saved Sign-in.'
-    assert shell.saved() == {'auth': None, 'include_instructions': True}
     await shell.loader.close('exit')
 
 
@@ -348,9 +351,10 @@ async def test_cancelling_or_resetting_in_the_menu(tmp_path: Path, monkeypatch: 
     [auth, instructions] = source.rows()
     assert source.current(auth) == 'oauth' and auth.note == ''
     assert source.reset(instructions) == 'Reset Server instructions.'
-    assert source.apply(auth, 'automatic') == 'Saved Sign-in.'
-    assert shell.saved() == {'auth': None, 'include_instructions': True}
-    assert source.current(auth) == 'automatic'
+    assert source.apply(auth, 'WORK_DAY_AI') == 'Saved Sign-in.'
+    assert source.reset(auth) == 'Reset Sign-in.'
+    assert shell.saved() == {'auth': 'oauth', 'include_instructions': True}
+    assert source.current(auth) == 'oauth'
     await shell.loader.close('exit')
 
 
@@ -370,7 +374,12 @@ async def test_add_replacing_the_builtin_opens_the_menu(tmp_path: Path, monkeypa
     shell = Shell(tmp_path)
     script(monkeypatch, lists=[pick('include_instructions')], choices=[pick('true')])
     added = await shell.loader.command(
-        ['add', 'day_ai', 'pydantic_clai2.builtin_plugins.day_ai', '{"include_instructions": false}']
+        [
+            'add',
+            'day_ai',
+            'pydantic_clai2.builtin_plugins.day_ai',
+            '{"auth": {"name": "DAY_AI_ACCESS_TOKEN"}, "include_instructions": false}',
+        ]
     )
     assert added == 'Replaced built-in day_ai.\nSaved Server instructions.'
     assert shell.loader.capabilities() == with_key()
@@ -392,7 +401,7 @@ async def test_configure_needs_a_loaded_plugin_with_a_menu(tmp_path: Path) -> No
 
 async def test_plugins_menu_enabling_opens_the_settings_menu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     api_keys.save_key(name='DAY_AI_ACCESS_TOKEN', value='saved')
-    shell = Shell(tmp_path)
+    shell = Shell(tmp_path, settings={'auth': {'name': 'DAY_AI_ACCESS_TOKEN'}})
     script(monkeypatch, lists=[pick('include_instructions')], choices=[pick('false')])
     presses = iter(['space', 'close'])
 

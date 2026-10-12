@@ -1,14 +1,15 @@
-"""Use Notion, signed in with a key from /keys or in the browser.
+"""Use Notion, signed in in the browser or with a key from /keys.
 
-The built-in `notion` plugin: harness `Notion`, connected with a named key from `/keys` or a browser sign-in.
+The built-in `notion` plugin: harness `Notion`, connected with a browser sign-in by default or a named key from `/keys`.
 
 Plugin settings are plaintext SQLite, so they hold only `Notion`'s non-secret options, all edited in the menu
 `/plugins configure notion` opens. Its key row picks or enters a key in the named keystore and saves only the
 name, in CLAI's credential store; each run resolves it again, so replacing the key in `/keys` reaches every
 plugin that shares it, and a deleted key fails the run rather than connecting.
 
-Without a chosen key, Notion uses a browser sign-in kept in the keyring under `mcp-plugin_notion`. The sign-in runs
-only from that menu or `/notion login`, never while loading or in a prompt; see `pydantic_clai2.plugins.sign_in`.
+By default Notion uses a browser sign-in kept in the keyring under `mcp-plugin_notion`; key-only sign-in uses the
+chosen key instead. The sign-in runs only from that menu or `/notion login`, never while loading or in a prompt; see
+`pydantic_clai2.plugins.sign_in`.
 """
 
 import asyncio
@@ -17,7 +18,7 @@ from functools import partial
 from typing import Generic, Literal
 
 import anyio
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, field_validator
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AgentCapability
@@ -59,13 +60,18 @@ class NotionSettings(BaseModel):
     """The JSON a `notion` declaration may carry. Secrets are not accepted here; they live in `/keys`."""
 
     model_config = ConfigDict(extra='forbid', frozen=True, strict=True)
-    auth: Literal['key', 'oauth'] | None = Field(
-        default=None,
-        description='`key` uses only the chosen key; `oauth` uses only the browser sign-in; unset uses the chosen '
-        'key when there is one, else the browser sign-in.',
+    auth: Literal['key', 'oauth'] = Field(
+        default='oauth',
+        description='`oauth` (the default) uses only the browser sign-in; `key` uses only the chosen key.',
     )
     read_only: bool = Field(default=False, description='Keep only the tools the server marks as read-only.')
     include_instructions: bool = Field(default=True, description="Forward the server's instructions to the agent.")
+
+    @field_validator('auth', mode='before')
+    @classmethod
+    def _automatic_is_browser(cls, value: object) -> object:
+        """Earlier builds saved `null` for an automatic choice; it now means the browser sign-in default."""
+        return 'oauth' if value is None else value
 
 
 class _Selection(BaseModel):
@@ -110,35 +116,28 @@ class NotionPlugin(Plugin[NotionSettings, DepsT]):
 
     async def on_session_start(self, event: SessionStart) -> None:
         # Here rather than on load, so the keyring read does not block the shell's loop.
-        auth = self.settings.auth
-        if auth != 'oauth':
-            try:
-                reference = await anyio.to_thread.run_sync(selected_key, abandon_on_cancel=True)
-            except UserError:
-                return  # Each run reports the invalid selection.
-            if reference is not None:
-                return
-            if auth == 'key':
-                self.host.console.print(
-                    f'Notion has no key selected, so runs fail. {SETUP}',
-                    style=theme.color(theme.WARNING),
-                    markup=False,
-                )
-                return
-        await warn_if_signed_out(SIGN_IN, self.host.console)
+        if self.settings.auth == 'oauth':
+            await warn_if_signed_out(SIGN_IN, self.host.console)
+            return
+        try:
+            reference = await anyio.to_thread.run_sync(selected_key, abandon_on_cancel=True)
+        except UserError:
+            return  # Each run reports the invalid selection.
+        if reference is None:
+            self.host.console.print(
+                f'Notion has no key selected, so runs fail. {SETUP}', style=theme.color(theme.WARNING), markup=False
+            )
 
     async def _connect(self, _: RunContext[DepsT]) -> Notion[DepsT] | None:
         settings = self.settings
-        reference = (
-            None if settings.auth == 'oauth' else await anyio.to_thread.run_sync(selected_key, abandon_on_cancel=True)
-        )
-        if reference is not None:
+        if settings.auth == 'key':
+            reference = await anyio.to_thread.run_sync(selected_key, abandon_on_cancel=True)
+            if reference is None:
+                raise UserError(f'No Notion key is selected. {SETUP}')
             token = await anyio.to_thread.run_sync(partial(resolve_key, token=reference), abandon_on_cancel=True)
             return Notion[DepsT](
                 auth=token, read_only=settings.read_only, include_instructions=settings.include_instructions
             )
-        if settings.auth == 'key':
-            raise UserError(f'No Notion key is selected. {SETUP}')
         # Checked per run, so signing in from the menu or `/notion login` applies to the next prompt.
         if not await anyio.to_thread.run_sync(SIGN_IN.signed_in, abandon_on_cancel=True):
             return None
@@ -150,12 +149,11 @@ class NotionPlugin(Plugin[NotionSettings, DepsT]):
         if args == ['logout']:
             await anyio.to_thread.run_sync(partial(delete_credentials, account=ACCOUNT), abandon_on_cancel=True)
             return f'{await sign_out_now(SIGN_IN)} Cleared the selected key; the key itself stays in /keys.'
-        if args in ([], ['status']) and self.settings.auth != 'oauth':
+        if args in ([], ['status']) and self.settings.auth == 'key':
             reference = await anyio.to_thread.run_sync(selected_key, abandon_on_cancel=True)
-            if reference is not None:
-                return f'Notion connects with {reference.name} from /keys.'
-            if self.settings.auth == 'key':
+            if reference is None:
                 return f'No Notion key is selected. {SETUP}'
+            return f'Notion connects with {reference.name} from /keys.'
         message = await run_subcommand(SIGN_IN, args)
         if message is None:
             raise ValueError(
@@ -169,20 +167,20 @@ _KEY = FieldRow(
     label='Key',
     description=(
         f'The saved API key in /keys that Notion connects with. Enter picks a saved key or saves a new one there '
-        f'as {KEY_NAME}; only its name is kept. Any plugin naming the same key shares it. R clears the choice, '
-        'so Notion uses the browser sign-in (/notion login) instead.'
+        f'as {KEY_NAME}; only its name is kept, and Sign-in switches to key only. Any plugin naming the same key '
+        'shares it. R clears the choice, so Notion uses the browser sign-in (/notion login) instead.'
     ),
     default='(none)',
 )
 _AUTH = FieldRow(
     key='auth',
     label='Sign-in',
-    description='Automatic uses the chosen key, else the browser sign-in. Key only never uses the browser '
-    'sign-in, for headless and remote machines. Browser always uses it, and choosing it signs in now if needed; '
-    '/notion login signs in again later.',
-    default='auto',
-    choices=('auto', 'key', 'oauth'),
-    choice_labels={'auto': 'automatic', 'key': 'key only', 'oauth': 'browser'},
+    description='Browser, the default, uses the browser sign-in and keeps its tokens in the keyring; choosing it '
+    'signs in now if needed, and /notion login signs in again later. Key only uses the chosen key and never the '
+    'browser sign-in, for headless and remote machines.',
+    default='oauth',
+    choices=('oauth', 'key'),
+    choice_labels={'oauth': 'browser', 'key': 'key only'},
     allow_custom=False,
 )
 _ROWS = (
@@ -237,8 +235,6 @@ class NotionSource(Generic[DepsT]):
                 return '(invalid; choose again)'
             return reference.name if reference else row.default
         value: object = getattr(self.settings, row.key)
-        if value is None:
-            return 'auto'
         return str(value).lower() if isinstance(value, bool) else str(value)
 
     def problem(self, row: FieldRow, text: str) -> str | None:
@@ -258,7 +254,9 @@ class NotionSource(Generic[DepsT]):
         """Restore one option's default, or forget the chosen key (the key itself stays in `/keys`)."""
         if row.key == 'key':
             delete_credentials(account=ACCOUNT)
-            return 'Notion no longer uses a saved key. The key itself stays in /keys.'
+            if self.settings.auth == 'key':
+                self.apply(_AUTH, 'oauth')
+            return 'Notion no longer uses a saved key and uses the browser sign-in. The key itself stays in /keys.'
         data = self.settings.model_dump(mode='json')
         del data[row.key]
         self._host.save_settings(NotionSettings.model_validate(data))
@@ -267,9 +265,7 @@ class NotionSource(Generic[DepsT]):
     def _updated(self, row: FieldRow, raw: str) -> NotionSettings:
         data = self.settings.model_dump(mode='json')
         value: JsonValue = raw
-        if row.key == 'auth':
-            value = None if raw == 'auto' else raw
-        elif raw in ('true', 'false'):
+        if raw in ('true', 'false'):
             value = raw == 'true'
         data[row.key] = value
         return NotionSettings.model_validate(data)
@@ -284,7 +280,12 @@ async def _configure(source: NotionSource[DepsT]) -> str:
         if reference is None:
             return []
         select_key(reference)
-        return [f'Notion uses the saved key {reference.name}. Manage it in /keys.']
+        messages = [f'Notion uses the saved key {reference.name}. Manage it in /keys.']
+        if source.settings.auth != 'key':
+            # A chosen key is used only with key-only sign-in, so choosing one switches to it.
+            source.apply(_AUTH, 'key')
+            messages.append(f'Saved {_AUTH.label}: {_AUTH.display("key")}.')
+        return messages
 
     menu = FieldMenu(source)
 

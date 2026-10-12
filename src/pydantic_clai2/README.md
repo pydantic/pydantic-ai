@@ -2170,9 +2170,9 @@ it again. CLAI builds from before this
 check apply every saved setting as they always did.
 
 `/plugins enable notion` gives the agent Notion's hosted MCP tools and opens its
-settings menu (`/plugins configure notion` reopens it). The token is picked from
-`/keys` by name (a new one is saved there as `NOTION_API_KEY`); without one,
-`/notion login` signs in through the browser. Plugin settings never hold the token.
+settings menu (`/plugins configure notion` reopens it). It uses a browser sign-in
+by default, made with `/notion login`, or a token picked from `/keys` by name (a new
+one is saved there as `NOTION_API_KEY`). Plugin settings never hold the token.
 No built-in plugin opens a browser while loading or during a prompt: each signs in
 only from its settings menu or its `login` command, and Esc cancels the wait. See
 [PLUGINS.md](PLUGINS.md#notion-workspace-tools).

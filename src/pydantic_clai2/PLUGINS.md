@@ -550,13 +550,15 @@ menu closes, so the next turn uses the new settings.
 | Row | Default | Does |
 |---|---|---|
 | Key | none | the `/keys` entry to connect with: pick a saved key from a searchable list, or type a new one into a masked field; `R` clears the choice |
-| Sign-in | automatic | automatic uses the key when one is chosen and otherwise signs in through the browser; key only never opens a browser; browser always does |
+| Sign-in | browser | browser uses the browser sign-in, and choosing it signs in if needed; key only uses the chosen key and never the browser. Choosing a key switches to key only, and `R` on the key switches back |
 | Tools | read and write | read-only keeps only the tools the server marks as read-only |
 | Server instructions | forwarded | whether the Notion server's own instructions reach the agent |
 
 Notion's server has one fixed URL, and the workspace is the one the connected
 account belongs to, so there is no URL or workspace row. The settings JSON uses
-`auth` (`"key"`, `"oauth"`, or unset), `read_only`, and `include_instructions`:
+`auth` (`"oauth"`, the default, or `"key"`), `read_only`, and `include_instructions`.
+Earlier builds offered an automatic sign-in, saved as `null`; it now means `"oauth"`.
+For example:
 
 ```text
 /plugins add notion pydantic_clai2.builtin_plugins.notion '{"auth": "key", "read_only": true}'
@@ -581,8 +583,8 @@ you manage with `/keys`:
   plugin does not read `NOTION_ACCESS_TOKEN` either. Notion integration tokens do
   not work with the hosted server; use a Notion OAuth access token.
 
-With no key chosen, Notion uses a browser sign-in, made with `/notion login` (or
-by choosing browser sign-in in the menu) behind a waiting screen that Esc
+By default, Notion uses a browser sign-in, made with `/notion login` (or by
+choosing browser sign-in in the menu) behind a waiting screen that Esc
 cancels. Those OAuth tokens go to the OS keyring, or CLAI's private credential
 file when there is no keyring, so later launches reuse and refresh them. Loading
 and prompts never open the browser: until you sign in, runs have no Notion tools
@@ -1291,7 +1293,7 @@ one row for each option harness `DayAI` takes:
 
 | Row | Setting | Choices |
 | --- | --- | --- |
-| Sign-in | `auth` | **automatic** (default): `DAY_AI_ACCESS_TOKEN` from `/keys` if it is saved, else a browser sign-in you completed earlier; **choose or enter a key in /keys**; **browser sign-in** |
+| Sign-in | `auth` | **browser sign-in** (default) or **choose or enter a key in /keys** |
 | Server instructions | `include_instructions` | **forwarded** (default) or **left out**: whether the Day AI server's own instructions reach the agent |
 
 Day AI runs one hosted endpoint (`https://day.ai/api/mcp`), and harness `DayAI`
@@ -1312,21 +1314,21 @@ Tokens are kept out of plugin settings, which are stored in plaintext:
   reaches the next run, and deleting it makes runs fail with a message until
   you save it again. Rename, replace, or delete keys in `/keys`. Plugins that
   name the same key share one value.
-- **Browser sign-in.** This keeps the tokens in the OS keyring (credential
-  `mcp-day_ai`), the way `/mcp` signs in to an OAuth server, so later sessions
-  reuse and refresh them. Choosing it saves `{"auth": "oauth"}`, which keeps
-  using the browser even when `DAY_AI_ACCESS_TOKEN` is saved. If you are not
-  signed in yet, the browser opens right away, behind a waiting screen. Esc
+- **Browser sign-in**, the default. This keeps the tokens in the OS keyring
+  (credential `mcp-day_ai`), the way `/mcp` signs in to an OAuth server, so
+  later sessions reuse and refresh them. It is saved as `{"auth": "oauth"}` and
+  keeps using the browser even when `DAY_AI_ACCESS_TOKEN` is saved. Choosing
+  **browser sign-in** in the menu signs in: if you are not signed in yet, the
+  browser opens right away, behind a waiting screen. Esc
   cancels it, and a failed sign-in is reported in the menu. `/day_ai login`
   signs in the same way at any time, `/day_ai logout` signs out, and `/day_ai`
   shows whether you are signed in. Loading and prompts never open the browser:
   until you sign in, runs have no Day AI tools and the session start says how to
   sign in. Signing in applies to the next prompt, without a reload.
 
-Until you choose one, with no `DAY_AI_ACCESS_TOKEN` and no earlier sign-in,
-the plugin loads without Day AI tools and prints how to connect. A key named
-in `auth` that is missing from `/keys` never falls back to the browser, and the
-menu marks it "missing from /keys".
+A key named in `auth` that is missing from `/keys` never falls back to the
+browser, and the menu marks it "missing from /keys". Earlier builds offered an
+**automatic** choice, saved as `{"auth": null}`; it now means browser sign-in.
 
 If you enabled `day_ai` from the earlier harness catalog, your saved
 `pydantic_ai_harness.day_ai:DayAI` declaration still takes precedence and reads
@@ -1352,7 +1354,7 @@ menu closes.
 
 | Row | Default | Does |
 |---|---|---|
-| Sign-in | Automatic | which credential runs use: Automatic (a `/keys` entry, else `ORDINAL_ACCESS_TOKEN`, else the browser), or only a saved key, only the environment variable, or only the browser |
+| Sign-in | Browser sign-in | which credential runs use: only the browser sign-in, only a saved key, or only the environment variable. Choosing a `/keys` entry switches to the saved key |
 | `/keys` entry | none | opens the `/keys` picker: choose a saved key, or type a new token masked; `R` stops using the key |
 | Server instructions | Included | pass Ordinal's own server instructions to the model |
 
@@ -1378,6 +1380,8 @@ sign in, runs have no Ordinal tools and the session start says how to sign in.
 With a key or environment variable chosen that is missing and no terminal (a
 headless run from CI, say), the plugin fails to load with a message naming
 `/plugins configure ordinal`, rather than adding tools that cannot connect.
+Earlier builds offered an Automatic sign-in (`"sign_in": "auto"`); it now means
+the browser.
 
 `/ordinal` shows which credential the next run uses. `/ordinal logout` forgets the
 browser sign-in; it does not touch a `/keys` entry or the environment variable. Disabling

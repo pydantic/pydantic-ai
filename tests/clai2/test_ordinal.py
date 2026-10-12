@@ -42,6 +42,7 @@ from pydantic_clai2.builtin_plugins.ordinal import (
     USAGE,
     OrdinalAuth,
     OrdinalPlugin,
+    OrdinalSettings,
     OrdinalSource,
 )
 from pydantic_clai2.commands import Commands
@@ -259,16 +260,12 @@ async def test_reopening_repicks_a_saved_key_and_options_without_reinstalling(
     save_key(name='SHARED_ORDINAL', value='shared-token')
     shell = await enabled(tmp_path, monkeypatch, sign_in='environment')
     labels = key_choice(monkeypatch, KeyReference(name='SHARED_ORDINAL'))
-    script(monkeypatch, lists=[pick('key'), pick('sign_in')], choices=[pick('auto')])
+    script(monkeypatch, lists=[pick('key')])
     assert await shell.loader.command(['configure', 'ordinal']) == '\n'.join(
-        [
-            'Ordinal uses SHARED_ORDINAL from /keys. Manage it there.',
-            'Saved Sign-in: Saved key from /keys.',
-            'Saved Sign-in.',
-        ]
+        ['Ordinal uses SHARED_ORDINAL from /keys. Manage it there.', 'Saved Sign-in: Saved key from /keys.']
     )
     assert labels == [f'Ordinal access token (saved in /keys as {KEY_NAME})']
-    assert shell.saved() == {'sign_in': 'auto', 'include_instructions': True}
+    assert shell.saved() == {'sign_in': 'key', 'include_instructions': True}
     assert (await shell.next_run()).auth == 'shared-token'
     assert set(load_keys()) == {'SHARED_ORDINAL'}
     with pytest.raises(ValueError, match='used by ordinal'):
@@ -281,9 +278,11 @@ async def test_key_is_resolved_every_run_and_fails_closed(
     monkeypatch.setenv(KEY_NAME, 'from-the-environment')
     save_key(name=KEY_NAME, value='first')
     choose_saved_key(KEY_NAME)
-    shell = await enabled(tmp_path, monkeypatch)
-    # With `auto`, a chosen key wins over the environment, as an explicit `auth` does in harness `Ordinal`.
-    assert (await shell.next_run()).auth == 'first'
+    shell = await enabled(tmp_path, monkeypatch, sign_in='key')
+    assert (await shell.next_run()).auth == 'first', 'a chosen key wins over the environment'
+    key_choice(monkeypatch, KeyReference(name=KEY_NAME))
+    script(monkeypatch, lists=[pick('key')])
+    assert await shell.loader.configure('ordinal') == f'Ordinal uses {KEY_NAME} from /keys. Manage it there.'
     save_key(name=KEY_NAME, value='replaced')
     assert (await shell.next_run()).auth == 'replaced'
     delete_key(name=KEY_NAME)
@@ -312,7 +311,7 @@ async def test_menu_marks_a_missing_or_invalid_key_and_r_resets(
     assert await shell.loader.configure('ordinal') == (
         'Ordinal uses no /keys entry.\nReset Server instructions.\nReset Sign-in.'
     )
-    assert shell.saved() == {'sign_in': 'auto', 'include_instructions': True}
+    assert shell.saved() == {'sign_in': 'browser', 'include_instructions': True}
     assert source.current(KEY) == KEY.default
 
     save_codex_credentials(account=KEY_ACCOUNT, value='{"token": "a raw secret"}')
@@ -401,6 +400,22 @@ async def test_each_sign_in_method_is_used_alone(vault: Vault, tmp_path: Path, m
         await key.next_run()
 
 
+async def test_automatic_saved_by_an_earlier_build_means_the_browser(
+    vault: Vault, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert OrdinalSettings.model_validate({'sign_in': 'auto'}) == OrdinalSettings()
+    monkeypatch.setenv(KEY_NAME, 'from-the-environment')
+    save_key(name='MINE', value='token')
+    choose_saved_key('MINE')
+    shell = await enabled(tmp_path, monkeypatch, sign_in='auto')
+    assert await shell.run_capability() is None, 'neither the environment nor the chosen key is used'
+    assert NOT_SIGNED_IN in shell.output.getvalue()
+    await store_sign_in()
+    assert isinstance((await shell.next_run()).client, Client)
+    assert OrdinalSource(plugin_host(shell.saved())).current(METHOD) == 'browser'
+    assert SignIn.attempts == 0
+
+
 async def test_status_names_the_credential_in_use(vault: Vault, monkeypatch: pytest.MonkeyPatch) -> None:
     async def status(**settings: JsonValue) -> str:
         plugin = load_ordinal(plugin_host(settings))
@@ -411,14 +426,14 @@ async def test_status_names_the_credential_in_use(vault: Vault, monkeypatch: pyt
     assert await status(sign_in='key') == f'Ordinal has no /keys entry, so runs fail. {setup}'
     assert await status(sign_in='environment') == f'Ordinal uses `{KEY_NAME}`, which is not set, so runs fail. {setup}'
     monkeypatch.setenv(KEY_NAME, 'token')
-    assert await status() == f'Ordinal uses `{KEY_NAME}` from the environment.'
-    assert await status(sign_in='browser') == NOT_SIGNED_IN
+    assert await status(sign_in='environment') == f'Ordinal uses `{KEY_NAME}` from the environment.'
     save_key(name='MINE', value='token')
     choose_saved_key('MINE')
-    assert await status() == 'Ordinal uses MINE from /keys.'
-    assert await status(sign_in='environment') == f'Ordinal uses `{KEY_NAME}` from the environment.'
+    # The browser is the default; neither the environment nor a chosen key replaces it.
+    assert await status() == NOT_SIGNED_IN
+    assert await status(sign_in='key') == 'Ordinal uses MINE from /keys.'
     delete_key(name='MINE')
-    assert await status() == f'Ordinal uses MINE, which is missing from /keys, so runs fail. {setup}'
+    assert await status(sign_in='key') == f'Ordinal uses MINE, which is missing from /keys, so runs fail. {setup}'
 
 
 async def test_logout_ends_the_browser_session(vault: Vault, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -442,8 +457,6 @@ async def test_unreadable_keyring_is_reported(vault: Vault, monkeypatch: pytest.
     plugin = load_ordinal(plugin_host())
 
     def locked(service: str, account: str) -> str | None:
-        if account == KEY_ACCOUNT:
-            return None
         raise KeyringLocked('locked')
 
     monkeypatch.setattr(keyring, 'get_password', locked)
@@ -452,7 +465,7 @@ async def test_unreadable_keyring_is_reported(vault: Vault, monkeypatch: pytest.
 
 async def test_invalid_saved_choice_fails_closed(vault: Vault) -> None:
     save_codex_credentials(account=KEY_ACCOUNT, value='{"token": "a raw secret"}')
-    plugin = load_ordinal(plugin_host())
+    plugin = load_ordinal(plugin_host({'sign_in': 'key'}))
     [auth] = plugin.capabilities
     assert isinstance(auth, OrdinalAuth)
     with pytest.raises(UserError, match='/plugins configure ordinal'):
@@ -539,7 +552,7 @@ async def test_an_invalid_key_choice_is_reported_at_session_start(
     vault: Vault, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     save_codex_credentials(account=KEY_ACCOUNT, value='{"token": "a raw secret"}')
-    shell = Shell(tmp_path)
+    shell = Shell(tmp_path, {'sign_in': 'key'})
     await shell.loader.enable('ordinal')
     assert 'The saved Ordinal key choice is invalid. Run /plugins configure ordinal' in shell.output.getvalue()
     assert 'a raw secret' not in shell.output.getvalue()
