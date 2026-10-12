@@ -21,8 +21,11 @@ from pydantic_ai._genai_prices import best_effort_price
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelRequest, ModelResponse, TextPart
-from pydantic_ai.models import Model, ModelRequestContext
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
@@ -187,7 +190,7 @@ def test_response_cost_rejects_partial_cost() -> None:
         provider_name='openai',
     )
 
-    with pytest.raises(ValueError, match='usage information is missing'):
+    with pytest.raises(ValueError, match='response that omitted usage information'):
         response.cost()
 
 
@@ -747,3 +750,144 @@ async def test_stream_marks_omitted_usage_only_once_complete(
     assert len(caught) == expected_warnings
     assert usage_per_step == expected_usage_per_step
     assert result.usage == usage_per_step[-1]
+
+
+# `FallbackModel`: the usage of a response it rejected counts in `RunUsage`, alongside omitted usage.
+
+
+def openai_text_model(content: str, *, reports_usage: bool) -> OpenAIChatModel:
+    usage = CompletionUsage(prompt_tokens=6, completion_tokens=3, total_tokens=9) if reports_usage else None
+    completion = completion_message(ChatCompletionMessage(content=content, role='assistant'), usage=usage)
+    return openai_model(completion.model_copy(update={'model': 'gpt-4o'}))
+
+
+def reject_text(response: ModelResponse) -> bool:
+    return response.text == 'rejected'
+
+
+@dataclass(kw_only=True)
+class CostReportingModel(TestModel):
+    """Reports explicit token and cost usage, including zero, without `FunctionModel`'s token estimation."""
+
+    reported_cost: Decimal
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        response = await super().request(messages, model_settings, model_request_parameters)
+        response.usage = RequestUsage(
+            input_tokens=self.input_tokens, output_tokens=self.output_tokens, cost=self.reported_cost
+        )
+        return response
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('token_limit', [None, 100], ids=['cost-limit', 'cost-and-token-limits'])
+async def test_fallback_counts_rejected_usage_alongside_omitted_usage(
+    allow_model_requests: None, token_limit: int | None
+) -> None:
+    model = FallbackModel(
+        openai_text_model('rejected', reports_usage=True),
+        openai_text_model('accepted', reports_usage=False),
+        fallback_on=reject_text,
+    )
+    limits = UsageLimits(cost_limit=Decimal('1'), input_tokens_limit=token_limit)
+
+    with pytest.warns(UsageLimitUnavailableWarning, match=r'response\(s\) omitted usage information') as caught:
+        result = await Agent(model).run('hello', usage_limits=limits)
+
+    assert len(caught) == 1
+    assert result.output == 'accepted'
+    assert result.usage == snapshot(
+        RunUsage(requests=1, input_tokens=6, output_tokens=3, cost=Decimal('0.000045'), unmeasured_requests=1)
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+async def test_fallback_omitted_usage_without_limits_does_not_warn(allow_model_requests: None) -> None:
+    model = FallbackModel(
+        openai_text_model('rejected', reports_usage=True),
+        openai_text_model('accepted', reports_usage=False),
+        fallback_on=reject_text,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UsageLimitUnavailableWarning)
+        result = await Agent(model).run('hello')
+
+    assert result.output == 'accepted'
+    assert result.usage == snapshot(
+        RunUsage(requests=1, input_tokens=6, output_tokens=3, cost=Decimal('0.000045'), unmeasured_requests=1)
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('rejected_count', [1, 2], ids=['one-omitted-rejection', 'two-omitted-rejections'])
+@pytest.mark.parametrize(
+    'selected_model, expected_usage',
+    [
+        pytest.param(
+            lambda: openai_text_model('accepted', reports_usage=True),
+            RunUsage(requests=1, input_tokens=6, output_tokens=3, cost=Decimal('0.000045')),
+            id='computed-cost',
+        ),
+        pytest.param(
+            lambda: CostReportingModel(
+                reported_cost=Decimal('0.1'), input_tokens=120, output_tokens=8, custom_output_text='accepted'
+            ),
+            RunUsage(requests=1, input_tokens=120, output_tokens=8, cost=Decimal('0.1')),
+            id='explicit-cost',
+        ),
+    ],
+)
+async def test_fallback_counts_each_omitted_rejection(
+    allow_model_requests: None, rejected_count: int, selected_model: Callable[[], Model], expected_usage: RunUsage
+) -> None:
+    rejected = [openai_text_model('rejected', reports_usage=False) for _ in range(rejected_count)]
+    model = FallbackModel(rejected[0], *rejected[1:], selected_model(), fallback_on=reject_text)
+    limits = UsageLimits(cost_limit=Decimal('1'), input_tokens_limit=200)
+
+    with pytest.warns(UsageLimitUnavailableWarning, match=r'response\(s\) omitted usage information') as caught:
+        result = await Agent(model).run('hello', usage_limits=limits)
+
+    assert len(caught) == 1
+    assert f'{rejected_count} response(s) omitted usage information' in str(caught[0].message)
+    assert result.output == 'accepted'
+    assert result.usage == expected_usage + RunUsage(unmeasured_requests=rejected_count)
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('reported_cost', [Decimal('0'), Decimal('0.1')], ids=['zero', 'nonzero'])
+@pytest.mark.parametrize('token_limit', [None, 100], ids=['cost-limit', 'cost-and-token-limits'])
+@pytest.mark.parametrize(
+    'fallback, rejected_usage',
+    [
+        pytest.param(False, RunUsage(), id='direct'),
+        pytest.param(True, RunUsage(input_tokens=6, output_tokens=3, cost=Decimal('0.000045')), id='fallback'),
+    ],
+)
+async def test_reported_cost_without_tokens_is_measured(
+    allow_model_requests: None,
+    reported_cost: Decimal,
+    token_limit: int | None,
+    fallback: bool,
+    rejected_usage: RunUsage,
+) -> None:
+    """A response that reports only a cost, including zero, reported its usage: zero tokens, not omitted ones."""
+    model: Model = CostReportingModel(reported_cost=reported_cost, custom_output_text='accepted')
+    if fallback:
+        model = FallbackModel(openai_text_model('rejected', reports_usage=True), model, fallback_on=reject_text)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UsageLimitUnavailableWarning)
+        result = await Agent(model).run(
+            'hello', usage_limits=UsageLimits(cost_limit=Decimal('1'), input_tokens_limit=token_limit)
+        )
+
+    assert result.output == 'accepted'
+    assert result.usage == rejected_usage + RunUsage(requests=1, cost=reported_cost)

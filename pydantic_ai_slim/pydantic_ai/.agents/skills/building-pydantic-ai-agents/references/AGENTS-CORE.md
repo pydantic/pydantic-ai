@@ -158,16 +158,6 @@ Pick a run method based on the interaction pattern:
 
 Use `event_stream_handler=` with `run()` or `run_stream()` when the user wants progress updates without manually consuming the event stream. The stream includes model deltas, tool call/result events, and framework events such as `EnqueuedMessagesEvent` when queued messages enter run history.
 
-When a completed model response omits usage, configured token or cost limits emit `UsageLimitUnavailableWarning` and return the result with known totals as lower bounds. Promote the warning to an error when the application must abort if a limit cannot be fully checked:
-
-```python
-import warnings
-
-from pydantic_ai import UsageLimitUnavailableWarning
-
-warnings.filterwarnings('error', category=UsageLimitUnavailableWarning)
-```
-
 Realtime sessions do not use `event_stream_handler`; iterate the session to consume realtime-only `RealtimeEvent` members.
 
 ```python
@@ -246,3 +236,13 @@ The answering response's `failed_attempts` lists the attempts the fallback moved
 `FallbackExceptionGroup.attempts`. A rejected response's tokens and cost count in `RunUsage` and towards token and
 cost limits, but not in the answering response's `usage`. Neither they nor failed attempts count towards
 `UsageLimits.request_limit`, which bounds the model responses the agent acts on, not requests sent to the provider.
+
+When a completed model response omits usage, configured token or cost limits emit `UsageLimitUnavailableWarning` and return the result with known totals as lower bounds. Promote the warning to an error when the application must abort if a limit cannot be fully checked:
+
+```python
+import warnings
+
+from pydantic_ai import UsageLimitUnavailableWarning
+
+warnings.filterwarnings('error', category=UsageLimitUnavailableWarning)
+```
