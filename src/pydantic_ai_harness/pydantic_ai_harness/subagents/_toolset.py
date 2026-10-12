@@ -323,10 +323,21 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         return replace(tool_def, parameters_json_schema=schema)
 
     def _prepare_task_control(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
-        """Offer the task controls only where this run can have started tasks: an open owner, below `max_depth`."""
+        """Offer the task controls only where this run can have started tasks: an open owner, below `max_depth`.
+
+        The controls act on the owner every `SubAgents` capability of the run shares, so when there are
+        several, only the first one that delegates in this run offers them.
+        """
         if DelegationTasks.current() is None or at_max_depth(self._max_depth):
             return None
+        toolsets = _run_delegate_toolsets(ctx)
+        if toolsets and toolsets[0] is not self:
+            return None
         return tool_def
+
+    def _delegates_to(self, agent_name: str) -> bool:
+        """Whether `agent_name` is on this toolset's own roster."""
+        return (self._include_self and agent_name == SELF_AGENT_NAME) or agent_name in self._agents
 
     def _inherited_toolsets(self, ctx: RunContext[AgentDepsT]) -> list[AbstractToolset[AgentDepsT]] | None:
         """The parent agent's own toolsets, excluding capability-contributed ones.
@@ -466,12 +477,18 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry(f'Unknown task {task_id!r}. Call `list_tasks` to see the tasks you started.')
         if record.status == 'finished':
             return f'Task {task_id} had already finished ({record.outcome}); nothing to stop.'
+        delivered = record.delivered
         if record.parent_id == DelegationTasks.child_id():
             # The caller started this task, so this result is its report and none follows. A task
             # started by a descendant still reports to that descendant, which is waiting for it.
             record.delivered = True
-        # Not a user stop: the model that stopped the task may resume it.
-        await owner.cancel(task_id, user=False)
+        try:
+            # Not a user stop: the model that stopped the task may resume it.
+            await owner.cancel(task_id, user=False)
+        except BaseException:
+            # No result reaches the caller, so the task's own report still has to.
+            record.delivered = delivered
+            raise
         if record.resumable:
             return f'Task {task_id}: running -> stopped. Continue it with delegate_task(resume={task_id!r}) if needed.'
         return f'Task {task_id}: running -> stopped. It is one-shot and cannot be resumed.'
@@ -497,7 +514,17 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if not owner.message(task_id, message):
                 raise ModelRetry(f'Task {task_id} is starting or settling and cannot take a message right now.')
             return f'Message sent to task {task_id}; it will see it before its next model request.'
-        return await self.delegate_task(ctx, record.agent_name, message, background=record.background, resume=task_id)
+        if record.parent_id != DelegationTasks.child_id():
+            # Resuming makes the caller the task's parent, taking it away from the task that started it.
+            raise ModelRetry(
+                f'Task {task_id} was started by task {record.parent_id} and has finished. '
+                'Only a running task can be messaged unless you started it yourself.'
+            )
+        # Resumed through the delegate tool whose roster has the task's agent, when several are offered.
+        toolset = next((t for t in _run_delegate_toolsets(ctx) if t._delegates_to(record.agent_name)), self)
+        return await toolset.delegate_task(
+            ctx, record.agent_name, message, background=record.background, resume=task_id
+        )
 
     async def list_tasks(self, ctx: RunContext[AgentDepsT]) -> str:
         """List the tasks you started with delegate_task, and the tasks they started, with their IDs and status.
@@ -786,6 +813,14 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
 _PROMPT_SNIPPET_CHARS = 80
 _MAX_LISTED_TASKS = 50
+
+
+def _run_delegate_toolsets(ctx: RunContext[Any]) -> list[SubAgentToolset[Any]]:
+    """The delegate toolsets of this run's `SubAgents` capabilities that delegate in it, in capability order."""
+    # Imported here: the capability module builds this toolset, so it imports this one.
+    from pydantic_ai_harness.subagents._capability import delegate_toolsets
+
+    return delegate_toolsets(ctx.capabilities.values())
 
 
 def _owned_tasks(owner: DelegationTasks, ctx: RunContext[Any]) -> list[DelegationTask]:

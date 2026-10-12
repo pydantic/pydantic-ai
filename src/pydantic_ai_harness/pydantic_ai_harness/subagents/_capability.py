@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -597,6 +597,12 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             id=self.id,
         )
 
+    def _delegate_toolset(self) -> SubAgentToolset[AgentDepsT] | None:
+        """The delegate toolset this capability contributes to the run, or `None` when it contributes none."""
+        if self._delegation_off:
+            return None
+        return self._run_toolset if self._per_run else self._toolset
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         """Not spec-serializable -- the capability holds live `Agent` instances."""
@@ -645,3 +651,13 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         if merged._per_run:
             merged._run_toolset = merged._make_toolset()
         return merged
+
+
+def delegate_toolsets(capabilities: Iterable[AbstractCapability[Any]]) -> list[SubAgentToolset[Any]]:
+    """The delegate toolsets that the `SubAgents` among a run's `capabilities` contribute, in order."""
+    toolsets = (
+        capability._delegate_toolset()  # pyright: ignore[reportPrivateUsage]
+        for capability in capabilities
+        if isinstance(capability, SubAgents)
+    )
+    return [toolset for toolset in toolsets if toolset is not None]

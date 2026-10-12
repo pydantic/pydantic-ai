@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.step_persistence import FileStepStore, StepPersistence
 from pydantic_ai_harness.subagents import (
     DelegationEndEvent,
@@ -1242,3 +1243,127 @@ async def test_list_tasks_is_capped() -> None:
     assert len(lines) == 51
     assert lines[-1] == '(2 older finished tasks not shown.)'
     assert first.id not in listing and second.id not in listing
+
+
+async def test_several_sub_agents_share_one_set_of_task_controls(tmp_path: Path) -> None:
+    offered: list[list[str]] = []
+
+    async def worker_respond(messages: list[ModelMessage]) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(' then '.join(user_prompts(messages)))])
+
+    owner = DelegationTasks()
+    general = Agent(TestModel(), deps_type=object, name='general')
+    researcher = Agent(scripted(worker_respond), deps_type=object, name='researcher')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.append([tool.name for tool in info.function_tools])
+        if not results(messages, 'delegate_research'):
+            return call('delegate_research', agent_name='researcher', task='first')
+        if not results(messages, 'message_task'):
+            (record,) = owner.records.values()
+            return call('message_task', task_id=record.id, message='follow up')
+        return ModelResponse(parts=[TextPart('done')])
+
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                agent = Agent(
+                    FunctionModel(respond),
+                    capabilities=[
+                        # Turned off by its own `max_depth`, so it leaves the controls to the next one.
+                        SubAgents(
+                            agents=[SubAgent(general)],
+                            agent_folders=None,
+                            max_depth=1,
+                            tool_name='delegate_off',
+                            id='off',
+                        ),
+                        SubAgents(agents=[SubAgent(general)], agent_folders=None),
+                        SubAgents(
+                            agents=[SubAgent(researcher)],
+                            agent_folders=['agents'],
+                            workspace=LocalWorkspaceBackend(tmp_path),
+                            tool_name='delegate_research',
+                            id='research',
+                        ),
+                    ],
+                )
+                result = await agent.run('go', conversation_id='root')
+            (record,) = owner.records.values()
+    assert sorted(offered[0]) == ['delegate_research', 'delegate_task', 'list_tasks', 'message_task', 'stop_task']
+    # Resumed through `delegate_research`, whose roster has the task's agent.
+    assert results(result.all_messages(), 'message_task') == [f'Task {record.id} (ok):\nfirst then follow up']
+    assert record.generation == 2
+
+
+async def test_message_task_does_not_resume_a_finished_nested_task() -> None:
+    owner = DelegationTasks(max_depth=3)
+    leaf = Agent(TestModel(custom_output_text='leaf done'), deps_type=object, name='leaf')
+
+    async def worker_respond(messages: list[ModelMessage]) -> ModelResponse:
+        if not results(messages, 'delegate_task'):
+            return call('delegate_task', agent_name='leaf', task='leaf work')
+        return ModelResponse(parts=[TextPart('worker done')])
+
+    worker = Agent(
+        scripted(worker_respond),
+        deps_type=object,
+        name='worker',
+        capabilities=[SubAgents(agents=[SubAgent(leaf)], agent_folders=None)],
+    )
+
+    async def parent_respond(messages: list[ModelMessage]) -> ModelResponse:
+        if not results(messages, 'delegate_task'):
+            return call('delegate_task', agent_name='worker', task='investigate')
+        if not results(messages, 'message_task'):
+            (nested,) = [r for r in owner.records.values() if r.agent_name == 'leaf']
+            return call('message_task', task_id=nested.id, message='dig deeper')
+        return ModelResponse(parts=[TextPart('done')])
+
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                parent = Agent(
+                    scripted(parent_respond), capabilities=[SubAgents(agents=[SubAgent(worker)], agent_folders=None)]
+                )
+                result = await parent.run('go', conversation_id='root')
+            worker_record, leaf_record = owner.records.values()
+    assert results(result.all_messages(), 'message_task') == [
+        f'Task {leaf_record.id} was started by task {worker_record.id} and has finished. '
+        'Only a running task can be messaged unless you started it yourself.'
+    ]
+    # The nested task stays with the task that started it.
+    assert (leaf_record.parent_id, leaf_record.generation) == (worker_record.id, 1)
+
+
+async def test_stop_task_keeps_the_report_when_cancellation_cleanup_fails() -> None:
+    class StuckOwner(DelegationTasks):
+        async def cancel(self, task_id: str, *, user: bool = True) -> None:
+            await super().cancel(task_id, user=user)
+            # What `cancel` raises when a child does not release its resources in time.
+            raise RuntimeError(f'Task {task_id} did not finish cancellation cleanup')
+
+    owner = StuckOwner()
+    blocked = asyncio.Event()
+
+    async def wait(record: DelegationTask) -> str:
+        await blocked.wait()
+        return 'unreachable'  # pragma: no cover
+
+    child = Agent(TestModel(), deps_type=object, name='worker')
+    async with owner.opened():
+        await owner.delegate(
+            agent_name='worker', prompt='', conversation_id='root', model=None, background=True, resume=None, run=wait
+        )
+        (record,) = owner.records.values()
+
+        async def respond(messages: list[ModelMessage]) -> ModelResponse:
+            return call('stop_task', task_id=record.id)
+
+        with owner.bind():
+            parent = Agent(scripted(respond), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)])
+            with pytest.raises(RuntimeError, match='cancellation cleanup'):
+                await parent.run('go', conversation_id='root')
+        # The caller never got a stop result, so the task's report is still owed to it.
+        assert (record.outcome, record.delivered) == ('cancelled', False)
+        assert owner.reports(conversation_id='root') == [record]
