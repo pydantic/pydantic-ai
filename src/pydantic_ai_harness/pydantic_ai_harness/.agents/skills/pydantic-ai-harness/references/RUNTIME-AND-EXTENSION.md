@@ -72,9 +72,13 @@ Stores, all in `pydantic_ai_harness.step_persistence`, all async, all accepting
   "pydantic-ai-harness[mongodb]"`. Exactly one of `client`/`db_url`, and `database` is required. With
   `db_url` the store owns the client, so call `await store.aclose()`. It creates indexes on its first
   write, so the user needs index-creation privileges.
+- `PostgresStepStore(pool, *, table='step_persistence')`: `pool` is your own `asyncpg` pool (the
+  driver-neutral `PostgresPool` protocol); no harness extra, and you own the pool lifecycle. `table`
+  is a prefix of at most 40 characters. It creates its tables on first use, so the role needs
+  `CREATE` on the schema.
 
-File, SQLite, and Mongo stores move `BinaryContent` and any text part of 64 KiB or more to a
-`MediaStore` (disk, same DB, or same Mongo client by default). Pass `media_store=None` to keep them
+File, SQLite, Mongo, and Postgres stores move `BinaryContent` and any text part of 64 KiB or more to a
+`MediaStore` (disk, same DB, same Mongo client, or same pool by default). Pass `media_store=None` to keep them
 inline, or `media_store=S3MediaStore(...)` from `pydantic_ai_harness.media`.
 
 Reading back:
@@ -383,6 +387,9 @@ or live agents, and raise `ValueError` if listed): `AWSLambdaDurability`, `Absur
 `capabilities=` keyword of `Agent.from_spec`/`Agent.from_file`, which adds them to the spec's list.
 Keep secrets out of spec files and let capabilities read their env vars.
 
+`ToolCallJudge` is spec-loadable when its model is a string and `tools` is `'all'`, a name list, or a
+metadata match. A live model, predicate selector, and `on_verdict` callback are code-only.
+
 A spec whose `model` is a provider string (`'openai:gpt-5'`) needs that provider's API key when the
 agent is built. In tests, pass `defer_model_check=True` and run under `agent.override(model='test')`.
 
@@ -442,8 +449,8 @@ loop. Silence the warning with `warnings.filterwarnings('ignore', category=Harne
 ## GitHub Agentic Workflows
 
 The gh-aw `pydantic-ai` engine runs a Pydantic AI agent in GitHub Actions on issues, PRs, or a schedule.
-In the workflow `.md`, import `pydantic/pydantic-ai-harness/gh-aw/pydantic.md@main`, set
-`engine: {id: pydantic-ai, model: openai/gpt-5}` (`provider/model` is required), and point
+In the workflow `.md`, import `pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main`,
+set `engine: {id: pydantic-ai, model: openai/gpt-5}` (`provider/model` is required), and point
 `engine.env.PAI_AGENT` at `module:variable` (for example `my_agent:agent`), at
 `pydantic_ai_harness.researcher:researcher_agent`, or at a `.yml`/`.json` spec. Omit `PAI_AGENT` to run
 `Coder`. Then run `gh aw compile` and commit the `.lock.yml` with it. Gotchas: leave the model off the

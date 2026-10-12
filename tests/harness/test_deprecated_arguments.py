@@ -38,7 +38,7 @@ def _macroscope(elsewhere: str, fake_cli: Path) -> AbstractCapability[None]:
 
 
 def _repo_context(elsewhere: str, fake_cli: Path) -> AbstractCapability[None]:
-    return RepoContext[None](workspace_dir=Path(elsewhere))
+    return RepoContext[None](workspace_dir=Path(elsewhere), expose_inventory_tool=True)
 
 
 @pytest.mark.parametrize(

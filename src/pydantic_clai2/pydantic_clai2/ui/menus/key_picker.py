@@ -11,6 +11,7 @@ import concurrent.futures
 import threading
 from dataclasses import dataclass, field
 
+from anyio import to_thread
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
 from pydantic_clai2.config.api_keys import KeyReference, load_keys, prompt_api_key, save_key
@@ -60,7 +61,7 @@ async def ask_key(*, name: str, label: str, runners: Runners) -> KeyReference | 
     value = choice.strip()
     if not value:
         return None
-    exists = name in await asyncio.to_thread(load_keys)
+    exists = name in await to_thread.run_sync(load_keys, abandon_on_cancel=True)
     if exists and not await run_worker(lambda: _confirm_replace(name, runners)):
         return None
     return NewKey(value, replace=exists)

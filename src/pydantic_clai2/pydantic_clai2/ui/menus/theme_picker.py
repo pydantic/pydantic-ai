@@ -15,6 +15,7 @@ from termflow.tui.terminal import terminal_size
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 from pydantic_clai2.ui.rendering.tool_output import print_tool_header
@@ -61,20 +62,17 @@ def build_theme_picker(context: CommandContext) -> Menu:
     """Offer the existing default and bundled palettes with a conversation preview."""
     names = theme.names()
     list_width = 30
-    return (
+    builder = (
         MenuBuilder('Select theme')
         .style(markdown_style())
         .items(
             [MenuItem(f'{name}{" (current)" if name == context.settings.theme else ""}', value=name) for name in names]
         )
-        .searchable()
         .initial_index(names.index(context.settings.theme))
         .list_width(list_width)
         .preview(lambda item: theme_preview(str(item.value), width=max(20, terminal_size()[0] - list_width - 4)))
-        .footer_hint('type to filter - Enter apply - Esc close')
-        .key_source(menu_key)
-        .build()
     )
+    return slash_search(builder, footer='enter apply · esc close', key_source=menu_key)
 
 
 async def theme_command(context: CommandContext, args: list[str], *, runners: Runners = TERMINAL) -> str:
