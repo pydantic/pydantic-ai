@@ -113,14 +113,12 @@ class InputWithdrawn:
 
 @dataclass(frozen=True, kw_only=True)
 class AudioSent:
-    """Input audio the caller streamed, retained for the spoken turn it belongs to."""
+    """Input audio the caller streamed went out, retained for the spoken turn it belongs to.
+
+    Reported once its send completed: a turn the provider ended while it was on its way was ended without it.
+    """
 
     data: bytes
-
-
-@dataclass(frozen=True, kw_only=True)
-class AudioUnsent:
-    """The input audio last reported as sent never went out: it is taken back, as much of it as is still there."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -185,7 +183,6 @@ Command: TypeAlias = (
     InputSent
     | InputWithdrawn
     | AudioSent
-    | AudioUnsent
     | AudioCleared
     | ToolReturned
     | ToolCallRefused
@@ -344,9 +341,6 @@ class SessionCore:
         self._recorded_audio: deque[_Response | _UserTurn] = deque()
         """Recorded entities whose message still has audio, in the order they joined the conversation: what eviction
         takes audio from first, oldest first, without passing over anything that has none or isn't recorded yet."""
-        self._unsent_audio: tuple[_UserTurn | None, int] | None = None
-        """The latest input audio chunk, until the next: the turn it was cut for since (or `None` while it is in the
-        buffer), and its length, so `AudioUnsent` can take it back if its send fails."""
         self._placements = 0
         self._user_speaking = False
         self._speech_segmented = False
@@ -433,7 +427,7 @@ class SessionCore:
             self._input_sent(command)
         elif isinstance(command, InputWithdrawn):
             self._withdraw(command.input_ids)
-        elif isinstance(command, (AudioSent, AudioUnsent, AudioCleared)):
+        elif isinstance(command, (AudioSent, AudioCleared)):
             self._input_audio_command(command)
         elif isinstance(command, ToolReturned):
             self._returns[command.tool_call_id] = command.request
@@ -458,37 +452,16 @@ class SessionCore:
         else:
             assert_never(command)
 
-    def _input_audio_command(self, command: AudioSent | AudioUnsent | AudioCleared) -> None:
+    def _input_audio_command(self, command: AudioSent | AudioCleared) -> None:
         if isinstance(command, AudioSent):
             if self._retain_input:
                 self._input_audio.extend(command.data)
-                self._unsent_audio = (None, len(command.data))
                 self._bound_retained_audio()
-        elif isinstance(command, AudioUnsent):
-            self._take_back_audio()
         else:
-            self._unsent_audio = None
             self._input_audio.clear()
             # A turn the user was saying that hadn't joined the conversation never will now.
             for turn_id in [turn_id for turn_id, turn in self._turns.items() if not turn.ended]:
                 self._drop_turn(turn_id)
-
-    def _take_back_audio(self) -> None:
-        """Take back the latest input audio chunk, whose send failed: from the buffer, or the turn it was cut for.
-
-        By length, as the session takes it back from its own buffer: what of it the budget already trimmed, or
-        that went into history with its turn, is no longer there to take back.
-        """
-        if self._unsent_audio is None:
-            return
-        turn, length = self._unsent_audio
-        self._unsent_audio = None
-        if turn is None:
-            del self._input_audio[len(self._input_audio) - min(length, len(self._input_audio)) :]
-        elif turn.id in self._waiting_turn_audio and turn.audio:
-            length = min(length, len(turn.audio))
-            turn.audio = turn.audio[: len(turn.audio) - length]
-            self._waiting_turn_audio_bytes -= length
 
     def _input_sent(self, command: InputSent) -> None:
         if command.request is not None:
@@ -726,8 +699,6 @@ class SessionCore:
         self._input_audio.clear()
         self._waiting_turn_audio[turn.id] = turn
         self._waiting_turn_audio_bytes += len(turn.audio)
-        if self._unsent_audio is not None and self._unsent_audio[0] is None:
-            self._unsent_audio = (turn, self._unsent_audio[1])
 
     def _release_turn_audio(self, turn: _UserTurn) -> None:
         if self._waiting_turn_audio.pop(turn.id, None) is not None and turn.audio:

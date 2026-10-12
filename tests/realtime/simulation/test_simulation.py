@@ -547,6 +547,61 @@ def test_known_failed_deferred_create_after_a_refusal_keeps_its_reservation() ->
     reproduce('SIM-4', OpenAISimulation(), scenario)
 
 
+@known('SIM-4')
+def test_known_xai_held_audio_failing_after_a_reply_drops_its_terminal() -> None:
+    """Audio sent during a reply is held back, and goes out from the receive loop once the reply ends."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.fail_next_send()
+        sim.send_audio()
+        sim.settle()
+
+    reproduce(
+        'SIM-4',
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=False)),
+        scenario,
+    )
+
+
+@known('SIM-4')
+def test_known_xai_held_audio_failing_before_a_deferred_request_loses_it() -> None:
+    """The held audio goes out ahead of the request deferred behind the reply, which the failure takes with it."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.create_response()
+        sim.fail_next_send()
+        sim.send_audio()
+        sim.settle()
+
+    reproduce(
+        'SIM-4',
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=False)),
+        scenario,
+    )
+
+
+@known('SIM-4')
+def test_known_xai_clear_before_a_deferred_request_failing_loses_it() -> None:
+    """The clear xAI needs before a deferred request goes out from the receive loop, once the reply ends."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.clear_audio()
+        sim.create_response()
+        sim.fail_next_send()
+        sim.send_audio()
+        sim.clear_audio()
+        sim.settle()
+
+    reproduce(
+        'SIM-4',
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=False)),
+        scenario,
+    )
+
+
 def test_barge_in_keeps_a_request_vad_will_not_answer() -> None:
     """SIM-32, fixed by the session core."""
 
@@ -674,6 +729,21 @@ def test_clear_after_an_unread_vad_commit_keeps_the_turn() -> None:
         sim.settle()
 
     run_clean(OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
+
+
+def test_xai_clear_after_a_request_committed_speech_keeps_the_turn() -> None:
+    """On xAI push-to-talk, the request a text turn sends commits the speech in the buffer before the clear (SIM-35)."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.settle()
+        sim.send_text()
+        sim.clear_audio()
+        sim.settle()
+
+    run_clean(
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=False)), scenario
+    )
 
 
 @known('SIM-36')

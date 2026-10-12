@@ -338,6 +338,21 @@ def test_the_budget_message_names_excluded_shared_setup(run: RunPytest, monkeypa
     result.stdout.fnmatch_lines(['*not counting 0.0*s of shared fixture setup*'])
 
 
+def test_shared_setup_requested_during_the_call_is_not_counted(run: RunPytest, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(BUDGET_ENV_VAR, '0.05')
+    result = run(
+        """
+        @pytest.fixture(scope='module')
+        def shared_server():
+            time.sleep(0.1)
+
+        def test_fast(request):
+            request.getfixturevalue('shared_server')
+        """
+    )
+    result.assert_outcomes(passed=1)
+
+
 def test_a_run_that_collects_nothing_is_not_judged(run: RunPytest):
     result = run('')
     assert result.ret == pytest.ExitCode.NO_TESTS_COLLECTED
