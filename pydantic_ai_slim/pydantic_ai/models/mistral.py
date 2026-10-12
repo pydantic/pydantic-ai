@@ -810,11 +810,10 @@ class MistralStreamedResponse(StreamedResponse):
                 self.provider_details = {'timestamp': self._provider_timestamp}
             chunk: MistralCompletionEvent
             async for chunk in self._response:
-                chunk_usage = _map_usage(chunk.data, self._provider_name, self._provider_url, self._model_name)
-                if chunk.data.usage is not None:
-                    self._usage_received = True
-                chunk_usage.unmeasured_requests = 0
-                self._usage += chunk_usage
+                self._add_usage(
+                    _map_usage(chunk.data, self._provider_name, self._provider_url, self._model_name),
+                    reported=chunk.data.usage is not None,
+                )
 
                 if chunk.data.id:  # pragma: no branch
                     self.provider_response_id = chunk.data.id

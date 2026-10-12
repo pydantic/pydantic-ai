@@ -1481,6 +1481,22 @@ class StreamedResponse(ABC):
             return self._usage + RequestUsage(unmeasured_requests=1)
         return self._usage
 
+    def _add_usage(self, usage: RequestUsage, *, reported: bool, replace: bool = False) -> None:
+        """Record the usage mapped from one stream event.
+
+        Whether the response omitted usage is decided once for the whole stream by `usage`, so the
+        per-event omission marker a mapping helper adds is dropped here.
+
+        Args:
+            usage: The usage mapped from the event.
+            reported: Whether the event carried provider usage.
+            replace: Whether `usage` is cumulative and replaces the usage recorded so far, rather than adding to it.
+        """
+        usage.unmeasured_requests = 0
+        if reported:
+            self._usage_received = True
+        self._usage = usage if replace else self._usage + usage
+
     @property
     @abstractmethod
     def model_name(self) -> str:

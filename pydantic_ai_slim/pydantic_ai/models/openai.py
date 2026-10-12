@@ -4436,17 +4436,11 @@ class OpenAIStreamedResponse(StreamedResponse):
                         'timestamp': self._provider_timestamp,
                     }
 
-                chunk_usage = self._map_usage(chunk)
-                if chunk.usage is not None:
-                    self._usage_received = True
-                chunk_usage.unmeasured_requests = 0
-                if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
-                    # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
-                    # so we replace rather than increment to avoid double-counting.
-                    if chunk.usage is not None:
-                        self._usage = chunk_usage
-                else:
-                    self._usage += chunk_usage
+                # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
+                # so we replace rather than increment to avoid double-counting.
+                cumulative = bool(self._model_settings and self._model_settings.get('openai_continuous_usage_stats'))
+                if chunk.usage is not None or not cumulative:
+                    self._add_usage(self._map_usage(chunk), reported=chunk.usage is not None, replace=cumulative)
 
                 if chunk.id:  # pragma: no branch
                     self.provider_response_id = chunk.id
@@ -5449,11 +5443,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
 
     def _record_usage(self, response: responses.Response) -> None:
-        response_usage = self._map_usage(response)
-        if response.usage is not None:
-            self._usage_received = True
-        response_usage.unmeasured_requests = 0
-        self._usage += response_usage
+        self._add_usage(self._map_usage(response), reported=response.usage is not None)
 
     @property
     def model_name(self) -> OpenAIModelName:

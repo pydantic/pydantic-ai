@@ -572,11 +572,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
-                chunk_usage = _map_usage(chunk)
-                if chunk.usage is not None:
-                    self._usage_received = True
-                chunk_usage.unmeasured_requests = 0
-                self._usage += chunk_usage
+                self._add_usage(_map_usage(chunk), reported=chunk.usage is not None)
 
                 if chunk.id:  # pragma: no branch
                     self.provider_response_id = chunk.id

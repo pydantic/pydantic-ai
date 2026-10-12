@@ -733,11 +733,10 @@ class GroqStreamedResponse(StreamedResponse):
                 if self._provider_timestamp is not None:  # pragma: no branch
                     self.provider_details = {'timestamp': self._provider_timestamp}
                 async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
-                    chunk_usage = _map_usage(chunk, self._provider_name, self._provider_url, self._model_name)
-                    if chunk.x_groq is not None and chunk.x_groq.usage is not None:
-                        self._usage_received = True
-                    chunk_usage.unmeasured_requests = 0
-                    self._usage += chunk_usage
+                    self._add_usage(
+                        _map_usage(chunk, self._provider_name, self._provider_url, self._model_name),
+                        reported=chunk.x_groq is not None and chunk.x_groq.usage is not None,
+                    )
 
                     if chunk.id:  # pragma: no branch
                         self.provider_response_id = chunk.id

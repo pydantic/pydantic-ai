@@ -1894,9 +1894,11 @@ class BedrockStreamedResponse(StreamedResponse):
                         self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
                     case {'metadata': metadata}:
                         if 'usage' in metadata:  # pragma: no branch
-                            self._usage_received = True
-                            self._usage += _map_usage(
-                                metadata['usage'], self._provider_name, self._provider_url, self._model_name
+                            self._add_usage(
+                                _map_usage(
+                                    metadata['usage'], self._provider_name, self._provider_url, self._model_name
+                                ),
+                                reported=True,
                             )
                         if 'trace' in metadata:
                             # `messageStop` usually precedes `metadata`, but AWS documents no strict event

@@ -1524,10 +1524,11 @@ class GeminiStreamedResponse(StreamedResponse):
         grounding_metadata: GroundingMetadata | None = None
         try:
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name, errors.UnknownApiResponseError):
-                self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage)
-                if chunk.usage_metadata is not None:
-                    self._usage_received = True
-                self._usage.unmeasured_requests = 0
+                self._add_usage(
+                    _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage),
+                    reported=chunk.usage_metadata is not None,
+                    replace=True,
+                )
                 # Grounding is counted from each chunk alone, and `web_searches` isn't carried forward like the token
                 # fields in `_usage_metadata_as_usage`: Gemini sends all grounding metadata once, on the final chunk,
                 # with the last `usage_metadata`. Seen in every grounded stream cassette and in live streams on
