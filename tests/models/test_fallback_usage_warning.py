@@ -58,7 +58,7 @@ async def test_fallback_unreported_usage_warns_before_adding_rejected_cost(
 
     assert len(caught) == 1
     assert result.output == 'accepted'
-    assert result.usage.total_tokens == 0
+    assert result.usage.total_tokens == 9
     assert result.usage.unmeasured_requests == 1
     assert result.usage.cost == Decimal('0.000045')
 
@@ -77,7 +77,8 @@ async def test_fallback_without_usage_limits_does_not_warn(allow_model_requests:
     assert response.text == 'accepted'
     assert response.usage.total_tokens == 0
     assert response.usage.unmeasured_requests == 1
-    assert response.usage.cost == Decimal('0.000045')
+    assert response.usage.cost is None
+    assert [attempt.usage and attempt.usage.cost for attempt in response.failed_attempts or ()] == [Decimal('0.000045')]
 
 
 @dataclass(kw_only=True)
@@ -161,6 +162,6 @@ async def test_cost_only_usage_is_known_zero_tokens_and_does_not_warn(
 
     assert sum(issubclass(item.category, UsageLimitUnavailableWarning) for item in caught) == 0
     assert result.output == 'accepted'
-    assert result.usage.total_tokens == 0
+    assert result.usage.total_tokens == (9 if fallback else 0)
     assert result.usage.unmeasured_requests == 0
     assert result.usage.cost == reported_cost + (Decimal('0.000045') if fallback else 0)

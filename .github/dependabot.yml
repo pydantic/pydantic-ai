@@ -6,6 +6,12 @@ updates:
     python-packages:
       patterns:
       - "*"
+  # Setting `labels` replaces Dependabot's defaults (`dependencies` plus the ecosystem label),
+  # so they are listed again next to `pkg:core`, which the `Package Label` check requires.
+  labels:
+  - dependencies
+  - python:uv
+  - pkg:core
   package-ecosystem: uv
   schedule:
     interval: monthly
@@ -18,6 +24,10 @@ updates:
       - "*"
   ignore:
   - dependency-name: "github/gh-aw-actions/**" # Managed by gh aw compile. Version-locked to the gh-aw compiler; do not bump.
+  labels:
+  - dependencies
+  - github_actions
+  - pkg:core
   package-ecosystem: github-actions
   schedule:
     interval: monthly

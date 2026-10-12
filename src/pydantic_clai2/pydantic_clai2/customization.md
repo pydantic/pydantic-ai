@@ -23,7 +23,7 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   to CLAI's settings (/spinner init writes a starter). /spinner picks one; the
   choice persists as display.spinner.
 - React to prompts or session lifecycle: override on_session_start,
-  on_session_end, on_turn_start, or on_turn_end.
+  on_session_end, on_turn_start, on_turn_end, or on_conversation_changed.
 - Configure a plugin: declare a Pydantic settings model as the class's type
   parameter, `Plugin[MySettings]`, and read self.settings.
 - Offer a settings menu: override async configure().
@@ -34,6 +34,10 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   models=...) values from get_logins to add /login NAME and save those models
   once it succeeds. ModelProvider(settings_from='anthropic') gives its models
   Anthropic's /model settings controls.
+- Give the model standing instructions without a plugin: /system_prompt edits
+  run.instructions, which CLAI sends after its built-in, AGENTS.md, and plugin
+  instructions, and shows the full system prompt read-only. A plugin adds
+  instructions with get_capabilities instead.
 - Select colours: /theme opens the Termflow palette picker; /theme tokyo_night
   selects directly and persists display.theme. /theme default restores CLAI's
   existing appearance. Browsing previews a sample conversation without applying
@@ -154,7 +158,8 @@ before reinstalling. Plugin code runs as the user; install only trusted reposito
 The second built-in is ask_user (pydantic_clai2.builtin_plugins.ask_user_menu): the
 harness AskUser capability with an inline numbered picker as its answerer, so
 the model can ask the user multiple-choice questions mid-run through
-ask_user_question. The conversation remains visible. Enter or a number selects;
+ask_user_question. The conversation remains visible, and the question stays pinned
+above its choices while output streams. Enter or a number selects;
 for multiple selections it toggles, then Done submits. /plugins disable ask_user removes the tool. To answer the
 questions somewhere other than the terminal, declare ask_user again with a
 module whose Plugin returns AskUser(answerer=...) from get_capabilities with your
@@ -171,7 +176,10 @@ appear in the transcript and reach the model as a one-item list under the questi
 The built-in observability plugin (pydantic_clai2.builtin_plugins.logfire) is enabled by default in the
 stock CLI. It contributes core's Instrumentation capability using an isolated
 Logfire instance. It exports to Logfire only when credentials are present, with
-no interactive setup or console logging. Text and binary images are included by
+no interactive setup or console logging. Errors CLAI shows and recovers from (plugin
+load failures, failed turns, unexpected slash command failures, failing plugin
+handlers) are recorded with their traceback, or only their type with include_content
+false; usage errors are not. Text and binary images are included by
 default, so review the telemetry destination before setting LOGFIRE_TOKEN. Use
 /plugins disable observability to remove it, or replace its settings with:
 
@@ -182,7 +190,7 @@ default, so review the telemetry destination before setting LOGFIRE_TOKEN. Use
 Other options are service_name (default pydantic-clai2), send_to_logfire
 (default "if-token-present", or false), token (the name of a /keys entry
 holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
-then receives the telemetry), and ui_events (default true; set false to opt out: also record UI
+then receives the telemetry), httpx (default false; set true to trace httpx and httpx2 requests process-wide, with headers and bodies captured when include_content is true), and ui_events (default true; set false to opt out: also record UI
 interactions such as menus, commands, settings, plugin actions, keys, and prompt
 submissions, by name; while include_content is on, a submitted prompt also
 carries its text, but ! lines and slash-command arguments never do).
@@ -263,7 +271,7 @@ are not recursively reloaded. Use `/plugins reload NAME` to reload only one plug
 
 ## Hooks, tools and settings
 
-The four CLAI moments are async methods returning None:
+The CLAI moments are async methods returning None:
 
 | Method | Event | Use |
 | --- | --- | --- |
@@ -271,6 +279,7 @@ The four CLAI moments are async methods returning None:
 | on_session_end | SessionEnd(reason) | Clean up; reason is exit, eof, or error |
 | on_turn_start | TurnStart(text) | Rewrite event.text or event.cancel() |
 | on_turn_end | TurnEnd(text, outcome, result, error) | Observe completion or failure |
+| on_conversation_changed | ConversationChanged(conversation_id, title) | Follow /new, /clear, /resume, and retitles |
 
 Import these event classes from pydantic_clai2.plugins. Event payloads are typed,
 keyword-only dataclasses. A raising on_turn_start cancels the turn. Do not
@@ -557,6 +566,11 @@ during_turn_subcommands=('add',) does the same for a bare subcommand such as
 /model add. Pass args_during_turn=True when every form of the command is safe
 mid-turn; it then runs at once with arguments too, ahead of queued follow-ups,
 as /plugins does.
+
+Pass live=True to Command for a slow handler that only prints, such as /compact,
+so the editor stays live while it runs: the working spinner shows, Esc or Ctrl-C
+cancels it, and Enter queues a follow-up. Leave it off for anything that reads
+keys or opens a menu; those need the suspended editor.
 
 For named validated fields, reuse FieldSource, FieldMenu and run_flow in
 field_menu.py rather than write another editor. SettingsSource in set_menu.py

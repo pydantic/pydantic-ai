@@ -1,13 +1,37 @@
 """Import-light entry point: animate before loading the agent/UI dependencies."""
 
 import json
+import logging
 import os
 import sqlite3
 import sys
 import warnings
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
+
+TELEMETRY_LOGGERS = ('logfire', 'opentelemetry')
+"""Loggers of the telemetry SDKs, whose export retries, timeouts, and batch failures run on background threads."""
+
+
+@contextmanager
+def quiet_telemetry_logs() -> Generator[None]:
+    """Keep telemetry SDK log records off stderr, where they would tear through the live display.
+
+    Without a handler anywhere on a record's path, `logging` falls back to printing it on stderr. A `NullHandler`
+    on these loggers stops only that fallback: handlers a plugin or host configures still receive every record.
+    """
+    handler = logging.NullHandler()
+    loggers = [logging.getLogger(name) for name in TELEMETRY_LOGGERS]
+    for logger in loggers:
+        logger.addHandler(handler)
+    try:
+        yield
+    finally:
+        for logger in loggers:
+            logger.removeHandler(handler)
 
 
 def main() -> None:
@@ -42,12 +66,13 @@ def main() -> None:
     try:
         from pydantic_clai2.cli._cli import run
 
-        with warnings.catch_warnings():
+        with warnings.catch_warnings(), quiet_telemetry_logs():
             if not sys.warnoptions:
-                # Library `UserWarning`s are advice for the developer who wired the agent, not the person
-                # at the prompt, and stderr output tears through the live display. `-W` or
-                # `PYTHONWARNINGS` restores them.
-                warnings.simplefilter('ignore', UserWarning)
+                # Library warnings are advice for the developer who wired the agent, not the person at the
+                # prompt, and stderr output tears through the live display. Not every one is a `UserWarning`
+                # (Logfire's `InspectArgumentsFailedWarning` subclasses `Warning`). `-W` or `PYTHONWARNINGS`
+                # restores them.
+                warnings.simplefilter('ignore', Warning)
             run(splash=splash)
     finally:
         splash.stop()

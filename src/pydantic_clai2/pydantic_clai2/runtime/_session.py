@@ -8,6 +8,7 @@ from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
+from functools import partial
 from pathlib import Path
 from typing import Generic, Literal, TypeVar, cast
 from uuid import uuid4
@@ -19,6 +20,7 @@ from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentCapability,
+    Capability,
     CapabilityOrdering,
     CombinedCapability,
     DynamicCapability,
@@ -35,11 +37,13 @@ from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 from pydantic_ai_harness.step_persistence import SqliteStepStore, StepStore
 from pydantic_ai_harness.step_persistence.conversations import (
+    ConversationConflict,
     ConversationSummary,
     SqliteConversationStore,
     ensure_inactive,
 )
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+from pydantic_clai2.plugins import ConversationChanged
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
 from pydantic_clai2.ui import telemetry
 
@@ -232,6 +236,28 @@ def local_workspace(
     return LocalWorkspace[DepsT](directory, env=_command_env())
 
 
+def _interrupted(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """`messages` with the last one marked interrupted, so core closes unanswered calls without replaying them."""
+    marked = list(messages)
+    if marked:
+        last = marked[-1]
+        if not isinstance(last, ModelResponse) or last.state != 'suspended':
+            marked[-1] = replace(last, state='interrupted')
+    return marked
+
+
+def _fork_summary(busy: ConversationSummary) -> ConversationSummary:
+    """A new saved session continuing `busy`, which another process is still running."""
+    return ConversationSummary(
+        workspace=busy.workspace,
+        title=f'{busy.title} (fork)',
+        subtitle=busy.subtitle,
+        tags=busy.tags,
+        title_source=busy.title_source,
+        model=busy.model,
+    )
+
+
 def _stale_local_workspace(messages: Sequence[ModelMessage], workspace: str) -> bool:
     """Whether the history's latest response names a local directory other than `workspace`.
 
@@ -298,11 +324,15 @@ class Session(Generic[DepsT, OutputT]):
         conversations: SqliteConversationStore | None = None,
         workspace: Path | None = None,
         on_stream_event: Callable[[AgentStreamEvent], Awaitable[None]] | None = None,
+        summary: ConversationSummary | None = None,
     ) -> None:
         self.delegations: DelegationTasks | None = None
         self.conversations = conversations
         self.workspace = str((workspace or Path.cwd()).resolve())
-        self.summary = ConversationSummary(workspace=self.workspace)
+        self.summary = summary or ConversationSummary(workspace=self.workspace)
+        self.on_change: Callable[[ConversationChanged], Awaitable[None]] | None = None
+        """Told when `conversation_id` or `title` changes; the shell fires it to plugins."""
+        self._published = (self.conversation_id, self.title)
         self.step_store: StepStore | None = (
             SqliteStepStore(database=conversations.database, max_snapshots_per_run=8) if conversations else None
         )
@@ -317,6 +347,11 @@ class Session(Generic[DepsT, OutputT]):
         self.model_defaults: FamilyDefaults | None = None
         """CLAI's default settings for a model name, beneath the agent's capabilities' settings."""
         self.tool_retries: int | None = None
+        self.instructions = ''
+        """The user's own instructions, sent after the agent's and its plugins' on each request; empty sends none.
+
+        A stock agent rebuilt for its plugins binds them too, so delegated tasks get them; otherwise each run
+        gets them. Either way they are read on each request, so changing them does not rebuild the agent."""
         self.resolve_model: ModelNameResolver = lambda name: name
         self.agent = agent
         self._base_agent = agent
@@ -328,6 +363,7 @@ class Session(Generic[DepsT, OutputT]):
         self.on_stream_event = on_stream_event
         self._messages: list[ModelMessage] = list(message_history)
         self._running = False
+        self._record_resumed: Callable[[], None] | None = None
         self._accepting_steering = False
         self._run_context: RunContext[DepsT] | None = None
         self._pending_steering: list[Sequence[UserContent]] = []
@@ -347,12 +383,38 @@ class Session(Generic[DepsT, OutputT]):
         """Return a snapshot of the conversation's message list."""
         return list(self._messages)
 
-    def clear(self) -> None:
+    @property
+    def conversation_id(self) -> str:
+        """The ID `/resume` restores this conversation by."""
+        return self.summary.id
+
+    @property
+    def title(self) -> str | None:
+        """The saved title; `None` until the first prompt is saved."""
+        return self.summary.title if self.summary.revision else None
+
+    async def _publish(self) -> None:
+        """Tell `on_change` about a new conversation ID or title, once per change."""
+        identity = (self.conversation_id, self.title)
+        if identity == self._published:
+            return
+        self._published = identity
+        if self.on_change is not None:
+            await self.on_change(ConversationChanged(conversation_id=identity[0], title=identity[1]))
+
+    async def clear(self) -> None:
         """Start a new conversation without replacing the agent or plugins."""
         cleared = len(self._messages)
         self.replace_messages(())
         telemetry.record('conversation cleared', messages=cleared)
         self.summary = ConversationSummary(workspace=self.workspace)
+        await self._publish()
+
+    async def renamed(self, *, conversation_id: str, title: str) -> None:
+        """Adopt a title already saved for `conversation_id`, if that is this conversation."""
+        if conversation_id == self.summary.id:
+            self.summary = replace(self.summary, title=title)
+            await self._publish()
 
     def replace_messages(self, messages: Sequence[ModelMessage]) -> None:
         """Swap the retained history, as `/compact` does after summarising it."""
@@ -374,8 +436,25 @@ class Session(Generic[DepsT, OutputT]):
         finally:
             self._running = False
 
-    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False) -> str:
-        """Restore a saved head without invoking the model or replaying tools."""
+    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False, record: bool = True) -> str:
+        """Restore a saved head without invoking the model or replaying tools.
+
+        A session another live process is running is not taken over: its newest saved state is
+        copied into a new saved session, which this one continues while the original keeps running.
+
+        `record=False` leaves the `conversation resumed` UI event to a later `record_resumed()`, for a
+        startup restore that runs before the observability plugin subscribes.
+        """
+        notice = await self._restore(conversation_id, allow_other_workspace=allow_other_workspace, record=record)
+        await self._publish()
+        return notice
+
+    def record_resumed(self) -> None:
+        """Record the `conversation resumed` UI event for the last restore."""
+        if self._record_resumed is not None:
+            self._record_resumed()
+
+    async def _restore(self, conversation_id: str, *, allow_other_workspace: bool, record: bool) -> str:
         if self._running:
             raise RuntimeError('Cannot resume during a running conversation')
         self._running = True
@@ -385,27 +464,44 @@ class Session(Generic[DepsT, OutputT]):
             saved = await self.conversations.get(conversation_id=conversation_id)
             if not allow_other_workspace:
                 self.check_workspace(saved.summary.workspace)
-            ensure_inactive(saved.summary)
+            busy: ConversationConflict | None = None
+            try:
+                ensure_inactive(saved.summary)
+            except ConversationConflict as conflict:
+                busy = conflict
             messages = saved.messages
+            interrupted = saved.summary.outcome in ('running', 'failed', 'cancelled')
             warning = ''
-            if saved.summary.outcome in ('running', 'failed', 'cancelled'):
+            if interrupted:
                 warning = ' Interrupted session: inspect external effects before continuing. No tools were replayed.'
             if saved.summary.outcome == 'running' and saved.summary.run_id and self.step_store:
                 snapshot = await self.step_store.latest_snapshot(run_id=saved.summary.run_id, include_interrupted=True)
                 if snapshot is not None:
                     messages = snapshot.messages
+            if interrupted:
+                messages = _interrupted(messages)
+            summary = saved.summary
+            notice = f'Resumed {summary.title} ({summary.id}).{warning}'
+            if busy is not None:
+                summary = await self.conversations.save(summary=_fork_summary(saved.summary), messages=messages)
+                notice = (
+                    f'{busy} Resumed a fork of it instead: {summary.title} ({summary.id}). '
+                    'The original keeps running there and may still change files. No tools were replayed.'
+                )
             self._messages = list(messages)
-            if saved.summary.outcome in ('running', 'failed', 'cancelled'):
-                self._mark_interrupted()
-            self.summary = saved.summary
-            telemetry.record(
+            self.summary = summary
+            self._record_resumed = partial(
+                telemetry.record,
                 'conversation resumed',
                 outcome=saved.summary.outcome,
                 messages=len(messages),
                 other_workspace=saved.summary.workspace != self.workspace,
+                forked=busy is not None,
             )
+            if record:
+                self.record_resumed()
             # Keep the caller's current model and approval configuration. Saved models are informational.
-            return f'Resumed {saved.summary.title} ({saved.summary.id}).{warning}'
+            return notice
         finally:
             self._running = False
 
@@ -415,11 +511,7 @@ class Session(Generic[DepsT, OutputT]):
             raise ValueError(f'Session belongs to {workspace}. Select it in /resume to confirm.')
 
     def _mark_interrupted(self) -> None:
-        # Let core close unanswered calls without replaying them on the next prompt.
-        if self._messages:
-            last = self._messages[-1]
-            if not isinstance(last, ModelResponse) or last.state != 'suspended':
-                self._messages[-1] = replace(last, state='interrupted')
+        self._messages = _interrupted(self._messages)
 
     async def _save_turn(self, *, outcome: Literal['running', 'completed', 'failed', 'cancelled']) -> None:
         if self.conversations is None:
@@ -467,7 +559,8 @@ class Session(Generic[DepsT, OutputT]):
                 or len(self.plugins) != len(self._bound_plugins)
                 or any(new is not old for new, old in zip(self.plugins, self._bound_plugins))
             ):
-                self.agent = self._base_agent.with_plugins(self.plugins, model=agent_model)
+                instructions = Capability[DepsT](instructions=self._user_instructions)
+                self.agent = self._base_agent.with_plugins([*self.plugins, instructions], model=agent_model)
                 self._bound_plugins = tuple(self.plugins)
                 self._bound_model = agent_model
             # Already bound to the stock agent, including delegation and guardrails.
@@ -477,6 +570,9 @@ class Session(Generic[DepsT, OutputT]):
         if self.model_defaults is not None:
             capabilities.append(ModelDefaults[DepsT](self.model_defaults))
         return run_model, capabilities
+
+    def _user_instructions(self) -> str | None:
+        return self.instructions or None
 
     async def _resolve_model_id(self, ctx: ModelResolutionContext[DepsT], model_id: str) -> Model | None:
         return await resolve_model_name(self.resolve_model, model_id)
@@ -522,6 +618,9 @@ class Session(Generic[DepsT, OutputT]):
                     self.delegations.bind() if self.delegations is not None else nullcontext(),
                 ):
                     try:
+                        # The first save titles a new conversation. Inside the handlers below, so a
+                        # failed or cancelled observer still finalizes the `running` head saved above.
+                        await self._publish()
                         run_model, capabilities = self._bind()
                         if self.delegations is not None:
                             capabilities.append(
@@ -543,6 +642,9 @@ class Session(Generic[DepsT, OutputT]):
                             deps=self.deps,
                             model=run_model,
                             model_settings=self._run_settings(),
+                            # Run-level, not a capability: composing one more would split a plugin group that
+                            # supplies the workspace into its members. A rebuilt stock agent has them bound already.
+                            instructions=self._user_instructions if self.agent is self._base_agent else None,
                             retries={'tools': self.tool_retries} if self.tool_retries is not None else None,
                             message_history=previous,
                             conversation_id=self.summary.id,

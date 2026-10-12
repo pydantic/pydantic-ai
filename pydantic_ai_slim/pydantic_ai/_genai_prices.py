@@ -93,9 +93,10 @@ def calculate_price_for_usage(
 ) -> PriceCalculation:
     """Price a usage object with [genai-prices](https://github.com/pydantic/genai-prices), propagating its errors.
 
-    Tries matching on `provider_api_url` first as it's more specific, then falls back to `provider_name`.
+    Normally tries matching on `provider_api_url` first as it's more specific, then falls back to `provider_name`.
+    `openai-decisions` uses its provider name first because it shares OpenAI's URL with another endpoint.
     """
-    if provider_api_url:
+    if provider_api_url and provider_name != 'openai-decisions':
         try:
             return calc_price(
                 usage,

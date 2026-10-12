@@ -6,15 +6,20 @@ The menu tests drive the real termflow widgets with scripted keys, the way `test
 import io
 import itertools
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol, TypeGuard
 
+import anyio
 import pytest
 from fastmcp import Client
 from fastmcp.client.auth import OAuth
+from fastmcp.client.auth.oauth import TokenStorageAdapter
 from fastmcp.client.transports import StreamableHttpTransport
+from mcp.shared.auth import OAuthToken
 from pydantic import JsonValue
 from rich.console import Console
+from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -30,17 +35,53 @@ from pydantic_clai2.config import api_keys
 from pydantic_clai2.config.api_keys import delete_key, key_users, load_keys, rename_key, save_key
 from pydantic_clai2.config.credential_store import load_codex_credentials, save_codex_credentials
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.mcp import TokenStore, http_client
+from pydantic_clai2.mcp import OAuthSignIn, TokenStore, http_client
 from pydantic_clai2.plugins import SessionStart
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.ui.menus import field_menu
 from tests.clai2.conftest import stored_accounts
+from tests.clai2.menu_script import UNTIL_CLOSED, Script
 
 Vault = dict[tuple[str, str], str]
 
 
 class Press(Protocol):
     def __call__(self, *keys: str) -> None: ...
+
+
+class SignIn:
+    """Stands in for `OAuthSignIn.sign_in`, which would open the browser; it stores tokens as FastMCP would."""
+
+    urls: list[str] = []
+    error: Exception | None = None
+    unfinished: bool = False
+    """The browser sign-in is never completed, so it waits until cancelled."""
+
+    @staticmethod
+    async def sign_in(method: OAuthSignIn, *, show: Callable[[str], object]) -> None:
+        assert method.name == TOKEN_ACCOUNT
+        SignIn.urls.append(method.url)
+        if SignIn.error is not None:
+            raise SignIn.error
+        if SignIn.unfinished:
+            await anyio.sleep_forever()
+        await store_sign_in(method.url)
+
+
+@pytest.fixture(autouse=True)
+def stub_sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No browser; the sign-in's waiting screen stays open until the sign-in ends, or reads as Esc."""
+    monkeypatch.setattr(OAuthSignIn, 'sign_in', SignIn.sign_in)
+    monkeypatch.setattr(SignIn, 'urls', [])
+    monkeypatch.setattr(SignIn, 'error', None)
+    monkeypatch.setattr(SignIn, 'unfinished', False)
+    waiting = Script(lists=[], choices=[UNTIL_CLOSED] * 5, texts=[])
+    monkeypatch.setattr('pydantic_clai2.plugins.sign_in.RUNNERS', waiting.runners)
+
+
+async def store_sign_in(url: str) -> None:
+    tokens = TokenStorageAdapter(TokenStore(TOKEN_ACCOUNT), server_url=url)
+    await tokens.set_tokens(OAuthToken(access_token='access', token_type='Bearer', expires_in=3600))
 
 
 @pytest.fixture(autouse=True)
@@ -98,11 +139,25 @@ def is_linear(capability: object) -> TypeGuard[Linear[None]]:
 
 
 def only(loader: PluginLoader[None]) -> Linear[None]:
-    """The capability the next run gets; under OAuth, built per run."""
+    """The capability the next run gets with an API key."""
     [capability] = loader.capabilities()
-    if callable(capability):
-        capability = capability(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
     assert is_linear(capability)
+    return capability
+
+
+async def for_run(loader: PluginLoader[None]) -> Linear[None] | None:
+    """What a run gets from the browser sign-in's per-run factory."""
+    [entry] = [entry for entry in loader.entries() if entry.name == 'linear']
+    assert entry.loaded is not None
+    plugin = entry.loaded.plugin
+    assert isinstance(plugin, linear.LinearPlugin)
+    assert loader.capabilities() == [plugin.for_run]
+    return await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+
+
+async def connected(loader: PluginLoader[None]) -> Linear[None]:
+    capability = await for_run(loader)
+    assert capability is not None
     return capability
 
 
@@ -176,11 +231,54 @@ async def test_switching_to_oauth_hides_the_key_row(tmp_path: Path, vault: Vault
         'Enabled linear.',
         'Linear Sign-in: Browser sign-in (OAuth).',
         'Linear Access: Read and write.',
+        'Signed in to Linear.',
     ]
+    assert SignIn.urls == ['https://mcp.linear.app/mcp'], 'one sign-in, once the menu closes, for the chosen access'
     assert saved(tmp_path) == {'auth': 'oauth', 'read_only': False, 'include_instructions': True}
-    client = only(loader).client
+    client = (await connected(loader)).client
     assert isinstance(client, Client) and isinstance(client.transport, StreamableHttpTransport)
     assert client.transport.url == 'https://mcp.linear.app/mcp'
+
+    press('down', 'down', 'enter', 'down', 'enter')  # Server instructions -> Leave out; already signed in
+    assert await loader.command(['configure', 'linear']) == 'Linear Server instructions: Leave out.'
+    press()
+    assert await loader.command(['configure', 'linear']) == 'Linear settings unchanged.'
+    assert len(SignIn.urls) == 1
+    await loader.close('exit')
+
+
+@pytest.mark.parametrize(
+    ('error', 'unfinished', 'message'),
+    [
+        (None, True, 'Linear sign-in cancelled. Run /linear login to try again.'),
+        (
+            RuntimeError('authorization denied'),
+            False,
+            'Could not sign in to Linear: authorization denied. Run /linear login to try again.',
+        ),
+    ],
+)
+async def test_menu_sign_in_that_does_not_finish_leaves_linear_signed_out(
+    tmp_path: Path,
+    vault: Vault,
+    press: Press,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception | None,
+    unfinished: bool,
+    message: str,
+) -> None:
+    SignIn.error, SignIn.unfinished = error, unfinished
+    if unfinished:  # Esc on the waiting screen
+        escape = Script(lists=[], choices=[MenuResult(cancelled=True)], texts=[])
+        monkeypatch.setattr('pydantic_clai2.plugins.sign_in.RUNNERS', escape.runners)
+    loader, _, output = make(tmp_path)
+    press('enter', 'down', 'enter')  # Sign-in -> OAuth
+    with anyio.fail_after(5):
+        result = await loader.command(['enable', 'linear'])
+    assert result.splitlines() == ['Enabled linear.', 'Linear Sign-in: Browser sign-in (OAuth).', message]
+    assert await for_run(loader) is None
+    assert 'Not signed in to Linear. Run /linear login to sign in.' in output.getvalue()
+    await loader.close('exit')
 
 
 async def test_key_row_picks_a_saved_key_and_resets(tmp_path: Path, vault: Vault, press: Press) -> None:
@@ -306,10 +404,19 @@ async def test_cancel_empty_and_invalid_choice(vault: Vault) -> None:
     ('read_only', 'url'), [(True, 'https://mcp.linear.app/mcp/readonly'), (False, 'https://mcp.linear.app/mcp')]
 )
 async def test_oauth_signs_in_with_keyring_tokens(tmp_path: Path, vault: Vault, read_only: bool, url: str) -> None:
-    loader, commands, _ = make(tmp_path)
-    await declare(loader, {'auth': 'oauth', 'read_only': read_only})
-    capability = only(loader)
-    assert only(loader).client is not capability.client, 'each run connects afresh, so a logout drops cached tokens'
+    loader, commands, output = make(tmp_path)
+    with anyio.fail_after(5):
+        await declare(loader, {'auth': 'oauth', 'read_only': read_only})
+        assert await for_run(loader) is None, 'no tools, and no browser, until signed in'
+    assert output.getvalue().count('Not signed in to Linear. Run /linear login to sign in.') == 1
+    assert SignIn.urls == []
+    assert await run(commands, '/linear') == 'Not signed in to Linear. Run /linear login to sign in.'
+    assert await run(commands, '/linear login') == 'Signed in to Linear.'
+    assert SignIn.urls == [url]
+    assert await run(commands, '/linear status') == 'Signed in to Linear.'
+
+    capability = await connected(loader)
+    assert (await connected(loader)).client is not capability.client, 'each run connects afresh'
     assert not capability.read_only, 'the URL carries read_only, not tool annotations'
     client = capability.client
     assert isinstance(client, Client)
@@ -319,12 +426,11 @@ async def test_oauth_signs_in_with_keyring_tokens(tmp_path: Path, vault: Vault, 
     assert transport.httpx_client_factory is http_client, 'redirects stay off, as for /mcp servers'
     assert isinstance(transport.auth, OAuth)
 
-    await TokenStore(TOKEN_ACCOUNT).put('x', {'access_token': 'a'}, collection='mcp-oauth-token')
-    assert TokenStore(TOKEN_ACCOUNT).signed_in()
-    with pytest.raises(ValueError, match='Usage: /linear logout'):
-        await run(commands, '/linear')
-    assert (await run(commands, '/linear logout')).startswith('Signed out of Linear.')
+    with pytest.raises(ValueError, match=r'Usage: /linear \[login \| logout \| status\]'):
+        await run(commands, '/linear other')
+    assert await run(commands, '/linear logout') == 'Signed out of Linear. Run /linear login to sign in again.'
     assert stored_accounts() == set()
+    assert await for_run(loader) is None
 
     await loader.disable('linear')
     assert 'linear' not in {command.name for command in commands}

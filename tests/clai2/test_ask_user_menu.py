@@ -106,6 +106,25 @@ def test_multi_select_enter_toggles_and_done_submits() -> None:
     assert menu.choose('3') == ('api.py', 'db.py')
 
 
+def test_question_is_pinned_between_title_and_choices() -> None:
+    menu = QuestionMenu(question=APPROACH, position=1, total=1)
+    rows = [Text.from_ansi(row).plain for row in menu.frame(width=80, height=24)]
+    assert rows[:3] == ['Approach', 'How should we do it?', '> 1. Refactor - Rewrite the module']
+    menu.choose('3')
+    rows = [Text.from_ansi(row).plain for row in menu.frame(width=80, height=24)]
+    assert rows[:2] == ['Approach: Other (type answer)', 'How should we do it?']
+
+
+def test_long_question_is_cut_so_choices_stay_visible() -> None:
+    question = APPROACH.model_copy(update={'question': 'word ' * 200})
+    menu = QuestionMenu(question=question, position=1, total=1)
+    rows = [Text.from_ansi(row).plain for row in menu.frame(width=40, height=24)]
+    assert len(rows) <= 12
+    assert rows[5].endswith('…')
+    assert rows[6:9] == ['> 1. Refactor - Rewrite the module', '  2. Patch', '  3. Other (type answer)']
+    assert all(cell_len(row) <= 40 for row in rows)
+
+
 def test_inline_frame_shows_context_selection_and_navigation() -> None:
     menu = QuestionMenu(question=TARGETS, position=1, total=1)
     menu.choose('1')
@@ -310,14 +329,15 @@ async def test_declining_reaches_the_model_through_the_plugin() -> None:
 
 async def test_a_delegated_task_names_itself_before_asking() -> None:
     """The user did not prompt a child task, so its question first says which task is asking."""
-    answers = iter([('Patch',)])
+    titles: list[str] = []
     output = io.StringIO()
+
+    def answer(menu: QuestionMenu) -> tuple[str, ...]:
+        titles.append(menu.title)
+        return ('Patch',)
+
     capabilities: list[AbstractCapability[object]] = [
-        AskUser(
-            answerer=TerminalAnswerer(
-                full_screen=ScreenLog(), console=Console(file=output), runner=lambda menu: next(answers)
-            )
-        )
+        AskUser(answerer=TerminalAnswerer(full_screen=ScreenLog(), console=Console(file=output), runner=answer))
     ]
 
     async def child(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -345,6 +365,8 @@ async def test_a_delegated_task_names_itself_before_asking() -> None:
     (record,) = owner.records.values()
     assert record.output == 'child done'
     assert output.getvalue() == f'Task [{record.id[:8]}] requests your input\n'
+    # The pinned title names the task too, since streamed output can push that line away.
+    assert titles == [f'Task [{record.id[:8]}]: Approach']
 
 
 async def test_default_runner_reuses_editor_surface(question_pipe: PipeInput) -> None:
@@ -453,7 +475,7 @@ def test_option_description_preserves_explicit_line_breaks() -> None:
     )
     menu = QuestionMenu(question=question, position=1, total=1)
     rows = [Text.from_ansi(row).plain for row in menu.frame(width=80, height=24)]
-    assert rows[1:4] == ['> 1. First - First step', '  ', '  Second step']
+    assert rows[1:5] == ['Which sequence?', '> 1. First - First step', '  ', '  Second step']
 
 
 def test_wide_characters_wrap_without_losing_choice_text() -> None:
@@ -488,6 +510,45 @@ def test_custom_answer_editing(question: Question, shortcut: str) -> None:
     assert 'Other (type answer)' in ''.join(menu.frame(width=80, height=24))
 
 
+@pytest.mark.parametrize('question', [APPROACH, TARGETS])
+def test_typing_on_highlighted_other_starts_the_answer(question: Question) -> None:
+    menu = QuestionMenu(question=question, position=1, total=1)
+    menu.choose('up')
+    assert 'type your answer' in menu.hint
+    # Digits are text here, not shortcuts, so an answer may start with one.
+    for key in ('2', ' ', 'f', 'i', 'l', 'e', 's'):
+        assert menu.choose(key) is None
+    assert menu.editing_custom
+    assert menu.selected == set()
+    assert menu.choose('enter') == '2 files'
+
+
+def test_paste_on_highlighted_other_starts_the_answer() -> None:
+    menu = QuestionMenu(question=APPROACH, position=1, total=1)
+    menu.choose('up')
+    assert menu.choose(Paste(text='first\nsecond')) is None
+    assert menu.editing_custom
+    assert menu.choose('enter') == 'first\nsecond'
+
+
+def test_typing_resumes_the_draft_after_escape() -> None:
+    menu = QuestionMenu(question=APPROACH, position=1, total=1)
+    menu.choose('3')
+    menu.choose('a')
+    menu.choose('escape')
+    assert not menu.editing_custom
+    menu.choose('b')
+    assert menu.choose('enter') == 'ab'
+
+
+def test_typing_elsewhere_does_not_start_the_answer() -> None:
+    menu = QuestionMenu(question=APPROACH, position=1, total=1)
+    assert menu.choose('x') is None
+    assert not menu.editing_custom
+    assert 'number/Enter select' in menu.hint
+    assert menu.choose('enter') == ('Refactor',)
+
+
 def test_custom_back_preserves_picks_and_draft() -> None:
     menu = QuestionMenu(question=TARGETS, position=1, total=1)
     menu.choose('1')
@@ -496,6 +557,7 @@ def test_custom_back_preserves_picks_and_draft() -> None:
     menu.choose('escape')
     assert not menu.editing_custom
     assert menu.selected == {0}
+    menu.choose('up')
     assert menu.choose('3') == ('api.py',)
     menu.choose('4')
     assert menu.choose('enter') == 'x'
@@ -505,7 +567,7 @@ def test_custom_back_preserves_picks_and_draft() -> None:
     'keys, expected',
     [
         (['3', 'x', 'enter'], 'x'),
-        (['3', 'x', 'escape', '2'], ('Patch',)),
+        (['3', 'x', 'escape', 'up', '2'], ('Patch',)),
         (['3', 'escape', 'escape'], None),
         (['3', 'ctrl-c'], None),
     ],
@@ -519,6 +581,15 @@ def test_custom_inline_lifecycle(keys: list[str], expected: tuple[str, ...] | st
     assert LEAVE not in output.getvalue()
     assert 'Previous conversation' in output.getvalue()
     assert MODES_OFF in output.getvalue(), 'input modes return to the editor, the screen stays'
+
+
+async def test_typing_on_highlighted_other_through_the_terminal(question_pipe: PipeInput) -> None:
+    # Up arrow wraps to `Other`; the answer is typed straight away, with no Enter to open it.
+    question_pipe.send_text('\x1b[A2 files\r')
+    response = await TerminalAnswerer(full_screen=ScreenLog(), console=Console(file=io.StringIO()))(
+        AskUserRequest(questions=(APPROACH,))
+    )
+    assert response.answers == (AskUserAnswer(header='Approach', custom_answer='2 files'),)
 
 
 @pytest.mark.parametrize('enter', ['\r', '\n'])
@@ -627,6 +698,38 @@ async def test_custom_decoder_cancellation_detaches_before_editor_resumes(
                 )
             assert scope.cancelled_caught
     assert screen.events == ['taken', 'attached', 'detached', 'released']
+
+
+def test_output_streamed_while_answering_stays_above_the_pinned_question() -> None:
+    """A delegated task's question once scrolled away under the parent's streamed thinking and tool calls."""
+    terminal = SurfaceTerminal(width=80, height=24)
+    surface = PromptSurface(output=terminal, size=lambda: (80, 24))
+    surface.write('Earlier conversation\n')
+    console = Console(file=surface, width=80, height=24, color_system=None)
+    seen: list[list[str]] = []
+
+    def keys() -> Generator[str]:
+        for index in range(40):
+            surface.write(f'streamed {index}\n')
+        yield ''
+        seen.append(terminal.lines())
+        yield '2'
+
+    menu = QuestionMenu(question=APPROACH, position=1, total=1)
+    assert menu.run(console=console, key_source=keys().__next__) == ('Patch',)
+    (screen,) = seen
+    assert screen[-6:] == [
+        'Approach',
+        'How should we do it?',
+        '> 1. Refactor - Rewrite the module',
+        '  2. Patch',
+        '  3. Other (type answer)',
+        'Up/Down move - number/Enter select - Esc decline',
+    ]
+    assert screen.index('streamed 39') < screen.index('Approach')
+    assert screen.count('How should we do it?') == 1
+    # Once answered, the transcript records the question after what streamed meanwhile.
+    assert [line for line in terminal.lines() if line][-2:] == ['streamed 39', 'How should we do it?']
 
 
 async def test_wheel_and_page_keys_scroll_the_transcript_while_answering(question_pipe: PipeInput) -> None:
