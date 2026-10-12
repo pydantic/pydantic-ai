@@ -21,6 +21,7 @@ an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 | Get human approval for a whole tool | core `requires_approval=True` (core skill) |
 | Detect indirect prompt injection in emails/web pages returned by tools | `PromptInjectionDefender` |
 | Ask a second model whether each selected tool call should run | `ToolCallJudge(model, question=..., tools=...)` |
+| Let a second model approve low-risk calls that need approval, and ask a person about the rest | `ApprovalReviewer(model, question=..., tools=...)` |
 | Cap USD or tokens per day/month/run, per tenant, across workers | `SpendLimits(budgets=[Budget(...)])` |
 | Cap tokens/cost for one run only | core `UsageLimits` (no harness capability needed) |
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
@@ -282,6 +283,47 @@ Gotchas:
 - Judgements are durable operations under Temporal, DBOS, and Prefect. Give every judge on a
   durable-capable agent a distinct explicit `id`; ordinary runs do not require one.
 
+## ApprovalReviewer
+
+Answers approval requests before a person sees them. For each call to a selected tool that needs
+approval (`requires_approval=True` or a raised `ApprovalRequired`), a second model answers one yes/no
+risk question: `no` approves the call and it runs in the same run step; `yes`, `unsure`, a model
+failure, or a budget that cannot fit the review leaves the call for the person.
+
+```python {test="skip"}
+from pydantic_ai import Agent, DeferredToolRequests
+
+from pydantic_ai_harness import ApprovalReviewer
+
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    output_type=[str, DeferredToolRequests],
+    capabilities=[
+        ApprovalReviewer(
+            'anthropic:claude-haiku-4-5',
+            question='Could this call destroy data, spend money, or expose secrets?',
+            tools=['run_shell'],
+        )
+    ],
+)
+```
+
+Parameters: the reviewer `model` is positional; `question` is required; `tools='all'` accepts the
+standard `ToolSelector` forms; `include_conversation=False`; `conversation_window=4_000`; `on_review`
+receives an `ApprovalReview`. The review type is in `pydantic_ai_harness.approval_reviewer`.
+
+Gotchas:
+
+- It only approves. It never denies or runs a call, and calls that do not need approval are not
+  reviewed. Add `ToolCallJudge` to block calls; the judge still runs on a call the reviewer approved.
+- It is implemented with the `handle_deferred_tool_calls` hook and ordered before
+  `HandleDeferredToolCalls`, so a human handler only receives what the reviewer left. Without a
+  handler, the rest surface as `DeferredToolRequests` output.
+- Reviews run one at a time per batch, count against the outer run's `usage` and `usage_limits`,
+  and are durable operations under Temporal, DBOS, and Prefect (give the reviewer an explicit `id`).
+- Reviewed arguments leave the process for the reviewer provider, including calls it leaves for the
+  person. This is a model-based filter, not an authorization boundary.
+
 ## SpendLimits
 
 Prices each model response via `ModelResponse.cost()` (genai-prices), adds it to every configured
@@ -504,6 +546,7 @@ not get the built-in judge instructions, so its `instructions` must describe the
 - https://pydantic.dev/docs/ai/harness/guardrails/
 - https://pydantic.dev/docs/ai/harness/prompt-injection-defender/
 - https://pydantic.dev/docs/ai/harness/tool-call-judge/
+- https://pydantic.dev/docs/ai/harness/approval-reviewer/
 - https://pydantic.dev/docs/ai/harness/spend/
 - https://pydantic.dev/docs/ai/harness/ask-user/
 - https://pydantic.dev/docs/ai/harness/system-reminders/
