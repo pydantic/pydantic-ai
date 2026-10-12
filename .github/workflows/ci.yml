@@ -1814,8 +1814,6 @@ jobs:
       GIT_CONFIG_COUNT: '0'
       GIT_CONFIG_KEY_0: ''
       GIT_CONFIG_VALUE_0: ''
-    outputs:
-      version: ${{ steps.engine.outputs.version }}
     steps:
       # Consumers compile the definition from the default branch, which may have moved past the tag.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -1830,7 +1828,6 @@ jobs:
       - id: engine
         run: |
           version=$(uv run --script src/pydantic_ai_harness/scripts/gh_aw_engine_version.py)
-          echo "version=$version" >> "$GITHUB_OUTPUT"
 
   # `src/pydantic_ai_harness/gh-aw/pydantic.md` pins the `pydantic-ai-harness` release a generated
   # gh-aw workflow installs, and consumers compile the definition straight from the default branch.
