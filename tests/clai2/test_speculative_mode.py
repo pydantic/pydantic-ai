@@ -15,7 +15,16 @@ from rich.console import Console
 
 from pydantic_ai import Agent, AgentRunResultEvent, ModelRetry, PartStartEvent, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, DynamicCapability, LocalWorkspace
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -28,7 +37,8 @@ from pydantic_ai_harness.code_mode import (
 )
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_clai2 import StreamRenderer
+from pydantic_clai2 import Session, StreamRenderer
+from pydantic_clai2._app import create_stock_agent
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
@@ -56,7 +66,7 @@ def streamed(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse]) 
                 assert isinstance(part, ToolCallPart)
                 yield {index: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
 
-    return FunctionModel(stream_function=stream)
+    return FunctionModel(respond, stream_function=stream)
 
 
 def fold_agent(model: FunctionModel, counters: SpeculationCounters, root: Path) -> Agent[None, str]:
@@ -73,9 +83,7 @@ def fold_agent(model: FunctionModel, counters: SpeculationCounters, root: Path) 
 
 def test_switch_supplies_the_sandbox_capabilities(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
-    context = CommandContext(
-        settings=store.load(), store=store, clear_history=lambda: None, apply_setting=lambda key, settings: None
-    )
+    context = CommandContext(settings=store.load(), store=store, apply_setting=lambda key, settings: None)
     switch = Speculation(context=context, console=Console(file=io.StringIO()))
     switch.toggle()
     assert [type(capability).__name__ for capability in switch.capabilities([])] == [
@@ -84,6 +92,41 @@ def test_switch_supplies_the_sandbox_capabilities(tmp_path: Path) -> None:
         'SpeculativeExecution',
         'ShowSandboxCalls',
     ]
+
+
+async def test_stock_delegates_keep_speculative_plugins_and_workspace(tmp_path: Path) -> None:
+    (tmp_path / 'note.txt').write_text('delegated workspace content')
+    prompts: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert {tool.name for tool in info.function_tools} == {'run_code', 'write_file', 'edit_file'}
+        assert guidance('read-only').strip() in (info.instructions or '')
+        if len(messages) == 1:
+            [request] = messages
+            assert isinstance(request, ModelRequest)
+            [part] = request.parts
+            assert isinstance(part, UserPromptPart) and isinstance(part.content, str)
+            prompt = part.content
+            prompts.append(prompt)
+            code = (
+                'await delegate_task(agent_name="self", task="child task")'
+                if prompt == 'parent task'
+                else 'await read_file(path="note.txt")'
+            )
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+        returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        assert any('delegated workspace content' in str(part.content) for part in returns)
+        return ModelResponse(parts=[TextPart('delegated workspace content')])
+
+    coder = Coder[None](repo_context=False)
+    session = Session(
+        create_stock_agent(streamed(respond)),
+        deps=None,
+        workspace=tmp_path,
+        plugins=[coder, *speculative_capabilities(SpeculationCounters(), (coder,))],
+    )
+    assert (await session.prompt('parent task')).output == 'delegated workspace content'
+    assert prompts == ['parent task', 'child task']
 
 
 class TestFold:
@@ -541,3 +584,51 @@ class TestSandboxCallDisplay:
         assert await show.wrap_tool_execute(context(), call=call, tool_def=tool_def, args={}, handler=late) == 'late'
         # Nothing was held, so the claim reports nothing; emitting would fail, as this context has no stream.
         await show.on_event(context(), event=claimed(ready=True, elapsed_ms=1, launch_id=call.tool_call_id))
+
+
+async def test_guidance_mentions_raw_triple_quoted_multiline_shell_commands(tmp_path: Path) -> None:
+    instructions: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.instructions is not None
+        instructions.append(info.instructions)
+        return ModelResponse(parts=[TextPart('done')])
+
+    await fold_agent(streamed(respond), SpeculationCounters(), tmp_path).run('hi')
+    [instruction] = instructions
+    assert 'raw triple-quoted' in instruction
+    assert 'shell(command=' in instruction
+
+
+async def test_run_code_multiline_shell_command_keyword_raw_string_runs(tmp_path: Path) -> None:
+    code = "out = await shell(command=r'''echo one\necho \"it's fine\"\necho two''')\nout"
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+    coder = Coder(repo_context=False)
+    agent: Agent[None, str] = Agent(
+        streamed(respond),
+        capabilities=[
+            coder,
+            *speculative_capabilities(SpeculationCounters(), (coder,)),
+            LocalWorkspace(tmp_path),
+        ],
+    )
+    result = await agent.run('run the multiline shell command')
+    assert result.output == 'done'
+    messages = result.all_messages()
+    tool_returns = [
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+    ]
+    assert len(tool_returns) == 1
+    content = str(tool_returns[0].content)
+    assert 'one' in content
+    assert "it's fine" in content
+    assert 'two' in content
+    assert not any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)

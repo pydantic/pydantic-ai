@@ -13,6 +13,9 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.github_copilot import GitHubCopilotModel
 from pydantic_ai.providers.github_copilot import GitHubCopilotCredentials, GitHubCopilotOAuthFlow, GitHubCopilotProvider
 from pydantic_clai2.config.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.models.profiles import parse_model
+
+ACCOUNT = 'github-copilot'
 
 
 class Connection(BaseModel):
@@ -22,8 +25,11 @@ class Connection(BaseModel):
     issued_at: float = Field(ge=0, allow_inf_nan=False)
 
 
-async def login(*, console: Console) -> str:
-    """Display core's device challenge and save only a completed authorization."""
+async def login(*, console: Console, account: str = ACCOUNT) -> str:
+    """Display core's device challenge and save only a completed authorization.
+
+    `account` is `github-copilot` for the default profile, or `github-copilot@PROFILE`.
+    """
     client_id = os.getenv('GITHUB_COPILOT_CLIENT_ID', '').strip() or 'Iv1.b507a08c87ecfe98'
     flow = GitHubCopilotOAuthFlow(client_id=client_id, scope='read:user')
     authorization = await flow.start()
@@ -32,30 +38,32 @@ async def login(*, console: Console) -> str:
     console.print('Approve only the code shown here. Ctrl-C cancels. You can open the link on another device.')
     credentials = await flow.wait_for_authorization()
     connection = Connection(credentials=credentials, issued_at=time.time())
-    await to_thread.run_sync(
-        lambda: save_codex_credentials(account='github-copilot', value=connection.model_dump_json())
-    )
-    path = credentials_path(account='github-copilot')
+    await to_thread.run_sync(lambda: save_codex_credentials(account=account, value=connection.model_dump_json()))
+    path = credentials_path(account=account)
     storage = (
         f'No OS keyring is available; credentials are saved in plaintext at {path}.'
         if path.exists()
         else 'Credentials saved in the OS credential store.'
     )
-    return f'GitHub login saved. {storage} Use /add_model > github-copilot to check Copilot access and choose a model.'
+    if account != ACCOUNT:
+        return f'GitHub login saved as {account}. {storage} Use {account}:MODEL.'
+    return f'GitHub login saved. {storage} Use /model add > github-copilot to check Copilot access and choose a model.'
 
 
-def token() -> str:
-    """Prefer the saved login; retain Copilot-specific environment tokens when no login exists."""
-    raw = load_codex_credentials(account='github-copilot')
+def token(account: str = ACCOUNT) -> str:
+    """Prefer the saved login; the default profile also takes Copilot-specific environment tokens."""
+    raw = load_codex_credentials(account=account)
     if raw is not None:
         try:
             connection = Connection.model_validate_json(raw)
         except ValidationError:
-            raise UserError('Stored Copilot credentials are invalid. Run /login github-copilot.') from None
+            raise UserError(f'Stored Copilot credentials are invalid. Run /login {account}.') from None
         lifetime = connection.credentials.expires_in
         if lifetime is not None and time.time() >= connection.issued_at + lifetime:
-            raise UserError('Copilot credentials expired. Run /login github-copilot.')
+            raise UserError(f'Copilot credentials expired. Run /login {account}.')
         return connection.credentials.access_token
+    if account != ACCOUNT:
+        raise UserError(f'Copilot is not connected for this profile. Run /login {account}.')
     for name in ('GITHUB_COPILOT_API_KEY', 'GITHUB_COPILOT_API_TOKEN', 'COPILOT_GITHUB_TOKEN'):
         if value := os.getenv(name):
             return value
@@ -63,8 +71,9 @@ def token() -> str:
 
 
 def model(name: str) -> GitHubCopilotModel:
-    """Use core's Copilot model profiles and request semantics."""
-    return GitHubCopilotModel(name.removeprefix('github-copilot:'), provider=GitHubCopilotProvider(api_key=token()))
+    """Use core's Copilot model profiles and request semantics, with the profile's login."""
+    ref = parse_model(name)
+    return GitHubCopilotModel(ref.name, provider=GitHubCopilotProvider(api_key=token(ref.account)))
 
 
 class ServedModel(BaseModel):

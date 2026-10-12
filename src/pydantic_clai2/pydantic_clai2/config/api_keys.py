@@ -1,12 +1,13 @@
 """Named API keys and a shared, name-only picker for credential prompts."""
 
-import asyncio
 import json
 import re
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
+from functools import partial
 from typing import Protocol
 
+from anyio import to_thread
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, TypeAdapter, ValidationError
 from termflow.tui import MenuBuilder, MenuItem
@@ -18,8 +19,10 @@ from pydantic_clai2.config.credential_store import (
     credentials_path,
     delete_credentials,
     load_codex_credentials,
+    profile_accounts,
     save_codex_credentials,
 )
+from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
@@ -69,14 +72,19 @@ def save_key_connection(*, account: str, token: SecretStr | KeyReference, value:
     with key_transaction():
         if isinstance(token, KeyReference) and token.name not in _load_keys():
             raise UserError(
-                f'The selected API key no longer exists. Select a saved key again through {_KEY_CONSUMERS[account]}.'
+                f'The selected API key no longer exists. Select a saved key again through {_setup(account)}.'
             )
         save_codex_credentials(account=account, value=value)
 
 
 def forget_connection(*, account: str) -> None:
-    """Drop a saved connection, and with it any key reference it held; the keys themselves stay."""
-    with key_transaction():
+    """Drop a saved connection, and with it any key reference it held; the keys themselves stay.
+
+    The account's own lock is held too, so a refresh in flight cannot save the login back afterwards;
+    see `replace_credentials`.
+    """
+    busy = f'Another CLAI is updating the {account} login. Try again.'
+    with key_transaction(), credential_lock(account=account, busy=busy):
         delete_credentials(account=account)
 
 
@@ -136,8 +144,10 @@ def save_key(*, name: str, value: str, replace: bool = True) -> str:
         keys = _load_keys()
         if not replace and name in keys:
             raise KeyExistsError(f'{name} is already saved.')
+        replaced = name in keys
         keys[name] = SecretStr(value)
         _save_keys(keys=keys)
+    telemetry.record('key saved', key_name=name, replaced=replaced)
     path = credentials_path(account='api-keys')
     if path.is_file():
         return f'Saved {name}. No OS keyring is available; keys are stored in plaintext at {path}.'
@@ -151,8 +161,8 @@ def _save_keys(*, keys: dict[str, SecretStr]) -> None:
 
 
 _KEY_CONSUMERS = {
-    'vllm': '/add_model',
-    'openrouter': '/add_model',
+    'vllm': '/model add',
+    'openrouter': '/model add',
     'google-workspace': '/google_workspace',
     'pylon': '/pylon',
     'ordinal': '/ordinal',
@@ -162,7 +172,14 @@ _KEY_CONSUMERS = {
     'grain': '/grain key',
     'linear': '/plugins configure linear',
 }
-"""Credential-store accounts that may reference a saved key, and the command that reconfigures each."""
+"""Credential-store accounts that may reference a saved key, and the command that reconfigures each.
+
+Auth profiles (`PROVIDER@PROFILE` accounts) may too; `/login PROVIDER@PROFILE` reconfigures them.
+"""
+
+
+def _setup(account: str) -> str:
+    return _KEY_CONSUMERS.get(account, f'/login {account}')
 
 
 class _Credential(BaseModel):
@@ -172,7 +189,8 @@ class _Credential(BaseModel):
 def key_users(*, name: str) -> list[str]:
     """Find saved provider and plugin references without exposing their inline credentials."""
     users: list[str] = []
-    for account, command in _KEY_CONSUMERS.items():
+    for account in [*_KEY_CONSUMERS, *profile_accounts()]:
+        command = _setup(account)
         raw = load_codex_credentials(account=account)
         if raw is not None:
             try:
@@ -200,6 +218,7 @@ def rename_key(*, name: str, new_name: str) -> str:
             raise ValueError(f'Key is used by {", ".join(users)}. Reconfigure those connections before renaming.')
         keys[new_name] = keys.pop(name)
         _save_keys(keys=keys)
+    telemetry.record('key renamed', key_name=name, new_key_name=new_name)
     return f'Renamed {name} to {new_name}.'
 
 
@@ -209,6 +228,7 @@ def delete_key(*, name: str) -> str:
         keys = _load_keys()
         keys.pop(name, None)
         _save_keys(keys=keys)
+    telemetry.record('key deleted', key_name=name)
     return f'Deleted {name}. Connections referencing it can no longer authenticate.'
 
 
@@ -219,7 +239,7 @@ async def set_api_key(*, args: list[str]) -> str:
     prompt: PromptSession[str] = PromptSession()
     try:
         name = normalize_name(name=await prompt.prompt_async('API key name (automatically uppercased): '))
-        keys = await asyncio.to_thread(load_keys)
+        keys = await to_thread.run_sync(load_keys, abandon_on_cancel=True)
         if name in keys:
             answer = await prompt.prompt_async(f'Replace {name}? [y/N]: ')
             if answer.strip().lower() != 'y':
@@ -227,7 +247,7 @@ async def set_api_key(*, args: list[str]) -> str:
         value = await prompt.prompt_async(f'API key value for {name}: ', is_password=True)
     except (EOFError, KeyboardInterrupt):
         return 'API key entry cancelled.'
-    return await asyncio.to_thread(save_key, name=name, value=value)
+    return await to_thread.run_sync(partial(save_key, name=name, value=value), abandon_on_cancel=True)
 
 
 def build_key_menu(*, names: list[str], label: str, optional: bool) -> Menu:
@@ -250,10 +270,26 @@ def build_key_menu(*, names: list[str], label: str, optional: bool) -> Menu:
 
 async def prompt_api_key(*, prompt: SecretPrompt, label: str, optional: bool = False) -> str | KeyReference | None:
     """Return a saved-key reference or a masked inline value; None means cancellation."""
-    keys = await asyncio.to_thread(load_keys)
+    with telemetry.span('key prompt', label=label) as span:
+        choice = await _prompt_api_key(prompt=prompt, label=label, optional=optional)
+        span.set('answer', _answer(choice))
+        return choice
+
+
+def _answer(choice: str | KeyReference | None) -> str:
+    """What kind of answer the key prompt got; never the key's value."""
+    if choice is None:
+        return 'cancelled'
+    if isinstance(choice, KeyReference):
+        return 'saved key'
+    return 'typed' if choice else 'no key'
+
+
+async def _prompt_api_key(*, prompt: SecretPrompt, label: str, optional: bool) -> str | KeyReference | None:
+    keys = await to_thread.run_sync(load_keys, abandon_on_cancel=True)
     if keys:
         menu = build_key_menu(names=list(keys), label=label, optional=optional)
-        result = await run_worker(menu.run)
+        result = await run_worker(lambda: menu.run())
         if result.cancelled or result.item is None:
             return None
         selected = result.item.value

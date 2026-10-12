@@ -389,6 +389,23 @@ async def test_shell_realpath_leaves_a_symlink_loop_unresolved(tmp_path: Path) -
         assert await workspace.realpath('loop1/q') == str(tmp_path / 'loop1' / 'q')
 
 
+async def test_shell_realpath_raises_on_a_link_readlink_cannot_read(tmp_path: Path) -> None:
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    for tool in ('base64', 'wc'):
+        found = shutil.which(tool)
+        assert found is not None
+        (bin_dir / tool).symlink_to(found)
+    root = tmp_path / 'root'
+    root.mkdir()
+    (root / 'escape').symlink_to(tmp_path)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(root, env={'PATH': str(bin_dir)})))
+
+    assert await workspace.realpath('plain/file.txt') == str(root / 'plain' / 'file.txt')
+    with pytest.raises(WorkspaceError, match='readlink'):
+        await workspace.realpath('escape/secret.txt')
+
+
 async def test_realpath_only_normalizes_on_a_filesystem_only_backend() -> None:
     workspace = Workspace(FilesystemOnlyWorkspaceBackend(FakeWorkspace('files-only')))
 
@@ -1406,6 +1423,38 @@ async def test_streamed_result_keeps_the_workspace_identity() -> None:
     async with agent.run_stream('go', workspace=workspace) as result:
         await result.get_output()
         assert result.workspace is workspace
+
+
+@pytest.mark.parametrize('consume', ['get_output', 'stream_text', 'stream_output', 'stream_response'])
+async def test_settled_streamed_result_keeps_the_workspace(tmp_path: Path, consume: str) -> None:
+    """Settling a TestModel stream preserves its usable, wrapped workspace without serializing it."""
+    (tmp_path / 'artifact.txt').write_text('streamed artifact')
+    workspace = ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+    agent = Agent(TestModel(custom_output_text='done'))
+
+    async with agent.run_stream('go', workspace=workspace) as streamed:
+        if consume == 'get_output':
+            await streamed.get_output()
+        elif consume == 'stream_text':
+            async for _ in streamed.stream_text(debounce_by=None):
+                pass
+        elif consume == 'stream_output':
+            async for _ in streamed.stream_output(debounce_by=None):
+                pass
+        else:
+            async for _ in streamed.stream_response(debounce_by=None):
+                pass
+        result = streamed.result
+
+    assert result.workspace is workspace
+    assert await result.workspace.read_text('artifact.txt') == 'streamed artifact'
+    with pytest.raises(WorkspaceReadOnlyError):
+        await result.workspace.write_text('artifact.txt', 'changed')
+
+    adapter = TypeAdapter(AgentRunResult[str])
+    reloaded = adapter.validate_json(adapter.dump_json(result))
+    assert reloaded.workspace.ref is None
+    assert reloaded.response.workspace_ref == workspace.ref
 
 
 def test_sync_streamed_result_keeps_the_workspace_identity() -> None:
