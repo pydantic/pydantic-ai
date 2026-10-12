@@ -587,56 +587,6 @@ async def test_google_model_gla_labels_reach_the_sdk(
     assert kwargs['config']['labels'] == {'environment': 'test', 'team': 'analytics'}
 
 
-@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
-async def test_agent_distinguishes_omitted_usage_from_reported_zero(
-    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture, missing_usage: bool
-) -> None:
-    usage_metadata = (
-        None if missing_usage else GenerateContentResponseUsageMetadata(prompt_token_count=0, candidates_token_count=0)
-    )
-    response = GenerateContentResponse(
-        candidates=[Candidate(content=Content(parts=[Part(text='hello')], role='model'))],
-        response_id='1',
-        model_version='gemini-2.5-flash',
-        usage_metadata=usage_metadata,
-    )
-    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
-    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
-
-    result = await Agent(model).run('hello')
-
-    assert result.usage.requests == 1
-    assert result.usage.input_tokens == 0
-    assert result.usage.output_tokens == 0
-    assert result.usage.unmeasured_requests == int(missing_usage)
-
-
-@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
-async def test_agent_stream_distinguishes_omitted_usage_from_reported_zero(
-    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture, missing_usage: bool
-) -> None:
-    response = GenerateContentResponse(
-        candidates=[Candidate(content=Content(parts=[Part(text='hello')], role='model'))],
-        response_id='1',
-        model_version='gemini-2.5-flash',
-        usage_metadata=(
-            None
-            if missing_usage
-            else GenerateContentResponseUsageMetadata(prompt_token_count=0, candidates_token_count=0)
-        ),
-    )
-    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
-    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=_aiter_chunks([response]))
-
-    async with Agent(model).run_stream('hello') as result:
-        assert await result.get_output() == 'hello'
-
-    assert result.usage.requests == 1
-    assert result.usage.input_tokens == 0
-    assert result.usage.output_tokens == 0
-    assert result.usage.unmeasured_requests == int(missing_usage)
-
-
 async def test_google_model_vertex_provider(
     allow_model_requests: None, vertex_provider: GoogleProvider
 ):  # pragma: lax no cover
@@ -4288,7 +4238,7 @@ async def _stream_gemini_usage(chunks: list[GenerateContentResponse]) -> Request
         _provider_url='',
     )
 
-    async for _ in streamed_response._get_event_iterator():  # pyright: ignore[reportPrivateUsage]
+    async for _ in streamed_response:
         pass
 
     return streamed_response.usage

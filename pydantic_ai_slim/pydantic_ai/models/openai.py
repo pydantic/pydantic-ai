@@ -4443,7 +4443,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                 # so we replace rather than increment to avoid double-counting.
                 cumulative = bool(self._model_settings and self._model_settings.get('openai_continuous_usage_stats'))
                 if chunk.usage is not None or not cumulative:
-                    self._add_usage(self._map_usage(chunk), reported=chunk.usage is not None, replace=cumulative)
+                    self._add_usage(self._map_usage(chunk), reported=chunk.usage is not None, cumulative=cumulative)
 
                 if chunk.id:  # pragma: no branch
                     self.provider_response_id = chunk.id

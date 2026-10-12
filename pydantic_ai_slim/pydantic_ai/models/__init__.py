@@ -14,6 +14,7 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
+from copy import copy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from difflib import get_close_matches
@@ -1265,6 +1266,12 @@ class StreamedResponse(ABC):
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _usage_received: bool | None = field(default=None, init=False)
+    """Whether the provider reported usage for this response.
+
+    `None` (the default) means the stream doesn't track this, so its usage is taken as is. A stream whose
+    provider can omit usage opts in by declaring this field with a `False` default and recording usage
+    through `_add_usage`. If such a stream completes without reporting any, `usage` counts it as an unmeasured
+    request."""
     _cancelled: bool = field(default=False, init=False)
     _finished: bool = field(default=False, init=False)
     _first_chunk_monotonic: float | None = field(default=None, init=False)
@@ -1477,11 +1484,12 @@ class StreamedResponse(ABC):
     @property
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
-        if self._usage_received is False:
+        # Usage usually arrives with the last event, so omission is only known once the stream has completed.
+        if self._usage_received is False and self._finished:
             return self._usage + RequestUsage(unmeasured_requests=1)
         return self._usage
 
-    def _add_usage(self, usage: RequestUsage, *, reported: bool, replace: bool = False) -> None:
+    def _add_usage(self, usage: RequestUsage, *, reported: bool, cumulative: bool = False) -> None:
         """Record the usage mapped from one stream event.
 
         Whether the response omitted usage is decided once for the whole stream by `usage`, so the
@@ -1490,12 +1498,13 @@ class StreamedResponse(ABC):
         Args:
             usage: The usage mapped from the event.
             reported: Whether the event carried provider usage.
-            replace: Whether `usage` is cumulative and replaces the usage recorded so far, rather than adding to it.
+            cumulative: Whether `usage` is cumulative and replaces the usage recorded so far, rather than adding to it.
         """
+        usage = copy(usage)
         usage.unmeasured_requests = 0
         if reported:
             self._usage_received = True
-        self._usage = usage if replace else self._usage + usage
+        self._usage = usage if cumulative else self._usage + usage
 
     @property
     @abstractmethod

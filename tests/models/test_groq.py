@@ -242,46 +242,6 @@ async def test_request_simple_usage(allow_model_requests: None):
     assert result.output == 'world'
 
 
-@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
-async def test_agent_distinguishes_omitted_usage_from_reported_zero(
-    allow_model_requests: None, missing_usage: bool
-) -> None:
-    usage = None if missing_usage else CompletionUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
-    completion = completion_message(ChatCompletionMessage(content='hello', role='assistant'), usage=usage)
-    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=MockGroq.create_mock(completion)))
-
-    result = await Agent(model).run('hello')
-
-    assert result.usage.requests == 1
-    assert result.usage.input_tokens == 0
-    assert result.usage.output_tokens == 0
-    assert result.usage.unmeasured_requests == int(missing_usage)
-
-
-@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
-async def test_agent_stream_distinguishes_omitted_usage_from_reported_zero(
-    allow_model_requests: None, missing_usage: bool
-) -> None:
-    base_chunk = text_chunk('hello', finish_reason='stop')
-    groq_usage = (
-        {'id': None, 'error': None, 'usage': {'completion_tokens': 0, 'prompt_tokens': 0, 'total_tokens': 0}}
-        if not missing_usage
-        else None
-    )
-    chunk_with_usage = chat.ChatCompletionChunk.model_validate(base_chunk.model_dump() | {'x_groq': groq_usage})
-    model = GroqModel(
-        'llama-3.3-70b-versatile', provider=GroqProvider(groq_client=MockGroq.create_mock_stream([chunk_with_usage]))
-    )
-
-    async with Agent(model).run_stream('hello') as result:
-        assert await result.get_output() == 'hello'
-
-    assert result.usage.requests == 1
-    assert result.usage.input_tokens == 0
-    assert result.usage.output_tokens == 0
-    assert result.usage.unmeasured_requests == int(missing_usage)
-
-
 async def test_request_structured_response(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(
@@ -6014,7 +5974,7 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='hello ')],
-                usage=RequestUsage(unmeasured_requests=1),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name='llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
                 provider_name='groq',

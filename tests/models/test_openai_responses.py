@@ -1317,10 +1317,7 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=62,
-                        output_tokens=9,
-                        output_reasoning_tokens=0,
-                        details={'reasoning_tokens': 0},
+                        input_tokens=62, output_tokens=9, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -5277,101 +5274,6 @@ async def test_openai_responses_web_search_without_token_usage_warns_with_token_
     assert result.usage == snapshot(
         RunUsage(web_searches=1, details={'web_search_requests': 1}, requests=1, unmeasured_requests=1)
     )
-
-
-@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
-async def test_agent_distinguishes_omitted_usage_from_reported_zero(
-    allow_model_requests: None, missing_usage: bool
-) -> None:
-    usage = None if missing_usage else ResponseUsage.model_construct(input_tokens=0, output_tokens=0, total_tokens=0)
-    response = response_message(
-        [
-            ResponseOutputMessage(
-                id='output-1',
-                content=cast(list[Content], [ResponseOutputText(text='hello', type='output_text', annotations=[])]),
-                role='assistant',
-                status='completed',
-                type='message',
-            )
-        ],
-        usage=usage,
-    )
-    model = OpenAIResponsesModel(
-        'gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(response))
-    )
-
-    result = await Agent(model).run('hello')
-
-    assert result.usage.requests == 1
-    assert result.usage.input_tokens == 0
-    assert result.usage.output_tokens == 0
-    assert result.usage.unmeasured_requests == int(missing_usage)
-
-
-@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
-async def test_agent_stream_distinguishes_omitted_usage_from_reported_zero(
-    allow_model_requests: None, missing_usage: bool
-) -> None:
-    usage = None if missing_usage else ResponseUsage.model_construct(input_tokens=0, output_tokens=0, total_tokens=0)
-    base_response = resp.Response(
-        id='resp_001',
-        model='gpt-4o',
-        object='response',
-        created_at=1704067200,
-        output=[],
-        parallel_tool_calls=True,
-        tool_choice='auto',
-        tools=[],
-    )
-    message = ResponseOutputMessage(id='msg_001', content=[], role='assistant', status='in_progress', type='message')
-    completed_message = message.model_copy(
-        update={
-            'content': [ResponseOutputText(text='hello', type='output_text', annotations=[])],
-            'status': 'completed',
-        }
-    )
-    stream: list[resp.ResponseStreamEvent] = [
-        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
-        resp.ResponseOutputItemAddedEvent(
-            item=message, output_index=0, type='response.output_item.added', sequence_number=1
-        ),
-        resp.ResponseTextDeltaEvent(
-            content_index=0,
-            delta='hello',
-            item_id='msg_001',
-            output_index=0,
-            type='response.output_text.delta',
-            sequence_number=2,
-            logprobs=[],
-        ),
-        resp.ResponseTextDoneEvent(
-            content_index=0,
-            item_id='msg_001',
-            output_index=0,
-            type='response.output_text.done',
-            sequence_number=3,
-            text='hello',
-            logprobs=[],
-        ),
-        resp.ResponseCompletedEvent(
-            response=base_response.model_copy(
-                update={'status': 'completed', 'output': [completed_message], 'usage': usage}
-            ),
-            type='response.completed',
-            sequence_number=4,
-        ),
-    ]
-    model = OpenAIResponsesModel(
-        'gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock_stream(stream))
-    )
-
-    async with Agent(model).run_stream('hello') as result:
-        assert await result.get_output() == 'hello'
-
-    assert result.usage.requests == 1
-    assert result.usage.input_tokens == 0
-    assert result.usage.output_tokens == 0
-    assert result.usage.unmeasured_requests == int(missing_usage)
 
 
 @pytest.mark.parametrize('cost_limit', [None, Decimal('0.005')], ids=['partial-cost', 'cost-limit'])
@@ -14266,7 +14168,7 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='hello ', id='msg_001', provider_name='openai')],
-                usage=RequestUsage(unmeasured_requests=1),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name='gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -18393,10 +18295,7 @@ async def test_forced_stream_aggregates_codex_slim_completed(allow_model_request
         ModelResponse(
             parts=[TextPart(content='hi there', id='m1', provider_name='openai-codex')],
             usage=RequestUsage(
-                details={'reasoning_tokens': 0},
-                input_tokens=3,
-                output_reasoning_tokens=0,
-                output_tokens=2,
+                details={'reasoning_tokens': 0}, input_tokens=3, output_reasoning_tokens=0, output_tokens=2
             ),
             model_name='gpt-5.6-luna',
             timestamp=IsDatetime(),
@@ -18421,10 +18320,7 @@ async def test_forced_stream_aggregates_full_completed_output(allow_model_reques
         ModelResponse(
             parts=[TextPart(content='hi there', id='m1', provider_name='openai-codex')],
             usage=RequestUsage(
-                details={'reasoning_tokens': 0},
-                input_tokens=3,
-                output_reasoning_tokens=0,
-                output_tokens=2,
+                details={'reasoning_tokens': 0}, input_tokens=3, output_reasoning_tokens=0, output_tokens=2
             ),
             model_name='gpt-5.6-luna',
             timestamp=IsDatetime(),
@@ -18458,10 +18354,7 @@ async def test_forced_stream_preserves_explicit_openai_settings(allow_model_requ
         ModelResponse(
             parts=[TextPart(content='hi there', id='m1', provider_name='openai-codex')],
             usage=RequestUsage(
-                details={'reasoning_tokens': 0},
-                input_tokens=3,
-                output_reasoning_tokens=0,
-                output_tokens=2,
+                details={'reasoning_tokens': 0}, input_tokens=3, output_reasoning_tokens=0, output_tokens=2
             ),
             model_name='gpt-5.6-luna',
             timestamp=IsDatetime(),

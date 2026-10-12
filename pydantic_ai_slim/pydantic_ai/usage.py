@@ -603,6 +603,7 @@ class UsageLimits:
         Args:
             usage: The accumulated run usage to check.
             warn_if_cost_unavailable: Whether to warn when a `cost_limit` is set but no cost was calculated.
+                When some responses omitted usage information, `check_tokens` warns instead.
         """
         if warn_if_cost_unavailable:
             self._warn_if_cost_unavailable(usage)
@@ -610,10 +611,8 @@ class UsageLimits:
             raise UsageLimitExceeded(f'Exceeded the `cost_limit` of {self.cost_limit} (`usage.cost`={usage.cost!r})')
 
     def _warn_if_cost_unavailable(self, usage: RunUsage) -> None:
-        if usage.unmeasured_requests:
-            self._warn_if_usage_unavailable(usage)
-            return
-        if self.cost_limit is not None and usage.cost is None:
+        # Omitted usage is reported once, by `check_tokens`, which covers a `cost_limit` too.
+        if self.cost_limit is not None and usage.cost is None and not usage.unmeasured_requests:
             warnings.warn(
                 CostNotFoundWarning(
                     'A `cost_limit` is set but cannot be enforced because no cost was calculated for this run. '

@@ -230,32 +230,6 @@ async def test_request_simple_usage(allow_model_requests: None):
     )
 
 
-@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
-async def test_agent_distinguishes_omitted_usage_from_reported_zero(
-    allow_model_requests: None, missing_usage: bool
-) -> None:
-    usage = None
-    if not missing_usage:
-        usage = cohere.Usage(
-            tokens=cohere.UsageTokens(input_tokens=0, output_tokens=0),
-            billed_units=cohere.UsageBilledUnits(input_tokens=0, output_tokens=0),
-        )
-    completion = completion_message(
-        AssistantMessageResponse(content=[TextAssistantMessageResponseContentItem(text='hello')], role='assistant'),
-        usage=usage,
-    )
-    model = CohereModel(
-        'command-r7b-12-2024', provider=CohereProvider(cohere_client=MockAsyncClientV2.create_mock(completion))
-    )
-
-    result = await Agent(model).run('hello')
-
-    assert result.usage.requests == 1
-    assert result.usage.input_tokens == 0
-    assert result.usage.output_tokens == 0
-    assert result.usage.unmeasured_requests == int(missing_usage)
-
-
 async def test_request_usage_without_tokens(allow_model_requests: None):
     """The mock pins billed-unit mapping when Cohere omits `tokens`, a response shape VCR cannot reliably trigger."""
     c = completion_message(

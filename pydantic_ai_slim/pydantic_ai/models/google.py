@@ -1527,7 +1527,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 self._add_usage(
                     _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage),
                     reported=chunk.usage_metadata is not None,
-                    replace=True,
+                    cumulative=True,
                 )
                 # Grounding is counted from each chunk alone, and `web_searches` isn't carried forward like the token
                 # fields in `_usage_metadata_as_usage`: Gemini sends all grounding metadata once, on the final chunk,
