@@ -223,7 +223,7 @@ class DelegationTasks:
                 self.problems = saved.problems
                 for problem in saved.problems:
                     logging.getLogger(__name__).warning(
-                        'Skipping saved delegation task %s: %s', problem.path, problem.reason
+                        'Skipping saved delegation task %r: %s', str(problem.path), problem.reason
                     )
                 for record in saved.tasks.values():
                     if record.status == 'running':
