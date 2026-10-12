@@ -26,6 +26,7 @@ from pydantic_ai import (
     RetryPromptPart,
     RunContext,
     TextPart,
+    ToolApproved,
     ToolCallPart,
     ToolReturnPart,
     UsageLimitExceeded,
@@ -1263,6 +1264,59 @@ async def test_tool_call_counted_inside_another_keeps_its_reservation() -> None:
     await parent.run('Delegate', usage=usage, usage_limits=UsageLimits(tool_calls_limit=2))
     assert reserved_after_child == [1]
     assert usage.tool_calls == 2
+    assert reserved_tool_calls(usage) == 0
+
+
+async def test_tool_call_approved_with_override_args_is_released_once_counted() -> None:
+    """An approval's `override_args` replace the call part, but its reservation is still released when it's counted."""
+
+    def child_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('work', tool_call_id='work')])
+        return ModelResponse(parts=[TextPart('worked')])
+
+    child = Agent(FunctionModel(child_model))
+
+    @child.tool_plain
+    def work() -> str:
+        return 'done'
+
+    def parent_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('quick', {'value': 'original'}, tool_call_id='quick'),
+                    ToolCallPart('delegate', tool_call_id='delegate'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    parent = Agent(FunctionModel(parent_model), output_type=[str, DeferredToolRequests])
+
+    @parent.tool_plain(requires_approval=True)
+    def quick(value: str) -> str:
+        return value
+
+    @parent.tool(requires_approval=True)
+    async def delegate(ctx: RunContext[object]) -> str:
+        while not ctx.usage.tool_calls:  # start the delegate once `quick` is counted
+            await asyncio.sleep(0)
+        result = await child.run('Work', usage=ctx.usage, usage_limits=ctx.usage_limits)
+        return result.output
+
+    first = await parent.run('Go')
+    assert isinstance(first.output, DeferredToolRequests)
+    usage = RunUsage()
+    result = await parent.run(
+        message_history=first.all_messages(),
+        deferred_tool_results=DeferredToolResults(
+            approvals={'quick': ToolApproved(override_args={'value': 'overridden'}), 'delegate': True}
+        ),
+        usage=usage,
+        usage_limits=UsageLimits(tool_calls_limit=3),
+    )
+    assert result.output == 'done'
+    assert usage.tool_calls == 3
     assert reserved_tool_calls(usage) == 0
 
 

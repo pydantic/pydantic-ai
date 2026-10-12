@@ -17,7 +17,8 @@ reservations live here rather than on `RunUsage`, so the usage a run reports doe
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections import Counter
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -25,7 +26,12 @@ from dataclasses import dataclass
 from .messages import ToolCallPart
 from .usage import RunUsage
 
-__all__ = ('ToolCallReservation', 'release_counted_tool_call', 'reserved_tool_calls')
+__all__ = (
+    'ToolCallReservation',
+    'release_counted_tool_call',
+    'reserved_enclosing_tool_calls',
+    'reserved_tool_calls',
+)
 
 _reserved: dict[int, int] = {}
 """How many calls are reserved against each `RunUsage`, by `id`, while any are.
@@ -39,6 +45,14 @@ calls against it, and a reservation keeps its `RunUsage` alive, so the `id` can'
 class _RunningCall:
     reservation: ToolCallReservation
     call: ToolCallPart
+    enclosing: _RunningCall | None
+    """The reserved call this one runs inside of, if any, like a delegating call around a delegate's call."""
+    released: bool = False
+
+    def release(self) -> None:
+        if not self.released:
+            self.released = True
+            self.reservation.release(self.call.tool_call_id)
 
 
 _running_call: ContextVar[_RunningCall | None] = ContextVar('pydantic_ai.running_tool_call', default=None)
@@ -53,45 +67,60 @@ def reserved_tool_calls(usage: RunUsage) -> int:
     return _reserved.get(id(usage), 0)
 
 
-class ToolCallReservation:
-    """The calls of one approved batch that are still reserved against the batch's `RunUsage`."""
+def reserved_enclosing_tool_calls(usage: RunUsage) -> int:
+    """How many of the calls reserved against `usage` are running the current task, like the call delegating to it.
 
-    def __init__(self, usage: RunUsage, calls: Iterable[ToolCallPart]) -> None:
-        self._usage = usage
-        self._call_ids = {id(call) for call in calls}
-        _reserved[id(usage)] = reserved_tool_calls(usage) + len(self._call_ids)
+    Unlike other reserved calls, these stay reserved for as long as the current task runs.
+    """
+    enclosing: list[_RunningCall] = []
+    running = _running_call.get()
+    while running is not None:
+        enclosing.append(running)
+        running = running.enclosing
+    return sum(not call.released and call.reservation.usage is usage for call in enclosing)
+
+
+class ToolCallReservation:
+    """The calls of one approved batch that are still reserved against the batch's `RunUsage`.
+
+    Calls are held by `tool_call_id`, which outlives the `ToolCallPart` an approval's `override_args` replaces.
+    """
+
+    def __init__(self, usage: RunUsage, calls: Sequence[ToolCallPart]) -> None:
+        self.usage = usage
+        self._held = Counter(call.tool_call_id for call in calls)
+        _reserved[id(usage)] = reserved_tool_calls(usage) + len(calls)
 
     @contextmanager
-    def running(self, call: ToolCallPart) -> Iterator[None]:
+    def running(self, call: ToolCallPart) -> Generator[None]:
         """Execute `call`, releasing its reservation once it's counted, or at the latest once it's done.
 
         A call this reservation doesn't hold (one approved inline after the batch deferred it) runs as is.
         """
-        if id(call) not in self._call_ids:
+        if not self._held[call.tool_call_id]:
             yield
             return
-        token = _running_call.set(_RunningCall(self, call))
+        running = _RunningCall(self, call, enclosing=_running_call.get())
+        token = _running_call.set(running)
         try:
             yield
         finally:
             _running_call.reset(token)
-            self.release_call(call)
-
-    def release_call(self, call: ToolCallPart) -> None:
-        """Release `call`, if it's still reserved."""
-        self._release({id(call)})
+            running.release()
 
     def release_all(self) -> None:
         """Release every call still reserved, once the batch is done."""
-        self._release(self._call_ids)
+        for tool_call_id, count in list(self._held.items()):
+            self.release(tool_call_id, count)
 
-    def _release(self, call_ids: set[int]) -> None:
-        released = len(self._call_ids & call_ids)
-        if not released:
+    def release(self, tool_call_id: str, count: int = 1) -> None:
+        """Release up to `count` of the calls held under `tool_call_id`."""
+        count = min(count, self._held[tool_call_id])
+        if not count:
             return
-        self._call_ids = self._call_ids - call_ids
-        key = id(self._usage)
-        if remaining := _reserved[key] - released:
+        self._held[tool_call_id] -= count
+        key = id(self.usage)
+        if remaining := _reserved[key] - count:
             _reserved[key] = remaining
         else:
             del _reserved[key]
@@ -106,4 +135,4 @@ def release_counted_tool_call(call: ToolCallPart) -> None:
     """
     running = _running_call.get()
     if running is not None and running.call is call:
-        running.reservation.release_call(call)
+        running.release()
