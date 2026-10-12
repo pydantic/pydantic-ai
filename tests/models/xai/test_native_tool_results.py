@@ -35,8 +35,10 @@ with try_import() as imports_successful:
     from xai_sdk import chat as chat_types
     from xai_sdk.proto import chat_pb2, sample_pb2
 
-    from pydantic_ai.models.xai import XaiModel
+    from pydantic_ai.models.xai import XaiModel, XaiModelSettings
     from pydantic_ai.providers.xai import XaiProvider
+
+    from ..xai_proto_cassettes import get_sent_request_messages
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed')
 
@@ -68,8 +70,91 @@ def _accumulated() -> chat_types.Response:
     return chat_types.Response(proto, index=None)
 
 
+def _tool_turns(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The sent messages that carry a server-side call or its result, with each id replaced by whether it pairs."""
+    turns: list[dict[str, Any]] = []
+    for message in messages:
+        call_ids = [call['id'] for call in message.get('tool_calls', [])]
+        if not call_ids:
+            continue
+        turn: dict[str, Any] = {'role': message['role'], 'calls': len(call_ids)}
+        if 'tool_call_id' in message:
+            turn['paired'] = message['tool_call_id'] == call_ids[0]
+        if 'encrypted_content' in message:
+            turn['encrypted_content'] = True
+        turns.append(turn)
+    return turns
+
+
+# The recorded follow-up answers, which quote rows only the search result held.
+FOLLOW_UP_OUTPUTS: dict[bool, str] = {
+    False: """\
+1. [Python 3.15.0](/downloads/release/python-3150/) Oct. 9, 2026
+2. [Python 3.14.8](/downloads/release/python-3148/) Sept. 30, 2026
+3. [Python 3.14.7](/downloads/release/python-3147/) Aug. 5, 2026\
+""",
+    True: """\
+1. [Python 3.15.0](/downloads/release/python-3150/) Oct. 9, 2026 [Download](/downloads/release/python-3150/) [Release notes](https://docs.python.org/release/3.15.0/whatsnew/changelog.html)
+2. [Python 3.14.8](/downloads/release/python-3148/) Sept. 30, 2026 [Download](/downloads/release/python-3148/) [Release notes](https://docs.python.org/release/3.14.8/whatsnew/changelog.html)
+3. [Python 3.14.7](/downloads/release/python-3147/) Aug. 5, 2026 [Download](/downloads/release/python-3147/) [Release notes](https://docs.python.org/release/3.14.7/whatsnew/changelog.html)\
+""",
+}
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_xai_native_tool_result_replayed_paired(
+    allow_model_requests: None, xai_provider: XaiProvider, stream: bool
+):
+    """A web search result is stored on its return part, and the next turn sends it back as a tool turn paired with its call.
+
+    The follow-up asks for rows of the page that only the search result holds, so the recorded answer shows xAI
+    accepted the paired tool turn and read the result from it without searching again.
+    """
+    agent = Agent(
+        XaiModel(XAI_REASONING_MODEL, provider=xai_provider),
+        capabilities=[NativeTool(WebSearchTool())],
+        model_settings=XaiModelSettings(xai_include_encrypted_content=True),
+    )
+    prompt = 'Open python.org/downloads and tell me the latest Python release. One line.'
+    if stream:
+        async with agent.run_stream(prompt) as streamed:
+            await streamed.get_output()
+        history = streamed.all_messages()
+    else:
+        history = (await agent.run(prompt)).all_messages()
+
+    response = history[-1]
+    assert isinstance(response, ModelResponse)
+    return_parts = [part for part in response.parts if isinstance(part, NativeToolReturnPart)]
+    assert return_parts
+    assert all((part.provider_details or {}).get('encrypted_content') for part in return_parts)
+    # The result is no longer stored as reasoning: no thinking signature repeats a return part's result.
+    results = {(part.provider_details or {})['encrypted_content'] for part in return_parts}
+    assert not [part for part in response.parts if isinstance(part, ThinkingPart) and part.signature in results]
+
+    follow_up = await agent.run(
+        'Without searching or opening anything again, list the first three rows of the release table on that page '
+        '(version and release date), exactly as the page showed them.',
+        message_history=history,
+    )
+
+    follow_up_response = follow_up.all_messages()[-1]
+    assert isinstance(follow_up_response, ModelResponse)
+    assert not [part for part in follow_up_response.parts if isinstance(part, NativeToolCallPart)]
+    assert follow_up.output == FOLLOW_UP_OUTPUTS[stream]
+    assert _tool_turns(get_sent_request_messages(xai_provider.client)[-1]) == snapshot(
+        [
+            {'role': 'ROLE_ASSISTANT', 'calls': 1, 'encrypted_content': True},
+            {'role': 'ROLE_TOOL', 'calls': 1, 'paired': True, 'encrypted_content': True},
+        ]
+    )
+
+
 async def test_xai_streamed_tool_result_split_across_chunks(allow_model_requests: None):
-    """A tool result that arrives in pieces ends up whole on the return part, and never as thinking."""
+    """A tool result that arrives in pieces ends up whole on the return part, and never as thinking.
+
+    Not a recorded test: whether xAI splits a result across chunks isn't something a request can control.
+    """
     in_progress = _web_search_call('call_1', chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_IN_PROGRESS)
     completed = _web_search_call('call_1', chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED)
     stream = [
@@ -222,6 +307,8 @@ async def test_xai_old_and_new_tool_result_histories_replay(allow_model_requests
     """An old-shape turn replays as before, and a new-shape turn pairs each result with its call.
 
     A call that follows a replayed result starts its own assistant message rather than joining the tool message.
+
+    Not a recorded test: the old shape is history stored by earlier releases, which no current response produces.
     """
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='First question')]),
@@ -322,7 +409,10 @@ async def test_xai_old_and_new_tool_result_histories_replay(allow_model_requests
 
 
 async def test_xai_other_provider_tool_results_are_not_replayed(allow_model_requests: None):
-    """Another provider's server-side call and result in the history are not sent to xAI."""
+    """Another provider's server-side call and result in the history are not sent to xAI.
+
+    Not a recorded test: the history comes from another provider, and only what is sent to xAI is asserted.
+    """
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='First question')]),
         ModelResponse(

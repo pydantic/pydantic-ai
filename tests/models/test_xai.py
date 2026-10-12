@@ -2441,22 +2441,6 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
         ]
     )
 
-    # Replayed, each encrypted result is a tool turn paired with its call by `tool_call_id`.
-    replayed = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
-    assert [
-        (chat_pb2.MessageRole.Name(msg.role), msg.tool_call_id, [call.id for call in msg.tool_calls])
-        for msg in replayed
-        if msg.encrypted_content or msg.tool_calls
-    ] == snapshot(
-        [
-            ('ROLE_ASSISTANT', '', ['call_68437309']),
-            ('ROLE_TOOL', 'call_68437309', ['call_68437309']),
-            ('ROLE_ASSISTANT', '', ['call_78055205']),
-            ('ROLE_TOOL', 'call_78055205', ['call_78055205']),
-            ('ROLE_ASSISTANT', '', []),
-        ]
-    )
-
     # Verify we got the expected builtin tool call events with snapshot.
     assert event_parts == snapshot(
         [
