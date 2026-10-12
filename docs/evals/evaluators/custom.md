@@ -567,7 +567,7 @@ class ExecutablePython(Evaluator):
                     process.communicate(),
                     timeout=self.timeout_seconds,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 process.kill()
                 return EvaluationReason(
                     value=False,
@@ -805,7 +805,7 @@ class APIEvaluator(Evaluator):
                 self._call_api(ctx.output),
                 timeout=self.timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return False
 ```
 

@@ -46,9 +46,14 @@ from pydantic_ai_harness.code_mode import (
     SpeculativeCallMissedEvent,
 )
 from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.subagents import DelegationTasks, SubAgents
 from pydantic_clai2.customization import CustomizationGuide, read_clai_customization_guide
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL, EagerExecutionCompletedEvent, EagerTiming
-from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_clai2.runtime.sandbox_calls import (
+    DelegationCallStartedEvent,
+    SandboxCallFinishedEvent,
+    SandboxCallStartedEvent,
+)
 from pydantic_clai2.runtime.speculation import SpeculationCounters
 
 SPECULATIVE_TOOLS: Mapping[str, type[object]] = {
@@ -92,6 +97,10 @@ The sandbox also has direct capabilities, no function call needed:
   function like `shell` (e.g. `curl`).
 
 Use raw Python strings for regex patterns so backslashes are not invalid escapes.
+For a multiline shell command, always pass it as a raw triple-quoted string
+with the keyword form, e.g. shell(command=r'''...'''), so its newlines and
+quotes cannot make the snippet fail with a Python syntax or quote-mismatch
+error before the command runs.
 
 How to work. The runtime watches your code AS YOU WRITE IT and starts
 eligible calls before the snippet is finished, so the SHAPE of your code
@@ -353,7 +362,13 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
             return await handler(args)
         speculative = nested['speculative'] is not None
         if not speculative:
-            await ctx.emit(SandboxCallStartedEvent(tool_call_id=call.tool_call_id, call=call))
+            event_type = (
+                DelegationCallStartedEvent
+                if DelegationTasks.current() is not None
+                and isinstance(ctx.capabilities.get(tool_def.capability_id or ''), SubAgents)
+                else SandboxCallStartedEvent
+            )
+            await ctx.emit(event_type(tool_call_id=call.tool_call_id, call=call))
         try:
             value = await handler(args)
         except Exception as error:

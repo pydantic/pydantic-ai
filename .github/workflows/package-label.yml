@@ -1,0 +1,60 @@
+name: Package Label
+
+# The release announcement groups PRs by package, so every PR needs exactly one of the six
+# `pkg:` labels. This check fails until it has one; the red check is the prompt to add it.
+#
+# Its own workflow, not a job in `bots.yml`: it has to run on every label change, and a later
+# run that skips the job (as `bots.yml` does on `labeled`) would replace a red result with a
+# neutral one. It also stays out of `bots.yml`'s per-PR concurrency group, so a long `douwebot`
+# run never holds it pending.
+
+on:
+  # zizmor: ignore[dangerous-triggers] -- pull_request_target runs the default branch's copy, so
+  # a PR cannot edit the check it has to pass. Nothing here checks out or executes PR code: it
+  # reads the PR's labels via the API.
+  pull_request_target:
+    # `labeled` and `unlabeled` re-run the check when the labels change, so adding the label
+    # turns it green without a push. `synchronize` runs it on every new head commit.
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions: {}
+
+concurrency:
+  group: package-label-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  package-label:
+    name: Package Label
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Require exactly one package label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          PACKAGE_LABELS="pkg:core, pkg:harness, pkg:clai2, pkg:evals, pkg:graph, pkg:clai"
+
+          # Read the labels now rather than from the event payload, so the last run reflects
+          # the PR's current labels even if events arrive out of order.
+          FOUND=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" \
+            --jq '[.labels[].name | select(test("^pkg:(core|harness|clai2|evals|graph|clai)$"))]')
+          COUNT=$(jq 'length' <<<"$FOUND")
+
+          if [ "$COUNT" -eq 1 ]; then
+            echo "Package label: $(jq -r '.[0]' <<<"$FOUND")"
+            exit 0
+          fi
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::error title=Missing package label::Add the one package label that fits this PR best: ${PACKAGE_LABELS}. Each label's description lists its paths; tests and docs count toward the package they cover, and repository infrastructure is pkg:core. Adding a label needs triage access; without it, a maintainer adds the label."
+          else
+            echo "::error title=More than one package label::This PR has ${COUNT} package labels ($(jq -r 'join(", ")' <<<"$FOUND")). Keep only the one that fits it best, out of: ${PACKAGE_LABELS}."
+          fi
+          exit 1

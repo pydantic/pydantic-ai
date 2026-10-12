@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import httpx
+import httpx2
 import keyring
 import pytest
 from fastmcp import Client
@@ -338,6 +339,21 @@ async def test_saved_key_auth_fails_closed() -> None:
     save_codex_credentials(account='posthog', value='{"token": "inline-secret"}')
     with pytest.raises(UserError, match='reference is invalid'):
         bearer()
+
+
+async def test_fastmcp_4_connections_accept_saved_key_auth() -> None:
+    """FastMCP 4 connects with `httpx2`, which rejected a legacy `httpx.Auth` as an invalid `auth`."""
+    api_keys.save_key(name=KEY, value='phx_saved')
+    save_codex_credentials(account='posthog', value=f'{{"token": {{"name": "{KEY}"}}}}')
+    bearers: list[str] = []
+
+    def mcp(request: httpx2.Request) -> httpx2.Response:
+        bearers.append(request.headers['Authorization'])
+        return httpx2.Response(200)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(mcp), auth=SavedKeyAuth()) as client:
+        assert (await client.post(US_URL)).status_code == 200
+    assert bearers == ['Bearer phx_saved']
 
 
 def test_menu_validates_resets_and_flags_a_missing_key() -> None:

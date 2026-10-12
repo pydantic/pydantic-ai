@@ -58,8 +58,8 @@ class Shell:
 
     def host(self) -> PluginHost[None]:
         [entry] = self.plugins.entries()
-        assert entry.host is not None
-        return entry.host
+        assert entry.loaded is not None
+        return entry.loaded.host
 
     def source(self) -> 'slack_plugin.SlackSource[None]':
         return slack_plugin.SlackSource(self.host())

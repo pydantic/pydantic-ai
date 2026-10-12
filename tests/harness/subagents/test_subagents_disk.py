@@ -16,17 +16,12 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.models import AbstractModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness import HarnessDeprecationWarning
-from pydantic_ai_harness.subagents import (
-    MINIMUM_EFFORT_FLOOR,
-    AgentOverride,
-    SubAgent,
-    SubAgents,
-    clamp_effort,
-)
+from pydantic_ai_harness import HarnessDeprecationWarning, subagents
+from pydantic_ai_harness.subagents import AgentOverride, SubAgent, SubAgents
 from pydantic_ai_harness.subagents._disk import ParsedAgent, parse_agent_markdown
 
 
@@ -60,27 +55,22 @@ def _write_agent(folder: Path, filename: str, content: str) -> None:
 
 
 class TestClampEffort:
-    def test_none_becomes_floor(self) -> None:
-        assert clamp_effort(None) == MINIMUM_EFFORT_FLOOR
-
-    def test_false_becomes_floor(self) -> None:
-        assert clamp_effort(False) == MINIMUM_EFFORT_FLOOR
-
-    def test_true_unchanged(self) -> None:
-        assert clamp_effort(True) is True
-
-    def test_below_floor_raised(self) -> None:
-        assert clamp_effort('minimal') == 'low'
-
-    def test_at_floor_unchanged(self) -> None:
-        assert clamp_effort('low') == 'low'
-
-    def test_above_floor_unchanged(self) -> None:
-        assert clamp_effort('high') == 'high'
-
-    def test_custom_floor(self) -> None:
-        assert clamp_effort('low', floor='high') == 'high'
-        assert clamp_effort('xhigh', floor='high') == 'xhigh'
+    def test_deprecated_exports_still_apply_the_old_floor(self) -> None:
+        with pytest.warns(HarnessDeprecationWarning, match='no longer imposes a minimum thinking effort') as record:
+            floor = subagents.MINIMUM_EFFORT_FLOOR
+            clamp = subagents.clamp_effort
+        assert len(record) == 2
+        assert all('AgentOverride(effort=' in str(warning.message) for warning in record)
+        assert clamp(None) == floor
+        assert clamp(False) == floor
+        assert clamp(True) is True
+        assert clamp('minimal') == 'low'
+        assert clamp('low') == 'low'
+        assert clamp('high') == 'high'
+        assert clamp('low', floor='high') == 'high'
+        assert clamp('xhigh', floor='high') == 'xhigh'
+        with pytest.raises(AttributeError, match="has no attribute 'missing'"):
+            subagents.__getattr__('missing')
 
 
 class TestParseAgentMarkdown:
@@ -159,18 +149,9 @@ class TestDiskLoading:
         _write_agent(tmp_path / '.agents' / 'agents', 'planner.md', 'Plan.')
         cap: SubAgents[object] = SubAgents()
         assert cap.agent_folders is None
-        with pytest.warns(HarnessDeprecationWarning, match='now defaults to `agent_folders=None`') as record:
-            assert await _listing(cap, LocalWorkspaceBackend(tmp_path)) is None
-            assert await _listing(cap, LocalWorkspaceBackend(tmp_path)) is None
-        assert len(record) == 1
-        assert str(tmp_path / '.agents' / 'agents') in str(record[0].message)
-        assert "Pass `agent_folders='agents'` to restore" in str(record[0].message)
-
-    async def test_default_is_silent_without_definitions(self, tmp_path: Path) -> None:
-        _write_agent(tmp_path / '.agents' / 'agents', 'notes.txt', 'Not an agent.')
         with warnings.catch_warnings():
             warnings.simplefilter('error')
-            assert await _listing(SubAgents(), LocalWorkspaceBackend(tmp_path)) is None
+            assert await _listing(cap, LocalWorkspaceBackend(tmp_path)) is None
 
     async def test_loads_the_conventional_folder_when_requested(self, tmp_path: Path) -> None:
         _write_agent(tmp_path / '.agents' / 'agents', 'planner.md', 'Plan.')
@@ -219,13 +200,205 @@ class TestDiskLoading:
         with pytest.raises(UserError, match='`SubAgents` needs a workspace'):
             await _listing(cap, None)
 
-    async def test_undecodable_file_is_skipped_with_warning(self, tmp_path: Path) -> None:
-        # A non-UTF-8 `.md` file must not abort loading: every valid definition in the folder still loads.
-        (tmp_path / 'broken.md').write_bytes(b'---\nname: broken\n---\n\xff\xfe not utf-8')
+    @pytest.mark.parametrize('suffix', ['.md', '.toml'])
+    async def test_undecodable_file_is_skipped_with_warning(self, tmp_path: Path, suffix: str) -> None:
+        # A non-UTF-8 definition must not abort loading: every valid definition in the folder still loads.
+        (tmp_path / f'broken{suffix}').write_bytes(b'---\nname: broken\n---\n\xff\xfe not utf-8')
         _write_agent(tmp_path, 'valid.md', '---\nname: valid\n---\nWork.')
         with pytest.warns(UserWarning, match='Skipping unreadable disk sub-agent file'):
             listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
         assert listing is not None and '- valid' in listing and 'broken' not in listing
+
+
+class TestCodexDiskLoading:
+    async def test_standalone_toml_instructions_and_tools(self, tmp_path: Path) -> None:
+        _write_agent(
+            tmp_path / '.codex' / 'workers',
+            'different-stem.toml',
+            'name = " researcher "\ndescription = " Researches topics "\n'
+            'developer_instructions = """\nResearch carefully.\nReport sources.\n"""\n'
+            'allowed-tools = [" search ", "Read"]\n',
+        )
+        toolset: FunctionToolset[object] = FunctionToolset()
+        resolved: list[str] = []
+
+        def resolver(name: str) -> Sequence[AgentToolset[object]]:
+            resolved.append(name)
+            return [toolset]
+
+        cap: SubAgents[object] = SubAgents(agent_folders='workers', tool_resolver=resolver)
+        seen: list[tuple[str | None, list[str]]] = []
+        parent: Agent[object, str] = Agent(_recording_model(seen, delegate_to='researcher'), capabilities=[cap])
+        await parent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert seen[0][0] is not None and '- researcher: Researches topics' in seen[0][0]
+        assert seen[1][0] == 'Research carefully.\nReport sources.'
+        assert resolved == ['search', 'Read']
+        assert toolset in _built(cap)['researcher'].toolsets
+        assert _built(cap)['researcher'].model is None
+
+    @pytest.mark.parametrize(
+        'tools', ['', 'tools = []', 'tools = ["Read"]', 'tools = " Read , Grep "', 'allowed-tools = "Read"']
+    )
+    async def test_optional_tools(self, tmp_path: Path, tools: str) -> None:
+        _write_agent(
+            tmp_path,
+            'worker.toml',
+            'name = "worker"\ndescription = "Works"\ndeveloper_instructions = "Work."\n' + tools,
+        )
+        resolved: list[str] = []
+
+        def resolver(name: str) -> Sequence[AgentToolset[object]]:
+            resolved.append(name)
+            return []
+
+        listing = await _listing(
+            SubAgents(agent_folders=['.'], tool_resolver=resolver), LocalWorkspaceBackend(tmp_path)
+        )
+        assert listing is not None and '- worker: Works' in listing
+        assert resolved == ([] if tools in ('', 'tools = []') else ['Read', 'Grep'] if 'Grep' in tools else ['Read'])
+
+    @pytest.mark.parametrize('field', ['name', 'description', 'developer_instructions'])
+    @pytest.mark.parametrize('value', [None, '""', '"  "', '42', 'true', '[]', '{}'])
+    async def test_invalid_required_fields_skip_only_one_file(
+        self, tmp_path: Path, field: str, value: str | None
+    ) -> None:
+        fields = {'name': '"broken"', 'description': '"Works"', 'developer_instructions': '"Work."'}
+        if value is None:
+            del fields[field]
+        else:
+            fields[field] = value
+        text = '\n'.join(f'{key} = {item}' for key, item in fields.items())
+        _write_agent(tmp_path, 'broken.toml', text)
+        _write_agent(tmp_path, 'valid.md', 'Valid.')
+        with pytest.warns(UserWarning, match=f'`{field}` must be a nonempty string') as record:
+            listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
+        assert len(record) == 1 and 'broken.toml' in str(record[0].message)
+        assert listing is not None and '- valid' in listing and 'broken' not in listing
+
+    @pytest.mark.parametrize(
+        'tools',
+        [
+            'tools = 42',
+            'allowed-tools = true',
+            'tools = {}',
+            'tools = ["Read", 1]',
+            'tools = [" "]',
+            'tools = ""',
+            'tools = "Read,,Grep"',
+            'tools = ["Read"]\nallowed-tools = ["Grep"]',
+        ],
+    )
+    async def test_invalid_tools_skip_file(self, tmp_path: Path, tools: str) -> None:
+        _write_agent(
+            tmp_path,
+            'broken.toml',
+            'name = "broken"\ndescription = "Works"\ndeveloper_instructions = "Work."\n' + tools,
+        )
+        with pytest.warns(UserWarning, match='Skipping invalid disk sub-agent file'):
+            assert await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path)) is None
+
+    @pytest.mark.parametrize(
+        'text', ['name =', 'name = "first"\nname = "second"', '[agents.worker]\nconfig_file = "worker.toml"']
+    )
+    async def test_malformed_and_legacy_toml_skip_only_one_file(self, tmp_path: Path, text: str) -> None:
+        _write_agent(tmp_path, 'broken.toml', text)
+        _write_agent(tmp_path, 'valid.toml', 'name = "valid"\ndescription = "Works"\ndeveloper_instructions = "Work."')
+        with pytest.warns(UserWarning, match='Skipping invalid disk sub-agent file') as record:
+            listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
+        assert len(record) == 1 and 'broken.toml' in str(record[0].message)
+        assert listing is not None and '- valid' in listing and 'broken' not in listing
+
+    @pytest.mark.parametrize(
+        'setting',
+        [
+            'sandbox_mode = "read-only"',
+            'approval_policy = "never"',
+            'permissions = "restricted"',
+            'unknown_future_security_setting = true',
+            '[sandbox_workspace_write]\nnetwork_access = false',
+            '[mcp_servers.example]\ncommand = "never-execute-this"',
+        ],
+    )
+    async def test_unsupported_settings_fail_closed(self, tmp_path: Path, setting: str) -> None:
+        _write_agent(
+            tmp_path,
+            'broken.toml',
+            'name = "broken"\ndescription = "Works"\ndeveloper_instructions = "Work."\n' + setting,
+        )
+        with pytest.warns(UserWarning, match='unsupported TOML settings'):
+            assert await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path)) is None
+
+    async def test_nonsecurity_settings_warn_and_do_not_change_model_or_effort(self, tmp_path: Path) -> None:
+        _write_agent(
+            tmp_path,
+            'worker.toml',
+            'name = "worker"\ndescription = "Works"\ndeveloper_instructions = "Work."\n'
+            'model = "not-a-model"\neffort = "high"\nmodel_reasoning_effort = "high"\ncolor = "blue"',
+        )
+        cap: SubAgents[object] = SubAgents(agent_folders=['.'])
+        with pytest.warns(UserWarning, match='Ignoring TOML disk sub-agent settings') as record:
+            listing = await _listing(cap, LocalWorkspaceBackend(tmp_path))
+        assert len(record) == 1 and 'agent_overrides' in str(record[0].message)
+        assert listing is not None and '- worker' in listing
+        assert _built(cap)['worker'].model is None
+        assert _built(cap)['worker'].model_settings is None
+
+    @pytest.mark.parametrize('toml_first', [False, True])
+    async def test_mixed_formats_are_sorted_and_first_definition_wins(self, tmp_path: Path, toml_first: bool) -> None:
+        _write_agent(
+            tmp_path,
+            'a.toml' if toml_first else 'b.toml',
+            'name = "worker"\ndescription = "toml"\ndeveloper_instructions = "Work."',
+        )
+        _write_agent(tmp_path, 'b.md' if toml_first else 'a.md', '---\nname: worker\ndescription: markdown\n---\nWork.')
+        (tmp_path / 'directory.toml').mkdir()
+        with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed") as record:
+            listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
+        assert len(record) == 1
+        assert listing is not None
+        assert f'- worker: {"toml" if toml_first else "markdown"}' in listing
+        assert f': {"markdown" if toml_first else "toml"}' not in listing
+
+    async def test_conventional_precedence(self, tmp_path: Path) -> None:
+        for root in ('.agents', '.claude', '.codex'):
+            _write_agent(
+                tmp_path / root / 'agents',
+                'worker.toml',
+                f'name = "worker"\ndescription = "{root}"\ndeveloper_instructions = "Work."',
+            )
+        with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed") as record:
+            listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
+        assert len(record) == 2
+        assert listing is not None and '- worker: .agents' in listing
+        assert '.claude' not in listing and '.codex' not in listing
+        with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed"):
+            listing = await _listing(
+                SubAgents(agent_folders=['.claude/agents', '.codex/agents']), LocalWorkspaceBackend(tmp_path)
+            )
+        assert listing is not None and '- worker: .claude' in listing and '.codex' not in listing
+
+    async def test_codex_symlink_is_deduplicated(self, tmp_path: Path) -> None:
+        _write_agent(
+            tmp_path / '.agents' / 'agents',
+            'worker.toml',
+            'name = "worker"\ndescription = "Works"\ndeveloper_instructions = "Work."',
+        )
+        (tmp_path / '.codex').symlink_to(tmp_path / '.agents', target_is_directory=True)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
+        assert listing is not None and '- worker' in listing
+
+    async def test_codex_discovery_stays_off_by_default(self, tmp_path: Path) -> None:
+        _write_agent(
+            tmp_path / '.codex' / 'agents',
+            'worker.toml',
+            'name = "worker"\ndescription = "Works"\ndeveloper_instructions = "Work."',
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            assert await _listing(SubAgents(), LocalWorkspaceBackend(tmp_path)) is None
+            assert await _listing(SubAgents(agent_folders=None), LocalWorkspaceBackend(tmp_path)) is None
 
 
 class TestOverrides:
@@ -238,12 +411,23 @@ class TestOverrides:
         )
         await _listing(cap, LocalWorkspaceBackend(tmp_path))
         assert _built(cap)['w'].model is model
+        assert _built(cap)['w'].model_settings == {'thinking': 'high'}
 
-    async def test_effort_floored_without_override(self, tmp_path: Path) -> None:
+    async def test_no_effort_override_leaves_thinking_unset(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'w.md', '---\nname: w\n---\nB')
         cap: SubAgents[object] = SubAgents(agent_folders=['.'])
         await _listing(cap, LocalWorkspaceBackend(tmp_path))
-        assert _built(cap)['w'].model_settings == {'thinking': MINIMUM_EFFORT_FLOOR}
+        assert _built(cap)['w'].model_settings is None
+
+    @pytest.mark.parametrize('effort', ['minimal', False])
+    async def test_effort_override_is_not_clamped(self, tmp_path: Path, effort: ThinkingLevel) -> None:
+        _write_agent(tmp_path, 'w.md', '---\nname: w\n---\nB')
+        cap: SubAgents[object] = SubAgents(
+            agent_folders=['.'],
+            agent_overrides={'w': AgentOverride(effort=effort)},
+        )
+        await _listing(cap, LocalWorkspaceBackend(tmp_path))
+        assert _built(cap)['w'].model_settings == {'thinking': effort}
 
 
 class TestToolResolver:

@@ -1349,6 +1349,36 @@ async def test_session_span_omits_conversation_id_when_unset() -> None:
     assert 'gen_ai.conversation.id' not in sess.attributes
 
 
+async def test_session_span_reports_a_conversation_id_the_session_minted() -> None:
+    # A session opened without a `conversation_id` mints one the first time `conversation` is taken,
+    # and every message it records from then on carries it. The session span has to report the same
+    # identity, or the span a conversation was spoken in can't be correlated with the text runs that
+    # continue it -- which is the whole reason the id is carried across modalities.
+    settings, exporter = _settings()
+    conn = _Connection([ResponseDone()])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    async with session:
+        minted = session.conversation.conversation_id
+        _ = [event async for event in session]
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.conversation.id'] == minted
+
+
+async def test_session_span_reports_a_conversation_id_minted_before_it_opened() -> None:
+    # The same identity, taken before the session was entered: there is no span to update yet, so the
+    # id has to be waiting for `start_session_span` to pick up instead.
+    settings, exporter = _settings()
+    conn = _Connection([ResponseDone()])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    minted = session.conversation.conversation_id
+    async with session:
+        _ = [event async for event in session]
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.conversation.id'] == minted
+
+
 async def test_session_span_without_model_or_usage() -> None:
     settings, exporter = _settings()
     conn = _Connection([ResponseDone()])  # no model name, no Usage event
@@ -1475,6 +1505,21 @@ async def test_session_usage_without_aggregated_attribute_names() -> None:
     assert sess.attributes is not None
     assert sess.attributes['gen_ai.usage.input_tokens'] == 10
     assert 'gen_ai.aggregated_usage.input_tokens' not in sess.attributes
+
+
+async def test_session_span_reports_the_usage_the_provider_reports_as_its_session_ends() -> None:
+    """GPT-Live bills its last seconds only as the session ends, after the reading stopped; the span counts them too."""
+
+    class _EndingConnection(_Connection):
+        async def _end_session(self) -> AsyncIterator[SessionUsage]:
+            yield SessionUsage(RequestUsage(input_tokens=7), response_scoped=False)
+
+    settings, exporter = _settings(use_aggregated_usage_attribute_names=False)
+    async with RealtimeSession(_EndingConnection([]), _ok_runner, instrumentation=settings, model_name='gpt-live-1'):
+        pass
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.usage.input_tokens'] == 7
 
 
 async def test_chat_span_matches_instrumented_model_shape() -> None:

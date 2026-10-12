@@ -17,7 +17,7 @@ from dataclasses import replace as dc_replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, Never, TypeVar
 from unittest.mock import MagicMock
 from uuid import UUID
 
@@ -25,8 +25,8 @@ import anyio
 import pytest
 from pydantic import BaseModel
 from pydantic_core import SchemaValidator, core_schema
-from pydantic_monty import NOT_HANDLED, AsyncMonty, MountDir, OSAccess, OsFunction
-from typing_extensions import Never, TypedDict
+from pydantic_monty import NOT_HANDLED, AsyncFutureSnapshot, AsyncMonty, MountDir, OSAccess, OsFunction
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     AbstractToolset,
@@ -70,14 +70,14 @@ from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning, ToolOutputLimits
-from pydantic_ai_harness.code_mode import CodeModeResourceLimits, CodeModeToolset
+from pydantic_ai_harness.code_mode import CodeModeResourceLimits, CodeModeReturnSchemaWarning, CodeModeToolset
 from pydantic_ai_harness.code_mode._capability import (
     _extract_discovered_names,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai_harness.code_mode._toolset import (
     _SEARCH_TOOLS_MODIFIER,  # pyright: ignore[reportPrivateUsage]
-    _TOOL_SEARCH_ADDENDUM,  # pyright: ignore[reportPrivateUsage]
     _sanitize_tool_name,  # pyright: ignore[reportPrivateUsage]
+    _tool_search_addendum,  # pyright: ignore[reportPrivateUsage]
     global_mode_is_sequential,
 )
 from pydantic_ai_harness.tool_output_limits import LocalFileStore
@@ -622,18 +622,30 @@ class TestCodeMode:
             await wrapper.call_tool('run_code', {'code': 'print(x)', 'restart': True}, ctx, run_code)
 
     async def test_advertised_modules_match_the_docs_and_import(self) -> None:
-        """The model is told exactly the modules the docs list, and each of them imports."""
+        """The model is told exactly the modules the docs, README, and skill list, and each of them imports."""
         wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
         description = tools['run_code'].tool_def.description or ''
         advertised = re.search(r'Importable standard library modules\*\*: (.*?)\. ', description)
-        docs = (Path(__file__).parents[3] / 'docs' / 'harness' / 'code-mode.md').read_text()
-        documented = re.search(r'Allowed stdlib modules: (.*?) \(', docs)
-        assert advertised is not None and documented is not None
+        repo = Path(__file__).parents[3]
+        harness = repo / 'src' / 'pydantic_ai_harness' / 'pydantic_ai_harness'
+        doc_lists = [
+            (repo / 'docs' / 'harness' / 'code-mode.md', r'Allowed stdlib modules: (.*?) \('),
+            (harness / 'code_mode' / 'README.md', r'allowed stdlib: (.*?)\)'),
+            (
+                harness / '.agents' / 'skills' / 'pydantic-ai-harness' / 'references' / 'CODE-MODE.md',
+                r'must be imported before use: (.*?)\n',
+            ),
+        ]
+        assert advertised is not None
         modules = re.findall(r'`(\w+)`', advertised.group(1))
-        assert modules == re.findall(r'`(\w+)`', documented.group(1))
+        assert 'collections' in modules
+        for path, pattern in doc_lists:
+            documented = re.search(pattern, path.read_text(), re.DOTALL)
+            assert documented is not None, path
+            assert re.findall(r'`(\w+)`', documented.group(1)) == modules, path
         code = '\n'.join(f'import {module}' for module in modules) + '\n"ok"'
         result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
         assert result.return_value == 'ok'
@@ -2049,7 +2061,7 @@ class TestCodeMode:
         assert isinstance(wrapper, CodeModeToolset)
 
         ctx = build_run_context(None)
-        with pytest.warns(UserWarning, match=r"tool 'search' has no return schema"):
+        with pytest.warns(CodeModeReturnSchemaWarning, match=r"tool 'search' has no return schema"):
             tools = await wrapper.get_tools(ctx)
 
         # Tool is still callable despite the warning.
@@ -2079,8 +2091,25 @@ class TestCodeMode:
 
         assert [str(warning.message) for warning in caught] == [
             "CodeMode: 3 tools have no return schema ('list_tags', 'search_code', 'search_issues'); "
-            'their signatures will show `-> Any`, which may reduce code mode effectiveness.'
+            'their signatures will show `-> Any`, which may reduce code mode effectiveness. Add a return '
+            'annotation to a function tool, or an `outputSchema` to an MCP tool; to silence this, filter '
+            '`CodeModeReturnSchemaWarning`.'
         ]
+        assert caught[0].category is CodeModeReturnSchemaWarning
+
+    async def test_missing_return_schema_warning_can_be_filtered_alone(self) -> None:
+        """Ignoring `CodeModeReturnSchemaWarning` silences it without hiding other `UserWarning`s."""
+        td = ToolDefinition(name='search', parameters_json_schema={'type': 'object', 'properties': {}})
+        wrapper = CodeMode[object]().get_wrapper_toolset(_StaticToolset([td]))
+        assert isinstance(wrapper, CodeModeToolset)
+
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter('always')
+            _warnings.filterwarnings('ignore', category=CodeModeReturnSchemaWarning)
+            await wrapper.get_tools(build_run_context(None))
+            _warnings.warn('unrelated', UserWarning)
+
+        assert [str(warning.message) for warning in caught] == ['unrelated']
 
     async def test_escalated_missing_return_schema_warning_raises_again(self) -> None:
         """With the warning escalated to an error, a retry raises again instead of passing silently."""
@@ -2091,7 +2120,7 @@ class TestCodeMode:
         with _warnings.catch_warnings():
             _warnings.simplefilter('error', UserWarning)
             for _ in range(2):
-                with pytest.raises(UserWarning, match=r"tool 'search' has no return schema"):
+                with pytest.raises(CodeModeReturnSchemaWarning, match=r"tool 'search' has no return schema"):
                     await wrapper.get_tools(build_run_context(None))
 
     async def test_tool_with_return_schema_does_not_warn(self) -> None:
@@ -2168,6 +2197,90 @@ class TestCodeMode:
 
         # The agent's final output reflects the value flowing through the sandbox.
         assert result.output == 'sum is 10'
+
+    # Deferred gather resolution order: regression tests for issue #9962. In global
+    # sequential modes (`sequential`, `parallel_ordered_events`) deferred calls resume in
+    # dispatch order even when the snapshot lists the pending ids in another order;
+    # `parallel` stays unordered.
+
+    @staticmethod
+    def _gather_three_calls_agent(monkeypatch: pytest.MonkeyPatch, executed: list[str]) -> Agent[object, str]:
+        """Build an agent whose model gathers three deferred `record` calls.
+
+        Reverses the ids reported by the public `AsyncFutureSnapshot.pending_call_ids`
+        property. This is test-local forcing, not library behavior: it simulates a
+        snapshot whose pending ids do not follow dispatch order, which is exactly the
+        input `_resolve_futures` must not trust.
+        """
+        original = AsyncFutureSnapshot.__dict__['pending_call_ids']
+        monkeypatch.setattr(
+            AsyncFutureSnapshot,
+            'pending_call_ids',
+            property(lambda snapshot: list(reversed(original.__get__(snapshot, AsyncFutureSnapshot)))),
+        )
+
+        def record(label: str) -> str:
+            """Record a call so the test can observe execution order."""
+            executed.append(label)
+            return label
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+                return ModelResponse(parts=[TextPart('done')])
+            code = (
+                'import asyncio\nawait asyncio.gather(*[record(label=label) for label in ["first", "second", "third"]])'
+            )
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+        return Agent(FunctionModel(model_fn), tools=[record], capabilities=[CodeMode[object]()])
+
+    def test_deferred_gather_sequential_reversed_pending_ids_runs_in_dispatch_order(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Global `sequential` mode resumes gathered deferred calls in dispatch order.
+
+        The `pending_call_ids` reversal is test-local forcing, not library behavior.
+        """
+        executed: list[str] = []
+        agent = self._gather_three_calls_agent(monkeypatch, executed)
+        with agent.parallel_tool_call_execution_mode('sequential'):
+            result = agent.run_sync('Gather three record calls.')
+
+        assert executed == ['first', 'second', 'third']
+        assert result.output == 'done'
+
+    def test_deferred_gather_parallel_ordered_events_reversed_pending_ids_runs_in_dispatch_order(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Global `parallel_ordered_events` mode also resumes in dispatch order.
+
+        `parallel_ordered_events` is not `parallel`, so the executor treats it as global
+        sequential and must not trust the snapshot's id order. The `pending_call_ids`
+        reversal is test-local forcing, not library behavior.
+        """
+        executed: list[str] = []
+        agent = self._gather_three_calls_agent(monkeypatch, executed)
+        with agent.parallel_tool_call_execution_mode('parallel_ordered_events'):
+            result = agent.run_sync('Gather three record calls.')
+
+        assert executed == ['first', 'second', 'third']
+        assert result.output == 'done'
+
+    def test_deferred_gather_parallel_reversed_pending_ids_completes_all_calls(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Global `parallel` mode stays unordered, but every gathered call completes.
+
+        Completion order is intentionally not pinned here. The `pending_call_ids`
+        reversal is test-local forcing, not library behavior.
+        """
+        executed: list[str] = []
+        agent = self._gather_three_calls_agent(monkeypatch, executed)
+        with agent.parallel_tool_call_execution_mode('parallel'):
+            result = agent.run_sync('Gather three record calls.')
+
+        assert sorted(executed) == ['first', 'second', 'third']
+        assert result.output == 'done'
 
     async def test_deferred_capability_loader_stays_native_with_tools_all(self) -> None:
         """Regression for the deferred-capability bootstrap (issue #276).
@@ -3267,7 +3380,19 @@ class TestToolSearchIntegration:
 
         run_code_desc = tools['run_code'].tool_def.description
         assert run_code_desc is not None
-        assert _TOOL_SEARCH_ADDENDUM.strip() in run_code_desc
+        assert _tool_search_addendum(_SEARCH_TOOLS_NAME).strip() in run_code_desc
+
+    async def test_renamed_search_tool_is_found_by_kind(self) -> None:
+        """A prefixed search tool is recognized by its `tool_kind`, and the note uses its name."""
+        toolset = _StaticToolset([_search_tool_def(name='mcp_search_tools')])
+        code_mode = CodeModeToolset(wrapped=toolset, tool_selector='all')
+        tools = await code_mode.get_tools(build_run_context(None))
+
+        search_desc = tools['mcp_search_tools'].tool_def.description
+        assert search_desc is not None and search_desc.endswith(_SEARCH_TOOLS_MODIFIER)
+        run_code_desc = tools['run_code'].tool_def.description
+        assert run_code_desc is not None
+        assert _tool_search_addendum('mcp_search_tools').strip() in run_code_desc
 
     async def test_run_code_description_no_search_note_without_search_tools(self) -> None:
         """run_code description does NOT include search addendum when no search_tools."""
@@ -3308,7 +3433,7 @@ class TestToolSearchIntegration:
         assert tools['later'].tool_def.defer_loading is True
         # search_tools is the discovery surface and stays native alongside run_code.
         assert _SEARCH_TOOLS_NAME in tools
-        assert _TOOL_SEARCH_ADDENDUM.strip() in description
+        assert _tool_search_addendum(_SEARCH_TOOLS_NAME).strip() in description
 
     async def test_tool_search_toolset_discovered_tool_in_run_code(self) -> None:
         """End-to-end: once `search_tools` has discovered the deferred tool, it folds into `run_code`."""
@@ -3467,7 +3592,7 @@ class TestDynamicCatalog:
 
         description = tools['run_code'].tool_def.description
         assert description is not None
-        assert _TOOL_SEARCH_ADDENDUM.strip() in description
+        assert _tool_search_addendum(_SEARCH_TOOLS_NAME).strip() in description
 
     async def test_for_run_step_preserves_catalog_stash(self) -> None:
         """A per-step rebuild must carry `_last_catalog` so instructions stay populated."""
@@ -3580,6 +3705,21 @@ class TestDynamicCatalog:
                 result=result,
             )
         # Only the first discovery of `weather` announces.
+        assert ctx.pending_messages is not None
+        assert len(ctx.pending_messages) == 1
+
+    async def test_other_system_prompts_do_not_count_as_announcements(self) -> None:
+        """Only an authored announcement suppresses one: a system prompt naming the tool does not."""
+        cap = CodeMode[object](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        ctx.messages.append(ModelRequest(parts=[SystemPromptPart(content='Prefer `weather` for forecasts.')]))
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
+            tool_def=_search_tool_def(),
+            args={},
+            result={'discovered_tools': [{'name': 'weather'}]},
+        )
         assert ctx.pending_messages is not None
         assert len(ctx.pending_messages) == 1
 
@@ -4193,7 +4333,7 @@ class TestCodeModeOSAccess:
         assert wrapper.mount is mount
 
 
-def _search_tool_def(description: str = 'Search for tools.') -> ToolDefinition:
+def _search_tool_def(description: str = 'Search for tools.', name: str = _SEARCH_TOOLS_NAME) -> ToolDefinition:
     """Create a ToolDefinition mimicking the search_tools tool from ToolSearchToolset.
 
     Carries `tool_kind='tool-search'`, matching what pydantic-ai emits (since 1.95.0);
@@ -4201,7 +4341,7 @@ def _search_tool_def(description: str = 'Search for tools.') -> ToolDefinition:
     """
 
     return ToolDefinition(
-        name=_SEARCH_TOOLS_NAME,
+        name=name,
         description=description,
         parameters_json_schema={'type': 'object', 'properties': {'keywords': {'type': 'string'}}},
         tool_kind='tool-search',

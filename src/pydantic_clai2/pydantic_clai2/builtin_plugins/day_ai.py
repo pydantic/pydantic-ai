@@ -1,26 +1,31 @@
-"""The built-in `day_ai` plugin: harness `DayAI`, with a token from `/keys` or a browser sign-in.
+"""Use Day AI, signed in with a token from /keys or in the browser.
+
+The built-in `day_ai` plugin: harness `DayAI`, with a token from `/keys` or a browser sign-in.
 
 Settings hold `DayAI`'s non-secret options and at most the name of a `/keys` entry, never a token; the menu that
 `/plugins configure day_ai` opens edits them. The browser sign-in works the way `/mcp` does for an OAuth server:
 FastMCP's flow, with tokens kept in the keyring under `mcp-day_ai`. `/mcp` server names cannot contain underscores,
 so that credential never belongs to one of your servers. The environment is not read.
+
+The sign-in runs only from that menu, where Esc cancels it. Loading never opens the browser: the session waits for
+every plugin to load, so a sign-in nobody finishes would leave CLAI unable to run anything.
 """
 
 import asyncio
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Generic, Literal
 
-from anyio import to_thread
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.day_ai import DayAI
 from pydantic_clai2.config.api_keys import KeyReference, SavedKey, load_keys
-from pydantic_clai2.mcp import TokenStore, http_client, sign_in
-from pydantic_clai2.plugins import DepsT, PluginHost, SessionStart
-from pydantic_clai2.plugins.keys import choose_key, on_loop
+from pydantic_clai2.mcp import OAUTH_TIMEOUT, TokenStore, http_client, sign_in
+from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
+from pydantic_clai2.plugins.keys import choose_key, on_loop, wait_for_sign_in
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.rendering import theme
@@ -62,43 +67,47 @@ def resolve_auth(settings: DayAISettings) -> Auth | None:
     return 'oauth' if TokenStore(TOKEN_ACCOUNT).signed_in() else None
 
 
-def activate(host: PluginHost[DepsT]) -> None:
-    """Add `DayAI` with a `/keys` token resolved on every run, or sign in through the browser before loading."""
-    settings = host.settings(DayAISettings)
-    auth = resolve_auth(settings)
+class DayAIPlugin(Plugin[DayAISettings, DepsT]):
+    """`DayAI` with a `/keys` token resolved on every run, or a browser sign-in made in the settings menu."""
 
-    @host.configure
-    async def configure() -> str:
-        return await _configure(DayAISource(host))
+    def __init__(self, host: PluginHost[DepsT], settings: DayAISettings) -> None:
+        super().__init__(host, settings)
+        self.auth = resolve_auth(settings)
+        self.signed_out = self.auth == 'oauth' and not TokenStore(TOKEN_ACCOUNT).signed_in()
+        """Browser sign-in is chosen but has not been completed; the settings menu completes it."""
 
-    if auth is None:
-        # Nothing to connect with; loading anyway keeps the menu available, and adds no broken capability.
-        host.console.print(f'Day AI is not connected. {SETUP}', style=theme.color(theme.WARNING), markup=False)
-        return
-    if isinstance(auth, KeyReference):
-        host.add(
-            DayAI[DepsT](auth=SavedKey(name=auth.name, setup=SETUP), include_instructions=settings.include_instructions)
-        )
-        if auth.name not in load_keys():
-            # Each run fails closed until the key is saved.
-            host.console.print(
-                f'Day AI has no token: {auth.name} is not in /keys. {SETUP}',
-                style=theme.color(theme.WARNING),
-                markup=False,
+    def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
+        include_instructions = self.settings.include_instructions
+        if self.auth is None or self.signed_out:
+            # Nothing to connect with; loading anyway keeps the menu available, and adds no broken capability.
+            return ()
+        if isinstance(self.auth, KeyReference):
+            return (
+                DayAI[DepsT](
+                    auth=SavedKey(name=self.auth.name, setup=SETUP), include_instructions=include_instructions
+                ),
             )
-        return
-    host.add(DayAI[DepsT](client=_transport(), include_instructions=settings.include_instructions))
+        return (DayAI[DepsT](client=_transport(), include_instructions=include_instructions),)
 
-    @host.on('session_start')
-    async def sign_in(_: SessionStart) -> None:
-        if await to_thread.run_sync(TokenStore(TOKEN_ACCOUNT).signed_in):
+    async def configure(self) -> str:
+        return await _configure(DayAISource(self.host))
+
+    async def on_session_start(self, event: SessionStart) -> None:
+        console = self.host.console
+        if self.auth is None:
+            console.print(f'Day AI is not connected. {SETUP}', style=theme.color(theme.WARNING), markup=False)
             return
-        if not host.console.is_terminal:
-            raise UserError(f'Save {KEY_NAME} in /keys, or sign in to Day AI from an interactive CLAI session first.')
-        host.console.print('Opening your browser to sign in to Day AI.', style=theme.color(theme.MUTED))
-        # A throwaway connection runs the sign-in now, so a failure fails the load rather than the next prompt.
-        async with Client(_transport()):
-            pass
+        if isinstance(self.auth, KeyReference):
+            if self.auth.name not in load_keys():
+                # Each run fails closed until the key is saved.
+                console.print(
+                    f'Day AI has no token: {self.auth.name} is not in /keys. {SETUP}',
+                    style=theme.color(theme.WARNING),
+                    markup=False,
+                )
+            return
+        if self.signed_out:
+            console.print(f'Day AI is not signed in. {SETUP}', style=theme.color(theme.WARNING), markup=False)
 
 
 _AUTOMATIC = 'automatic'
@@ -210,6 +219,8 @@ async def _configure(source: DayAISource[DepsT]) -> str:
         pick = RUNNERS.run_choice(menu.build_choices(_AUTH))
         if pick.cancelled or pick.item is None:
             return []
+        if pick.item.value == 'oauth':
+            return [source.apply(_AUTH, 'oauth'), *sign_in_now()]
         if pick.item.value != _KEY:
             return [source.apply(_AUTH, str(pick.item.value))]
         label = f'Day AI access token (saved in /keys as {KEY_NAME})'
@@ -219,8 +230,30 @@ async def _configure(source: DayAISource[DepsT]) -> str:
         source.save(source.settings.model_copy(update={'auth': reference}))
         return [f'Day AI uses the saved key {reference.name}. Manage it in /keys.']
 
+    def sign_in_now() -> list[str]:
+        if TokenStore(TOKEN_ACCOUNT).signed_in():
+            return []
+        try:
+            signed_in = on_loop(
+                lambda: wait_for_sign_in(_sign_in(), service='Day AI', note=_WAITING, runners=RUNNERS), loop
+            )
+        except Exception as exc:  # noqa: BLE001 -- FastMCP fails in many ways; each leaves Day AI signed out.
+            return [f'Could not sign in to Day AI: {exc}. {SETUP}']
+        if not signed_in:
+            return [f'Day AI sign-in cancelled. {SETUP}']
+        return ['Signed in to Day AI. Tokens are kept in the OS credential store and renew themselves.']
+
     messages = await run_worker(lambda: run_flow(menu, RUNNERS, submenus={'auth': pick_auth}))
     return '\n'.join(messages) or 'Day AI settings unchanged.'
+
+
+_WAITING = 'Finish in the browser window that opened. Esc cancels; CLAI keeps working without Day AI.'
+
+
+async def _sign_in() -> None:
+    """Connect once so FastMCP signs in through the browser and stores the tokens."""
+    async with Client(_transport(), init_timeout=OAUTH_TIMEOUT):
+        pass
 
 
 def _transport() -> StreamableHttpTransport:

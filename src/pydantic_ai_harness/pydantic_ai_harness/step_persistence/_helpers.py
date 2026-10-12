@@ -63,10 +63,12 @@ async def continue_run(store: StepStore, *, run_id: str, include_interrupted: bo
 
     By default only `complete` snapshots are considered -- points whose tool
     work was settled when captured. `include_interrupted=True` also considers
-    `interrupted` rescue points (e.g. a crash mid-tool-cycle): pydantic-ai
-    makes them sendable on resume, but pending tool calls may be re-executed
-    or closed out with synthesized returns, so check
-    `list_unresolved_tool_effects` first (see `SnapshotState`).
+    `interrupted` rescue points (e.g. a crash mid-tool-cycle): pending tool
+    calls may be re-executed or closed out with synthesized returns, so check
+    `list_unresolved_tool_effects` first (see `SnapshotState`). To continue
+    one with a new prompt when none of its pending calls returned, pass the
+    history through `pydantic_ai.messages.repair_messages` first; otherwise
+    the run refuses to abandon them.
 
     Raises `LookupError` if no matching snapshot exists for `run_id` -- e.g.
     the run failed before producing a model response, or it crashed

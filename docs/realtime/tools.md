@@ -32,9 +32,10 @@ of the return value — plus, where the provider supports it, multimodal content
 [`ToolReturn`][pydantic_ai.messages.ToolReturn]'s `content` — while local history keeps the full
 structured [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with its `return_value`,
 `content`, and `metadata`. Attached content is delivered for real or refused loudly — never
-silently degraded: OpenAI and Azure OpenAI deliver text and images as a follow-up user message,
-and Gemini Live inside the tool result, as a standard Gemini 3 request does. Media the model can't
-carry raises [`UserError`][pydantic_ai.exceptions.UserError] before anything is sent.
+silently degraded: OpenAI and Azure OpenAI deliver it as a follow-up user message (GPT-Live to its
+delegated backend, which also takes documents), and Gemini Live inside the tool result, as a standard
+Gemini 3 request does. Media the model can't carry raises [`UserError`][pydantic_ai.exceptions.UserError]
+before anything is sent.
 If the provider cancels an in-flight call, Pydantic AI cancels the task
 and records a synthetic cancellation result locally without sending that result back to the
 provider.
@@ -282,7 +283,7 @@ standard-run semantics; multimodal content isn't routed yet
 
 ## Ending the session from a tool
 
-To hang up from a tool, call [`close()`][pydantic_ai.realtime.RealtimeSession.close] through
+To hang up from a tool, call [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] through
 [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session]:
 
 ```python
@@ -294,11 +295,15 @@ agent = Agent(instructions='When the caller says goodbye, call `hang_up`.')
 @agent.tool
 async def hang_up(ctx: RunContext) -> None:
     assert ctx.realtime_session is not None
-    await ctx.realtime_session.close()
+    await ctx.realtime_session.hang_up()
 ```
 
+`hang_up()` closes the session, like [`close()`][pydantic_ai.realtime.RealtimeSession.close]. On a
+[WebRTC sideband](deployment.md#browser-webrtc-server-sideband) it also ends the browser's call,
+which `close()` would leave up; on every other session the two are the same.
+
 The session closes cleanly, and `session.result` and its history are settled before the context
-exits. The tool does not resume after `close()`: there is no provider left to receive its result, so
+exits. The tool does not resume after `hang_up()` or `close()`: there is no provider left to receive its result, so
 the call is recorded locally with an interrupted result. The code that owns the `session()` context
 does not receive an exception. A concurrent `send_audio()` call consuming a microphone or other
 async iterable returns cleanly at the next chunk after the tool closes the session, without sending

@@ -144,7 +144,7 @@ class MCPServers:
         try:
             await stack.enter_async_context(connection.toolset)
             listed = await connection.toolset.list_tools()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- any connection failure is reported, not raised.
             await stack.aclose()
             connection.error = f'{type(exc).__name__}: {exc}'
             self.log(name, f'start failed: {connection.error}')

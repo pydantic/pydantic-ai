@@ -177,13 +177,15 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Clamp any oversized response part before the request is sent."""
-        messages: list[ModelMessage] = list(request_context.messages)
+        messages: list[ModelMessage] = list(ctx.messages)
         request_ctx = context_for_request(ctx, request_context)
-        request_context.messages = await compact_with_span(
+        compacted = await compact_with_span(
             request_ctx,
             strategy='ClampOversizedMessages',
             messages=messages,
             compact=lambda: self.compact(messages, request_ctx),
             tokenizer=self.tokenizer,
         )
-        return request_context
+        ctx.messages[:] = compacted
+        # Not recorded: clamping's own reclaim has never fed the usage-reporter correction.
+        return replace(request_context, messages=compacted)

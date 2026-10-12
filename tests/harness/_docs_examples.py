@@ -48,6 +48,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.workspaces import WorkspaceRef
+from tests.temporal_utils import temporal_dev_server_cache_dir
 
 _ROOT = Path(__file__).parents[2]  # the repository root, above `tests/harness`
 
@@ -138,7 +139,7 @@ def _run_temporal_script(example: CodeExample) -> dict[str, object]:
 
     # The block runs its own `asyncio.run(main())`, so the server lives on a portal thread's loop.
     async def start() -> WorkflowEnvironment:
-        return await WorkflowEnvironment.start_local()  # pyright: ignore[reportUnknownMemberType]
+        return await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir())  # pyright: ignore[reportUnknownMemberType]
 
     with start_blocking_portal() as portal:
         env = portal.call(start)

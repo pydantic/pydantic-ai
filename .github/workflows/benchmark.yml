@@ -28,6 +28,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          # Keep classification inline so this token-bearing job never executes PR-authored files.
           run_benchmarks() {
             echo 'content_only=false' >> "$GITHUB_OUTPUT"
           }
@@ -61,25 +62,35 @@ jobs:
             exit 0
           fi
 
-          is_published_docs_markdown() {
+          needs_docs_checks() {
+            # `test_examples.py` also scans Markdown under the published package directories.
             case "$1" in
-              README.md|docs/*.md|examples/*.md) ;;
+              README.md|clai/README.md|src/pydantic_clai2/README.md|src/pydantic_ai_harness/README.md) ;;
+              docs/*.md|docs/*.mdc|docs/*.png|docs/*.svg|docs/*.ico|docs/*.jpg|docs/*.jpeg|docs/*.gif|docs/*.webp|docs/*.avif) ;;
+              examples/*.md|pydantic_ai_slim/*.md|pydantic_graph/*.md|pydantic_evals/*.md) ;;
               *) return 1 ;;
-            esac
-            case "$1" in
-              AGENTS.md|CLAUDE.md|*/AGENTS.md|*/CLAUDE.md) return 1 ;;
             esac
           }
 
-          is_instruction_skill() {
-            [[ "$1" =~ ^\.agents/skills/[^/]+/SKILL\.md$ ]]
+          is_non_test_content() {
+            case "$1" in
+              tests/*|.github/*|.macroscope/*) return 1 ;;
+            esac
+            if needs_docs_checks "$1"; then
+              return 0
+            fi
+            case "$1" in
+              .agents/*.md|.agents/*.tsv|.claude/*.md|agent_docs/*.md|*/AGENTS.md|*/CLAUDE.md) return 0 ;;
+              *.md) [[ "$1" != */* ]] ;;
+              *) return 1 ;;
+            esac
           }
 
           content_only=true
           for changed_file in "${changed_files[@]}"; do
             IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
-            if ! is_published_docs_markdown "$filename" && ! is_instruction_skill "$filename" || \
-              { [ -n "$previous_filename" ] && ! is_published_docs_markdown "$previous_filename" && ! is_instruction_skill "$previous_filename"; }; then
+            if ! is_non_test_content "$filename" || \
+              { [ -n "$previous_filename" ] && ! is_non_test_content "$previous_filename"; }; then
               content_only=false
               break
             fi

@@ -12,6 +12,7 @@ Harness capabilities that act in a [workspace](../workspace.md), such as [`Coder
 activity or step reattaches to the environment it names, whichever worker runs it. A later run that
 continues the conversation from `message_history`, in a new workflow or flow, works in the
 [same environment](../workspace.md#continuing-in-the-same-workspace).
+[`Researcher`](researcher.md) works under all three engines too: pass `Researcher()` next to the durability capability, as the `Coder` examples below do, and keep the workspace attached for its tool-result spills.
 
 Attach the workspace, the harness capabilities, and the durability capability when you construct the
 agent. The examples below run the same `Coder` agent on each engine. Swap `LocalWorkspace` for a
@@ -176,6 +177,11 @@ Add it to the agent's capabilities next to `TemporalDurability()`. For work long
 ### Engine notes
 
 - **DBOS** runs a workspace run's tool calls one at a time, so recovery replays each call's recorded result.
+- **Capabilities that make requests from their tools**, [`ExaSearch` and `ExaAgent`](exa-search.md),
+  [`YouSearch` and `YouResearch`](youdotcom.md), [`LocalStack`](localstack.md) against an external instance, and
+  [`CapabilityCreation`](capability-creation.md), record each request on every engine, including DBOS,
+  which otherwise runs function tools in workflow code. Recovery reuses the recorded result. The records
+  are named after each capability's default `id`, so keep it stable once deployed.
 - **Sticky `cd`** is kept in the workspace under `.pydantic-ai-harness/shell/run-state/`, keyed by the
   run ID, so a new worker continues in the same directory after a restart. Without an explicit
   `run_id`, a durable run's ID comes from its workflow or flow run and survives worker recovery. The

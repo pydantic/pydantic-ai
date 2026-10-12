@@ -25,7 +25,7 @@ Not every model supports every input type. Keep provider expectations in mind wh
 
 ## Work with Message History
 
-Use `message_history=` to continue a conversation across runs.
+Continue a conversation across runs with `conversation=result.conversation`. A `Conversation` carries the messages plus what lives outside them: the running `usage` (so `UsageLimits` budget the whole conversation), the `conversation_id`, and the `deferred_tool_requests` a paused run is waiting on. It is also the thing to store between requests.
 
 ```python
 from pydantic_ai import Agent
@@ -33,15 +33,19 @@ from pydantic_ai import Agent
 agent = Agent('openai:gpt-5.2', name='conversation_agent', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
-result2 = agent.run_sync('Explain?', message_history=result1.new_messages())
+result2 = agent.run_sync('Explain?', conversation=result1.conversation)
 print(result2.output)
 ```
+
+`message_history=` is the lower-level form: it takes just the messages (`result.all_messages()` / `new_messages()`), for when you build or edit a history yourself.
 
 Important distinctions:
 
 - `new_messages()` returns only the current run
 - `all_messages()` returns the full history accumulated so far
 - when `message_history` is non-empty, Pydantic AI assumes the history already carries the system prompt
+- `Conversation` (`from pydantic_ai import Conversation, ConversationTypeAdapter`) is accepted by `run`, `run_sync`, `run_stream`, `run_stream_sync`, `run_stream_events`, `iter` and `realtime()`; `RealtimeSession.conversation` produces one too. Passing it alongside `message_history`, `usage` or `conversation_id` raises `UserError`. Store it with `ConversationTypeAdapter.dump_json(...)` / `validate_json(...)` or as a field on your own Pydantic model; it serializes messages with the same fidelity as `ModelMessagesTypeAdapter` (raw `bytes` in tool returns come back as base64 strings)
+- a run that ends with `DeferredToolRequests` output leaves them on `result.conversation.deferred_tool_requests` (they can't be rebuilt from the messages: approval vs external and per-call metadata aren't recorded there). Resume later with `agent.run(conversation=conv, deferred_tool_results=conv.deferred_tool_requests.build_results(...))`
 - interrupted, hand-built, or context-evicted histories are made provider-valid automatically before each model request — no manual cleanup needed. Repairs only ADD synthesized parts or REMOVE fundamentally-unsendable ones (never silently dropping meaningful content): a tool call with no result gets a synthesized `ToolReturnPart` (marked with `{'pydantic_ai_synthesized_tool_return': True}` in `metadata`), including one whose args were cut off mid-stream; an orphaned tool result (result with no matching call) is dropped; then consecutive compatible messages are merged. Applies to regular tool calls only — builtin/native parts are left untouched (handled by each model's serializer). Duplicate tool results and provider-specific ordering rules are out of scope.
 - to cancel a whole run: pass a `CancellationToken` to any run method and call `token.cancel()` (thread-safe), call `agent_run.cancel()` on the `agent.iter()` handle, cancel via `async with agent.run_stream_events(...) as events: ... events.cancel()`, or call `ctx.cancel()` from a tool, `event_stream_handler`, or capability hook. Inside the `agent.iter()` block this surfaces as `CancelledError`; once the context exits it raises `RunCancelled`. `RunCancelled.all_messages()` returns a complete snapshot of the history (completed tool results included) and can be passed as `message_history` to a new run to resume — dangling calls are repaired per the previous bullet. Cancellation is terminal: capability hooks may clean up but cannot recover the run to success. External `asyncio.Task.cancel()` keeps raising `CancelledError` (never translated; wins if both race); catch it and call `RunCancelled.from_cancellation(exc)` to access the attached run state. `StreamedRunResult.cancel()` is different: it only stops the current model response, the run continues.
 
@@ -78,6 +82,17 @@ Rules of thumb:
 
 Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request. `ProcessHistory` is a thin wrapper around the `before_model_request` lifecycle hook — for richer control (access to `RunContext`/`ModelRequestContext`, ability to short-circuit the model call), hook the event directly via `capabilities=[Hooks(before_model_request=fn)]`.
 
+In `before_model_request` and `wrap_model_request`, use the two message views deliberately:
+
+- Mutating or assigning `request_context.messages` changes only the current model request.
+- `ctx.messages[:] = rewritten` changes persistent history and later requests, but not the current model request.
+- Use both assignments when both effects are intended.
+- Deprecated: in `before_model_request`, `append`/`extend`/`+=` on `request_context.messages` also appends to `ctx.messages` and warns. Assign a new list instead, e.g. `request_context.messages = [*request_context.messages, m]` plus `ctx.messages.append(m)`.
+
+The separation is only at the outer collection. `request_context.messages` is an independent shallow list, but retained messages and nested parts may be the same objects as those in `ctx.messages`. Apart from the deprecated appends above, changing the outer list is isolated; mutating a contained message or part in place is not and can affect persistent history. For request-only changes below the message level, use `dataclasses.replace` to construct new messages and parts down to the level being changed.
+
+`ProcessHistory` and compaction intentionally update both contexts. A processor transforms the current request view and makes its complete result persistent, so capability order still matters around processors.
+
 ```python
 from pydantic_ai import Agent, ModelMessage
 from pydantic_ai.capabilities import ProcessHistory
@@ -105,7 +120,7 @@ Use `RunContext.enqueue(...)` (from a tool or capability hook), `AgentRun.enqueu
 
 `enqueue` is variadic; each positional arg is one item: a piece of `UserContent` (a `str` or multi-modal content like an `ImageUrl`), a `ModelRequestPart` (e.g. a `SystemPromptPart`), or a complete `ModelRequest`/`ModelResponse`. Adjacent user content is gathered into one `UserPromptPart`. Pass an existing list by spreading it (`enqueue(*items)`). All three entry points return an `enqueue_id` (`str`) for non-empty calls, or `None` for empty calls. Standard-run and realtime event streams yield an `EnqueuedMessagesEvent` (with that `enqueue_id` and the delivered messages) once those messages enter history, so a client can observe when its steering message took effect. Realtime sessions accept text and `SystemPromptPart`s only, render system parts as `<system>…</system>`, and record the delivered content as one `UserPromptPart`. A system part marks provenance, not silence: the model still gets a turn on it (use `session.send(text, respond=False)` for context that should not prompt a turn).
 
-An enqueued `SystemPromptPart` is a mid-conversation instruction: it's sent at its position in the history rather than hoisted into the provider's top-level system prompt, so it doesn't invalidate a cached prefix ahead of it. This does not enable caching by itself; configure the model's prompt caching or include a `CachePoint`. On models that honor `CachePoint`, one at the end of an `enqueue(...)` batch covers every preceding item in that batch, including a `SystemPromptPart`; one with more content after it caches up to where you put it and leaves the instruction outside, since the instruction is sent after the content it accompanies. Where the provider's API accepts a system message inline it's sent as one, with real operator authority; elsewhere it's rendered as `<system>`-tagged user content at that position, which a model treats as a strong preference rather than a system-level rule. Support varies by model *and* transport, and Pydantic AI picks the rendering automatically — don't gate your own code on a model list.
+An enqueued `SystemPromptPart` is a mid-conversation instruction: it's sent at its position in the history rather than hoisted into the provider's top-level system prompt, so it doesn't invalidate a cached prefix ahead of it. This does not enable caching by itself; configure prompt caching (the unified `cache` model setting — see [Configure Prompt Caching Across Providers](./CAPABILITIES-AND-HOOKS.md#configure-prompt-caching-across-providers) — or a provider-specific setting) or include a `CachePoint`. On models that honor `CachePoint`, one at the end of an `enqueue(...)` batch covers every preceding item in that batch, including a `SystemPromptPart`; one with more content after it caches up to where you put it and leaves the instruction outside, since the instruction is sent after the content it accompanies. Where the provider's API accepts a system message inline it's sent as one, with real operator authority; elsewhere it's rendered as `<system>`-tagged user content at that position, which a model treats as a strong preference rather than a system-level rule. Support varies by model *and* transport, and Pydantic AI picks the rendering automatically — don't gate your own code on a model list.
 
 Only enqueue a `SystemPromptPart` for an instruction you authored. A system prompt carries operator authority, so building one out of tool output, a retrieved document, or a webhook payload hands that content the same authority and makes a prompt injection buried in it load-bearing. Late-arriving results are the case to watch, since they're a common reason to reach for `enqueue`: a background job whose tool returned `'started'` long before the work finished. Enqueue those as user content, and if the result should also change how the agent behaves, write that instruction yourself and enqueue the payload separately.
 
