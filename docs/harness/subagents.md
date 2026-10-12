@@ -458,7 +458,9 @@ tasks below it, so it cannot list, message, or stop its siblings or its parent. 
 these tools is offered without an owner or to a run at `max_depth`, which cannot
 delegate. With several `SubAgents` capabilities on one agent, the first one that can
 delegate offers them, and a task is resumed through the delegate tool whose roster has
-its agent.
+its agent. These are tools of their own, so a guardrail or approval hook meant to cover
+what delegates are told should name them next to the delegate tool: `message_task`
+sends new instructions to a running task and resumes a finished one.
 
 An observer receives `DelegationTaskEvent`, with the task identity and an optional
 correlated child stream event. Managed start/end events carry `task_id` and
