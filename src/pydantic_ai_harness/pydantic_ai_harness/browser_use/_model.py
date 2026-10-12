@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from typing_extensions import TypeIs
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation, WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -207,8 +208,19 @@ class RunChatModel(PydanticAIChatModel):
                 f'{model.model_id!r} is not a request-response model. Pass `llm` to BrowserUse.'
             )
         super().__init__(model)
-        settings = ctx.instrumentation_settings
-        self._agent.instrument = settings if settings is not None else False
+        # Without a host `Instrumentation`, stay uninstrumented rather than fall back to global defaults.
+        self._agent.instrument = False
+
+        def select(capability: AbstractCapability[AgentDepsT]) -> None:
+            # The last `Instrumentation` in application order instruments the host run; a resolved
+            # capability function's one is visited inside its wrapper.
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if isinstance(capability, Instrumentation):
+                self._agent.instrument = capability.settings
+
+        if ctx.root_capability is not None:
+            ctx.root_capability.apply(select)
 
 
 def resolve_chat_model(llm: BaseChatModel | Model | KnownModelName | str | None) -> BaseChatModel | None:
