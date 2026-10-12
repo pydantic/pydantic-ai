@@ -178,6 +178,9 @@ reports = DelegationReports(tasks, conversation_id='conversation-1')
 - For a host-started, report-only continuation, use `priority='asap'` with `agent.run(None, ...)`, so
   the reports reach the first model request with no synthetic user prompt.
 - Reports are marked delivered once consumed and are not replayed. The host owns idle wake-up.
+- With `DelegationTasks(directory=...)`, a damaged saved task file is skipped and listed in
+  `owner.problems` instead of stopping `opened()`. `await DelegationTasks.discover(directory)` reads the
+  saved task tree (`tasks` by ID, plus `problems`) without opening an owner or resuming anything.
 
 ## DynamicWorkflow
 

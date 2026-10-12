@@ -422,6 +422,30 @@ Inspect possible partial effects before an explicit resume. A resume closes out 
 calls the interruption left unanswered with an `interrupted` tool return, so the child
 sees they did not complete.
 
+Each saved file loads on its own. A file that cannot be read or validated, whose name
+does not match its task ID, or whose saved ancestry loops is skipped and left on disk:
+`opened()` logs a warning and lists it in `problems` as a `SavedTaskProblem` (its path
+and the reason), and the other tasks still load. To list a saved task tree without
+opening an owner or resuming anything, for example from a dashboard or another process,
+call `DelegationTasks.discover(directory)`. It returns `SavedTasks`, with the loaded
+`tasks` by ID (follow `parent_id` for the tree) and the same `problems`. Discovery
+writes nothing, and returns a task saved as `running` unchanged, since the process that
+owns it may still be running it.
+
+```python
+from pathlib import Path
+
+from pydantic_ai_harness.subagents import DelegationTasks
+
+
+async def show_saved_tasks():
+    saved = await DelegationTasks.discover(Path('.task-history'))
+    for task in saved.tasks.values():
+        print(task.id, task.parent_id, task.agent_name, task.status, task.outcome)
+    for problem in saved.problems:
+        print(f'Skipped {problem.path}: {problem.reason}')
+```
+
 Managed children with `forward_usage=True` share live usage accounting and inherit
 parent ceilings. A per-child budget is converted to an absolute ceiling at launch;
 concurrent sibling spend may reach that ceiling earlier, but cannot bypass the

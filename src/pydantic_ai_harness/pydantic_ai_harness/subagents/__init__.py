@@ -16,7 +16,14 @@ from pydantic_ai_harness.subagents._events import (
     DelegationStartEvent,
 )
 from pydantic_ai_harness.subagents._models import ModelOption
-from pydantic_ai_harness.subagents._tasks import DelegationReports, DelegationTask, DelegationTaskEvent, DelegationTasks
+from pydantic_ai_harness.subagents._tasks import (
+    DelegationReports,
+    DelegationTask,
+    DelegationTaskEvent,
+    DelegationTasks,
+    SavedTaskProblem,
+    SavedTasks,
+)
 from pydantic_ai_harness.subagents._toolset import SubAgent, SubAgentToolset
 
 if TYPE_CHECKING:
@@ -35,6 +42,8 @@ __all__ = [
     'DelegationTaskEvent',
     'DelegationTasks',
     'ModelOption',
+    'SavedTaskProblem',
+    'SavedTasks',
     'SubAgent',
     'SubAgentToolset',
     'SubAgents',

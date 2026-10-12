@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 import anyio
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, on_event
@@ -79,6 +79,24 @@ class DelegationTaskEvent:
     """That model's context window, when its profile knows one, so a UI can show the child's context usage."""
 
 
+@dataclass(kw_only=True)
+class SavedTaskProblem:
+    """A saved task file that discovery skipped. The file is left on disk for inspection."""
+
+    path: Path
+    reason: str
+
+
+@dataclass(kw_only=True)
+class SavedTasks:
+    """The tasks saved under a `DelegationTasks` directory, read without opening an owner or resuming any task."""
+
+    tasks: dict[str, DelegationTask]
+    """The tasks that loaded, by ID. Use `parent_id` to walk the tree; a parent that did not load is absent."""
+    problems: list[SavedTaskProblem]
+    """One entry per skipped file, so a damaged task does not hide its siblings."""
+
+
 Observer = Callable[[DelegationTaskEvent], Awaitable[None]]
 Runner = Callable[[DelegationTask], Awaitable[str]]
 _ADAPTER = TypeAdapter(DelegationTask)
@@ -116,6 +134,8 @@ class DelegationTasks:
         self.one_shot = one_shot
         self.max_depth = max_depth
         self.records: dict[str, DelegationTask] = {}
+        self.problems: list[SavedTaskProblem] = []
+        """Saved task files that `opened()` skipped, from the most recent `opened()`."""
         self._workers: dict[str, asyncio.Task[str]] = {}
         self._released: dict[str, asyncio.Event] = {}
         self._stopping: set[str] = set()
@@ -134,6 +154,48 @@ class DelegationTasks:
         """The child whose tools are currently executing, including permission tools."""
         return _CHILD.get()
 
+    @staticmethod
+    async def discover(directory: Path) -> SavedTasks:
+        """Read the task tree saved under `directory` without opening an owner or resuming any task.
+
+        Each file is checked on its own. An unreadable or invalid file, a file whose name does not match its
+        task ID, and a task whose saved ancestry loops are reported in `SavedTasks.problems`; the other tasks
+        still load. Nothing is written. A task saved as `running` is returned as saved, since the process that
+        owns it may still be running it.
+        """
+        tasks: dict[str, DelegationTask] = {}
+        problems: list[SavedTaskProblem] = []
+        paths = sorted([path async for path in anyio.Path(directory).glob('*.json')], key=lambda path: path.name)
+        for path in paths:
+            try:
+                record = _ADAPTER.validate_json(await path.read_bytes())
+            except (OSError, ValidationError) as exc:
+                problems.append(SavedTaskProblem(path=Path(path), reason=f'{type(exc).__name__}: {exc}'))
+                continue
+            if (
+                not _SAFE_ID.fullmatch(record.id)
+                or not _SAFE_ID.fullmatch(record.run_id)
+                or path.name != f'{record.id}.json'
+            ):
+                problems.append(SavedTaskProblem(path=Path(path), reason='Invalid saved task identity'))
+                continue
+            tasks[record.id] = record
+
+        def loops(record: DelegationTask) -> bool:
+            ancestors = {record.id}
+            parent = record.parent_id
+            while parent is not None and parent in tasks:
+                if parent in ancestors:
+                    return True
+                ancestors.add(parent)
+                parent = tasks[parent].parent_id
+            return False
+
+        for task_id in [task_id for task_id, record in tasks.items() if loops(record)]:
+            del tasks[task_id]
+            problems.append(SavedTaskProblem(path=directory / f'{task_id}.json', reason='Cyclic saved task ancestry'))
+        return SavedTasks(tasks=tasks, problems=problems)
+
     @contextmanager
     def bind(self) -> Generator[None]:
         """Route this run's delegations to the owner without taking ownership of the run."""
@@ -147,22 +209,23 @@ class DelegationTasks:
 
     @asynccontextmanager
     async def opened(self) -> AsyncGenerator[DelegationTasks]:
-        """Restore saved children, then cancel and drain workers before releasing resources."""
+        """Restore saved children, then cancel and drain workers before releasing resources.
+
+        Saved files that `discover` reports as problems are skipped, logged, and kept in `problems`.
+        """
         if self._open:
             raise RuntimeError('Delegation task owner is already open')
         self._open = True
         try:
             if self.directory is not None:
-                directory = anyio.Path(self.directory)
-                await directory.mkdir(parents=True, exist_ok=True)
-                async for path in directory.glob('*.json'):
-                    record = _ADAPTER.validate_json(await path.read_bytes())
-                    if (
-                        not _SAFE_ID.fullmatch(record.id)
-                        or not _SAFE_ID.fullmatch(record.run_id)
-                        or path.name != f'{record.id}.json'
-                    ):
-                        raise ValueError(f'Invalid saved task identity in {path.name!r}')
+                await anyio.Path(self.directory).mkdir(parents=True, exist_ok=True)
+                saved = await self.discover(self.directory)
+                self.problems = saved.problems
+                for problem in saved.problems:
+                    logging.getLogger(__name__).warning(
+                        'Skipping saved delegation task %s: %s', problem.path, problem.reason
+                    )
+                for record in saved.tasks.values():
                     if record.status == 'running':
                         if self.step_store is not None:
                             snapshot = await self.step_store.latest_snapshot(
@@ -174,14 +237,6 @@ class DelegationTasks:
                         record.output = 'Execution interrupted by process exit. Inspect effects before resuming.'
                         record.finished_at = time.time()
                     self.records[record.id] = record
-                for record in self.records.values():
-                    ancestors = {record.id}
-                    parent = record.parent_id
-                    while parent is not None and parent in self.records:
-                        if parent in ancestors:
-                            raise ValueError('Cyclic saved task ancestry')
-                        ancestors.add(parent)
-                        parent = self.records[parent].parent_id
             yield self
         finally:
             with anyio.move_on_after(10, shield=True) as cleanup:
