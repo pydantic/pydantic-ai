@@ -739,7 +739,7 @@ class _PlainModel(Model):
 
     @property
     def system(self) -> str:
-        return 'plain'
+        raise NotImplementedError
 
 
 @dataclass(eq=False)

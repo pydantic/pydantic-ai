@@ -2659,11 +2659,11 @@ class _PlainEmbeddingModel(EmbeddingModel):
 
     @property
     def model_name(self) -> str:
-        return 'plain'
+        raise NotImplementedError
 
     @property
     def system(self) -> str:
-        return 'plain'
+        raise NotImplementedError
 
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
