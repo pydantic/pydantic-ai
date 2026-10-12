@@ -38,7 +38,10 @@ def _run_bump(
     tag: str = 'v0.55.0',
     stale_pinned: str = '0.55.0',
     snapshot_version: str | None = None,
-) -> tuple[subprocess.CompletedProcess[str], list[str], str, str]:
+    existing_title: str = '',
+    branch_exists: bool = False,
+    branch_content: str | None = None,
+) -> tuple[subprocess.CompletedProcess[str], list[str], str, str, str]:
     workflow: object = yaml.safe_load(WORKFLOW.read_text(encoding='utf-8'))
     jobs = WORKFLOW_ADAPTER.validate_python(workflow)['jobs']
     job = PIN_BUMP_JOB_ADAPTER.validate_python(jobs['gh-aw-engine-pin-bump'])
@@ -65,9 +68,11 @@ engine:
 """,
         encoding='utf-8',
     )
+    branch_definition = tmp_path / 'pydantic.branch.md'
+    branch_definition.write_text(branch_content or definition.read_text(encoding='utf-8'), encoding='utf-8')
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
-    for name in ('grep', 'awk', 'cmp', 'cat', 'cp', 'tr'):
+    for name in ('grep', 'awk', 'cmp', 'cat', 'cp', 'tee', 'tr'):
         source = shutil.which(name)
         assert source is not None
         (bin_dir / name).symlink_to(source)
@@ -99,19 +104,26 @@ fi
 set -e
 printf '%s\\n' "$*" >> "$GH_CALLS"
 case "$*" in
-  "pr list "*) ;;
+  "pr list "*) if [[ -n "$GH_EXISTING_TITLE" ]]; then printf '%s\\n' "$GH_EXISTING_TITLE"; fi ;;
   "api repos/fixture/repository/git/ref/heads/main --jq .object.sha") printf 'base-sha\\n' ;;
   *"/contents/src/pydantic_ai_harness/gh-aw/pydantic.md?ref=base-sha"*) cat "$GH_SNAPSHOT" ;;
-  "api repos/fixture/repository/git/ref/heads/gh-aw-engine-pin-"*) exit 1 ;;
+  "api repos/fixture/repository/git/ref/heads/gh-aw-engine-pin-"*)
+    if [[ "$GH_BRANCH_EXISTS" == true ]]; then printf 'branch-sha\\n'; else exit 1; fi
+    ;;
   "api repos/fixture/repository/git/refs "*) ;;
-  *"/contents/src/pydantic_ai_harness/gh-aw/pydantic.md?ref=gh-aw-engine-pin-"*) cat "$GH_SNAPSHOT" ;;
   *"/contents/src/pydantic_ai_harness/gh-aw/pydantic.md"*"--jq .sha"*) printf 'file-sha\\n' ;;
+  *"/contents/src/pydantic_ai_harness/gh-aw/pydantic.md?ref=gh-aw-engine-pin-"*)
+    cat "$GH_BRANCH_CONTENT" | tee "$GH_BRANCH_READ"
+    ;;
   *"-X PUT repos/fixture/repository/contents/src/pydantic_ai_harness/gh-aw/pydantic.md"*)
+    has_expected_sha=false
     for argument in "$@"; do
       case "$argument" in
+        sha=file-sha) has_expected_sha=true ;;
         content=*) printf '%s' "${argument#content=}" | base64 -d > "$GH_UPDATED_CONTENT" ;;
       esac
     done
+    [[ "$has_expected_sha" == true ]]
     ;;
   "pr create "*) cp "$GH_BODY" "$GH_CREATED_BODY" ;;
   *) exit 2 ;;
@@ -143,6 +155,10 @@ esac
         'GH_CREATED_BODY': str(tmp_path / 'created-body.md'),
         'GH_UPDATED_CONTENT': str(tmp_path / 'updated-content.md'),
         'BASE64_REAL': base64,
+        'GH_EXISTING_TITLE': existing_title,
+        'GH_BRANCH_EXISTS': str(branch_exists).lower(),
+        'GH_BRANCH_CONTENT': str(branch_definition),
+        'GH_BRANCH_READ': str(tmp_path / 'branch-read.md'),
     }
     shell = shutil.which('bash')
     assert shell is not None
@@ -161,16 +177,71 @@ esac
         if (tmp_path / 'updated-content.md').exists()
         else ''
     )
-    return process, calls, created_body, updated_content
+    branch_read = (
+        (tmp_path / 'branch-read.md').read_text(encoding='utf-8') if (tmp_path / 'branch-read.md').exists() else ''
+    )
+    return process, calls, created_body, updated_content, branch_read
 
 
 @pytest.mark.parametrize(('pinned', 'released'), [('0.55.0', '0.54.0'), ('0.55.0', '0.55.0')])
 def test_older_or_equal_release_does_not_write_even_when_job_pin_is_stale(tmp_path: Path, pinned: str, released: str):
-    process, calls, _, _ = _run_bump(tmp_path, pinned, released, stale_pinned='0.53.0')
+    process, calls, _, _, _ = _run_bump(tmp_path, pinned, released, stale_pinned='0.53.0')
 
     assert process.returncode == 0, process.stderr
     assert not any('-X PUT' in call or call.startswith('pr create ') for call in calls)
     assert not any('/git/refs ' in call for call in calls)
+
+
+def test_exact_open_pull_request_title_stops_after_listing(tmp_path: Path):
+    released = '0.55.0'
+    title = f'Bump the gh-aw engine pin to `{released}`'
+
+    process, calls, _, updated_content, branch_read = _run_bump(tmp_path, '0.54.0', released, existing_title=title)
+
+    assert process.returncode == 0, process.stderr
+    assert len(calls) == 1
+    assert calls[0].startswith('pr list ')
+    assert updated_content == ''
+    assert branch_read == ''
+
+
+def test_existing_release_branch_with_old_file_is_updated_without_ref_creation(tmp_path: Path):
+    process, calls, body, updated_content, branch_read = _run_bump(tmp_path, '0.54.0', '0.55.0', branch_exists=True)
+    expected_content = branch_read.replace('version: "0.54.0"', 'version: "0.55.0"', 1)
+    puts = [call for call in calls if '-X PUT' in call]
+
+    assert process.returncode == 0, process.stderr
+    assert branch_read.startswith('---\n') and 'version: "0.54.0"' in branch_read
+    assert not any('/git/refs ' in call for call in calls)
+    assert len(puts) == 1
+    assert 'sha=file-sha' in puts[0]
+    assert updated_content == expected_content
+    assert sum(call.startswith('pr create ') for call in calls) == 1
+    assert 'from `0.54.0` to `0.55.0`' in body
+
+
+def test_existing_release_branch_with_current_file_skips_put_and_creates_pull_request(tmp_path: Path):
+    current_content = """---
+name: Pydantic
+engine:
+  id: pydantic-ai
+  version: "0.55.0"
+runtimes:
+  python:
+    version: "3.13"
+---
+engine:
+  version: "9.9.9"
+"""
+    process, calls, _, updated_content, branch_read = _run_bump(
+        tmp_path, '0.54.0', '0.55.0', branch_exists=True, branch_content=current_content
+    )
+
+    assert process.returncode == 0, process.stderr
+    assert branch_read == current_content
+    assert not any('/git/refs ' in call or '-X PUT' in call for call in calls)
+    assert updated_content == ''
+    assert sum(call.startswith('pr create ') for call in calls) == 1
 
 
 @pytest.mark.parametrize(
@@ -192,7 +263,7 @@ def test_newer_release_bumps_from_fetched_snapshot_and_uses_numeric_ordering(
         version_literal = pinned
     else:
         version_literal = None
-    process, calls, body, updated_content = _run_bump(
+    process, calls, body, updated_content, _ = _run_bump(
         tmp_path, pinned, released, stale_pinned=released, snapshot_version=version_literal
     )
 
@@ -218,7 +289,7 @@ engine:
 
 @pytest.mark.parametrize('version', ['0.55.0rc1', '0.55.0.dev1', '0.55.0+local'])
 def test_non_final_releases_do_not_call_gh(tmp_path: Path, version: str):
-    process, calls, _, _ = _run_bump(tmp_path, '0.54.0', '0.55.0', tag=f'v{version}')
+    process, calls, _, _, _ = _run_bump(tmp_path, '0.54.0', '0.55.0', tag=f'v{version}')
 
     assert process.returncode == 0, process.stderr
     assert calls == []
@@ -226,7 +297,7 @@ def test_non_final_releases_do_not_call_gh(tmp_path: Path, version: str):
 
 @pytest.mark.parametrize(('pinned', 'released'), [('bad', '0.55.0'), ('0.54.0', '0.55.0rc1')])
 def test_unexpected_version_shape_fails_closed_before_writes(tmp_path: Path, pinned: str, released: str):
-    process, calls, _, _ = _run_bump(tmp_path, pinned, released)
+    process, calls, _, _, _ = _run_bump(tmp_path, pinned, released)
 
     assert process.returncode != 0
     assert 'numeric' in process.stderr.lower() or 'numeric' in process.stdout.lower()
