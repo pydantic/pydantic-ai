@@ -38,6 +38,12 @@ class TestFakeSmolSandboxBackend(WorkspaceBackendSuite):
     async def test_large_file_round_trip(self, backend: WorkspaceBackend) -> None: ...
 
     @pytest.fixture
+    def can_detect_exit_with_inherited_output_pipes(self) -> bool:
+        # The fake's host processes report exit only once their output pipes close; smolvm reports
+        # it on its own, which the live tier checks.
+        return False
+
+    @pytest.fixture
     def fresh_backend(self, working_dir: str) -> Callable[[], WorkspaceBackend]:
         return lambda: SmolSandboxBackend(working_dir=working_dir)
 

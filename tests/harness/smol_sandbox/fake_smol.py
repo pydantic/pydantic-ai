@@ -160,14 +160,9 @@ class FakeAsyncMachine:
                 await events.put({'kind': kind, 'data': decoder.decode(chunk)})
             await events.put({'kind': kind, 'data': decoder.decode(b'', final=True)})
 
-        readers = asyncio.gather(pump(process.stdout, 'stdout'), pump(process.stderr, 'stderr'))
+        # Unlike the real engine, this waits for the output pipes to close as well as for the exit.
+        await asyncio.gather(pump(process.stdout, 'stdout'), pump(process.stderr, 'stderr'))
         code = await process.wait()
-        # Like the real engine, report the exit without waiting for a background child that
-        # inherited the output pipes to close them.
-        try:
-            await asyncio.wait_for(asyncio.shield(readers), 0.5)
-        except TimeoutError:
-            readers.cancel()
         if self._vm.state != 'running':
             await events.put({'kind': 'error', 'message': 'io operation failed: connection closed'})
         else:
