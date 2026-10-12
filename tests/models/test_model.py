@@ -2,6 +2,7 @@ import os
 import re
 import warnings
 from copy import deepcopy
+from dataclasses import dataclass
 from importlib import import_module
 from unittest.mock import patch
 
@@ -30,6 +31,7 @@ from pydantic_ai.models import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings
 
 from ..conftest import try_import
 
@@ -713,3 +715,74 @@ def test_wrapper_model_deepcopy():
     assert copied.wrapped is not model.wrapped
     assert copied.model_name == 'test'
     assert copied.custom_output_text == 'wrapped'
+
+
+@dataclass(init=False)
+class _DataclassTestModel(TestModel):
+    """A user's dataclass subclass, which would generate its own `__eq__` and `__repr__` from its fields."""
+
+
+class _PlainModel(Model):
+    """A subclass that isn't a dataclass, so it has no fields to compare."""
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        raise NotImplementedError
+
+    @property
+    def model_name(self) -> str:
+        return 'plain'
+
+    @property
+    def system(self) -> str:
+        return 'plain'
+
+
+class _OwnEqualityModel(_PlainModel):
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _OwnEqualityModel)
+
+
+def test_models_that_differ_only_in_settings_or_profile_are_not_equal():
+    """`settings` and `profile` live on the `Model` base, outside the fields a dataclass subclass compares.
+
+    Not a VCR test: equality makes no request.
+    """
+    assert TestModel(settings={'temperature': 0.0}) != TestModel(settings={'temperature': 1.0})
+    assert TestModel(profile=ModelProfile(supports_tools=True)) != TestModel(profile=ModelProfile(supports_tools=False))
+    assert WrapperModel(TestModel(settings={'temperature': 0.0})) != WrapperModel(
+        TestModel(settings={'temperature': 1.0})
+    )
+    assert _DataclassTestModel(settings={'temperature': 0.0}) != _DataclassTestModel(settings={'temperature': 1.0})
+    assert TestModel(settings={'temperature': 0.0}) == TestModel(settings={'temperature': 0.0})
+    assert TestModel() != object()
+
+
+def test_a_model_without_dataclass_fields_compares_by_identity():
+    """Not a VCR test: equality and hashing make no request."""
+    model = _PlainModel()
+
+    assert model == model
+    assert model != _PlainModel()
+    assert {model: 'kept'}[model] == 'kept'
+    assert _OwnEqualityModel() == _OwnEqualityModel(), "a subclass's own `__eq__` is kept"
+
+
+def test_model_repr_shows_its_name_settings_and_profile():
+    """A provider adapter keeps its name and provider out of its dataclass fields' repr.
+
+    Not a VCR test: `repr` makes no request.
+    """
+    with patch.dict(os.environ, {'OPENAI_API_KEY': 'x'}):
+        model = OpenAIChatModel('gpt-5', settings={'temperature': 1.0})
+
+    assert repr(model) == "OpenAIChatModel(model_name='gpt-5', settings={'temperature': 1.0})"
+    assert repr(TestModel(seed=1, profile=ModelProfile(supports_tools=False))) == (
+        "TestModel(model_name='test', call_tools='all', custom_output_text=None, custom_output_args=None, seed=1, "
+        "last_model_request_parameters=None, profile={'supports_tools': False})"
+    )
+    assert repr(_PlainModel()) == "_PlainModel(model_name='plain')"

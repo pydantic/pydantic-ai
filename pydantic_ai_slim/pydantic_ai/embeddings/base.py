@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from dataclasses import fields, is_dataclass
+from typing import Any
 
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings, merge_embedding_settings
@@ -36,6 +38,27 @@ class EmbeddingModel(ABC):
     def settings(self) -> EmbeddingSettings | None:
         """Get the default settings for this model."""
         return self._settings
+
+    def __eq__(self, other: object) -> bool:
+        """Compare `settings` and the subclass's dataclass fields; a non-dataclass subclass compares by identity."""
+        if not isinstance(other, type(self)) or other.__class__ is not self.__class__:
+            return NotImplemented
+        if not is_dataclass(self):
+            return self is other
+        names = [f.name for f in fields(self) if f.compare]
+        return (self._settings, *(getattr(self, name) for name in names)) == (
+            other._settings,
+            *(getattr(other, name) for name in names),
+        )
+
+    __hash__ = ABC.__hash__
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # `@dataclass` generates `__eq__` from the subclass's own fields, which leaves out the `settings`
+        # stored on this base. `@dataclass` keeps an `__eq__` the class already defines.
+        if '__eq__' not in cls.__dict__ and cls.__eq__ is EmbeddingModel.__eq__:
+            cls.__eq__ = EmbeddingModel.__eq__
 
     @property
     def base_url(self) -> str | None:

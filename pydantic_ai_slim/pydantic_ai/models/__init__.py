@@ -14,7 +14,7 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timedelta
 from difflib import get_close_matches
 from functools import cache, cached_property
@@ -565,8 +565,40 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Get the model settings."""
         return self._settings
 
+    def __eq__(self, other: object) -> bool:
+        """Compare `settings`, `profile`, and the subclass's dataclass fields; a non-dataclass subclass compares by identity."""
+        if not isinstance(other, type(self)) or other.__class__ is not self.__class__:
+            return NotImplemented
+        if not is_dataclass(self):
+            return self is other
+        names = [f.name for f in fields(self) if f.compare]
+        return (self._settings, self._profile, *(getattr(self, name) for name in names)) == (
+            other._settings,
+            other._profile,
+            *(getattr(other, name) for name in names),
+        )
+
+    __hash__ = AbstractModel.__hash__
+
+    def __repr__(self) -> str:
+        shown = [f'model_name={self.model_name!r}']
+        if is_dataclass(self):
+            shown.extend(f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr)
+        if self._settings is not None:
+            shown.append(f'settings={self._settings!r}')
+        if self._profile is not None:
+            shown.append(f'profile={self._profile!r}')
+        return f'{self.__class__.__qualname__}({", ".join(shown)})'
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
+        # `@dataclass` generates `__eq__` and `__repr__` from the subclass's own fields, which leaves out the
+        # `settings` and `profile` stored on this base, so two models configured differently would compare
+        # equal and print the same. `@dataclass` keeps a method the class already defines.
+        if '__eq__' not in cls.__dict__ and cls.__eq__ is Model.__eq__:
+            cls.__eq__ = Model.__eq__
+        if '__repr__' not in cls.__dict__ and cls.__repr__ is Model.__repr__:
+            cls.__repr__ = Model.__repr__
         # TODO(v3): remove along with `resolve_prompt_cache_retention`.
         legacy = cls.__dict__.get('resolve_prompt_cache_retention')
         if legacy is not None and 'resolve_cache_retention' not in cls.__dict__:

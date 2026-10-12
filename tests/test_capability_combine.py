@@ -908,11 +908,7 @@ async def test_a_merge_takes_the_later_of_two_models_differing_only_in_settings(
     subagent_output: FilePart | TextPart,
     subagent_profile: ModelProfile,
 ) -> None:
-    """Two model instances are two values, so the later one runs even where the models compare equal.
-
-    A model's `settings` live on the non-dataclass `Model` base, outside the field equality its
-    dataclass subclasses generate. Merging them to the first would run the fallback subagent with the
-    earlier model's settings under the later capability.
+    """Two models that differ only in `settings` are two values, so the later one runs.
 
     Not a VCR test: the claim is which of the two models the merge keeps, and the settings a function
     model receives show that without a provider.
@@ -925,7 +921,6 @@ async def test_a_merge_takes_the_later_of_two_models_differing_only_in_settings(
 
     first = FunctionModel(subagent, settings={'temperature': 0.0}, profile=subagent_profile)
     later = FunctionModel(subagent, settings={'temperature': 1.0}, profile=subagent_profile)
-    assert first == later
 
     def outer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='done')] if len(messages) > 1 else [tool_call])
