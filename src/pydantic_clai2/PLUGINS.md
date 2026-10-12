@@ -422,13 +422,13 @@ setup. The flow lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
 
 Setup also tries to mint a read token for the same project and saves it in
 `/keys` as `LOGFIRE_READ_TOKEN_<ORG>_<PROJECT>`. `read_access` stores only its key
-name and the write-token key saved beside it. Builds without the
+name, the write-token key saved beside it, and the Logfire that issued both. Builds without the
 `logfire-read-access` feature ignore this setting. A failed read-token request
 leaves tracing available; setup must run again to enable reading.
 
 The plugin contributes `/logfire optimize [agents | preview AGENT | propose
 AGENT [focus]]`. It refuses before any network request unless `read_access`
-was saved by project setup and still names the write-token key in use. An
+was saved by project setup and still names the write-token key and Logfire in use. An
 environment write token, SDK credentials, or a `logfire_mcp` login does not
 qualify. Disabling the plugin removes the command.
 

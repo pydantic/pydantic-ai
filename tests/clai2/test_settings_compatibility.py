@@ -205,12 +205,21 @@ async def test_an_older_build_changing_the_token_retires_the_sign_in_email(
     assert tags == [(), ('mike@example.com',), (), ()]
 
 
-async def test_an_older_build_setting_up_another_project_retires_the_read_token(
-    tmp_path: Path, recorder: Recorder, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    'elsewhere',
+    [
+        {'token': KeyReference(name='LOGFIRE_TOKEN_OTHER')},
+        # The same project name on another Logfire reuses the write-token key name, but not the issuing Logfire.
+        {'base_url': 'https://logfire.example.com'},
+    ],
+)
+async def test_an_older_build_setting_up_elsewhere_retires_the_read_token(
+    tmp_path: Path, recorder: Recorder, monkeypatch: pytest.MonkeyPatch, elsewhere: dict[str, object]
 ) -> None:
     loader, store = observability_loader(tmp_path)
-    team, other = KeyReference(name='LOGFIRE_TOKEN_TEAM'), KeyReference(name='LOGFIRE_TOKEN_OTHER')
-    access = LogfireReadAccess(token=KeyReference(name='LOGFIRE_READ_TOKEN_TEAM'), write_token=team)
+    team = KeyReference(name='LOGFIRE_TOKEN_TEAM')
+    us = 'https://logfire-us.pydantic.dev'
+    access = LogfireReadAccess(token=KeyReference(name='LOGFIRE_READ_TOKEN_TEAM'), write_token=team, base_url=us)
     save_key(name='LOGFIRE_READ_TOKEN_TEAM', value='pylf_v1_us_read')
     supported = features.SUPPORTED_FEATURES
     store.save_plugin(
@@ -222,24 +231,24 @@ async def test_an_older_build_setting_up_another_project_retires_the_read_token(
         await loader.load_all()
         # This build's project setup saves the write token with the read token minted beside it.
         host = _observability_host(loader)
-        update = {'token': team, 'base_url': 'https://logfire-us.pydantic.dev', 'read_access': access}
+        update = {'token': team, 'base_url': us, 'read_access': access}
         host.save_settings(host.settings(LogfireSettings).model_copy(update=update))
         requirements = store.plugin_requirements('observability')
         assert isinstance(requirements, dict)
         assert requirements['read_access'] == ['logfire-read-access']
-        # A build that knows user tags but not read access ignores it, then sets up another project.
+        # A build that knows user tags but not read access ignores it, then sets up elsewhere.
         monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset({'logfire-user-tag'}))
         await loader.reload('observability')
         host = _observability_host(loader)
         assert host.settings(LogfireSettings).read_access is None
-        host.save_settings(host.settings(LogfireSettings).model_copy(update={'token': other}))
+        host.save_settings(host.settings(LogfireSettings).model_copy(update=elsewhere))
         [saved] = store.plugins()
         assert saved.settings['read_access'] == access.model_dump(mode='json')  # Written back, as unknown settings are.
         monkeypatch.setattr(features, 'SUPPORTED_FEATURES', supported)
         await loader.reload('observability')
         settings = _observability_host(loader).settings(LogfireSettings)
         assert settings.read_access == access
-        # The read token belongs to the old project, so this build refuses to read with it.
+        # The read token belongs to the old project or Logfire, so this build refuses to send it.
         with pytest.raises(ValueError, match='needs a read token for the Logfire project traces go to'):
             await read_access(settings)
     finally:

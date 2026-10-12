@@ -50,11 +50,12 @@ class LogfireAccount(BaseModel):
 
 
 class LogfireReadAccess(BaseModel):
-    """The `/keys` entry holding the read token project setup saved, and the write token saved beside it."""
+    """The read token project setup saved in `/keys`, the write token beside it, and the Logfire that issued both."""
 
     model_config = ConfigDict(extra='forbid', frozen=True, strict=True, hide_input_in_errors=True)
     token: KeyReference
     write_token: KeyReference
+    base_url: str
 
 
 def _base_url(text: str) -> str:
@@ -101,7 +102,8 @@ class LogfireSettings(BaseModel):
     read_access: LogfireReadAccess | None = Field(
         default=None,
         description='Saved by project setup: a read token for the same project, which /logfire optimize reads '
-        'agent runs with only while `token` still names the write token saved beside it.',
+        'agent runs with only while `token` and `base_url` still name the write token saved beside it and the '
+        'Logfire that issued both.',
     )
 
 
@@ -119,13 +121,13 @@ NO_READ_TOKEN = (
 async def read_access(settings: LogfireSettings) -> Access:
     """Where `/logfire optimize` reads from, or a `ValueError` saying how to sign in: the hard gate.
 
-    Only a read token saved by this plugin's own setup, beside the write token still in use, counts, so the
-    command never reads a project other than the one traces go to.
+    Only a read token saved by this plugin's own setup, beside the write token and Logfire still in use, counts,
+    so the command never reads a project other than the one traces go to, nor sends the token anywhere else.
     """
     if settings.token is None or settings.base_url is None:
         raise ValueError(NOT_SIGNED_IN)
     access = settings.read_access
-    if access is None or access.write_token != settings.token:
+    if access is None or access.write_token != settings.token or access.base_url != settings.base_url:
         raise ValueError(NO_READ_TOKEN)
     keys = await to_thread.run_sync(load_keys, abandon_on_cancel=True)
     if access.token.name not in keys:
@@ -479,7 +481,11 @@ async def _configure(host: PluginHost[None], setup: Setup) -> str:
         'token': chosen.token,
         'base_url': chosen.destination.base_url,
         'account': LogfireAccount(email=email, token=chosen.token) if email else None,
-        'read_access': LogfireReadAccess(token=read, write_token=chosen.token) if read else None,
+        'read_access': (
+            LogfireReadAccess(token=read, write_token=chosen.token, base_url=chosen.destination.base_url)
+            if read
+            else None
+        ),
         'send_to_logfire': 'if-token-present',
     }
     host.save_settings(config.model_copy(update=update))

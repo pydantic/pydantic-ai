@@ -2368,8 +2368,8 @@ platform's deeper trace analysis. See [the API notes](docs/logfire-optimization.
 Only observability's project sign-in enables this command. `LOGFIRE_TOKEN`, SDK
 credentials, and the separate `logfire_mcp` login do not. Without setup it refuses
 with instructions to sign in; disabling observability removes the command.
-Switching the write-token key invalidates the saved read access until setup runs
-again. Resetting **Logfire project** clears that access but leaves the keys in
+Switching the write-token key or the Logfire traces go to invalidates the saved
+read access until setup runs again. Resetting **Logfire project** clears that access but leaves the keys in
 `/keys`, where you can delete them. Revoke unwanted tokens in Logfire too.
 Agent names currently cannot contain spaces.
 

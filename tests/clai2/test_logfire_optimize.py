@@ -24,7 +24,11 @@ US = 'https://logfire-us.pydantic.dev'
 SIGNED_IN: dict[str, JsonValue] = {
     'token': {'name': 'LOGFIRE_TOKEN_TEAM'},
     'base_url': US,
-    'read_access': {'token': {'name': 'LOGFIRE_READ_TOKEN_TEAM'}, 'write_token': {'name': 'LOGFIRE_TOKEN_TEAM'}},
+    'read_access': {
+        'token': {'name': 'LOGFIRE_READ_TOKEN_TEAM'},
+        'write_token': {'name': 'LOGFIRE_TOKEN_TEAM'},
+        'base_url': US,
+    },
     'send_to_logfire': False,
 }
 MESSAGES = json.dumps(
@@ -149,8 +153,17 @@ async def run(command: str, *, settings: dict[str, JsonValue] = SIGNED_IN, model
         ({'token': {'name': 'LOGFIRE_TOKEN_TEAM'}}, NOT_SIGNED_IN),  # LOGFIRE_TOKEN-style: no setup URL.
         ({'token': {'name': 'LOGFIRE_TOKEN_TEAM'}, 'base_url': US}, NO_READ_TOKEN),  # Set up before this command.
         ({**SIGNED_IN, 'token': {'name': 'LOGFIRE_TOKEN_OTHER'}}, NO_READ_TOKEN),  # Read token is another project's.
+        # Issued by another Logfire, so it is never sent here, even for a project of the same name.
+        ({**SIGNED_IN, 'base_url': 'https://logfire.example.com'}, NO_READ_TOKEN),
         (
-            {**SIGNED_IN, 'read_access': {'token': {'name': 'GONE'}, 'write_token': {'name': 'LOGFIRE_TOKEN_TEAM'}}},
+            {
+                **SIGNED_IN,
+                'read_access': {
+                    'token': {'name': 'GONE'},
+                    'write_token': {'name': 'LOGFIRE_TOKEN_TEAM'},
+                    'base_url': US,
+                },
+            },
             f'GONE is not in /keys. {NO_READ_TOKEN}',
         ),
     ],

@@ -88,7 +88,8 @@ of instrumentation as needed. Server-side query permissions and limits apply.
 A revoked read token is refused with instructions to run setup again.
 
 The gate binds read access to the write-token **key name** saved by setup, as
-observability's account tag does. Manually replacing the secret inside that key
+observability's account tag does, and to the Logfire that issued the read token,
+so it is never sent to another `base_url`. Manually replacing the secret inside that key
 is outside this binding: run setup again when switching projects. Disabling
 observability removes the command. Resetting its project row clears the gate;
 keys are left for the user to delete, and remote tokens can be revoked in Logfire.

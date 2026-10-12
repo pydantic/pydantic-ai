@@ -205,6 +205,7 @@ async def test_sign_in_pick_a_project_and_save_its_write_token(configure: Config
     assert saved.read_access == LogfireReadAccess(
         token=KeyReference(name='LOGFIRE_READ_TOKEN_PYDANTIC_CLAI2'),
         write_token=KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2'),
+        base_url='https://logfire-us.pydantic.dev',
     )
     assert harness.lines == [
         'Sign in to Logfire (new users can sign up there): https://logfire-us.pydantic.dev/auth/dev-123'
