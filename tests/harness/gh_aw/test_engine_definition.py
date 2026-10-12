@@ -255,7 +255,7 @@ def test_install_pins_clai2_and_installs_spec_extra_for_yaml_agents() -> None:
         'pydantic-ai-harness==${GH_AW_ENGINE_VERSION}',
         'pydantic-clai2==${GH_AW_ENGINE_VERSION}',
     ]
-    assert definition().engine.version == '0.54.0'
+    assert definition().engine.version == '0.55.0'
     assert requirement == 'pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0'
 
 
