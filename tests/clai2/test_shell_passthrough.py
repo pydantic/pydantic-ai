@@ -198,6 +198,7 @@ class TestShellPassthrough:
         assert 'Interrupted (' in text
         assert (tmp_path / 'cleanup.txt').read_text() == 'cleaned'
 
+    @pytest.mark.subprocess(reason="needs a real process tree to check Ctrl-C reaches the shell's descendants")
     @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell process-group signalling')
     async def test_ctrl_c_kills_shell_descendants(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Cancelling a shell command must also terminate a background child."""

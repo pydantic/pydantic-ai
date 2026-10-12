@@ -322,6 +322,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `builtin_plugins/logfire_setup.py` | the `observability` plugin's setup menu: which Logfire, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), account email from `/v1/account/me`, project pick, write token saved in `/keys` |
 | `builtin_plugins/logfire_destination.py` | "which Logfire", shared by `observability` setup and `logfire_mcp`: regions from harness, a host, UI URL, or MCP URL parsed to one origin, the picker, and the last pick remembered for the other plugin |
 | `ui/telemetry_log.py` | sends unhandled `logfire` and `opentelemetry` logger warnings to `telemetry.log` during the interactive session, so `logging.lastResort` never writes over the editor |
+| `ui/stderr_relay.py` | on macOS, holds file descriptor 2 as a pipe during the interactive session and copies it to the terminal without libmalloc's `MallocStackLogging` fork notices, which a memory pressure event makes every `fork()` child print before `exec`; `terminal_stderr()` is the terminal for a child that draws on it (`/update`'s `uv`) |
 | `ui/telemetry.py` | UI telemetry sinks, `record`/`span`, `handled_error`, the menu naming, and `conversation_selected`, which calls every sink's session `root` (a sink subscribed with `ui_events=False` gets only that and handled errors) once startup picks the conversation; instrument shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the loader, `/keys`, the prompt), never one menu at a time, and record names, not content; typed text goes only through `prompt_text`, which the subscriber's `include_content` gates. `handled_error` is for failures CLAI shows and recovers from, sent without `ui_events`; usage errors (`ValueError`, `UserError`) are not recorded |
 | `builtin_plugins/compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert, its settings menu |
 | `commands.py` | `Command`, the registry, completion |
@@ -332,9 +333,9 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/prompt/prompt_surface.py` | scroll-region ownership, serialized transcript writes and changed-row painting |
 | `ui/prompt/prompt_transcript.py` | bounded styled transcript tail for viewport replay |
 | `ui/prompt/prompt_resize.py` | scoped resize notifications, without terminal IO in signal handlers |
-| `ui/prompt/prompt_buffer.py` | pure draft editing, history navigation, search and cell-width wrapping |
+| `ui/prompt/prompt_buffer.py` | pure draft editing, undo/redo steps (word- and run-grouped, capped, reset on submit), history navigation, search and cell-width wrapping |
 | `ui/prompt/prompt_completion.py` | bounded daemon completion worker; no terminal ownership |
-| `ui/prompt/prompt_keys.py` | prompt-toolkit input attachment and paste, CSI-u, Kitty alternate-key and xterm report normalization; `PromptSurface` enables and releases xterm `CSI >4;1m` and Kitty `CSI >5u`; no prompt-toolkit renderer |
+| `ui/prompt/prompt_keys.py` | prompt-toolkit input attachment and paste, CSI-u, Kitty alternate-key and xterm report normalization, including Super (Cmd) for `super-z`; `PromptSurface` enables and releases xterm `CSI >4;1m` and Kitty `CSI >5u`; no prompt-toolkit renderer |
 | `ui/prompt/prompt_selection.py` | SGR mouse report decoding and the left-button drag selection over the transcript's painted cells: highlight and text |
 | `ui/prompt/text_clipboard.py` | copying text out: the local clipboard command on one background worker where the newest copy wins, or OSC 52 over SSH or without one |
 | `config/__init__.py` | `Settings`, `PluginSettings` |

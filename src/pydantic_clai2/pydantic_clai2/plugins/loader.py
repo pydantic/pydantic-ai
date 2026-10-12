@@ -95,6 +95,8 @@ _RETIRED_BUILTINS: dict[str, PluginSettings] = {
 """Former built-in declarations. A stored copy of one loads the built-in now declared under its id."""
 
 
+FAILED_SESSION_END_TIMEOUT = 5.0
+"""Seconds a plugin that failed to load may spend in `on_session_end` before loading continues without it."""
 TURN_NOTICE = 'The running turn keeps the plugins it started with; the agent sees the change on the next prompt.'
 
 
@@ -899,7 +901,7 @@ def _same_plugin(declaration: PluginSettings, shipped: PluginSettings | None) ->
 async def _end_failed_session(plugin: Plugin[BaseModel, DepsT]) -> BaseException | None:
     """Return the handler's failure rather than raising it."""
     try:
-        with fail_after(5):
+        with fail_after(FAILED_SESSION_END_TIMEOUT):
             await plugin.on_session_end(SessionEnd(reason='error'))
     except (Exception, asyncio.CancelledError) as exc:  # noqa: BLE001 -- reported by the caller.
         return exc

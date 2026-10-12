@@ -1,5 +1,4 @@
 import importlib
-import subprocess
 import sys
 from pathlib import Path
 from typing import NoReturn
@@ -79,19 +78,13 @@ async def test_coder_agent_imports_on_a_non_posix_host(monkeypatch: pytest.Monke
         await agent.run('go', model=TestModel(call_tools=[]))
 
 
-def test_coder_agent_export_is_lazy() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            '-c',
-            'import sys; import pydantic_ai_harness.coder; '
-            "assert 'pydantic_ai_harness.coder._agent' not in sys.modules",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
+def test_coder_agent_export_is_lazy(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Forget the whole harness package (restored after the test), so neither `pydantic_ai_harness`
+    # nor `pydantic_ai_harness.coder` can import the bundled agent without the test seeing it.
+    for name in [name for name in sys.modules if name.split('.')[0] == 'pydantic_ai_harness']:
+        monkeypatch.delitem(sys.modules, name)
+    importlib.import_module('pydantic_ai_harness.coder')
+    assert 'pydantic_ai_harness.coder._agent' not in sys.modules
 
 
 def test_coder_unknown_export() -> None:

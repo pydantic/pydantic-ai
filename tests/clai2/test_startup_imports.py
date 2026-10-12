@@ -10,6 +10,8 @@ import pytest
 
 from pydantic_clai2 import warm_imports
 
+pytestmark = pytest.mark.subprocess(reason='asserts what a fresh `pydantic_clai2` process imports at startup')
+
 
 @pytest.mark.parametrize(
     ('args', 'exit_code'),

@@ -5375,7 +5375,7 @@ async def test_a_conversation_id_resolved_late_reaches_the_core_history() -> Non
 
 
 @pytest.mark.anyio
-async def test_audio_that_fails_to_go_out_is_taken_back_from_the_core_too() -> None:
+async def test_audio_that_fails_to_go_out_never_reaches_the_core() -> None:
     class _FailingAudio(_QueuedWebSocket):
         async def send(self, data: str) -> None:
             raise OSError('gone')  # (the audio is all this session sends)
@@ -5397,8 +5397,8 @@ async def test_audio_that_fails_to_go_out_is_taken_back_from_the_core_too() -> N
 
 
 @pytest.mark.anyio
-async def test_a_failed_send_takes_back_its_own_audio_while_another_waits_to_go_out() -> None:
-    """Two chunks sent at once go out one after the other: the first failing takes back its own audio, not the second's."""
+async def test_a_failed_send_leaves_its_audio_out_while_another_waits_to_go_out() -> None:
+    """Two chunks sent at once go out one after the other: the first failing never adds its audio, and the second's goes in."""
 
     class _FirstAudioFails(_QueuedWebSocket):
         def __init__(self) -> None:
@@ -5435,6 +5435,74 @@ async def test_a_failed_send_takes_back_its_own_audio_while_another_waits_to_go_
         core = session._core  # pyright: ignore[reportPrivateUsage]
         assert core is not None
         assert bytes(core._input_audio) == second  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_that_turn() -> None:
+    """A turn recorded while a chunk is still going out doesn't keep that chunk when its send then fails.
+
+    The provider committed its buffer before it had the chunk, so the chunk is no part of that turn whether or not
+    its send succeeds: history and the streamed part both hold only the audio that went out ahead of the commit.
+    """
+
+    class _SecondAudioFails(_QueuedWebSocket):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sending = asyncio.Event()
+            self.fail = asyncio.Event()
+            self.sends = 0
+
+        async def send(self, data: str) -> None:
+            self.sends += 1
+            if self.sends == 2:  # (the audio is all this session sends)
+                self.sending.set()
+                await self.fail.wait()
+                raise OSError('gone')
+            await super().send(data)
+
+    ws = _SecondAudioFails()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='input_audio',
+    )
+    sent, unsent = b'\x01\x00' * 100, b'\x02\x00' * 50
+    streamed: list[SpeechPart] = []
+    async with session:
+        await session.send_audio(sent)
+        failing_send = asyncio.create_task(session.send_audio(unsent))
+        await ws.sending.wait()
+        for frame in [
+            {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_u1', 'audio_start_ms': 0},
+            {'type': 'input_audio_buffer.speech_stopped', 'item_id': 'item_u1', 'audio_end_ms': 500},
+            {'type': 'input_audio_buffer.committed', 'item_id': 'item_u1', 'previous_item_id': None},
+            {
+                'type': 'conversation.item.input_audio_transcription.completed',
+                'item_id': 'item_u1',
+                'content_index': 0,
+                'transcript': 'Hi.',
+            },
+        ]:
+            ws.push(frame)
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart):
+                streamed.append(event.part)
+                break
+        # The turn is recorded while the chunk is still going out; then its send fails.
+        assert session.all_messages()
+        ws.fail.set()
+        with pytest.raises(RealtimeError):
+            await failing_send
+        history = session.all_messages()
+
+    [request] = history
+    [part] = request.parts
+    assert isinstance(part, SpeechPart) and part.transcript == 'Hi.' and part.audio is not None
+    assert part.audio.data[44:] == sent
+    [streamed_part] = streamed
+    assert streamed_part.audio is not None and streamed_part.audio.data[44:] == sent
 
 
 @pytest.mark.anyio
