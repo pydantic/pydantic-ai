@@ -10,10 +10,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
-from weakref import ReferenceType, ref
-
-from typing_extensions import Self, assert_never
+from typing import TYPE_CHECKING, Protocol, Self, assert_never, runtime_checkable
 
 from pydantic_ai.messages import (
     CompactionPart,
@@ -34,6 +31,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    is_multi_modal_content,
 )
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -58,10 +56,15 @@ if TYPE_CHECKING:
 _CHARS_PER_TOKEN = 4
 """Rough approximation: ~4 characters per token on average."""
 
-_COMPACTION_RECLAIM: ContextVar[tuple[ReferenceType[object], int] | None] = ContextVar(
+_COMPACTION_RECLAIM: ContextVar[tuple[str | None, int, int] | None] = ContextVar(
     'pydantic_ai_harness.compaction.reclaim', default=None
 )
-"""Heuristic reclaim from compaction that ran earlier in this request's hook chain."""
+"""`(run_id, run_step, reclaimed)`: heuristic reclaim from compaction earlier in this request's hook chain.
+
+Keyed by the request (`run_step` advances once per model request) rather than by request-context
+identity: strategies return `replace()` copies of the context, so an identity key would have to be
+re-attached at every hop, and a strategy that forgot would silently drop the correction.
+"""
 
 
 def _collect_message_text(messages: Sequence[ModelMessage]) -> list[str]:
@@ -118,9 +121,11 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
     # Match the discriminator so this remains importable before the new core part is released.
     elif part.part_kind == 'instruction-delta':  # pyright: ignore[reportUnnecessaryComparison]
         return [part.render()]  # pragma: lax no cover - requires core instruction updates
-    elif isinstance(part, (ToolReturnPart, RetryPromptPart)):
-        # Both are sent in full. The tool-search and capability-load returns subclass
-        # `ToolReturnPart`, so they arrive here too.
+    elif isinstance(part, ToolReturnPart):
+        # Sent in full. The tool-search and capability-load returns subclass `ToolReturnPart`, so
+        # they arrive here too.
+        return [tool_return_text(part)]
+    elif isinstance(part, RetryPromptPart):
         return [str(part.content)]
     # Control bookkeeping rather than message text: it records which tools became available, and
     # the schemas themselves travel in the request's tool definitions. Those schemas are not free
@@ -187,6 +192,20 @@ def _instructions_text(messages: Sequence[ModelMessage]) -> list[str]:
         if isinstance(msg, ModelRequest) and msg.instructions:
             return [msg.instructions]
     return []
+
+
+def tool_return_text(part: ToolReturnPart) -> str:
+    """The tool return's content as text, with each file named by identifier rather than spelled out.
+
+    A file's `repr` carries its bytes at ~3 characters per byte, so a 1 MB file would be estimated at
+    ~700k tokens and render into a summary prompt as escaped bytes. The reference is the one a
+    text-only tool result gives the model in its place (`ToolReturnPart.model_response_str_and_user_content`).
+    """
+    if not part.files:
+        return str(part.content)
+    return ' '.join(
+        f'See file {item.identifier}.' if is_multi_modal_content(item) else str(item) for item in part.content_items()
+    )
 
 
 def _user_prompt_text_for_counting(part: UserPromptPart) -> str:
@@ -325,21 +344,26 @@ def _tool_schema_text(tool: ToolDefinition) -> str:
     return ''.join((tool.name, tool.description or '', dumps(tool.parameters_json_schema, sort_keys=True)))
 
 
-def record_compaction_reclaim(request_context: ModelRequestContext, before: int, after: int) -> None:
+def reset_compaction_reclaim() -> None:
+    """Start a run without corrections inherited from a previous invocation."""
+    _COMPACTION_RECLAIM.set(None)
+
+
+def record_compaction_reclaim(ctx: RunContext[AgentDepsT], before: int, after: int) -> None:
     """Record a conservative correction for a later usage reporter in this hook chain."""
     previous = _COMPACTION_RECLAIM.get()
     reclaimed = max(before - after, 0)
-    if previous is not None and previous[0]() is request_context:
-        reclaimed += previous[1]
-    _COMPACTION_RECLAIM.set((ref(request_context), reclaimed))
+    if previous is not None and previous[:2] == (ctx.run_id, ctx.run_step):
+        reclaimed += previous[2]
+    _COMPACTION_RECLAIM.set((ctx.run_id, ctx.run_step, reclaimed))
 
 
-def get_compaction_reclaim(request_context: ModelRequestContext) -> int:
-    """Return the reclaim recorded for *request_context*, if it is still current."""
+def get_compaction_reclaim(ctx: RunContext[AgentDepsT]) -> int:
+    """Return the reclaim recorded for this request, or 0 for one left over from another."""
     previous = _COMPACTION_RECLAIM.get()
-    if previous is None or previous[0]() is not request_context:
+    if previous is None or previous[:2] != (ctx.run_id, ctx.run_step):
         return 0
-    return previous[1]
+    return previous[2]
 
 
 def exceeds(
@@ -672,7 +696,7 @@ def find_token_cutoff(
             lo = mid + 1
 
     if candidate >= len(messages):
-        candidate = max(0, len(messages) - 1)  # pragma: no cover
+        candidate = max(0, len(messages) - 1)
 
     # Walk backward to a safe point.
     for idx in range(candidate, -1, -1):

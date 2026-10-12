@@ -10,28 +10,21 @@ pre-agent-steps:
       # sys.path, so a repo-local pip.py or pydantic_ai_harness/ cannot be
       # imported in place of the installed packages.
       #
-      # 2.36.0 carried `pai --mcp-config`, which is how the gateway's MCP servers
-      # reach the agent. The floor is 2.44.0 for a second reason: it is the first
-      # release where `Agent.from_spec()` accepts a spec that names no model, so a
-      # `PAI_AGENT` spec file no longer has to carry a `model:` that the engine's
-      # own `-m` immediately replaces.
-      #
-      # The anthropic extra is what an `anthropic/` model runs on: that backend of
-      # the api-proxy serves the Messages API, not Chat Completions.
-      # The spec extra supplies YAML parsing for PAI_AGENT spec files.
-      python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness[cli]==$GH_AW_ENGINE_VERSION" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.44.0"
+      # CLAI 2.0's published `-p` command is the headless interface used by this
+      # engine. The agent hooks and MCP composition require Pydantic AI 2.54.
+      python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness==${GH_AW_ENGINE_VERSION}" "pydantic-clai2==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0"
       # Logfire 4.39.0 is pydantic-ai-slim's compatibility floor. Install it only
       # when gh-aw supplies an OTLP endpoint, so other runs pay no installation cost.
       if [ -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" ]; then
         python3 -P -m pip install --quiet --user --disable-pip-version-check "logfire>=4.39.0"
       fi
-      "$HOME/.local/bin/pai" --version
+      "$HOME/.local/bin/clai2" --help
       python3 -P -c "from pydantic_ai_harness import Coder"
 engine:
   id: pydantic-ai
-  version: "0.52.0"
+  version: "0.54.0"
   display-name: Pydantic AI
-  description: Pydantic AI CLI (pai) running the pydantic-ai-harness coder agent with MCP tool support
+  description: CLAI 2 headless runner for Pydantic AI agents with MCP tool support
   mcp: true
   provider:
     name: github
@@ -61,14 +54,15 @@ engine:
         openai: api.openai.com
         codex: api.openai.com
     execution:
-      command-name: pai
+      command-name: clai2
       step-name: Execute Pydantic AI CLI
       model-env-var: PAI_MODEL
       write-timestamp: true
       provider-env-mode: universal-llm-consumer
     harness-script: |
       const { spawnSync } = require("child_process");
-      const { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } = require("fs");
+      const { randomBytes } = require("crypto");
+      const { chmodSync, existsSync, mkdtempSync, writeFileSync } = require("fs");
       const { homedir, tmpdir } = require("os");
       const { join } = require("path");
       const { fetchAWFReflect, resolveProviderEndpointFromReflect, deriveBaseUrlFromModelsURL } = require("./awf_reflect.cjs");
@@ -80,7 +74,7 @@ engine:
       const commandArgs = process.argv.slice(3);
       const log = message => process.stderr.write(`[pydantic-ai] ${message}\n`);
 
-      // `pai -a` takes one target, either an import path or a JSON/YAML agent
+      // `clai2 -a` takes one target, either an import path or a JSON/YAML agent
       // spec, and the spec format resolves capability names through a closed
       // registry that the harness capabilities are not part of, so the coder
       // composition cannot be expressed as a spec. It is written as a Python
@@ -96,112 +90,324 @@ engine:
       // the provider credential variables `Coder`'s shell has always withheld.
       // The AWF sandbox is the isolation boundary.
       //
-      // The gateway's MCP servers are deliberately not part of the module.
-      // `pai --mcp-config` reads the same Claude-shaped config file through the
-      // same `pydantic_ai.mcp.load_mcp_toolsets`, `${VAR}` expansion included, so
-      // routing them through the CLI is what lets a `PAI_AGENT` agent receive
-      // them on identical terms.
-      const AGENT_MODULE = `import os
+      // The wrapper loads the gateway's MCP servers with the same public loader
+      // and adds them as a dynamic toolset so agent-defined toolsets remain active.
+      const AGENT_MODULE = `import importlib
+      import json
+      import os
+      import sys
+      from datetime import datetime, timezone
       from fnmatch import fnmatchcase
+      from pathlib import Path
 
-      from pydantic_ai import Agent
+      import pydantic_core
+      from pydantic_ai import Agent, RunContext
       from pydantic_ai.capabilities import LocalWorkspace
+      from pydantic_ai.messages import (
+          AgentStreamEvent,
+          FunctionToolCallEvent,
+          FunctionToolResultEvent,
+          OutputToolCallEvent,
+          OutputToolResultEvent,
+          PartDeltaEvent,
+          PartEndEvent,
+          PartStartEvent,
+          RetryPromptPart,
+          TextPart,
+          TextPartDelta,
+          ThinkingPart,
+          ThinkingPartDelta,
+      )
+      from pydantic_ai.toolsets import CombinedToolset
+      from pydantic_ai.usage import RunUsage
       from pydantic_ai_harness import Coder
       from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 
-      env = {
-          name: value
-          for name, value in os.environ.items()
-          if not any(fnmatchcase(name, pattern) for pattern in LLM_API_KEY_ENV_PATTERNS)
-      }
-      agent = Agent(name="coder", capabilities=[LocalWorkspace(".", env=env), Coder()])
+      _stdout = sys.__stdout__
+      # Remove the transient key before agent code can start child processes.
+      _frame_key = os.environ.pop('GH_AW_SESSION_FRAME_KEY')
+      _run_id: str | None = None
+      _sequence = 0
+      _usage: RunUsage | None = None
+      _session_id: str | None = None
+      _model: str | None = None
+      _started = False
+      _finished = False
+      _partial: dict[int, tuple[str, str]] = {}
+
+
+      def _json_value(value: object) -> object:
+          return pydantic_core.to_jsonable_python(value, bytes_mode='base64', inf_nan_mode='null')
+
+
+      def _emit(event_type: str, data: dict[str, object]) -> None:
+          global _sequence
+          event: dict[str, object] = {
+              'type': event_type,
+              'data': data,
+              'parentId': None,
+              'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+          }
+          if _run_id is not None:
+              event['id'] = f'pydantic-ai-{_run_id}-{_sequence}'
+              _sequence += 1
+          if _session_id is not None:
+              event['session_id'] = _session_id
+          print(
+              f'\\x1eGH-AW-SESSION/{_frame_key} ' + json.dumps(_json_value(event), separators=(',', ':')),
+              file=_stdout,
+              flush=True,
+          )
+
+
+      class _SessionRecorder:
+          def observe(self, ctx: RunContext[object], event: AgentStreamEvent) -> None:
+              global _run_id, _usage, _session_id, _model, _started
+              if ctx.run_id is None:
+                  return
+              if _run_id is None:
+                  _run_id = ctx.run_id
+                  _session_id = ctx.conversation_id
+              if ctx.run_id != _run_id:
+                  return
+              _usage = ctx.usage
+              _model = ctx.model_id or ctx.model.model_name
+              if not _started:
+                  initial: dict[str, object] = {'sourceEngine': 'pydantic-ai', 'model': _model, 'cwd': os.getcwd()}
+                  if _session_id is not None:
+                      initial['sessionId'] = _session_id
+                  _emit('session.init', initial)
+                  if ctx.prompt is not None:
+                      _emit('user.message', {'content': _json_value(ctx.prompt)})
+                  _started = True
+
+              if isinstance(event, PartStartEvent):
+                  if isinstance(event.part, TextPart):
+                      _partial[event.index] = ('assistant.message', event.part.content)
+                  elif isinstance(event.part, ThinkingPart):
+                      _partial[event.index] = ('assistant.reasoning', event.part.content)
+                  else:
+                      _partial.pop(event.index, None)
+              elif isinstance(event, PartDeltaEvent):
+                  delta = event.delta
+                  if isinstance(delta, TextPartDelta):
+                      _partial[event.index] = (
+                          'assistant.message',
+                          _partial.get(event.index, ('', ''))[1] + delta.content_delta,
+                      )
+                  elif isinstance(delta, ThinkingPartDelta):
+                      if delta.content_delta is not None:
+                          _partial[event.index] = (
+                              'assistant.reasoning',
+                              _partial.get(event.index, ('', ''))[1] + delta.content_delta,
+                          )
+              elif isinstance(event, PartEndEvent):
+                  _partial.pop(event.index, None)
+                  if isinstance(event.part, TextPart):
+                      _emit('assistant.message', {'content': event.part.content})
+                  elif isinstance(event.part, ThinkingPart):
+                      _emit('assistant.reasoning', {'content': event.part.content})
+              elif isinstance(event, (FunctionToolCallEvent, OutputToolCallEvent)):
+                  input_value = _json_value(event.part.args)
+                  if isinstance(event.part.args, str):
+                      try:
+                          input_value = json.loads(event.part.args)
+                      except json.JSONDecodeError:
+                          pass
+                  data: dict[str, object] = {
+                      'toolCallId': event.tool_call_id,
+                      'toolName': event.part.tool_name,
+                      'input': input_value,
+                  }
+                  if isinstance(event, OutputToolCallEvent):
+                      data['sourceType'] = 'output_tool'
+                  _emit('tool.execution_start', data)
+              elif isinstance(event, (FunctionToolResultEvent, OutputToolResultEvent)):
+                  part = event.part
+                  if isinstance(part, RetryPromptPart):
+                      success = False
+                      status = 'retry'
+                      output = None
+                      error = _json_value(part.content)
+                      tool_name = part.tool_name
+                  else:
+                      success = part.outcome == 'success'
+                      status = part.outcome
+                      output = _json_value(part.content)
+                      error = None if success else _json_value(part.content)
+                      tool_name = part.tool_name
+                  data: dict[str, object] = {
+                      'toolCallId': event.tool_call_id,
+                      'toolName': tool_name,
+                      'success': success,
+                      'status': status,
+                  }
+                  if not isinstance(part, RetryPromptPart):
+                      data['output'] = output
+                  if error is not None:
+                      data['error'] = error
+                  if isinstance(event, OutputToolResultEvent):
+                      data['sourceType'] = 'output_tool'
+                  _emit('tool.execution_complete', data)
+
+          def finish(self, exit_code: int) -> None:
+              global _finished
+              if _finished:
+                  return
+              _finished = True
+              if _partial and exit_code != 0:
+                  for event_type, content in _partial.values():
+                      _emit(event_type, {'content': content, 'partial': True})
+                  print('[pydantic-ai] preserving partial streamed content after failure', file=sys.stderr, flush=True)
+              usage: dict[str, int] | None = None
+              if _usage is not None:
+                  usage = {'input_tokens': _usage.input_tokens, 'output_tokens': _usage.output_tokens}
+                  if _usage.cache_write_tokens:
+                      usage['cache_creation_input_tokens'] = _usage.cache_write_tokens
+                  if _usage.cache_read_tokens:
+                      usage['cache_read_input_tokens'] = _usage.cache_read_tokens
+                  if _usage.cache_write_tokens or _usage.cache_read_tokens:
+                      usage['input_tokens_include_cache'] = True
+              result: dict[str, object] = {'status': 'success' if exit_code == 0 else 'failure', 'sourceType': 'pydantic-ai'}
+              if usage is not None:
+                  result['usage'] = usage
+              _emit('session.result', result)
+
+
+      _configured_agent = os.environ.get('PAI_AGENT')
+      agent: Agent[object, object]
+      if not _configured_agent:
+          _env: dict[str, str] = {
+              name: value
+              for name, value in os.environ.items()
+              if name != 'GH_AW_SESSION_FRAME_KEY'
+              and not any(fnmatchcase(name, pattern) for pattern in LLM_API_KEY_ENV_PATTERNS)
+          }
+          agent = Agent(name='coder', capabilities=[LocalWorkspace('.', env=_env), Coder()])
+      elif _configured_agent.lower().endswith(('.json', '.yaml', '.yml')):
+          agent = Agent.from_file(_configured_agent)
+      else:
+          sys.path.insert(0, os.getcwd())
+          _module_name, _separator, _attribute = _configured_agent.rpartition(':')
+          if not _separator:
+              _module_name, _separator, _attribute = _configured_agent.rpartition('.')
+          if not _separator:
+              raise ValueError(
+                  f'PAI_AGENT expects MODULE:ATTRIBUTE, MODULE.ATTRIBUTE, or a JSON/YAML file; got {_configured_agent!r}'
+              )
+          agent = getattr(importlib.import_module(_module_name), _attribute)
+          if not isinstance(agent, Agent):
+              raise TypeError(f'{_configured_agent} does not refer to a pydantic_ai.Agent')
+
+      _recorder = _SessionRecorder()
+      agent.on_event(_recorder.observe)
+
+      _mcp_config = os.environ.get('GH_AW_MCP_CONFIG')
+      if _mcp_config and Path(_mcp_config).is_file():
+          from pydantic_ai.mcp import load_mcp_toolsets
+
+          _mcp_toolsets = load_mcp_toolsets(_mcp_config)
+
+          @agent.toolset(per_run_step=False)
+          def _gateway_toolset(ctx: RunContext[object]) -> CombinedToolset[object]:
+              del ctx
+              return CombinedToolset(_mcp_toolsets)
       `;
       const DEFAULT_AGENT = "gh_aw_agent:agent";
 
-      // The CLI runs inside the interpreter that owns the install rather than as a
-      // separate `pai` process, so the agent module is imported once, in the process
-      // that runs it. Three things follow from that.
-      //
-      // `pai` reduces any failed `-a` load to one line naming the target, so an
-      // agent that raises on import would reach the step log without its traceback.
-      // The import here happens before the CLI starts, and an unhandled exception is
-      // the step's failure, traceback included.
-      //
-      // `pydantic_ai._cli.load_agent` prepends the working directory -- the checkout
-      // -- to sys.path before resolving the target, ahead of PYTHONPATH. A
-      // repository file named `gh_aw_agent.py` would therefore be loaded in place of
-      // the generated module. Importing the target first settles which file the name
-      // means, because an import of a module already in sys.modules does not search
-      // the path again.
-      //
-      // A separate preflight process could do neither: it would import the module in
-      // one interpreter and leave the CLI to import it again in another, running any
-      // module-level work in the agent twice.
-      //
-      // The residual is `load_agent`'s insert itself: everything the agent imports
-      // after that point still sees the checkout first on sys.path. That is the
-      // CLI's documented behavior for its own users, and not something this file
-      // can change from the outside.
-      //
-      // `-P` keeps the `-c` invocation from putting the working directory on
-      // sys.path on its own account; PYTHONPATH below is what makes the agent
-      // importable. A spec file, and the dotted `module.attribute` form the CLI also
-      // accepts, are left to the CLI as before.
-      const LAUNCHER = `import os
+      // Preload the installed runner before an opt-in PAI_AGENT import adds the
+      // checkout to sys.path. The wrapper is cached before CLAI 2 resolves -a,
+      // so agent code imports once and import failures retain their traceback.
+      const LAUNCHER = `import importlib
+      import json
+      import os
       import runpy
       import sys
+      from datetime import datetime, timezone
+      from pathlib import Path
 
-      target, *cli_args = sys.argv[1:]
-      module, separator, attribute = target.rpartition(":")
-      # The endpoint is gh-aw's signal that observability is configured. The
-      # "if-token-present" setting avoids a missing-LOGFIRE_TOKEN failure while
-      # preserving OTLP export, and console=False keeps spans out of the engine's
-      # log parser, while distributed_tracing=True marks the propagated context as
-      # deliberate because joining gh-aw's trace is why it is attached.
-      # gh-aw supplies run identity through OTEL_RESOURCE_ATTRIBUTES,
-      # so the engine adds no resource attributes. This runs before the agent
-      # target import, so a user's own configure() call runs later and overrides it.
-      if os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
-          import atexit
-          import tempfile
+      target, prompt_file, *cli_args = sys.argv[1:]
+      frame_key = sys.stdin.readline().rstrip('\\n')
+      module, separator, attribute = target.rpartition(':')
+      original_stdout = sys.stdout
+      stdout_sink = open(os.devnull, 'w')
+      sys.stdout = stdout_sink
+      exit_code = 0
+      agent_module = None
+      try:
+          importlib.import_module('pydantic_clai2')
+          if os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT'):
+              import atexit
+              import tempfile
+              import logfire
 
-          # Ignore checkout configuration and credentials, including when TMPDIR
-          # points into the checkout. Register cleanup before Logfire's shutdown
-          # handlers so its exporters finish before the directory is removed.
-          logfire_dir = tempfile.TemporaryDirectory(prefix="gh-aw-logfire-", dir="/tmp")
-          atexit.register(logfire_dir.cleanup)
+              # Ignore checkout configuration and credentials. Exporters shut down
+              # before this private directory is removed.
+              logfire_dir = tempfile.TemporaryDirectory(prefix='gh-aw-logfire-', dir='/tmp')
+              atexit.register(logfire_dir.cleanup)
+              logfire.configure(
+                  send_to_logfire='if-token-present',
+                  console=False,
+                  distributed_tracing=True,
+                  config_dir=logfire_dir.name,
+                  data_dir=logfire_dir.name,
+              )
+              logfire.instrument_pydantic_ai()
+              traceparent = os.environ.get('TRACEPARENT')
+              if traceparent:
+                  from opentelemetry.context import attach
+                  from opentelemetry.propagate import extract
 
-          import logfire
+                  attach(extract({'traceparent': traceparent}))
 
-          logfire.configure(
-              send_to_logfire="if-token-present", console=False, distributed_tracing=True,
-              config_dir=logfire_dir.name, data_dir=logfire_dir.name,
-          )
-          logfire.instrument_pydantic_ai()
-
-          # gh-aw supplies TRACEPARENT for exactly this purpose: it lets engines
-          # nest their spans under the workflow run's span. OpenTelemetry does not
-          # read it from the environment on its own; without explicit extraction,
-          # the agent and workflow spans reach the backend as unrelated traces
-          # correlated only by shared resource attributes.
-          traceparent = os.environ.get("TRACEPARENT")
-          if traceparent:
-              from opentelemetry.context import attach
-              from opentelemetry.propagate import extract
-
-              attach(extract({"traceparent": traceparent}))
-
-      if separator and not target.lower().endswith((".yml", ".yaml", ".json")):
-          import importlib
-
+          if not separator:
+              raise ValueError(f'Expected MODULE:ATTRIBUTE, got {target!r}')
+          os.environ['GH_AW_SESSION_FRAME_KEY'] = frame_key
+          agent_module = importlib.import_module(module)
+          loaded = getattr(agent_module, attribute)
           from pydantic_ai import Agent
 
-          loaded = getattr(importlib.import_module(module), attribute)
           if not isinstance(loaded, Agent):
-              raise TypeError(f"{target} is {type(loaded).__name__}, not pydantic_ai.Agent")
-
-      sys.argv = ["pai", *cli_args]
-      runpy.run_module("pydantic_ai", run_name="__main__", alter_sys=True)
+              raise TypeError(f'{target} is {type(loaded).__name__}, not pydantic_ai.Agent')
+          # Read in-process: workflow context can exceed the OS argv limit.
+          sys.argv = ['clai2', *cli_args, '-p', Path(prompt_file).read_text(encoding='utf-8')]
+          runpy.run_module('pydantic_clai2', run_name='__main__', alter_sys=True)
+      except SystemExit as exc:
+          if isinstance(exc.code, int):
+              exit_code = exc.code
+          elif exc.code is not None:
+              exit_code = 1
+          raise
+      except BaseException:
+          exit_code = 1
+          raise
+      finally:
+          sys.stdout = original_stdout
+          try:
+              result_emitted = False
+              try:
+                  recorder = getattr(agent_module, '_recorder', None)
+                  if recorder is not None:
+                      recorder.finish(exit_code)
+                      result_emitted = True
+              except Exception as exc:
+                  print(f'[pydantic-ai] Unable to finish session recording: {exc}', file=sys.stderr)
+              if not result_emitted:
+                  event = {
+                      'type': 'session.result',
+                      'data': {'status': 'success' if exit_code == 0 else 'failure', 'sourceType': 'pydantic-ai'},
+                      'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+                  }
+                  try:
+                      print(
+                          '\\x1eGH-AW-SESSION/' + frame_key + ' ' + json.dumps(event),
+                          file=original_stdout,
+                          flush=True,
+                      )
+                  except Exception as exc:
+                      print(f'[pydantic-ai] Unable to emit the session result: {exc}', file=sys.stderr)
+          finally:
+              stdout_sink.close()
       `;
 
       const main = async () => {
@@ -220,20 +426,21 @@ engine:
         // agent step mounts read-only, where gh-aw's own Claude and Codex converters
         // write theirs.
         //
-        // `PAI_AGENT` runs an agent the repository defines, in whichever form
-        // `pai -a` accepts. The generated module is not written in that case:
-        // nothing would load it, and a stale copy on disk is worse than none.
+        // The generated module wraps the default agent, an imported Agent, or a
+        // JSON/YAML spec so each form gets identical recording and MCP behavior.
         const configuredAgent = process.env.PAI_AGENT;
-        const agentTarget = configuredAgent || DEFAULT_AGENT;
-        const moduleDir = configuredAgent ? "" : mkdtempSync(join(tmpdir(), "gh-aw-pydantic-ai-"));
-        if (moduleDir) {
-          const agentModulePath = join(moduleDir, "gh_aw_agent.py");
-          writeFileSync(agentModulePath, AGENT_MODULE, { mode: 0o600 });
-          chmodSync(agentModulePath, 0o600);
-        }
+        const agentTarget = DEFAULT_AGENT;
+        const moduleDir = mkdtempSync(join(tmpdir(), "gh-aw-pydantic-ai-"));
+        const agentModulePath = join(moduleDir, "gh_aw_agent.py");
+        writeFileSync(agentModulePath, AGENT_MODULE, { mode: 0o600 });
+        chmodSync(agentModulePath, 0o600);
 
         const env = { ...process.env };
-        // `pip install --user` puts `pai` here. The runner tool cache that holds
+        const frameKey = randomBytes(16).toString("hex");
+        // Linux retains exec environment bytes in /proc even after unsetenv.
+        // Deliver the key through stdin so tool subprocesses cannot recover it there.
+        delete env.GH_AW_SESSION_FRAME_KEY;
+        // `pip install --user` puts `clai2` here. The runner tool cache that holds
         // `uv` and the interpreter's own bin directory is under /opt, which the
         // sandbox exposes read-only, but the home directory is where the CLI and
         // its user site-packages actually live.
@@ -241,7 +448,7 @@ engine:
         // Which interpreter owns those user site-packages matters: only the one
         // that ran the pre-agent `pip install --user` can import them, and the
         // sandbox prelude prepends every `bin` directory under the runner tool
-        // cache — which caches several Python versions — so a bare `python3`
+        // cache (which caches several Python versions), so a bare `python3`
         // there resolves by `find` order rather than to the installing
         // interpreter. `actions/setup-python` names that one in `pythonLocation`;
         // putting its `bin` on PATH also gives the agent's own shell tool a
@@ -252,11 +459,9 @@ engine:
         // The module is reached through PYTHONPATH rather than by importing it as a
         // package, and prepending keeps a caller-supplied PYTHONPATH usable.
         //
-        // The checkout itself joins the path only under `PAI_AGENT`. That is the
-        // opt-in: it makes repository code importable, which is the whole point
-        // of running your own agent, and it is exactly what `-P` on the install
-        // step keeps off the path for the default composition.
-        env.PYTHONPATH = [moduleDir, configuredAgent ? workspace : "", process.env.PYTHONPATH || ""].filter(Boolean).join(":");
+        // The wrapper adds the checkout only when resolving an imported PAI_AGENT,
+        // after trusted framework packages have loaded.
+        env.PYTHONPATH = [moduleDir, process.env.PYTHONPATH || ""].filter(Boolean).join(":");
         if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
           // Traces-only backends return 404 noise for metrics and logs. A workflow
           // can override either default when its backend accepts those signals.
@@ -268,8 +473,8 @@ engine:
         const provider = process.env.GH_AW_LLM_PROVIDER;
         const configuredBaseUrl = process.env.PAI_BASE_URL;
 
-        // `pai` sends the model name verbatim, minus the provider marker that
-        // selects one of its clients, so the bare model ID reaches the api-proxy —
+        // The client sends the model name verbatim, minus the provider marker that
+        // selects one of its clients. The bare model ID reaches the api-proxy,
         // which steers to the configured provider by the port it is reached on, not
         // by a prefix in the model name: Copilot rejects `copilot/<model>` with
         // `model_not_supported`.
@@ -289,8 +494,8 @@ engine:
         const useMessagesAPI = !configuredBaseUrl && modelProvider === "anthropic";
         // The dotted-alias rewrite describes the api-proxy's Copilot backend,
         // which publishes Copilot's Claude models under dotted IDs. Every other
-        // destination — the anthropic and openai backends, or an endpoint named
-        // by PAI_BASE_URL — gets the id the workflow wrote: a model actually
+        // destination (the anthropic and openai backends, or an endpoint named
+        // by PAI_BASE_URL) gets the id the workflow wrote: a model actually
         // called `claude-sonnet-4-5` there has to arrive as that.
         const model = !configuredBaseUrl && modelProvider === "copilot"
           ? requestedModel.replace(/^(claude-(?:haiku|sonnet|opus)-\d+)-(\d+)$/, "$1.$2")
@@ -341,7 +546,7 @@ engine:
               // `endpoint.baseUrl` is the models-listing origin, while the
               // OpenAI-compatible client posts to `<base>/chat/completions`, so the
               // path prefix carried by models_url (`/v1` on some providers) has to
-              // come along — and this helper applies the same api-proxy ->
+              // come along. This helper applies the same api-proxy ->
               // host.docker.internal rewrite.
               //
               // The Anthropic client keeps the origin instead: it appends
@@ -369,7 +574,7 @@ engine:
         }
 
         // `-m` is always passed: the composed agent carries no model, and without
-        // the flag `pai` silently falls back to its own `openai:gpt-5` default,
+        // the flag the CLI falls back to its own default,
         // billing a model the workflow never asked for. gh-aw validates
         // `provider/model` at compile time, so PAI_MODEL is set for every compiled
         // workflow, and the throw above covers any other invocation.
@@ -377,15 +582,19 @@ engine:
         // An explicit `-m` also replaces the model a loaded agent declares, so a
         // `PAI_AGENT` agent runs on the workflow's `engine.model` whatever it was
         // constructed with. That is what routes it through the endpoint above.
-        const cliArgs = [...commandArgs, "-a", agentTarget];
+        const cliArgs = [
+          ...commandArgs,
+          "-a", agentTarget,
+          "-m", `${useMessagesAPI ? "anthropic" : "openai-chat"}:${model}`,
+        ];
         // The config adapter writes this file only for a workflow that configures
-        // MCP tools, and `--mcp-config` fails on a path that is not there, so its
+        // MCP tools, so its
         // absence has to mean "no servers" rather than an error. The
         // `RUNNER_TEMP || "/tmp"` fallback is the one gh-aw's own converters use, and
         // the adapter resolves this path by the same expression.
         const mcpConfig = join(process.env.RUNNER_TEMP || "/tmp", "gh-aw", "mcp-config", "mcp-servers.json");
-        if (existsSync(mcpConfig)) cliArgs.push("--mcp-config", mcpConfig);
-        cliArgs.push("-m", `${useMessagesAPI ? "anthropic" : "openai-chat"}:${model}`, readFileSync(promptFile, "utf8"));
+        delete env.GH_AW_MCP_CONFIG;
+        if (existsSync(mcpConfig)) env.GH_AW_MCP_CONFIG = mcpConfig;
         // Log only the origin because endpoint userinfo and query parameters can
         // contain credentials, and workflow run logs are not private.
         const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
@@ -405,7 +614,10 @@ engine:
         // The target is passed twice on purpose: once for LAUNCHER, which imports it
         // and hands the CLI a module already in sys.modules, and once as the `-a`
         // the CLI parses for itself.
-        const result = spawnSync(python, ["-P", "-c", LAUNCHER, agentTarget, ...cliArgs], { cwd: workspace, env, stdio: "inherit" });
+        process.stdout.write(`\x1eGH-AW-SESSION-KEY:${frameKey}\x1e\n`);
+        const result = spawnSync(python, ["-P", "-c", LAUNCHER, agentTarget, promptFile, ...cliArgs], {
+          cwd: workspace, env, input: `${frameKey}\n`, stdio: ["pipe", "inherit", "inherit"],
+        });
         if (result.error) throw result.error;
         if (result.status !== 0) {
           const error = new Error(`Pydantic AI execution failed with exit code ${result.status ?? "unknown"}`);
@@ -424,7 +636,7 @@ engine:
       config-adapter: |
         // Renders the MCP gateway's configuration as the Claude-style
         // `mcpServers` document that `pydantic_ai.mcp.load_mcp_toolsets` reads,
-        // which the harness script hands to `pai --mcp-config`. Only HTTP entries
+        // which the wrapper loads as dynamic toolsets. Only HTTP entries
         // are carried: `load_mcp_toolsets` can host stdio
         // servers too, but the gateway already fronts every configured server
         // over HTTP, and CLI-mounted servers are excluded because the agent
@@ -472,96 +684,58 @@ engine:
         // converter produces, which is also the path gh-aw's log redaction scans for
         // the gateway bearer token. The harness script resolves it by the same
         // expression. Keeping it out of the checkout is what stops a committed
-        // `mcp.json` from reaching `pai --mcp-config`; see the harness script.
+        // `mcp.json` from reaching the wrapper; see the harness script.
         const configPath = path.join(process.env.RUNNER_TEMP || "/tmp", "gh-aw", "mcp-config", "mcp-servers.json");
         fs.mkdirSync(path.dirname(configPath), { recursive: true, mode: 0o700 });
         fs.writeFileSync(configPath, JSON.stringify({ mcpServers }, null, 2), { mode: 0o600 });
         fs.chmodSync(configPath, 0o600);
         console.log(`Wrote ${Object.keys(mcpServers).length} MCP server(s) to ${configPath}`);
     log-parser: |
+      const { collectAddMaskedValues, redactArtifactMaskedValues } = require('./add_mask_redaction.cjs');
+
       function parseLog(logContent) {
-        const lines = logContent.split("\n");
-        const logEntries = [];
-        const mcpFailures = [];
-        let maxTurnsHit = false;
-        const AWF_INFRA_RE = /^\[(INFO|WARN|SUCCESS|ERROR|entrypoint|health-check|pydantic-ai)\]|^ (?:Container|Network|Volume) |^Process exiting with code:/;
-        let inputTokens = 0;
-        let outputTokens = 0;
-        let toolCallIndex = 0;
-        let turnCount = 0;
-        let pendingText = [];
-
-        function flushText() {
-          if (pendingText.length === 0) return;
-          const text = pendingText.join("\n").trim();
-          if (text) {
-            logEntries.push({ type: "assistant", message: { content: [{ type: "text", text }] } });
-            turnCount++;
-          }
-          pendingText = [];
-        }
-
-        logEntries.push({ type: "system", subtype: "init", model: null, session_id: null });
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          if (AWF_INFRA_RE.test(line)) continue;
-          if (/max.?turns|maximum.*turns.*reached|turn limit/i.test(line)) maxTurnsHit = true;
-          if (/MCP server .* failed|MCP.*connection.*error|Failed to connect to MCP/i.test(line)) {
-            const serverMatch = line.match(/MCP server ['"]?([^\s'"]+)['"]?/i);
-            mcpFailures.push(serverMatch ? serverMatch[1] : line.trim());
-          }
-
-          let parsed = null;
-          try {
-            if (line.trim().startsWith("{")) parsed = JSON.parse(line.trim());
-          } catch (e) { /* not JSON */ }
-
-          if (parsed) {
-            if (parsed.input_tokens) inputTokens += parsed.input_tokens;
-            if (parsed.output_tokens) outputTokens += parsed.output_tokens;
-            const entryType = parsed.type != null ? String(parsed.type) : "log";
-            const msg = parsed.msg || parsed.message || parsed.content || "";
-
-            if (/tool[._]call|tool[._]use/i.test(entryType)) {
-              flushText();
-              const toolId = `pai_tool_${toolCallIndex++}`;
-              const toolName = parsed.tool || parsed.name || entryType;
-              logEntries.push({ type: "assistant", message: { content: [{ type: "tool_use", id: toolId, name: toolName, input: {} }] } });
-              logEntries.push({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: toolId, content: msg }] } });
-            } else if (msg) {
-              pendingText.push(msg);
-            } else if (!parsed.input_tokens && !parsed.output_tokens) {
-              // A JSON line carrying none of the text fields is still assistant output --
-              // a reply that is bare JSON, say -- so it is kept as written. A usage record
-              // is not: its numbers were just added to the totals.
-              pendingText.push(line.trim());
-            }
-          } else {
-            pendingText.push(line.trim());
+        const lines = logContent.split('\n');
+        const canonicalTypes = new Set([
+          'session.init', 'user.message', 'assistant.message', 'assistant.reasoning',
+          'tool.execution_start', 'tool.execution_complete', 'session.result',
+        ]);
+        const header = lines.find(line => /^\x1eGH-AW-SESSION-KEY:[0-9a-f]{32}\x1e$/.test(line));
+        const frameKey = header?.match(/^\x1eGH-AW-SESSION-KEY:([0-9a-f]{32})\x1e$/)?.[1];
+        const records = [];
+        if (frameKey) {
+          for (const line of lines) {
+            const frame = line.match(/^\x1eGH-AW-SESSION\/([0-9a-f]{32}) (\{.*\})$/);
+            if (!frame || frame[1] !== frameKey) continue;
+            try {
+              const event = JSON.parse(frame[2]);
+              if (event && canonicalTypes.has(event.type) && event.data && typeof event.data === 'object' && !Array.isArray(event.data)) {
+                records.push(event);
+              }
+            } catch { /* a malformed record does not discard adjacent events */ }
           }
         }
-        flushText();
-
-        const usage = {};
-        if (inputTokens) usage.input_tokens = inputTokens;
-        if (outputTokens) usage.output_tokens = outputTokens;
-        logEntries.push({ type: "result", num_turns: turnCount, usage });
-        const parts = [`**Turns:** ${turnCount}`, `**Tool calls:** ${toolCallIndex}`];
-        if (inputTokens || outputTokens) parts.push(`**Tokens:** ${((inputTokens ?? 0) + (outputTokens ?? 0)).toLocaleString()}`);
-        if (mcpFailures.length) parts.push(`**MCP failures:** ${mcpFailures.length}`);
-        if (maxTurnsHit) parts.push("**Max turns reached**");
-        return { markdown: parts.join(" · "), logEntries, mcpFailures, maxTurnsHit };
+        const logEntries = JSON.parse(redactArtifactMaskedValues(JSON.stringify(records), collectAddMaskedValues(logContent)));
+        const result = logEntries.findLast(event => event.type === 'session.result');
+        const usage = result?.data?.usage || {};
+        const parts = [];
+        if (result?.data?.status) parts.push(`**Status:** ${result.data.status}`);
+        if (logEntries.length) {
+          const toolCalls = logEntries.filter(event => event.type === 'tool.execution_start').length;
+          parts.push(`**Tool calls:** ${toolCalls}`);
+        }
+        if (usage.input_tokens !== undefined || usage.output_tokens !== undefined) {
+          parts.push(`**Tokens:** ${((usage.input_tokens || 0) + (usage.output_tokens || 0)).toLocaleString()}`);
+        }
+        return { markdown: parts.join(' · ') || 'No recorded agent events.', logEntries, mcpFailures: [], maxTurnsHit: false };
       }
 ---
 
 <!--
 # Pydantic AI
 
-Shared engine definition for the [Pydantic AI](https://ai.pydantic.dev) CLI
-(`pai`), running the coder agent from
-[pydantic-ai-harness](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness). Import
-this file and set `engine: id: pydantic-ai` to use it:
+Shared engine definition for CLAI 2 headless execution. Import this file and set
+`engine: id: pydantic-ai`; gh-aw v0.91.1 or newer is required for canonical
+session capture and schema-valid merged usage.
 
 ```yaml
 imports:
@@ -571,91 +745,14 @@ engine:
   model: copilot/claude-sonnet-4-5
 ```
 
-The agent is a `pydantic_ai.Agent` composed from the harness `Coder`
-capability -- six filesystem and shell tools, repository context and context
-management -- working in a `LocalWorkspace` on the checkout. Shell commands are
-unrestricted inside the sandbox and get the step's environment, minus provider
-credential variables such as `OPENAI_*` and `ANTHROPIC_*`. `pai -a` accepts
-a single target and its JSON agent-spec format cannot name harness capabilities,
-so the harness script writes that composition as `gh_aw_agent.py` in a private
-directory it creates inside the sandbox, puts that directory on `PYTHONPATH`, and
-passes `-a gh_aw_agent:agent`. The module is deliberately not written into the
-checkout: a directory the engine puts on `PYTHONPATH` would otherwise let a
-package committed to the repository shadow an installed one for the whole run.
+The private wrapper supplies the default `Coder`/`LocalWorkspace` composition or
+resolves `PAI_AGENT` once from an imported Agent or JSON/YAML spec. Gateway MCP
+tools are added alongside existing tools. The workflow's model and proxy routing
+apply to all target forms.
 
-The CLI is started by the interpreter that owns the install -- `python -P -c`
-importing the target and then `runpy.run_module("pydantic_ai")` -- rather than as
-a separate `pai` process. The module is imported exactly once, in the process
-that runs it: an agent that raises on import fails the step with its traceback
-rather than the one line `pai` prints for a failed `-a` load, and the CLI's own
-`load_agent`, which prepends the checkout to `sys.path` before resolving the
-target, finds the module already in `sys.modules` instead of a repository file of
-the same name. That insert still applies to everything imported after it, which
-is the CLI's documented behavior for its own users.
-
-`PAI_AGENT` in `engine.env` replaces that target with an agent the repository
-defines, in the same `module:variable` or spec-file form `pai -a` takes. The
-generated module is then not written, and `GITHUB_WORKSPACE` joins `PYTHONPATH` so
-a module in the repository imports. That is opt-in because it puts repository code
-on the import path. `-m` is still passed, so the agent runs on the workflow's
-`engine.model` rather than any model it was constructed with. See `README.md` next
-to this file.
-
-MCP servers are rendered into `${RUNNER_TEMP}/gh-aw/mcp-config/mcp-servers.json` in
-the same `mcpServers` shape Claude Desktop and Cursor use -- written on the host
-runner, into the tree the agent step mounts read-only, so a file committed to the
-repository cannot stand in for it -- and reach the agent through
-`pai --mcp-config`, which loads them with `pydantic_ai.mcp.load_mcp_toolsets`
-(including `${VAR}` expansion of header values) and passes the toolsets into the
-run. Routing them through the CLI rather than the generated module is what gives a
-`PAI_AGENT` agent the same servers. That flag arrived in pydantic-ai 2.36.0, which
-is the floor on the install line. Tools are prefixed with their server name, so
-safe outputs are reachable as `safeoutputs_create_issue` and the like. Only HTTP
-servers are carried over; CLI-mounted servers stay available to the agent's shell
-as executables on `PATH`.
-
-`model` must use `provider/model` format. The provider segment selects which of
-the AWF api-proxy's backends handles the request; `copilot`, `anthropic`,
-`openai` and `codex` are the values gh-aw accepts. Requests are routed through
-that proxy, whose endpoint is discovered from `/reflect` at run time, so the
-first segment is dropped and the rest of the model ID is passed with `-m`, under
-the marker for the wire API that backend serves: `anthropic:<model>` against
-`ANTHROPIC_BASE_URL` for `anthropic/`, whose backend forwards the path to
-api.anthropic.com unchanged and does not translate Chat Completions into
-Messages, and `openai-chat:<model>` against `OPENAI_BASE_URL` for the rest. The
-marker selects a Pydantic AI client and is not part of the model name sent
-upstream. The two base URLs differ by a segment: the Anthropic client appends
-`/v1/messages` to the endpoint's origin, the OpenAI-compatible client appends
-`/chat/completions` to the `/v1` prefix the reflected `models_url` carries.
-Only the first segment of the model goes, so an ID carrying an org namespace such
-as `openai/meta-llama/Llama-3.1` keeps it. When the provider segment is
-`copilot`, Claude aliases such as `claude-sonnet-4-5` are normalized to the dotted
-model IDs the proxy's Copilot backend exposes, such as `claude-sonnet-4.5`; every
-other destination — the `anthropic` and `openai` backends, or a `PAI_BASE_URL`
-endpoint — receives the ID as written. `-m` is always passed, because a workflow
-that declares no model would otherwise inherit the CLI's own `openai:gpt-5`
-default silently.
-
-Setting `PAI_BASE_URL` in `engine.env` sends requests to that URL instead of the
-proxy, for any endpoint speaking the OpenAI Chat Completions API. `/reflect`
-discovery is skipped and the provider segment of `model` becomes a formality --
-including `anthropic/`, which stays on Chat Completions under `PAI_BASE_URL` --
-so write `openai/<model-id>` and the bare ID reaches the endpoint. There is no
-matching key setting: gh-aw keeps `engine.env` values holding secrets out of the
-agent sandbox, so the endpoint has to accept the placeholder bearer token or sit
-behind something that adds the real credential. See `README.md` next to this file
-for the whole picture.
-
-Responses are streamed. The proxy's aggregated non-streaming body omits
-`object` and `choices[].index`, which Pydantic AI rejects during response
-validation, so `--no-stream` is deliberately not passed.
-
-`pai` renders its output as Markdown for a terminal and has no structured output
-mode today, so the log parser reconstructs turns from that text and reads token
-counts only from any JSON lines the run happens to emit.
-
-The CLI and the coder capabilities are installed before the agent runs with
-`pip install --user "pydantic-ai-harness[cli]==<engine version>"
-"pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.44.0"`, into `~/.local` because the
-runner tool cache holding `uv` is not writable from inside the sandbox.
+The recorder captures typed assistant, reasoning, tool-call, tool-result, and
+usage events. The parser selects its framed records; gh-aw writes
+`agent-session.jsonl` and collects `usage/aw_session.jsonl`. Import failures and
+interrupted runs keep their actual failure outcome, without inferred turns or
+tool completions. See `README.md` for setup, credentials, and observability.
 -->

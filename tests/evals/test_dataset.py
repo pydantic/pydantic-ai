@@ -4,7 +4,6 @@ import asyncio
 import inspect
 import json
 import math
-import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
@@ -77,12 +76,6 @@ needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logf
 _any_trace_id: str | None = IsOneOf(IsStr(), None)  # type: ignore[assignment]
 _any_span_id: str | None = IsOneOf(IsStr(), None)  # type: ignore[assignment]
 _any_duration: float = IsNumber()  # type: ignore[assignment]
-
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 
 if logfire_import_successful():

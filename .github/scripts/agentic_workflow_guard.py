@@ -734,29 +734,89 @@ def check_lock_regenerated(changed: list[str], workflows_dir: Path = WORKFLOWS_D
     return violations
 
 
-def _is_minimax_workflow(frontmatter: Mapping[str, object]) -> bool:
+def _is_zai_workflow(frontmatter: Mapping[str, object]) -> bool:
     imports = _as_strings(frontmatter.get('imports'))
     engine_env = _as_mapping(_as_mapping(frontmatter.get('engine')).get('env'))
-    return (
-        'shared/engine-minimax.md' in imports
-        or engine_env.get('ANTHROPIC_BASE_URL') == 'https://api.minimax.io/anthropic'
+    return 'shared/engine-zai.md' in imports or engine_env.get('ANTHROPIC_BASE_URL') == 'https://api.z.ai/api/anthropic'
+
+
+def check_provider_engine_config(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Shared and workflow-local engines must use the shared provider configuration."""
+    engine_path = workflows_dir / 'shared' / 'engine-zai.md'
+    if not engine_path.is_file():
+        return [Violation(str(engine_path), 'provider-engine-config', 'Shared Z.AI engine configuration is missing.')]
+
+    engine_config = parse_frontmatter(engine_path)
+    shared_engine = _as_mapping(engine_config.get('engine'))
+    shared_env = _as_mapping(shared_engine.get('env'))
+    endpoint = shared_env.get('ANTHROPIC_BASE_URL')
+    credential = shared_env.get('ANTHROPIC_API_KEY')
+    if not isinstance(endpoint, str) or not endpoint or not isinstance(credential, str) or not credential:
+        return [
+            Violation(
+                str(engine_path),
+                'provider-engine-config',
+                'The shared agent engine must define a nonempty `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`.',
+            )
+        ]
+
+    shared_engines: tuple[tuple[str, object], ...] = (
+        (
+            'threat-detection',
+            _as_mapping(_as_mapping(engine_config.get('safe-outputs')).get('threat-detection')).get('engine'),
+        ),
     )
+    violations: list[Violation] = []
+    for engine_name, engine_value in shared_engines:
+        engine_env = _as_mapping(_as_mapping(engine_value).get('env'))
+        if engine_env.get('ANTHROPIC_BASE_URL') != endpoint or engine_env.get('ANTHROPIC_API_KEY') != credential:
+            violations.append(
+                Violation(
+                    str(engine_path),
+                    'provider-engine-config',
+                    f'The shared {engine_name} engine must use the shared agent engine endpoint and credential.',
+                )
+            )
+
+    source_paths = list(workflows_dir.glob(AGENTIC_GLOB))
+    for source in (workflows_dir / 'shared' / 'provider-health.md', workflows_dir / 'agent-provider-health.yml'):
+        if source.is_file():
+            source_paths.append(source)
+    for source in source_paths:
+        frontmatter = parse_frontmatter(source) if source.suffix == '.md' else {}
+        local_engines: tuple[object, ...] = (
+            frontmatter.get('engine'),
+            _as_mapping(_as_mapping(frontmatter.get('safe-outputs')).get('threat-detection')).get('engine'),
+        )
+        for local_engine in local_engines:
+            local_env = _as_mapping(_as_mapping(local_engine).get('env'))
+            if ('ANTHROPIC_BASE_URL' in local_env or 'ANTHROPIC_API_KEY' in local_env) and (
+                local_env.get('ANTHROPIC_BASE_URL') != endpoint or local_env.get('ANTHROPIC_API_KEY') != credential
+            ):
+                violations.append(
+                    Violation(
+                        str(source),
+                        'provider-engine-config',
+                        'A workflow-local engine override must use the shared engine endpoint and credential.',
+                    )
+                )
+    return violations
 
 
 def check_provider_health_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
-    """Every MiniMax source must gate activation on its compiled provider-health job."""
+    """Every Z.AI source must gate activation on its compiled provider-health job."""
     violations: list[Violation] = []
     for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
         frontmatter = parse_frontmatter(source)
         imports = _as_strings(frontmatter.get('imports'))
-        if not _is_minimax_workflow(frontmatter):
+        if not _is_zai_workflow(frontmatter):
             continue
         if 'shared/provider-health.md' not in imports:
             violations.append(
                 Violation(
                     str(source),
                     'provider-health-import',
-                    'MiniMax workflow does not import `shared/provider-health.md`.',
+                    'Z.AI workflow does not import `shared/provider-health.md`.',
                 )
             )
         if 'needs.provider_health.outputs.ready' not in parse_prompt_body(source):
@@ -774,7 +834,7 @@ def check_provider_health_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Vi
                 Violation(
                     str(source),
                     'provider-health-gate',
-                    'MiniMax workflow top-level `if:` must require `provider_health` readiness.',
+                    'Z.AI workflow top-level `if:` must require `provider_health` readiness.',
                 )
             )
         safe_outputs = _as_mapping(frontmatter.get('safe-outputs'))
@@ -784,7 +844,7 @@ def check_provider_health_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Vi
                 Violation(
                     str(source),
                     'provider-health-reporting',
-                    'MiniMax workflows must disable gh-aw generic failure-as-issue reporting.',
+                    'Z.AI workflows must disable gh-aw generic failure-as-issue reporting.',
                 )
             )
         lock = source.with_suffix('.lock.yml')
@@ -830,7 +890,7 @@ def check_provider_health_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Vi
 
 def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
     """The gate and shim must receive the same stable workflow task identity."""
-    engine_path = workflows_dir / 'shared' / 'engine-minimax.md'
+    engine_path = workflows_dir / 'shared' / 'engine-zai.md'
     health_path = workflows_dir / 'shared' / 'provider-health.md'
     if not engine_path.is_file() or not health_path.is_file():
         return [
@@ -886,7 +946,7 @@ def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[
     for source in workflows_dir.glob(AGENTIC_GLOB):
         frontmatter = parse_frontmatter(source)
         imports = _as_strings(frontmatter.get('imports'))
-        if not _is_minimax_workflow(frontmatter) or 'shared/engine-minimax.md' in imports:
+        if not _is_zai_workflow(frontmatter) or 'shared/engine-zai.md' in imports:
             continue
         engine_env = _as_mapping(_as_mapping(frontmatter.get('engine')).get('env'))
         if (
@@ -899,14 +959,14 @@ def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[
                 Violation(
                     str(source),
                     'provider-health-identity',
-                    'A MiniMax workflow with a local engine config must forward the shared task identity exactly.',
+                    'A Z.AI workflow with a local engine config must forward the shared task identity exactly.',
                 )
             ]
     return []
 
 
 def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:  # noqa: C901
-    """The serialized monitor only accepts completions from the enumerated MiniMax workflows."""
+    """The serialized monitor only accepts completions from the enumerated Z.AI workflows."""
     monitor_path = workflows_dir / 'agent-provider-health.yml'
     if not monitor_path.is_file():
         return [Violation(str(monitor_path), 'provider-health-monitor', 'Provider-health monitor is missing.')]
@@ -917,7 +977,7 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
     expected_names = {
         str(parse_frontmatter(source).get('name'))
         for source in workflows_dir.glob(AGENTIC_GLOB)
-        if _is_minimax_workflow(parse_frontmatter(source))
+        if _is_zai_workflow(parse_frontmatter(source))
     }
     violations: list[Violation] = []
     if monitor_names != expected_names:
@@ -927,7 +987,7 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
             Violation(
                 str(monitor_path),
                 'provider-health-monitor-workflows',
-                f'`workflow_run.workflows` must match all MiniMax workflows; missing={missing}, unexpected={unexpected}.',
+                f'`workflow_run.workflows` must match all Z.AI workflows; missing={missing}, unexpected={unexpected}.',
             )
         )
     if 'workflow_dispatch' not in triggers or 'schedule' not in triggers:
@@ -948,6 +1008,19 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
         )
     jobs = _as_mapping(monitor.get('jobs'))
     monitor_job = _as_mapping(jobs.get('monitor'))
+    if ' '.join(str(monitor_job.get('if', '')).split()) != (
+        "github.repository == 'pydantic/pydantic-ai' && "
+        "(github.event_name != 'workflow_run' || "
+        "github.event.workflow_run.event != 'pull_request' || "
+        'github.event.workflow_run.head_repository.full_name == github.repository)'
+    ):
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-fork-gate',
+                'Monitor must exclude fork `pull_request` completions while retaining trusted runs and recovery triggers.',
+            )
+        )
     concurrency = _as_mapping(monitor.get('concurrency'))
     if not concurrency.get('group') or concurrency.get('cancel-in-progress') is not False:
         violations.append(
@@ -1026,7 +1099,7 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
                 'Downloaded agent artifacts must be parsed only as input to the trusted controller, never executed as code.',
             )
         )
-    provider_keys: tuple[str, str] = ('MINIMAX_API_KEY', 'MINIMAX_QUOTA_RESOURCE')
+    provider_keys: tuple[str, ...] = ('ZAI_API_KEY',)
     workflow_env: Mapping[str, object] = _as_mapping(monitor.get('env'))
     job_env: Mapping[str, object] = _as_mapping(monitor_job.get('env'))
     if job_env.get('PYDANTIC_AI_RUN_ATTEMPT') != '${{ github.run_attempt }}':
@@ -1062,7 +1135,7 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
             Violation(
                 str(monitor_path),
                 'provider-health-monitor-provider-event-scope',
-                'MiniMax credentials and quota selection must not be inherited by `workflow_run` steps.',
+                'Z.AI credentials must not be inherited by `workflow_run` steps.',
             )
         )
     for step in steps:
@@ -1083,7 +1156,7 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
             Violation(
                 str(monitor_path),
                 'provider-health-monitor-provider-event-scope',
-                'MiniMax credentials and quota selection must be scoped exactly to scheduled or explicitly requested recovery, never `workflow_run`.',
+                'Z.AI credentials must be scoped exactly to scheduled or explicitly requested recovery, never `workflow_run`.',
             )
         )
     permissions = _as_mapping(monitor_job.get('permissions'))
@@ -1176,6 +1249,7 @@ def run_checks(
     for markdown in [*sources, *shared]:
         violations += check_prompt_paths(markdown)
     violations += check_compiler_versions(locks)
+    violations += check_provider_engine_config(workflows_dir)
     violations += check_provider_health_wiring(workflows_dir)
     violations += check_provider_health_identity(workflows_dir)
     violations += check_provider_health_monitor(workflows_dir)

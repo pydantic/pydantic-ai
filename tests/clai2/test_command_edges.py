@@ -145,6 +145,14 @@ def test_substring_command_and_argument_completion(*, fragment: str) -> None:
         assert all(item.start_position == -len(fragment) for item in completions)
 
 
+def test_command_names_rank_exact_then_prefix_then_substring() -> None:
+    commands = Commands()
+    for name in ('chats', 'hats', 'chat', 'hat'):
+        commands.register(Command(name=name, description=name, handler=lambda _: ''))
+    completions = list(commands.get_completions(Document('/hat'), CompleteEvent()))
+    assert [item.text for item in completions] == ['hat', 'hats', 'chats', 'chat']
+
+
 @pytest.mark.parametrize('fragment', ['', 'exam', 'ample', '.py', 'example.py', 'AMPLE', 'missing'])
 @pytest.mark.parametrize('directory', [False, True])
 def test_substring_file_completion(*, tmp_path: Path, fragment: str, directory: bool) -> None:

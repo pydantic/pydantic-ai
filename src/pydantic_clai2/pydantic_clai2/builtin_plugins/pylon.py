@@ -2,7 +2,7 @@
 
 The built-in `pylon` plugin: Pylon's support issues, accounts, and contacts through harness `Pylon`.
 
-The settings menu is `PylonPlugin.configure`, so turning the plugin on opens it, as do `C` in
+The settings menu is `PylonPlugin.configure`, so turning the plugin on opens it, as do `c` in
 `/plugins`, `/plugins configure pylon`, and `/pylon`. Each edit is saved to the plugin's settings at once and
 applies from the next run, because the capability is rebuilt per run from the current settings.
 
@@ -240,6 +240,7 @@ class PylonPlugin(Plugin[PylonSettings, DepsT]):
                     if len(args) <= 1
                     else []
                 ),
+                during_turn=True,
             ),
         )
 

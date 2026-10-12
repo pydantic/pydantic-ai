@@ -29,6 +29,9 @@ that records only path, body and headers on a live transport, while `timeout` is
   when the resolved profile sets `supports_thinking`, and a `thinking_always_enabled` model (Cohere,
   Mistral's magistral) supports it while sending nothing at all. "Payload unchanged" is therefore not
   evidence of non-support, which is exactly what this harness reads it as.
+- `cache` is excluded for the same reason as `thinking`: it is gated per model name via
+  `supports_cache`, and a provider that caches implicitly (OpenAI's automatic caching; Google,
+  which warns instead) supports it while sending nothing at all.
 
 That per-model-name gating bounds this file generally: each class is probed at ONE representative
 model, chosen to exercise the class's full capability, so an entry whose support varies by model
@@ -73,6 +76,7 @@ with try_import() as openai_available:
     from pydantic_ai.models.ollama import OllamaModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openai_codex import OpenAICodexModel
+    from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.snowflake import SnowflakeModel
     from pydantic_ai.models.zai import ZaiModel
@@ -83,6 +87,7 @@ with try_import() as openai_available:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
+    from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
     from pydantic_ai.providers.zai import ZaiProvider
@@ -137,7 +142,7 @@ with try_import() as typesafe_available:
     from pydantic_ai.providers.typesafe import TypeSafeProvider
 
 
-HAND_MAINTAINED = frozenset({'tool_choice', 'thinking'})
+HAND_MAINTAINED = frozenset({'tool_choice', 'thinking', 'cache'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
 
 PROBE_VALUES: dict[str, tuple[object, ...]] = {
@@ -591,6 +596,10 @@ def _system_one(client: httpx2.AsyncClient) -> Model:
     )
 
 
+def _openai_decisions(client: httpx2.AsyncClient) -> Model:
+    return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIDecisionsProvider(api_key=PROBE_KEY, http_client=client))
+
+
 CASES = [
     Case(
         'OpenAIChatModel',
@@ -637,6 +646,12 @@ CASES = [
     Case('MCPSamplingModel', ('MCP Sampling',), mcp_sampling_probe, _needs(mcp_available, 'mcp')),
     Case('TypeSafeModel', ('TypeSafe',), decision_probe(_typesafe), _needs(typesafe_available, 'typesafe-sdk')),
     Case('SystemOneModel', ('System One',), decision_probe(_system_one)),
+    Case(
+        'OpenAIDecisionsModel',
+        ('OpenAI Decisions',),
+        decision_probe(_openai_decisions),
+        _needs(openai_available, 'openai'),
+    ),
 ]
 
 
@@ -720,9 +735,6 @@ def test_every_api_backed_model_class_is_probed():
         except ImportError:  # pragma: lax no cover
             continue  # an optional provider SDK isn't installed; its classes can't be probed either
         for name, obj in vars(module).items():
-            # A subscripted generic (`dict[str, Any]`) passes `isinstance(_, type)` on Python 3.10 and
-            # then makes `issubclass` raise, so both it and anything merely imported into the module
-            # are screened out before the base-class question is asked.
             if not isinstance(obj, type) or isinstance(obj, types.GenericAlias):
                 continue
             if obj.__module__ != module_info.name or not issubclass(obj, Model):

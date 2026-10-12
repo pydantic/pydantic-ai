@@ -29,6 +29,8 @@ from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.ui.rendering.usage_report import session_usage
 
 _LOGGER = logging.getLogger(__name__)
+TITLE_POLL_INTERVAL = 2.0
+"""Seconds between checks for a session title renamed outside this shell."""
 
 
 class _Reporter:
@@ -103,7 +105,7 @@ class _Reporter:
 
     async def watch(self) -> None:
         while True:
-            await asyncio.sleep(2)
+            await asyncio.sleep(TITLE_POLL_INTERVAL)
             await self.refresh()
 
     async def stop(self, event: SessionEnd) -> None:

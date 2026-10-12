@@ -18,11 +18,12 @@ import re
 from collections.abc import AsyncGenerator, Generator, Sequence
 from dataclasses import replace
 from functools import partial
-from typing import Literal
+from typing import Literal, TypeVar
 from urllib.parse import urlencode, urlsplit
 
 import anyio
 import httpx
+import httpx2
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, field_validator
@@ -94,6 +95,7 @@ FEATURE_GROUPS = (
 )
 """PostHog's documented feature groups; see the MCP server's README, "Feature Filtering"."""
 
+_RequestT = TypeVar('_RequestT', httpx.Request, httpx2.Request)
 _GROUP = re.compile(r'[a-z][a-z0-9_]*')
 _ID = re.compile(r'[A-Za-z0-9-]+')
 _LOOPBACK = ('localhost', '127.0.0.1', '::1')
@@ -168,15 +170,18 @@ def saved_key() -> KeyReference | None:
         raise UserError(f'The saved PostHog key reference is invalid. {SETUP}') from None
 
 
-class SavedKeyAuth(httpx.Auth):
+# The connection's client is legacy `httpx` under FastMCP 3 and `httpx2` under FastMCP 4, and each rejects
+# another family's `Auth` as an invalid `auth`. The flows below serve either, so be both; the inherited
+# `sync_auth_flow` the two declare for their own `Request` is what Pyright objects to.
+class SavedKeyAuth(httpx.Auth, httpx2.Auth):  # pyright: ignore[reportIncompatibleMethodOverride]
     """Send the chosen `/keys` entry as the bearer token, looked up again for every request."""
 
-    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
+    def auth_flow(self, request: _RequestT) -> Generator[_RequestT, object, None]:
         """Fail closed when no key is chosen or the chosen one is gone."""
         request.headers['Authorization'] = _bearer()
         yield request
 
-    async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
+    async def async_auth_flow(self, request: _RequestT) -> AsyncGenerator[_RequestT, object]:
         """The same lookup off the event loop: the keyring and the `/keys` lock can block."""
         request.headers['Authorization'] = await anyio.to_thread.run_sync(_bearer, abandon_on_cancel=True)
         yield request

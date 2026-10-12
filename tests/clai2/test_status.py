@@ -151,6 +151,51 @@ async def test_model_change_clears_the_previous_context_window(tmp_path: Path, m
     assert readings == [(1_000_000, True), (None, False)]
 
 
+@pytest.mark.parametrize(
+    ('model_window', 'measured', 'expected'),
+    [(1_000_000, None, 1_000_000), (None, None, None), (1_000_000, 200_000, 200_000)],
+)
+async def test_the_shell_shows_the_model_window_without_compaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    model_window: int | None,
+    measured: int | None,
+    expected: int | None,
+) -> None:
+    """`coder` keeps `compaction` and its gauge off, so the shell reads the request model's window itself.
+
+    A window the gauge already measured, such as its `context_window` override, is kept.
+    """
+    inputs(monkeypatch, ['/measure', 'hello', '/inspect', '/exit'])
+    shell = create_shell(
+        Agent(TestModel(profile={'context_window': model_window})),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+    )
+    readings: list[str] = []
+
+    def measure(args: list[str]) -> str:
+        shell.status.context_window = measured
+        return ''
+
+    def inspect(args: list[str]) -> str:
+        readings.append(shell.status.text())
+        return ''
+
+    shell.commands.register(Command(name='measure', description='Act as the gauge', handler=measure))
+    shell.commands.register(Command(name='inspect', description='Read status', handler=inspect))
+    await shell.run()
+    assert shell.status.context_window == expected
+    assert re.search(r'context: \d+/', readings[0])
+    assert shell.session.on_context_window is None
+
+
 def test_tool_status_transitions() -> None:
     status = Status()
     status.observe(PartStartEvent(index=0, part=NativeToolCallPart('web_search', {})))

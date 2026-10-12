@@ -2,7 +2,7 @@
 
 The built-in `linear` plugin: harness `Linear`, set up in a settings menu, with its key named in `/keys`.
 
-`/plugins configure linear` (also opened on `/plugins add`, `/plugins enable`, and Space or C in `/plugins`) edits
+`/plugins configure linear` (also opened on `/plugins add`, `/plugins enable`, and Space or `c` in `/plugins`) edits
 every setting harness `Linear` takes from a user: how to sign in, which `/keys` entry to use, read-only access,
 and whether to pass the server's instructions. Edits are saved as they are made. Plugin settings are plaintext
 SQLite, so they carry no credential: the menu's key row picks a saved key or saves a new one under

@@ -360,9 +360,9 @@ class PKCESignIn:
     def _refresh_locked(self) -> str:
         with self._lock():
             tokens = self._usable(self._load())
-            if tokens.refresh_token is None:
-                raise UserError(f'Not signed in to {self.service}. Run {self.setup} to sign in.')
             if tokens.stale(time.time()):
+                if tokens.refresh_token is None:
+                    raise UserError(f'Not signed in to {self.service}. Run {self.setup} to sign in.')
                 try:
                     tokens = asyncio.run(refresh(self.client, tokens, service=self.service, transport=self.transport))
                 except UserError:
