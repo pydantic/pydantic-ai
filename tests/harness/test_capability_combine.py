@@ -673,7 +673,10 @@ def test_sub_agents_compose_the_roster_and_nothing_else(
 
 
 def test_system_reminders_keep_two_llm_reminders_whose_models_differ_only_in_settings() -> None:
-    """Reminders asking two differently configured models are two reminders, so both keep firing."""
+    """Reminders asking two differently configured models are two reminders, so both keep firing.
+
+    Not a VCR test: `combine` makes no request.
+    """
     first = LLMReminder[Any](model=TestModel(settings={'temperature': 0.0}))
     second = LLMReminder[Any](model=TestModel(settings={'temperature': 1.0}))
 

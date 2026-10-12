@@ -9,6 +9,7 @@ from __future__ import annotations as _annotations
 import base64
 import hashlib
 import json
+import reprlib
 import time
 import warnings
 from abc import ABC, abstractmethod
@@ -566,29 +567,23 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         return self._settings
 
     def __eq__(self, other: object) -> bool:
-        """Compare `settings`, `profile`, and the subclass's dataclass fields.
-
-        A subclass that keeps identity hashing (one that isn't a dataclass, or a `@dataclass(eq=False)`)
-        compares by identity, so equal models always hash equal.
-        """
+        """Compare `settings`, `profile`, and the subclass's dataclass fields; a subclass that hashes by identity compares by identity."""
         if not isinstance(other, type(self)) or other.__class__ is not self.__class__:
             return NotImplemented
-        if not is_dataclass(self) or type(self).__hash__ is object.__hash__:
-            return self is other
-        names = [f.name for f in fields(self) if f.compare]
-        return (self._settings, self._profile, *(getattr(self, name) for name in names)) == (
-            other._settings,
-            other._profile,
-            *(getattr(other, name) for name in names),
+        return (self._settings, self._profile) == (other._settings, other._profile) and _utils.dataclass_fields_equal(
+            self, other
         )
 
     # Defining `__eq__` would otherwise set `__hash__` to `None`, making non-dataclass subclasses unhashable.
     __hash__ = AbstractModel.__hash__
 
+    @reprlib.recursive_repr()
     def __repr__(self) -> str:
         shown = [f'model_name={self.model_name!r}']
         if is_dataclass(self):
-            shown.extend(f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr)
+            shown.extend(
+                f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr and f.name != 'model_name'
+            )
         if self._settings is not None:
             shown.append(f'settings={self._settings!r}')
         if self._profile is not None:

@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import fields, is_dataclass
 from typing import Any
 
+from .._utils import dataclass_fields_equal
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings, merge_embedding_settings
 
@@ -40,20 +40,10 @@ class EmbeddingModel(ABC):
         return self._settings
 
     def __eq__(self, other: object) -> bool:
-        """Compare `settings` and the subclass's dataclass fields.
-
-        A subclass that keeps identity hashing (one that isn't a dataclass, or a `@dataclass(eq=False)`)
-        compares by identity, so equal models always hash equal.
-        """
+        """Compare `settings` and the subclass's dataclass fields; a subclass that hashes by identity compares by identity."""
         if not isinstance(other, type(self)) or other.__class__ is not self.__class__:
             return NotImplemented
-        if not is_dataclass(self) or type(self).__hash__ is object.__hash__:
-            return self is other
-        names = [f.name for f in fields(self) if f.compare]
-        return (self._settings, *(getattr(self, name) for name in names)) == (
-            other._settings,
-            *(getattr(other, name) for name in names),
-        )
+        return self._settings == other._settings and dataclass_fields_equal(self, other)
 
     # Defining `__eq__` would otherwise set `__hash__` to `None`, making non-dataclass subclasses unhashable.
     __hash__ = ABC.__hash__
