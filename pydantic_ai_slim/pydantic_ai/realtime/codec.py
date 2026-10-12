@@ -38,6 +38,7 @@ from ..messages import (
     UserContent,
 )
 from ..usage import RequestUsage
+from ._lifecycle import LifecycleEvent, TaggedEvent
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, DEFAULT_REALTIME_PROFILE, merge_realtime_profile
 
 # Input content types (fed into the connection via `send`). Session content reuses the shared message
@@ -105,11 +106,17 @@ class TruncateOutput:
 
     After a barge-in the user only heard part of the model's audio. Truncating tells the provider how
     much was actually played, so its stored transcript matches and the conversation context stays
-    consistent. The provider resolves which output item to truncate from its own state.
+    consistent. The provider resolves which output item to truncate from its own state unless
+    `item_id` names one.
     """
 
     audio_end_ms: int
-    """Milliseconds of the current output audio that were actually played before the interruption."""
+    """Milliseconds of the output audio that were actually played before the interruption."""
+
+    _: KW_ONLY
+    item_id: str | None = None
+    """The output item to truncate, when it isn't the provider's current one — a reply the listener was
+    still hearing after a newer one was generated. `None` truncates the current output item."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -364,9 +371,9 @@ class ConversationCreated:
 class ConversationItemCreated:
     """An OpenAI-protocol server reported a conversation item.
 
-    xAI uses `replayed=True` for item events emitted during the resume handshake. The session consumes
-    those items and remembers their newly assigned IDs so any follow-on content or tool events aren't
-    appended or executed again.
+    A connection that resumes a provider-side conversation marks the items the provider replays into it
+    with `replayed=True`. The session consumes those items and remembers their newly assigned IDs so any
+    follow-on content or tool events aren't appended or executed again.
     """
 
     _: KW_ONLY
@@ -387,7 +394,10 @@ class InputRejected:
     Yielded just ahead of the [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]
     that explains the refusal, and only when the provider's error identifies the frame it refused (the
     OpenAI protocol echoes the client `event_id`). A connection that can't tell which input an error was
-    about yields the error alone. The session uses it to take back what it assumed the input did: a
+    about yields the error alone. A reconnect whose new session no longer has an input (Gemini resumes
+    from a handle that can predate a typed turn) yields it too, ahead of the
+    [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent]. The session
+    uses it to take back what it assumed the input did: a
     refused request for a response releases the reply
     [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] would otherwise wait for
     forever, and refused content is removed from history.
@@ -474,6 +484,53 @@ class RealtimeConnection(ABC):
         """Iterate over events received from the model."""
         raise NotImplementedError
 
+    _lifecycle_version: ClassVar[int] = 1
+    """Which version of the lifecycle contract this connection's events follow (see `_lifecycle.py`).
+
+    Version 1 is the codec vocabulary alone. A connection on version 2 also yields identified lifecycle
+    events from `_lifecycle_events()`.
+    """
+
+    async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:
+        """Every event, codec and lifecycle alike, a frame at a time, each with whether it is stale.
+
+        A frame is what one provider message (or one transition of the connection's own, such as a
+        reconnect) makes, so a consumer can apply it whole. A stale event is a codec event about a response
+        that has already ended (a repeated or late terminal, content trailing it): the codec stream
+        (`__aiter__`) carries it, the lifecycle stream (`_lifecycle_events()`) leaves it out. A version 1
+        connection has no lifecycle events and no stale ones: each codec event is a frame of its own.
+        """
+        async for event in self:
+            yield [(event, False)]
+
+    async def _lifecycle_events(self) -> AsyncIterator[RealtimeCodecEvent | LifecycleEvent]:
+        """Iterate over the codec events together with the lifecycle events, on a version 2 connection."""
+        async for frame in self._tagged_frames():
+            for event, stale in frame:
+                if not stale:
+                    yield event
+
+    async def _end_session(self) -> AsyncIterator[SessionUsage]:
+        """End the provider session, yielding the usage the provider reports only as it ends.
+
+        A private seam until the realtime session refactor gives closing a lifecycle of its own.
+
+        The session iterates this once while closing, after
+        it has stopped reading the connection and before it reports the session's usage, whenever the
+        session owns the provider session (not on a WebRTC sideband, where ending it would end the browser's
+        call). A provider that already ended the session, or went away, has nothing more to ask: yield what
+        it reported that the session hasn't taken yet, if anything. Only session-scoped usage belongs here:
+        there is no response left to attribute anything else to.
+
+        The session bounds how long it iterates, and stops at a transport error; everything yielded until
+        then is recorded. It skips this when the session is closing because it was cancelled.
+
+        The default yields nothing, for providers that report all usage as it happens or that end the
+        session by closing the transport.
+        """
+        return
+        yield  # pragma: no cover
+
     @property
     def model_name(self) -> str | None:
         """The model id the server reported serving this session, when the provider reports one.
@@ -496,7 +553,7 @@ class RealtimeConnection(ABC):
         session instead of resuming with total amnesia. The session's history grows as the call goes on,
         hence a callable rather than a snapshot.
 
-        A no-op by default: providers with native session resumption (Gemini Live, xAI) have nothing to
+        A no-op by default: a provider with native session resumption (Gemini Live) has nothing to
         replay, and one that can't seed a session at all has nowhere to put it.
         """
 
@@ -525,18 +582,69 @@ class RealtimeConnection(ABC):
         return False
 
     @property
+    def _can_reconnect(self) -> bool:
+        """Whether this connection will still re-dial if its link drops.
+
+        Private while send retries across a reconnect are being redesigned. `False` without a reconnect
+        policy, once its `max_reconnects` budget is spent, and once a reconnect has failed for good.
+        While it is `True`, a [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] drops an audio
+        chunk that hits the dropped link instead of raising, so a microphone task survives the reconnect.
+        """
+        return False
+
+    @property
+    def _answers_tool_calls_per_response(self) -> bool:
+        """Whether one reply answers all the tool results of a model response, rather than one per result.
+
+        For the session's reply accounting only. The built-in connections make it so (Gemini Live answers
+        a tool-call frame once; the OpenAI-protocol connection asks for one response per calling
+        response), and the session then counts one reply per tool-calling response. Defaults to `False`,
+        which counts one per result, as a connection that asks for a response after each one needs.
+        """
+        return False
+
+    def _take_merged_response_requests(self) -> int:
+        """How many requests for a response sent since the last call were answered by another one's response.
+
+        For the session's reply accounting only: a connection that holds a request made during an
+        active response, and answers any further ones with the same response, reports them here so
+        the session stops waiting for a response of their own.
+        """
+        return 0
+
+    @property
     def reconnect_restores_in_flight_state(self) -> bool:
         """Whether a reconnect continues the response and tool calls that were in flight when the socket dropped.
 
-        Otherwise it only brings back the finalized conversation. Native session resumption (xAI Grok Voice) restores the in-flight generation server-side, and
-        Gemini Live settles the cut turn in the connection before its
-        [`RealtimeSessionReconnectEvent`][pydantic_ai.messages.RealtimeSessionReconnectEvent], so in
-        both the [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] must not settle again and
-        trusts `state_restored`. Local replay (OpenAI, Azure OpenAI) restores only finalized turns, so
+        Otherwise it only brings back the finalized conversation. Gemini Live settles the cut turn in the
+        connection before its
+        [`RealtimeSessionReconnectEvent`][pydantic_ai.messages.RealtimeSessionReconnectEvent], so the
+        [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] must not settle again and trusts
+        `state_restored`. Local replay (OpenAI, Azure OpenAI, xAI) restores only finalized turns, so
         the session settles the interrupted turn itself and reports `state_restored=False`. Defaults to
         `True`; the OpenAI connection overrides it.
         """
         return True
+
+    @property
+    def _defers_audio_commit(self) -> bool:
+        """Whether committed audio joins the conversation only when the connection sends the commit later.
+
+        For the session's history placement only. A connection may hold a `CommitAudio` back, for instance
+        until a response is asked for, when its provider answers a commit by itself, and input sent in the
+        meantime then reaches the provider first. The session records the spoken turn where the provider
+        has it, once the connection reports sending the commit to the listener passed to
+        `_set_audio_commit_listener`. Internal until the session's lifecycle events, which track provider
+        items per input, replace it. Defaults to `False`.
+        """
+        return False
+
+    def _set_audio_commit_listener(self, listener: Callable[[], None]) -> None:
+        """Register what to call as a held commit goes out, on a connection that `_defers_audio_commit`.
+
+        The listener is called just before the commit is sent, and before anything the provider sends in
+        answer. Internal, like `_defers_audio_commit`. A no-op by default.
+        """
 
 
 __all__ = (

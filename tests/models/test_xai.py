@@ -1,8 +1,8 @@
 """Tests for xAI model integration.
 
 The xAI SDK uses gRPC for all calls (including executing built-in tools like `code_execution`,
-`web_search`, and `mcp_server` server-side). Since VCR doesn't support gRPC, we cannot
-record/replay these interactions like we do with HTTP APIs.
+`web_search`, and `mcp_server` server-side), so these calls don't go through the HTTP cassettes
+the other model tests use.
 
 Instead, we use two strategies:
 - A **custom recorder** for xAI SDK interactions where possible (gRPC-aware recording/replay)
@@ -17,7 +17,7 @@ Across these tests, we verify:
 from __future__ import annotations as _annotations
 
 import json
-from datetime import timezone
+from datetime import UTC
 from decimal import Decimal
 from typing import Any
 
@@ -51,7 +51,6 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     ThinkingPart,
-    ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
@@ -61,7 +60,7 @@ from pydantic_ai import (
     WebSearchTool,
 )
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CachePoint,
@@ -98,6 +97,7 @@ from .mock_xai import (
 )
 
 with try_import() as imports_successful:
+    import grpc
     import xai_sdk.chat as chat_types
     from xai_sdk.chat import required_tool
     from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
@@ -115,7 +115,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -178,7 +177,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -196,7 +195,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -849,7 +848,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
                 parts=[
                     UserPromptPart(
                         content='What is the largest city in the user country?',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -876,7 +875,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
                         tool_name='get_user_country',
                         content='Mexico',
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -1087,7 +1086,7 @@ async def test_xai_native_output_with_tools(allow_model_requests: None):
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
     """Test that tool_choice falls back to 'auto' when 'required' is not supported."""
     # Create a profile that doesn't support tool_choice='required'
-    profile = GrokModelProfile(grok_supports_tool_choice_required=False)
+    profile = GrokModelProfile(supports_forced_tool_choice=False)
 
     response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
     mock_client = MockXai.create_mock([response])
@@ -1349,7 +1348,7 @@ async def test_xai_web_search_user_location_recorded(allow_model_requests: None,
                 parts=[
                     UserPromptPart(
                         content='Search the web for one popular tourist attraction near me and name it.',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -2263,7 +2262,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                 parts=[
                     UserPromptPart(
                         content='Return just the day of week for the date of Jan 1 in 2026?',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -2368,7 +2367,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 parts=[
                     ThinkingPart(
                         content='',
-                        signature='DCSdJov0KqNTAiL+A6ioyn70PGRCLsIt3PRq4htAiEqlpTrAZvYxgY3Z22z69UNf30XmThQ6i8OzHILTc5t260s0YS8mrTBzlwtf60lp1o+5SE3BrAtT/iA9DMmMUfgvSe75iVaqrk54sGmxmpbUKzvnpcqBU01Nl1l3l+lssigniKZgD0VB7W/7fGSasp/ysO9BVAgrVTfn8aDGMYh7FOH8ItJCW5AdzPERnITXiL8YmiaeieqdlZBGCLg2datmkj4IldOyhIjF4AAfv+0p8Lv1vcWVAEv35ZI1PF7NMDMyxmyANUBDS+6ZanmMMeQB4hfFFf86d5cQUIF6VItRf4uahuDnmczDMo4W7Ho2xCFdPU8AEKOMndXA8yNeq8pwX3VRguYPzKCTDgaCIn3zBX+YWIfdXujB87L6rZ04FqlLoN1BPtoC+hal6O4OsyfZj3NVh6/P2nwJlgi7ntop4j/S7FxnttWDCtxWxSKMnrBrAO4V+fDaitEtokkxAnID8sPqdWXqN4vk49ZuBufUAG62ASqg88sfZq9up6afYkfONwnhRgv8kqmpqoSDABG79ZRLAvb/ipDrDkSjkfGd/jB6dGQAesTUGyzVLLC5v/NAkiLxVQQP9ADTymxSdJ/MlmScf6xlEIH1RhVsR2XdAst0aJENkWjtH5HjBJIemghkd4LQeIX9JFEd6XWqR5mjA9wMKHKAez7P/uQgD4SU4Yq1HFGHpync4NAOwD1/dLlNp1/qrrEUhGBMXM6uZokb2PYxCBVK4zPRinHfb+DnIvxjFQ6aSAtD88LZDeTpQYgGgflq9o8seGYnMGiLyv6faHyz4TUtmKE0X5T0PtS2iNqGDKn4xPqVxPZc5ErRm2JglnUs6XVkFAo',
+                        signature='qBsbOpXt0iGLuYsVE7NyapPz/aM46HSgPDWPirBkao7k1PC/Kr8cCkd8X7kIKzvoyNsXaXRuUlaX/HIeSWM+Z1WX4D7zkUugOj+9wpiI3yuOVvpcgH9ZR8jHXDVl2l3wOuJ1MJLN3ksDfzEe8jXdp2eFqjphqMe4L2F+0CztjBAA8t3JrChA5WOMNCi+7J/ilrMj/Vb5ziC2OYdnoZgKo0tw5g8MD79sSBZI4gccCkyWtepj/Tq5raR5HZbXVXKLbPJSHBe2OHbN3QNnm8Kru+D268Y4g0FviU0FfVGF+VaQvkbHyfj0khheg/e0haj7AssXkH5b6YYOVbxe2qCtQOCSUAw37gAW77nqG9EQc74kk4eobmi8eoeDCVMnQ1C2TqhMaL7bvJ1/YIEQoQ9MZKIMyHSYgsrn6GsEZXza01NAqKrO8tK03UFGR19TphM7ybDzs9dB5VMyg0OhlS+4ZJFTSNg0mrz578hqhp3/iNfgAMD04L8EOA5HdoCS60khfF+LHir0syt+4aN6Dxotm5UK3SMtbnAf26kPLAp/C1TIIBoC2cU+rHOyylXY47w7VrgQVPrYDmuOnt4C2bqGb3W/HYcgg/f4c9pG1nqWdEu8CgvyNtOsHGFilTJJ/7wnZYeA48YtV5yP1GpWKmK1ukSod6YuAjyHFiguBIbLnqVN/c1gJcSm40COikR9B87vzOawR0IgdQjf04ASyucZpTW7MJ3DM+NT5FOHMIg6bqQt2xdkwtPaQSrTMvvFBpIO4FMip103f/1DrFpW+8sQqR7GXcpJi824jHQmb+rqIEjQ1BgsyQNtZuInhXNx31snZgpTkG5cFVl9W/2DaH9PTZkhQP1xibQqpQaPgF83c7j+o2fWYH39kgbEMZMlfxa4BIjHqm2ryFwzhLByfoafpnAyS4u2IRenO3CRr3mFatUGssLs0GjB/sG7zJjqfn7aORhBK4M03uQaW4UaAW4H+p9dbZRomOsh2mubWZG3rrDnjQoMoJv9YqvE78IhNkfInhP98IaFxHRTQpWMTzIkAlBdXyYlz/zxKfV4N4/4ZwQ4kwk1PhH769O7xiQa0PiNSg5dK28LULR0Z8WHz1KMSC6F3IA',
                         provider_name='xai',
                     ),
                     NativeToolCallPart(
@@ -2378,11 +2377,21 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                         provider_name='xai',
                         provider_details={'function_name': 'web_search'},
                     ),
+                    ThinkingPart(
+                        content='',
+                        signature='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',
+                        provider_name='xai',
+                    ),
                     NativeToolReturnPart(
                         tool_name='web_search',
                         content=None,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        signature='ech7t8FxCgEqI/eDeHo8Xd6VMDvsoYAuJZ7CwcXDJzLoflFyJRVo6l+sVq0kcryWOARaEtn8D8CTYhIH0NBDmnzAyPE25xNQdqkdVOQTxeQnRPFrbnBmjgXcEJmiIF3Ym2wuQm5t2c02XDd/O2va9ZjBMwGz/OR0SWUg7GlohlTMvpxvDmYbWl1/Co21yBuxk/7ghDX+E1WP3wlML7G6aAkQYM8GFUmk3Nz4Y+xM8JywizY8PPsbF7gsRs5vGqho3z5HAddTOKANUJzLcPPbeKips2K9ctbS2Wj6yYyD/yODpFzyf77fMk2w4UxMHfugzOmYej8GTRFHjMw5VDM9LGWNOYLVnE/08GTsuCSYgzww+iWdQ+Z1+BkjkFQKlOB9hTYmybKfhw8nvTi7DJEMIoRPaYn725I181Q8jHNwZmdRQcXAu+Gdnee9vdFBUILoB4zvKN+gn5KvtYFnFQ3frIURiJZXTy73g7CIQdhXGNRhJKbsQASvtyINBFTscbmnkX871dWA7UYqLrxy5ePhnXjrhyQd84Bco0JwUqaPt8Rqw44EBkeF5fC+zj7lzsjoR2NjvwXI3xkjJQ+uBnbZ+4uGGMvW1vwmi+aAoNFlYDIaXP0KIiyyGrZoGmjm/X+B1O614OkrZK6cisdbvtu9BHogQ8bzXAKB6kIIJWWt6j6j7oASgb5yAtiS7yCkYg3+L+EJUCOjaeecfBNtSCzIDb3i8RTrvquW/ZiEJj7ZSgiZL134zzEWO6ENL5tZWcE3kWm2LeFb3mOOuQnmzIDT0iDK0LxepAwnv4L8FgE7JD/qVZvMaVGUs0e2qnUsmbw7P4rKMcU0NtVFNLGYVRJaNSqZxxB/l0xfzcv0trmBVhw/YzjSlJUt77T2ZMZm0Y9KQJATd9EdVifzuZrjHUr1DPDRz3cfnBifTZTAIr/UcysQUGr6dAB6wEBRiQK0KoT/F2rhgIyJ2N0sqE0sUpKLGN1wcWkO+cbNER0rtyq2tapCREaZPsDgjZ4T+SLMxMraePnJodzfpDB1mLC3sBmYP66gx0Ay9iTo+2CwnueAFNjsq+fEtTTKu/WAGEEl/fVBvLDZnaNstXqxpBskHK6RKc+y+1TlXXfmWC38grI1oGC7VvzY+TJRGVBvtxU0YJ17IwWdtHgbjqCAx2btanfTWvigsObzRztA10ifWVLQwHKW5GYCn3YGjVzhwFwQJp7jj1/hmwCWwFM4Ijivolc5kPsWVUylbB6TUjIg4Y7zZO6ZryMXKNIJhbA7t6Vaej/E+0cfTFn6ACzFGnqqXxu62GLyte8NBGCEgvh4Bxhc+DoenauWKlCNktSR+i1M+mjg3pkgDcR0J5QiLNHvKhRblh5NGdHapYOphUDbWcwqdJ07VOwo9CHZ1WTox4VuVVSVz84Siag9ibuf18Z7XKd56MortTH7WAATHE6LB6RY8OG5+n1ZY9TWiHE3Mo6vKbHRKcEkbB2k/S5L28CL1a4C4yuAy5nNERL/+IRFhRpEUSH6GFQ4uIWcOcD62Zc',
                         provider_name='xai',
                     ),
                     NativeToolCallPart(
@@ -2392,11 +2401,21 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                         provider_name='xai',
                         provider_details={'function_name': 'browse_page'},
                     ),
+                    ThinkingPart(
+                        content='',
+                        signature='DToYBFUjR6BjxiqLM6MM7KYXoTIxzVXk0GaeiHxpkkR0y3ED3TPajEXxbrP3J/SSXBbbCBQCING5DIqli2sYqtwb7EnCgVLavbr0M2MYKi5NWFHdghAG7qKEUufi67XlJJRvjRArv3x+5TEqNFpoY6YSs7adU+bWt2QryfaFOEUWMPVysrnolTS3eviH9APQWrvaE9VVKRxyNv2xb/lCf7lh0JVujG9609GxPFLeyS0H0Pf+aTBM5lHEKExjSMK84DA6EhItMUJKP3BpYLXhtwrw3DnWW4Mk7Kz2NqkmNIzLYbIgUgQ0jXxMP0n8636439sAWyV+YD53X+TFN0KP5UzICz7XI8oPoAgZISFd7XfytW4gq1T2FF20SY+2VnJgouCBvdO8E0/GgA',
+                        provider_name='xai',
+                    ),
                     NativeToolReturnPart(
                         tool_name='web_search',
                         content=None,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        signature='DCSdJov0KqNTAiL+A6ioyn70PGRCLsIt3PRq4htAiEqlpTrAZvYxgY3Z22z69UNf30XmThQ6i8OzHILTc5t260s0YS8mrTBzlwtf60lp1o+5SE3BrAtT/iA9DMmMUfgvSe75iVaqrk54sGmxmpbUKzvnpcqBU01Nl1l3l+lssigniKZgD0VB7W/7fGSasp/ysO9BVAgrVTfn8aDGMYh7FOH8ItJCW5AdzPERnITXiL8YmiaeieqdlZBGCLg2datmkj4IldOyhIjF4AAfv+0p8Lv1vcWVAEv35ZI1PF7NMDMyxmyANUBDS+6ZanmMMeQB4hfFFf86d5cQUIF6VItRf4uahuDnmczDMo4W7Ho2xCFdPU8AEKOMndXA8yNeq8pwX3VRguYPzKCTDgaCIn3zBX+YWIfdXujB87L6rZ04FqlLoN1BPtoC+hal6O4OsyfZj3NVh6/P2nwJlgi7ntop4j/S7FxnttWDCtxWxSKMnrBrAO4V+fDaitEtokkxAnID8sPqdWXqN4vk49ZuBufUAG62ASqg88sfZq9up6afYkfONwnhRgv8kqmpqoSDABG79ZRLAvb/ipDrDkSjkfGd/jB6dGQAesTUGyzVLLC5v/NAkiLxVQQP9ADTymxSdJ/MlmScf6xlEIH1RhVsR2XdAst0aJENkWjtH5HjBJIemghkd4LQeIX9JFEd6XWqR5mjA9wMKHKAez7P/uQgD4SU4Yq1HFGHpync4NAOwD1/dLlNp1/qrrEUhGBMXM6uZokb2PYxCBVK4zPRinHfb+DnIvxjFQ6aSAtD88LZDeTpQYgGgflq9o8seGYnMGiLyv6faHyz4TUtmKE0X5T0PtS2iNqGDKn4xPqVxPZc5ErRm2JglnUs6XVkFAo',
                         provider_name='xai',
                     ),
                     TextPart(
@@ -2466,10 +2485,28 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     provider_name='xai',
                     provider_details={'function_name': 'web_search'},
                 ),
-                next_part_kind='builtin-tool-return',
+                next_part_kind='thinking',
             ),
             PartStartEvent(
                 index=2,
+                part=ThinkingPart(
+                    content='',
+                    signature='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',
+                    provider_name='xai',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartEndEvent(
+                index=2,
+                part=ThinkingPart(
+                    content='',
+                    signature='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',
+                    provider_name='xai',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=3,
                 part=NativeToolReturnPart(
                     tool_name='web_search',
                     content=None,
@@ -2477,27 +2514,28 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 ),
-                previous_part_kind='builtin-tool-call',
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='ech7t8FxCgEqI/eDeHo8Xd6VMDvsoYAuJZ7CwcXDJzLoflFyJRVo6l+sVq0kcryWOARaEtn8D8CTYhIH0NBDmnzAyPE25xNQdqkdVOQTxeQnRPFrbnBmjgXcEJmiIF3Ym2wuQm5t2c02XDd/O2va9ZjBMwGz/OR0SWUg7GlohlTMvpxvDmYbWl1/Co21yBuxk/7ghDX+E1WP3wlML7G6aAkQYM8GFUmk3Nz4Y+xM8JywizY8PPsbF7gsRs5vGqho3z5HAddTOKANUJzLcPPbeKips2K9ctbS2Wj6yYyD/yODpFzyf77fMk2w4UxMHfugzOmYej8GTRFHjMw5VDM9LGWNOYLVnE/08GTsuCSYgzww+iWdQ+Z1+BkjkFQKlOB9hTYmybKfhw8nvTi7DJEMIoRPaYn725I181Q8jHNwZmdRQcXAu+Gdnee9vdFBUILoB4zvKN+gn5KvtYFnFQ3frIURiJZXTy73g7CIQdhXGNRhJKbsQASvtyINBFTscbmnkX871dWA7UYqLrxy5ePhnXjrhyQd84Bco0JwUqaPt8Rqw44EBkeF5fC+zj7lzsjoR2NjvwXI3xkjJQ+uBnbZ+4uGGMvW1vwmi+aAoNFlYDIaXP0KIiyyGrZoGmjm/X+B1O614OkrZK6cisdbvtu9BHogQ8bzXAKB6kIIJWWt6j6j7oASgb5yAtiS7yCkYg3+L+EJUCOjaeecfBNtSCzIDb3i8RTrvquW/ZiEJj7ZSgiZL134zzEWO6ENL5tZWcE3kWm2LeFb3mOOuQnmzIDT0iDK0LxepAwnv4L8FgE7JD/qVZvMaVGUs0e2qnUsmbw7P4rKMcU0NtVFNLGYVRJaNSqZxxB/l0xfzcv0trmBVhw/YzjSlJUt77T2ZMZm0Y9KQJATd9EdVifzuZrjHUr1DPDRz3cfnBifTZTAIr/UcysQUGr6dAB6wEBRiQK0KoT/F2rhgIyJ2N0sqE0sUpKLGN1wcWkO+cbNER0rtyq2tapCREaZPsDgjZ4T+SLMxMraePnJodzfpDB1mLC3sBmYP66gx0Ay9iTo+2CwnueAFNjsq+fEtTTKu/WAGEEl/fVBvLDZnaNstXqxpBskHK6RKc+y+1TlXXfmWC38grI1oGC7VvzY+TJRGVBvtxU0YJ17IwWdtHgbjqCAx2btanfTWvigsObzRztA10ifWVLQwHKW5GYCn3YGjVzhwFwQJp7jj1/hmwCWwFM4Ijivolc5kPsWVUylbB6TUjIg4Y7zZO6ZryMXKNIJhbA7t6Vaej/E+0cfTFn6ACzFGnqqXxu62GLyte8NBGCEgvh4Bxhc+DoenauWKlCNktSR+i1M+mjg3pkgDcR0J5QiLNHvKhRblh5NGdHapYOphUDbWcwqdJ07VOwo9CHZ1WTox4VuVVSVz84Siag9ibuf18Z7XKd56MortTH7WAATHE6LB6RY8OG5+n1ZY9TWiHE3Mo6vKbHRKcEkbB2k/S5L28CL1a4C4yuAy5nNERL/+IRFhRpEUSH6GFQ4uIWcOcD62Zc'
-                ),
+                previous_part_kind='thinking',
             ),
             PartStartEvent(
-                index=3,
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
-                    tool_call_id=IsStr(),
+                index=4,
+                part=ThinkingPart(
+                    content='',
+                    signature='ech7t8FxCgEqI/eDeHo8Xd6VMDvsoYAuJZ7CwcXDJzLoflFyJRVo6l+sVq0kcryWOARaEtn8D8CTYhIH0NBDmnzAyPE25xNQdqkdVOQTxeQnRPFrbnBmjgXcEJmiIF3Ym2wuQm5t2c02XDd/O2va9ZjBMwGz/OR0SWUg7GlohlTMvpxvDmYbWl1/Co21yBuxk/7ghDX+E1WP3wlML7G6aAkQYM8GFUmk3Nz4Y+xM8JywizY8PPsbF7gsRs5vGqho3z5HAddTOKANUJzLcPPbeKips2K9ctbS2Wj6yYyD/yODpFzyf77fMk2w4UxMHfugzOmYej8GTRFHjMw5VDM9LGWNOYLVnE/08GTsuCSYgzww+iWdQ+Z1+BkjkFQKlOB9hTYmybKfhw8nvTi7DJEMIoRPaYn725I181Q8jHNwZmdRQcXAu+Gdnee9vdFBUILoB4zvKN+gn5KvtYFnFQ3frIURiJZXTy73g7CIQdhXGNRhJKbsQASvtyINBFTscbmnkX871dWA7UYqLrxy5ePhnXjrhyQd84Bco0JwUqaPt8Rqw44EBkeF5fC+zj7lzsjoR2NjvwXI3xkjJQ+uBnbZ+4uGGMvW1vwmi+aAoNFlYDIaXP0KIiyyGrZoGmjm/X+B1O614OkrZK6cisdbvtu9BHogQ8bzXAKB6kIIJWWt6j6j7oASgb5yAtiS7yCkYg3+L+EJUCOjaeecfBNtSCzIDb3i8RTrvquW/ZiEJj7ZSgiZL134zzEWO6ENL5tZWcE3kWm2LeFb3mOOuQnmzIDT0iDK0LxepAwnv4L8FgE7JD/qVZvMaVGUs0e2qnUsmbw7P4rKMcU0NtVFNLGYVRJaNSqZxxB/l0xfzcv0trmBVhw/YzjSlJUt77T2ZMZm0Y9KQJATd9EdVifzuZrjHUr1DPDRz3cfnBifTZTAIr/UcysQUGr6dAB6wEBRiQK0KoT/F2rhgIyJ2N0sqE0sUpKLGN1wcWkO+cbNER0rtyq2tapCREaZPsDgjZ4T+SLMxMraePnJodzfpDB1mLC3sBmYP66gx0Ay9iTo+2CwnueAFNjsq+fEtTTKu/WAGEEl/fVBvLDZnaNstXqxpBskHK6RKc+y+1TlXXfmWC38grI1oGC7VvzY+TJRGVBvtxU0YJ17IwWdtHgbjqCAx2btanfTWvigsObzRztA10ifWVLQwHKW5GYCn3YGjVzhwFwQJp7jj1/hmwCWwFM4Ijivolc5kPsWVUylbB6TUjIg4Y7zZO6ZryMXKNIJhbA7t6Vaej/E+0cfTFn6ACzFGnqqXxu62GLyte8NBGCEgvh4Bxhc+DoenauWKlCNktSR+i1M+mjg3pkgDcR0J5QiLNHvKhRblh5NGdHapYOphUDbWcwqdJ07VOwo9CHZ1WTox4VuVVSVz84Siag9ibuf18Z7XKd56MortTH7WAATHE6LB6RY8OG5+n1ZY9TWiHE3Mo6vKbHRKcEkbB2k/S5L28CL1a4C4yuAy5nNERL/+IRFhRpEUSH6GFQ4uIWcOcD62Zc',
                     provider_name='xai',
-                    provider_details={'function_name': 'browse_page'},
                 ),
                 previous_part_kind='builtin-tool-return',
             ),
             PartEndEvent(
-                index=3,
+                index=4,
+                part=ThinkingPart(
+                    content='',
+                    signature='ech7t8FxCgEqI/eDeHo8Xd6VMDvsoYAuJZ7CwcXDJzLoflFyJRVo6l+sVq0kcryWOARaEtn8D8CTYhIH0NBDmnzAyPE25xNQdqkdVOQTxeQnRPFrbnBmjgXcEJmiIF3Ym2wuQm5t2c02XDd/O2va9ZjBMwGz/OR0SWUg7GlohlTMvpxvDmYbWl1/Co21yBuxk/7ghDX+E1WP3wlML7G6aAkQYM8GFUmk3Nz4Y+xM8JywizY8PPsbF7gsRs5vGqho3z5HAddTOKANUJzLcPPbeKips2K9ctbS2Wj6yYyD/yODpFzyf77fMk2w4UxMHfugzOmYej8GTRFHjMw5VDM9LGWNOYLVnE/08GTsuCSYgzww+iWdQ+Z1+BkjkFQKlOB9hTYmybKfhw8nvTi7DJEMIoRPaYn725I181Q8jHNwZmdRQcXAu+Gdnee9vdFBUILoB4zvKN+gn5KvtYFnFQ3frIURiJZXTy73g7CIQdhXGNRhJKbsQASvtyINBFTscbmnkX871dWA7UYqLrxy5ePhnXjrhyQd84Bco0JwUqaPt8Rqw44EBkeF5fC+zj7lzsjoR2NjvwXI3xkjJQ+uBnbZ+4uGGMvW1vwmi+aAoNFlYDIaXP0KIiyyGrZoGmjm/X+B1O614OkrZK6cisdbvtu9BHogQ8bzXAKB6kIIJWWt6j6j7oASgb5yAtiS7yCkYg3+L+EJUCOjaeecfBNtSCzIDb3i8RTrvquW/ZiEJj7ZSgiZL134zzEWO6ENL5tZWcE3kWm2LeFb3mOOuQnmzIDT0iDK0LxepAwnv4L8FgE7JD/qVZvMaVGUs0e2qnUsmbw7P4rKMcU0NtVFNLGYVRJaNSqZxxB/l0xfzcv0trmBVhw/YzjSlJUt77T2ZMZm0Y9KQJATd9EdVifzuZrjHUr1DPDRz3cfnBifTZTAIr/UcysQUGr6dAB6wEBRiQK0KoT/F2rhgIyJ2N0sqE0sUpKLGN1wcWkO+cbNER0rtyq2tapCREaZPsDgjZ4T+SLMxMraePnJodzfpDB1mLC3sBmYP66gx0Ay9iTo+2CwnueAFNjsq+fEtTTKu/WAGEEl/fVBvLDZnaNstXqxpBskHK6RKc+y+1TlXXfmWC38grI1oGC7VvzY+TJRGVBvtxU0YJ17IwWdtHgbjqCAx2btanfTWvigsObzRztA10ifWVLQwHKW5GYCn3YGjVzhwFwQJp7jj1/hmwCWwFM4Ijivolc5kPsWVUylbB6TUjIg4Y7zZO6ZryMXKNIJhbA7t6Vaej/E+0cfTFn6ACzFGnqqXxu62GLyte8NBGCEgvh4Bxhc+DoenauWKlCNktSR+i1M+mjg3pkgDcR0J5QiLNHvKhRblh5NGdHapYOphUDbWcwqdJ07VOwo9CHZ1WTox4VuVVSVz84Siag9ibuf18Z7XKd56MortTH7WAATHE6LB6RY8OG5+n1ZY9TWiHE3Mo6vKbHRKcEkbB2k/S5L28CL1a4C4yuAy5nNERL/+IRFhRpEUSH6GFQ4uIWcOcD62Zc',
+                    provider_name='xai',
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=5,
                 part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
@@ -2505,10 +2543,39 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     provider_name='xai',
                     provider_details={'function_name': 'browse_page'},
                 ),
+                previous_part_kind='thinking',
+            ),
+            PartEndEvent(
+                index=5,
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
+                    tool_call_id=IsStr(),
+                    provider_name='xai',
+                    provider_details={'function_name': 'browse_page'},
+                ),
+                next_part_kind='thinking',
+            ),
+            PartStartEvent(
+                index=6,
+                part=ThinkingPart(
+                    content='',
+                    signature='DToYBFUjR6BjxiqLM6MM7KYXoTIxzVXk0GaeiHxpkkR0y3ED3TPajEXxbrP3J/SSXBbbCBQCING5DIqli2sYqtwb7EnCgVLavbr0M2MYKi5NWFHdghAG7qKEUufi67XlJJRvjRArv3x+5TEqNFpoY6YSs7adU+bWt2QryfaFOEUWMPVysrnolTS3eviH9APQWrvaE9VVKRxyNv2xb/lCf7lh0JVujG9609GxPFLeyS0H0Pf+aTBM5lHEKExjSMK84DA6EhItMUJKP3BpYLXhtwrw3DnWW4Mk7Kz2NqkmNIzLYbIgUgQ0jXxMP0n8636439sAWyV+YD53X+TFN0KP5UzICz7XI8oPoAgZISFd7XfytW4gq1T2FF20SY+2VnJgouCBvdO8E0/GgA',
+                    provider_name='xai',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartEndEvent(
+                index=6,
+                part=ThinkingPart(
+                    content='',
+                    signature='DToYBFUjR6BjxiqLM6MM7KYXoTIxzVXk0GaeiHxpkkR0y3ED3TPajEXxbrP3J/SSXBbbCBQCING5DIqli2sYqtwb7EnCgVLavbr0M2MYKi5NWFHdghAG7qKEUufi67XlJJRvjRArv3x+5TEqNFpoY6YSs7adU+bWt2QryfaFOEUWMPVysrnolTS3eviH9APQWrvaE9VVKRxyNv2xb/lCf7lh0JVujG9609GxPFLeyS0H0Pf+aTBM5lHEKExjSMK84DA6EhItMUJKP3BpYLXhtwrw3DnWW4Mk7Kz2NqkmNIzLYbIgUgQ0jXxMP0n8636439sAWyV+YD53X+TFN0KP5UzICz7XI8oPoAgZISFd7XfytW4gq1T2FF20SY+2VnJgouCBvdO8E0/GgA',
+                    provider_name='xai',
+                ),
                 next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
-                index=4,
+                index=7,
                 part=NativeToolReturnPart(
                     tool_name='web_search',
                     content=None,
@@ -2516,50 +2583,62 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 ),
-                previous_part_kind='builtin-tool-call',
+                previous_part_kind='thinking',
             ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='DCSdJov0KqNTAiL+A6ioyn70PGRCLsIt3PRq4htAiEqlpTrAZvYxgY3Z22z69UNf30XmThQ6i8OzHILTc5t260s0YS8mrTBzlwtf60lp1o+5SE3BrAtT/iA9DMmMUfgvSe75iVaqrk54sGmxmpbUKzvnpcqBU01Nl1l3l+lssigniKZgD0VB7W/7fGSasp/ysO9BVAgrVTfn8aDGMYh7FOH8ItJCW5AdzPERnITXiL8YmiaeieqdlZBGCLg2datmkj4IldOyhIjF4AAfv+0p8Lv1vcWVAEv35ZI1PF7NMDMyxmyANUBDS+6ZanmMMeQB4hfFFf86d5cQUIF6VItRf4uahuDnmczDMo4W7Ho2xCFdPU8AEKOMndXA8yNeq8pwX3VRguYPzKCTDgaCIn3zBX+YWIfdXujB87L6rZ04FqlLoN1BPtoC+hal6O4OsyfZj3NVh6/P2nwJlgi7ntop4j/S7FxnttWDCtxWxSKMnrBrAO4V+fDaitEtokkxAnID8sPqdWXqN4vk49ZuBufUAG62ASqg88sfZq9up6afYkfONwnhRgv8kqmpqoSDABG79ZRLAvb/ipDrDkSjkfGd/jB6dGQAesTUGyzVLLC5v/NAkiLxVQQP9ADTymxSdJ/MlmScf6xlEIH1RhVsR2XdAst0aJENkWjtH5HjBJIemghkd4LQeIX9JFEd6XWqR5mjA9wMKHKAez7P/uQgD4SU4Yq1HFGHpync4NAOwD1/dLlNp1/qrrEUhGBMXM6uZokb2PYxCBVK4zPRinHfb+DnIvxjFQ6aSAtD88LZDeTpQYgGgflq9o8seGYnMGiLyv6faHyz4TUtmKE0X5T0PtS2iNqGDKn4xPqVxPZc5ErRm2JglnUs6XVkFAo'
+            PartStartEvent(
+                index=8,
+                part=ThinkingPart(
+                    content='',
+                    signature='DCSdJov0KqNTAiL+A6ioyn70PGRCLsIt3PRq4htAiEqlpTrAZvYxgY3Z22z69UNf30XmThQ6i8OzHILTc5t260s0YS8mrTBzlwtf60lp1o+5SE3BrAtT/iA9DMmMUfgvSe75iVaqrk54sGmxmpbUKzvnpcqBU01Nl1l3l+lssigniKZgD0VB7W/7fGSasp/ysO9BVAgrVTfn8aDGMYh7FOH8ItJCW5AdzPERnITXiL8YmiaeieqdlZBGCLg2datmkj4IldOyhIjF4AAfv+0p8Lv1vcWVAEv35ZI1PF7NMDMyxmyANUBDS+6ZanmMMeQB4hfFFf86d5cQUIF6VItRf4uahuDnmczDMo4W7Ho2xCFdPU8AEKOMndXA8yNeq8pwX3VRguYPzKCTDgaCIn3zBX+YWIfdXujB87L6rZ04FqlLoN1BPtoC+hal6O4OsyfZj3NVh6/P2nwJlgi7ntop4j/S7FxnttWDCtxWxSKMnrBrAO4V+fDaitEtokkxAnID8sPqdWXqN4vk49ZuBufUAG62ASqg88sfZq9up6afYkfONwnhRgv8kqmpqoSDABG79ZRLAvb/ipDrDkSjkfGd/jB6dGQAesTUGyzVLLC5v/NAkiLxVQQP9ADTymxSdJ/MlmScf6xlEIH1RhVsR2XdAst0aJENkWjtH5HjBJIemghkd4LQeIX9JFEd6XWqR5mjA9wMKHKAez7P/uQgD4SU4Yq1HFGHpync4NAOwD1/dLlNp1/qrrEUhGBMXM6uZokb2PYxCBVK4zPRinHfb+DnIvxjFQ6aSAtD88LZDeTpQYgGgflq9o8seGYnMGiLyv6faHyz4TUtmKE0X5T0PtS2iNqGDKn4xPqVxPZc5ErRm2JglnUs6XVkFAo',
+                    provider_name='xai',
                 ),
+                previous_part_kind='builtin-tool-return',
             ),
-            PartStartEvent(index=5, part=TextPart(content='Today'), previous_part_kind='builtin-tool-return'),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' in')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' San')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' Francisco')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' the')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' current')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' temperature')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='7')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='°C')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' Expect')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' high')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' of')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='16')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='°C')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' low')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' of')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='7')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='°C')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' with')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' partly')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' cloudy')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' conditions')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='.')),
             PartEndEvent(
-                index=5,
+                index=8,
+                part=ThinkingPart(
+                    content='',
+                    signature='DCSdJov0KqNTAiL+A6ioyn70PGRCLsIt3PRq4htAiEqlpTrAZvYxgY3Z22z69UNf30XmThQ6i8OzHILTc5t260s0YS8mrTBzlwtf60lp1o+5SE3BrAtT/iA9DMmMUfgvSe75iVaqrk54sGmxmpbUKzvnpcqBU01Nl1l3l+lssigniKZgD0VB7W/7fGSasp/ysO9BVAgrVTfn8aDGMYh7FOH8ItJCW5AdzPERnITXiL8YmiaeieqdlZBGCLg2datmkj4IldOyhIjF4AAfv+0p8Lv1vcWVAEv35ZI1PF7NMDMyxmyANUBDS+6ZanmMMeQB4hfFFf86d5cQUIF6VItRf4uahuDnmczDMo4W7Ho2xCFdPU8AEKOMndXA8yNeq8pwX3VRguYPzKCTDgaCIn3zBX+YWIfdXujB87L6rZ04FqlLoN1BPtoC+hal6O4OsyfZj3NVh6/P2nwJlgi7ntop4j/S7FxnttWDCtxWxSKMnrBrAO4V+fDaitEtokkxAnID8sPqdWXqN4vk49ZuBufUAG62ASqg88sfZq9up6afYkfONwnhRgv8kqmpqoSDABG79ZRLAvb/ipDrDkSjkfGd/jB6dGQAesTUGyzVLLC5v/NAkiLxVQQP9ADTymxSdJ/MlmScf6xlEIH1RhVsR2XdAst0aJENkWjtH5HjBJIemghkd4LQeIX9JFEd6XWqR5mjA9wMKHKAez7P/uQgD4SU4Yq1HFGHpync4NAOwD1/dLlNp1/qrrEUhGBMXM6uZokb2PYxCBVK4zPRinHfb+DnIvxjFQ6aSAtD88LZDeTpQYgGgflq9o8seGYnMGiLyv6faHyz4TUtmKE0X5T0PtS2iNqGDKn4xPqVxPZc5ErRm2JglnUs6XVkFAo',
+                    provider_name='xai',
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=9, part=TextPart(content='Today'), previous_part_kind='thinking'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' in')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' San')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' Francisco')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' current')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' temperature')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='7')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' Expect')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' high')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='16')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' low')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='7')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' partly')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' cloudy')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' conditions')),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='.')),
+            PartEndEvent(
+                index=9,
                 part=TextPart(
                     content='Today in San Francisco, the current temperature is 7°C. Expect a high of 16°C and a low of 7°C, with partly cloudy conditions.'
                 ),
@@ -2596,7 +2675,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                 parts=[
                     UserPromptPart(
                         content=prompt,
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -3263,6 +3342,11 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
+                    ThinkingPart(
+                        content='',
+                        signature='nAARcuG1WrrOihjyhaPpVRYnz2tyTOiZ4uCSybvcYy0gk2HXRvtRj5InGSI5zGKbv7Wq6ht2scPbFguvb/a+fCQlHqs7EojklFK7VQdd61WS92PUXQ0c/poPXRYSgK5oUlgl79LF/Iji1wjyYSNuC5O8AwCpNsIG0l+WGVa1uVXg2S/hzGQgJed0Gx9wRksxVhf/uTCPaUnaPBgaVvqJKx3slXdTxeqCPNqRIBbJQQON16f040d3JmVtX5fNk2xUjYDrrz5+djSalxk7kItObuta+KgStN3sk9RuTerKW31nYP1OA1G9/+Sg3txT8GggUrV8MmW6LkLg9YuKjjBlzOBRID45LLuw2g5w7nd+8TvA1B2I7ChInwMDSHI+ztt6mtREoSqSpKCTfqkndS3qvfL3G+NAcA4GvRji8BjFGdyF4kPY44qnVDHh+1xh/xc8sp6t1+qNS6MsttXR4A/owsMJNk/Zx0eBgCxe7jcCy44xg2j8g/IqIgNa9qgRYptO/4GbxakdEQ',
+                        provider_name='xai',
+                    ),
                     TextPart(
                         content="Pydantic/pydantic-ai is a GenAI Agent Framework built on Pydantic for creating type-safe Generative AI applications. It unifies interactions with LLMs from providers like OpenAI, Anthropic, Google, and others; supports agent orchestration, graph-based execution, tools, durable workflows, and multi-agent patterns. It's a monorepo with core packages for slim framework, graphs, and evals."
                     ),
@@ -3372,97 +3456,111 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(signature_delta=IsStr()),
+            PartStartEvent(
+                index=3,
+                part=ThinkingPart(
+                    content='',
+                    signature='nAARcuG1WrrOihjyhaPpVRYnz2tyTOiZ4uCSybvcYy0gk2HXRvtRj5InGSI5zGKbv7Wq6ht2scPbFguvb/a+fCQlHqs7EojklFK7VQdd61WS92PUXQ0c/poPXRYSgK5oUlgl79LF/Iji1wjyYSNuC5O8AwCpNsIG0l+WGVa1uVXg2S/hzGQgJed0Gx9wRksxVhf/uTCPaUnaPBgaVvqJKx3slXdTxeqCPNqRIBbJQQON16f040d3JmVtX5fNk2xUjYDrrz5+djSalxk7kItObuta+KgStN3sk9RuTerKW31nYP1OA1G9/+Sg3txT8GggUrV8MmW6LkLg9YuKjjBlzOBRID45LLuw2g5w7nd+8TvA1B2I7ChInwMDSHI+ztt6mtREoSqSpKCTfqkndS3qvfL3G+NAcA4GvRji8BjFGdyF4kPY44qnVDHh+1xh/xc8sp6t1+qNS6MsttXR4A/owsMJNk/Zx0eBgCxe7jcCy44xg2j8g/IqIgNa9qgRYptO/4GbxakdEQ',
+                    provider_name='xai',
+                ),
+                previous_part_kind='builtin-tool-return',
             ),
-            PartStartEvent(index=3, part=TextPart(content='P'), previous_part_kind='builtin-tool-return'),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='yd')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='antic')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='/p')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='yd')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='antic')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='-ai')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Gen')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='AI')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Agent')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Framework')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' built')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' on')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' P')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='yd')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='antic')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' for')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' creating')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' type')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='-safe')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Gener')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ative')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' AI')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' applications')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' It')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' un')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ifies')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' interactions')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' with')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' LL')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='Ms')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' from')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' providers')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' like')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Open')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='AI')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Anthrop')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ic')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Google')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' others')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=';')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' supports')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' agent')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' orchestration')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' graph')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='-based')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' execution')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' tools')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' durable')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' workflows')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' multi')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='-agent')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' patterns')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=" It's")),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' mon')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ore')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='po')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' with')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' core')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' packages')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' for')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' slim')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' framework')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' graphs')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' ev')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='als')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='.')),
             PartEndEvent(
                 index=3,
+                part=ThinkingPart(
+                    content='',
+                    signature='nAARcuG1WrrOihjyhaPpVRYnz2tyTOiZ4uCSybvcYy0gk2HXRvtRj5InGSI5zGKbv7Wq6ht2scPbFguvb/a+fCQlHqs7EojklFK7VQdd61WS92PUXQ0c/poPXRYSgK5oUlgl79LF/Iji1wjyYSNuC5O8AwCpNsIG0l+WGVa1uVXg2S/hzGQgJed0Gx9wRksxVhf/uTCPaUnaPBgaVvqJKx3slXdTxeqCPNqRIBbJQQON16f040d3JmVtX5fNk2xUjYDrrz5+djSalxk7kItObuta+KgStN3sk9RuTerKW31nYP1OA1G9/+Sg3txT8GggUrV8MmW6LkLg9YuKjjBlzOBRID45LLuw2g5w7nd+8TvA1B2I7ChInwMDSHI+ztt6mtREoSqSpKCTfqkndS3qvfL3G+NAcA4GvRji8BjFGdyF4kPY44qnVDHh+1xh/xc8sp6t1+qNS6MsttXR4A/owsMJNk/Zx0eBgCxe7jcCy44xg2j8g/IqIgNa9qgRYptO/4GbxakdEQ',
+                    provider_name='xai',
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=4, part=TextPart(content='P'), previous_part_kind='thinking'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='yd')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='antic')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='/p')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='yd')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='antic')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-ai')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Gen')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='AI')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Agent')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Framework')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' built')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' on')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' P')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='yd')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='antic')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' for')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' creating')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' type')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-safe')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Gener')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='ative')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' AI')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' applications')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' It')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' un')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='ifies')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' interactions')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' LL')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='Ms')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' from')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' providers')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' like')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Open')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='AI')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Anthrop')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='ic')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Google')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' others')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=';')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' supports')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' agent')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' orchestration')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' graph')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-based')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' execution')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' tools')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' durable')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' workflows')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' multi')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-agent')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' patterns')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=" It's")),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' mon')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='ore')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='po')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' core')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' packages')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' for')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' slim')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' framework')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' graphs')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ev')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='als')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
+            PartEndEvent(
+                index=4,
                 part=TextPart(
                     content="Pydantic/pydantic-ai is a GenAI Agent Framework built on Pydantic for creating type-safe Generative AI applications. It unifies interactions with LLMs from providers like OpenAI, Anthropic, Google, and others; supports agent orchestration, graph-based execution, tools, durable workflows, and multi-agent patterns. It's a monorepo with core packages for slim framework, graphs, and evals."
                 ),
@@ -3616,7 +3714,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='What is 2+2? Return just number.', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What is 2+2? Return just number.', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3653,7 +3751,7 @@ async def test_xai_encrypted_content_only(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='What is 2+2? Return just "4".', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What is 2+2? Return just "4".', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4304,7 +4402,7 @@ First reasoning
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4332,11 +4430,7 @@ First reasoning
                 run_id=None,
             ),
             ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Second question <think>user think</think>', timestamp=IsNow(tz=timezone.utc)
-                    )
-                ],
+                parts=[UserPromptPart(content='Second question <think>user think</think>', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4420,7 +4514,7 @@ async def test_xai_thinking_part_with_content_and_signature_in_history(allow_mod
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4441,7 +4535,7 @@ async def test_xai_thinking_part_with_content_and_signature_in_history(allow_mod
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='Second question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Second question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4520,7 +4614,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4541,7 +4635,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='Second question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Second question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4623,7 +4717,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Calculate 2+2', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Calculate 2+2', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4657,7 +4751,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='What was the result?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What was the result?', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4697,7 +4791,7 @@ def test_builtin_tool_call_part_failed_status(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4822,7 +4916,7 @@ async def test_xai_builtin_tool_failed_in_history(allow_model_requests: None):
                 timestamp=IsDatetime(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='What happened?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What happened?', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5216,22 +5310,22 @@ async def test_xai_stream_client_tool_args_non_prefix_path(allow_model_requests:
     assert any(p.tool_name == 'final_result' and p.args == 'ABCXYZ' for p in tool_calls)
 
 
-async def test_xai_stream_reasoning_delta_non_prefix_path(allow_model_requests: None):
-    """Force the reasoning-delta fallback path where accumulated reasoning resets mid-stream."""
-    # Frame 1: reasoning starts.
-    r1 = create_response(content='', reasoning_content='abc')
-    c1 = create_stream_chunk(reasoning_content='abc')
-
-    # Frame 2: accumulated reasoning changes to a different non-prefix string, forcing the fallback branch.
-    r2 = create_response(content='done', reasoning_content='XYZ', finish_reason='stop')
-    c2 = create_stream_chunk(content='done', reasoning_content='XYZ', finish_reason='stop')
+async def test_xai_stream_encrypted_content_split_across_chunks(allow_model_requests: None):
+    """An output's encrypted content that arrives in pieces becomes one signature, like the SDK accumulates it."""
+    r1 = create_response(content='', reasoning_content='abc', encrypted_content='sig-')
+    c1 = create_stream_chunk(reasoning_content='abc', encrypted_content='sig-')
+    r2 = create_response(content='done', reasoning_content='abc', encrypted_content='sig-123', finish_reason='stop')
+    c2 = create_stream_chunk(content='done', encrypted_content='123', finish_reason='stop')
 
     mock_client = MockXai.create_mock_stream([[(r1, c1), (r2, c2)]])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
         assert [t async for t in result.stream_text(debounce_by=None)] == ['done']
+    assert result.all_messages()[-1].parts == snapshot(
+        [ThinkingPart(content='abc', signature='sig-123', provider_name='xai'), TextPart(content='done')]
+    )
 
 
 async def test_xai_map_builtin_tool_call_part_unknown_tool_name_ignored(allow_model_requests: None):
@@ -5252,7 +5346,7 @@ async def test_xai_map_builtin_tool_call_part_unknown_tool_name_ignored(allow_mo
                 )
             ],
             model_name=XAI_NON_REASONING_MODEL,
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             provider_name='xai',
         )
     ]
@@ -5382,7 +5476,7 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5400,7 +5494,7 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content=[CachePoint()], timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content=[CachePoint()], timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5449,7 +5543,7 @@ async def test_xai_empty_usage_response(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5511,7 +5605,7 @@ async def test_xai_parse_tool_args_invalid_json(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Search for something', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Search for something', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5679,7 +5773,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Search for test', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Search for test', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5713,7 +5807,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='What did you find?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What did you find?', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5798,7 +5892,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Get MCP data', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Get MCP data', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5832,7 +5926,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='What did MCP return?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What did MCP return?', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5913,7 +6007,7 @@ async def test_xai_builtin_tool_without_tool_call_id(allow_model_requests: None)
                 timestamp=IsDatetime(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='What happened?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What happened?', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -6051,6 +6145,26 @@ async def test_xai_builtin_tool_failed_without_error_in_history(allow_model_requ
     )
 
 
+async def test_xai_file_upload_error_is_mapped(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
+    """A gRPC error from the document upload is mapped like one from the chat request, not raised raw."""
+    mock_client = MockXai.create_mock([create_response(content='unused')])
+
+    async def failing_upload(data: bytes, filename: str) -> Any:
+        raise grpc.aio.AioRpcError(
+            grpc.StatusCode.RESOURCE_EXHAUSTED, grpc.aio.Metadata(), grpc.aio.Metadata(), details='upload quota'
+        )
+
+    monkeypatch.setattr(mock_client, 'files_upload', failing_upload)
+    agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run(['Process this document', BinaryContent(data=b'%PDF-1.4 test', media_type='application/pdf')])
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.body == 'upload quota'
+    assert isinstance(exc_info.value.__cause__, grpc.aio.AioRpcError)
+
+
 async def test_xai_document_url_without_data_type(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
     """Test DocumentUrl handling when data_type is missing or empty."""
     response = create_response(content='Document processed')
@@ -6170,7 +6284,7 @@ async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: No
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Use the custom server tool', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Use the custom server tool', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),

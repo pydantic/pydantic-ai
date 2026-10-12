@@ -33,7 +33,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='typesafe-sdk or logfire not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -968,7 +967,8 @@ async def test_a_route_jev_cannot_fill_is_handed_off(
     """A picked route whose fields Jev cannot express is handed off before any fill request is sent.
 
     The route span records the `UnfillableRoute` with the picked route's label, and the step goes to the model
-    behind Jev, so the `chat` span above it ends without an error.
+    behind Jev, so the `chat` span above it ends without an error. The failed attempt gets its own
+    `model request attempt` span beside the `decide` span.
     """
     agent = Agent(
         FallbackModel(jev, FunctionModel(write_reply, model_name='writer')),
@@ -1068,7 +1068,8 @@ async def test_a_route_jev_cannot_fill_is_handed_off(
                                         'pydantic_ai.decision.route': 'Reply',
                                     }
                                 ],
-                            }
+                            },
+                            {'name': 'model request attempt jev-latest'},
                         ],
                     }
                 ],

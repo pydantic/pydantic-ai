@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import importlib
 import json
 import os
 import re
@@ -9,8 +10,8 @@ import ssl
 import subprocess
 import sys
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Sequence
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from inspect import FrameInfo
@@ -106,6 +107,8 @@ class ExamplesConfig(BaseExamplesConfig):
 
     def ruff_config(self) -> tuple[str, ...]:
         config = super().ruff_config()
+        config = tuple(arg for arg in config if not arg.startswith('--config='))
+        config = (*config, '--config', str(Path(__file__).parent.parent / 'pyproject.toml'))
         if self.known_first_party:  # pragma: no branch
             config = (*config, '--config', f'lint.isort.known-first-party = {self.known_first_party}')
         if self.known_local_folder:
@@ -142,7 +145,12 @@ def find_filter_examples() -> Iterable[ParameterSet]:
                 if title.endswith('.py'):
                     code_examples[title] = ex
                 test_id += f':{title}'
-            yield pytest.param(ex, id=test_id)
+            marks = (
+                [pytest.mark.subprocess(reason='the example runs Python as a real child process')]
+                if path == Path('docs/workspace.md') or title == 'mcp_client_sampling.py'
+                else []
+            )
+            yield pytest.param(ex, id=test_id, marks=marks)
 
 
 @pytest.fixture
@@ -160,6 +168,29 @@ def tmp_path_cwd(tmp_path: Path):
     finally:
         os.chdir(cwd)
         sys.path.remove(str(tmp_path))
+
+
+_HEAVY_IMPORTS = re.compile(r'sentence[-_]transformers|voyage', re.IGNORECASE)
+
+
+@pytest.fixture(scope='module')
+def heavy_example_imports() -> None:
+    """Import `sentence_transformers` and `voyageai` (which imports it and `torch`) once per worker.
+
+    It takes seconds, so it is shared setup rather than a cost of whichever example happens to need it first (see
+    "Test cost" in `tests/AGENTS.md`).
+    """
+    for module in ('sentence_transformers', 'voyageai'):
+        with suppress(ImportError):
+            importlib.import_module(module)
+
+
+def _prepare_heavy_imports(request: pytest.FixtureRequest, mocker: MockerFixture, example: CodeExample) -> None:
+    """Only for the examples that use them: import the heavy embedding packages, and stub the model download."""
+    if _HEAVY_IMPORTS.search(example.source):
+        request.getfixturevalue('heavy_example_imports')
+        with suppress(ModuleNotFoundError):
+            mocker.patch('sentence_transformers.SentenceTransformer')
 
 
 def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
@@ -296,7 +327,7 @@ def _typecheck_examples(examples: Sequence[CodeExample], work_dir: Path) -> dict
     environments: dict[str, list[dict[str, Any]]] = {}
     for index, example in enumerate(examples):
         prefix_settings = example.prefix_settings()
-        python_version = prefix_settings.get('py', '3.10')
+        python_version = prefix_settings.get('py', '3.11')
         example_dir = work_dir / f'py{python_version}' / str(index)
         example_dir.mkdir(parents=True)
         for req in filter(None, prefix_settings.get('requires', '').split(',')):
@@ -421,6 +452,7 @@ def examples_type_errors(
     return result['errors']
 
 
+@pytest.mark.subprocess(reason='runs pyright, which is launched through `python -m pyright`')
 @pytest.mark.skipif(not _typecheck_enabled(), reason='type checking the examples is off')
 def test_typecheck_examples_reports_errors_at_their_source(tmp_path: Path):
     """A type error is reported at its line and column in the Markdown or docstring the example came from."""
@@ -445,6 +477,7 @@ def test_docs_examples(
     tmp_path_cwd: Path,
     vertex_provider_auth: None,
     examples_type_errors: dict[str, list[str]] | None,
+    request: pytest.FixtureRequest,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai.embeddings.infer_embedding_model', side_effect=mock_infer_embedding_model)
@@ -480,10 +513,7 @@ def test_docs_examples(
 
     _patch_optional_mcp_modules(mocker)
     _patch_realtime_models(mocker)
-    try:
-        mocker.patch('sentence_transformers.SentenceTransformer')
-    except ModuleNotFoundError:
-        pass
+    _prepare_heavy_imports(request, mocker, example)
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
@@ -491,6 +521,7 @@ def test_docs_examples(
     env.set('GROQ_API_KEY', 'testing')
     env.set('CO_API_KEY', 'testing')
     env.set('TYPESAFE_API_KEY', 'testing')
+    env.set('SYSTEM_ONE_BASE_URL', 'http://localhost:8700')
     env.set('MISTRAL_API_KEY', 'testing')
     env.set('ANTHROPIC_API_KEY', 'testing')
     env.set('HF_TOKEN', 'hf_testing')
@@ -529,6 +560,11 @@ def test_docs_examples(
     env.set('ZAI_API_KEY', 'testing')
     env.set('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
     env.set('SNOWFLAKE_TOKEN', 'testing')
+    # Many examples call `logfire.configure()`, whose console exporter then prints every span of every
+    # later test in the worker. Each of those prints goes through pytest-examples' mocked `print`, which
+    # calls `inspect.stack()`, so an evals example emitting hundreds of spans took up to 30s in CI.
+    # The console output is never part of an example's checked output, so turn the exporter off.
+    env.set('LOGFIRE_CONSOLE', 'false')
 
     # The Codex provider reads the Codex CLI's `auth.json` (honoring `CODEX_HOME`) instead of an
     # env var, so fake the file the same way the API keys above are faked.
@@ -550,7 +586,7 @@ def test_docs_examples(
 
     _check_python_version(python_version, max_python_version)
 
-    ruff_target_version: str = 'py310'
+    ruff_target_version: str = 'py311'
     if python_version:
         python_version_info = tuple(int(v) for v in python_version.split('.'))
         ruff_target_version = f'py{python_version_info[0]}{python_version_info[1]}'
@@ -618,6 +654,7 @@ def test_docs_examples(
 
 def print_callback(s: str) -> str:
     s = re.sub(r'datetime\.datetime\(.+?\)', 'datetime.datetime(...)', s, flags=re.DOTALL)
+    s = re.sub(r'datetime\.timedelta\(.+?\)', 'datetime.timedelta(...)', s, flags=re.DOTALL)
     s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
     s = re.sub(r'datetime.date\(', 'date(', s)
     s = re.sub(r"run_id='.+?'", "run_id='...'", s)
@@ -697,6 +734,20 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    # docs/workspace.md
+    'Explain what fizzbuzz.py does.': 'It prints the numbers 1 to 15, with fizz, buzz or fizzbuzz for multiples of 3 and 5.',
+    'Now add a test for it.': 'Added test_fizzbuzz.py.',
+    'Ask the reviewer to check fizzbuzz.py.': ToolCallPart(
+        tool_name='ask_reviewer', args={'request': 'Check fizzbuzz.py for bugs.'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
+    'Check fizzbuzz.py for bugs.': ToolCallPart(
+        tool_name='read_file', args={'path': 'fizzbuzz.py'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
+    # docs/capabilities/caching.md
+    'Can I expense a home office chair?': 'Yes, up to $300 with manager approval.',
+    'Is remote work allowed on Fridays?': 'Yes, every Friday is a remote day.',
+    'How many vacation days do new employees get?': 'New employees get 20 vacation days a year.',
+    'And after five years?': 'After five years, employees get 25 vacation days a year.',
     # docs/models/decision.md
     'pytest tests/test_agent.py': ToolCallPart(tool_name='final_result', args={'safe_to_run': True}),
     'A dashboard that shows every SaaS subscription a company pays for.': ToolCallPart(
@@ -927,6 +978,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='image_generator', args={'subject': 'robot', 'style': 'punk'}, tool_call_id='0001'
     ),
     "subject='robot' style='punk'": '<svg/>',
+    'Generate an illustration of a cafe, then write alt text for it.': ToolCallPart(
+        tool_name='generate_image', args={'prompt': 'An illustration of a cozy corner cafe'}
+    ),
     'What is a banana?': ToolCallPart(tool_name='return_fruit', args={'name': 'banana', 'color': 'yellow'}),
     'What is a Ford Explorer?': '{"result": {"kind": "Vehicle", "data": {"name": "Ford Explorer", "wheels": 4}}}',
     'What is a MacBook?': '{"result": {"kind": "Device", "data": {"name": "MacBook", "kind": "laptop"}}}',
@@ -1009,9 +1063,16 @@ tool_responses: dict[tuple[str, str], str] = {
 }
 
 
-def _output_tool_named(info: AgentInfo, type_name: str) -> str:  # pragma: lax no cover
-    """The output tool for the union member named `type_name`, whatever the tool itself is called."""
-    return next(tool.name for tool in info.output_tools if tool.name.endswith(type_name))
+def _structured_output(
+    info: AgentInfo, type_name: str, args: dict[str, Any]
+) -> ToolCallPart | TextPart:  # pragma: lax no cover
+    """The union member named `type_name` as the model would return it: a call to its output tool, whatever the tool
+    itself is called, or Native Output's JSON where the model's profile resolves the output type to it."""
+    if info.output_tools:
+        return ToolCallPart(
+            tool_name=next(tool.name for tool in info.output_tools if tool.name.endswith(type_name)), args=args
+        )
+    return TextPart(json.dumps({'result': {'kind': type_name, 'data': args}}))
 
 
 # docs/models/decision.md: Jev's route probabilities for the labelled texts the threshold is tuned on, from a live run
@@ -1080,9 +1141,10 @@ async def model_logic(  # noqa: C901
         # so this is the language model behind it, writing the reply with the status in view
         return ModelResponse(
             parts=[
-                ToolCallPart(
-                    tool_name=_output_tool_named(info, 'Reply'),
-                    args={
+                _structured_output(
+                    info,
+                    'Reply',
+                    {
                         'body': (
                             "Yes, login has been having problems since 09:12 UTC and that's why your team can't sign in. "
                             'A fix is rolling out now, so please try again shortly.'
@@ -1273,7 +1335,7 @@ async def model_logic(  # noqa: C901
         elif m.content == 'The export button does nothing when I click it.':
             # docs/models/decision.md: a union picks a member, then fills it in a second request
             return ModelResponse(
-                parts=[ToolCallPart(tool_name=_output_tool_named(info, 'Ticket'), args={'urgent': False})],
+                parts=[_structured_output(info, 'Ticket', {'urgent': False})],
                 provider_details={
                     'confidence': {'urgent': 0.4},
                     'probabilities': {},
@@ -1291,7 +1353,7 @@ async def model_logic(  # noqa: C901
             choice = max(route, key=lambda label: route[label])
             args = {'urgent': False} if choice == 'Ticket' else {'security': True}
             return ModelResponse(
-                parts=[ToolCallPart(tool_name=_output_tool_named(info, choice), args=args)],
+                parts=[_structured_output(info, choice, args)],
                 provider_details={
                     'confidence': {},
                     'probabilities': {},
@@ -1302,9 +1364,7 @@ async def model_logic(  # noqa: C901
             )
         elif m.content == 'Can you recommend a good restaurant near your office?':
             # docs/models/decision.md: the language model behind Jev takes the step Jev's route pick was unsure of
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name=_output_tool_named(info, 'Ticket'), args={'urgent': False})]
-            )
+            return ModelResponse(parts=[_structured_output(info, 'Ticket', {'urgent': False})])
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])
@@ -1334,20 +1394,13 @@ async def model_logic(  # noqa: C901
             )
         elif m.content == 'You charged me twice for the March invoice.':
             # docs/models/decision.md: the support desk picks the `Refund` route, then fills it
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name=_output_tool_named(info, 'Refund'), args={'reason': 'duplicate'})]
-            )
+            return ModelResponse(parts=[_structured_output(info, 'Refund', {'reason': 'duplicate'})])
         elif m.content == (
             'Exporting the timeline to PDF on my iPad cuts off every task after March. Client review is this afternoon.'
         ):
             # docs/models/decision.md: the support desk picks the `Triage` route, then fills all four of its fields
             return ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name=_output_tool_named(info, 'Triage'),
-                        args={'area': 'bug', 'urgent': True, 'app': 'ios', 'impact': 2},
-                    )
-                ]
+                parts=[_structured_output(info, 'Triage', {'area': 'bug', 'urgent': True, 'app': 'ios', 'impact': 2})]
             )
         elif m.content == 'Is login down? None of my team can sign in.':
             # docs/models/decision.md: the support desk picks `check_status` and fills its argument
@@ -1375,6 +1428,16 @@ async def model_logic(  # noqa: C901
                 provider_details={
                     'confidence': {'harmful': 0.98, 'target': 1.0},
                     'probabilities': {'target': {'code': 1.0, 'infrastructure': 0.0, 'data': 0.0}},
+                    'scores': {},
+                },
+            )
+        elif m.content == 'Our checkout has returned 500 errors since 9am.':
+            # docs/models/system-one.md: Nimble on Ollama labels the ticket, from a live run
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': 'bug'})],
+                provider_details={
+                    'confidence': {'response': 0.91},
+                    'probabilities': {'response': {'billing': 0.01, 'bug': 0.98, 'account': 0.01}},
                     'scores': {},
                 },
             )
@@ -1457,6 +1520,24 @@ async def model_logic(  # noqa: C901
                     FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
                 ]
             )
+        elif m.content == 'Write fizzbuzz to fizzbuzz.py and run it.':
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='execute',
+                        args={
+                            'command': [
+                                'python',
+                                '-c',
+                                'from pathlib import Path; '
+                                'code = \'for i in range(1, 16): print("fizz"*(i%3==0) + "buzz"*(i%5==0) or i)\\n\'; '
+                                "Path('fizzbuzz.py').write_text(code); exec(code)",
+                            ]
+                        },
+                        tool_call_id='pyd_ai_tool_call_id',
+                    )
+                ]
+            )
         elif m.content == 'Calculate the factorial of 15.':
             return ModelResponse(
                 parts=[
@@ -1498,6 +1579,23 @@ async def model_logic(  # noqa: C901
             return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
         elif 'Yashar' in m.content:
             return ModelResponse(parts=[TextPart('Tough luck, Yashar, you rolled a 4. Better luck next time.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'read_file' and 'fizz' in str(m.content):
+        # docs/workspace.md: the reviewer read the file the coding agent wrote in the shared workspace
+        return ModelResponse(parts=[TextPart('fizzbuzz.py is correct.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'ask_reviewer':
+        return ModelResponse(parts=[TextPart(f'The reviewer says {m.content}')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'execute':
+        prompts = [
+            part.content
+            for message in messages
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+        ]
+        # The examples' `execute` tool reports failures as '[exit N] ...'; the command
+        # really ran in the workspace, so require it to have succeeded.
+        assert isinstance(m.content, str) and not m.content.startswith('[exit '), m.content
+        if 'Write fizzbuzz to fizzbuzz.py and run it.' in prompts:
+            return ModelResponse(parts=[TextPart('fizzbuzz.py is written and runs clean.')])
     if (
         isinstance(m, RetryPromptPart)
         and isinstance(m.content, str)
@@ -1649,6 +1747,8 @@ async def model_logic(  # noqa: C901
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'image_generator':
         return ModelResponse(parts=[TextPart('Image file written to robot_punk.svg.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'generate_image':
+        return ModelResponse(parts=[TextPart('A cozy corner cafe with warm light spilling onto the sidewalk.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_preferred_language':
         return ModelResponse(
             parts=[
@@ -1806,8 +1906,11 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
     if isinstance(model, FallbackModel):
         # When a fallback model is encountered, replace any OpenAIChatModel with a model that will raise a ModelHTTPError.
         # Otherwise, do the usual inference.
-        def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            raise ModelHTTPError(401, 'Invalid API Key')
+        def raise_http_error(model_name: str) -> Callable[[list[ModelMessage], AgentInfo], ModelResponse]:
+            def function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+                raise ModelHTTPError(401, model_name, {'error': 'Invalid API Key'})
+
+            return function
 
         mock_fallback_models: list[Model] = []
         for m in model.models:
@@ -1818,10 +1921,17 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
 
             if isinstance(m, OpenAIChatModel):
                 # Raise an HTTP error for OpenAIChatModel
-                mock_fallback_models.append(FunctionModel(raise_http_error, model_name=m.model_name))
+                failing_model = FunctionModel(raise_http_error(m.model_name), model_name=m.model_name)
+                # Named after the provider it stands in for, as the attempt it records would be.
+                failing_model._system = m.system  # pyright: ignore[reportPrivateUsage]
+                mock_fallback_models.append(failing_model)
             else:
                 mock_fallback_models.append(mock_infer_model(m))
-        return FallbackModel(*mock_fallback_models)
+        mocked = FallbackModel(*mock_fallback_models)
+        # Keep the example's own `fallback_on`, so a response handler it passes still applies.
+        mocked._exception_handlers = model._exception_handlers  # pyright: ignore[reportPrivateUsage]
+        mocked._response_handlers = model._response_handlers  # pyright: ignore[reportPrivateUsage]
+        return mocked
     if isinstance(model, FunctionModel | TestModel):
         return model
     elif isinstance(model, DecisionModel):

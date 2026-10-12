@@ -1,14 +1,27 @@
-"""Discover and parse Agent Skill packages from local libraries."""
+"""Discover and parse Agent Skill packages from libraries in the run's workspace."""
 
 from __future__ import annotations
 
-import os
+import posixpath
 import unicodedata
+import warnings
 from collections.abc import Collection, Hashable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+
+from pydantic_ai.workspaces import FileEntry, Workspace
+from pydantic_ai_harness._workspace import workspace_path
+
+# Imported with the module rather than on first parse: a durable engine such as Temporal parses skills in
+# workflow code, where importing a module for the first time fails the workflow task.
+try:
+    import yaml
+except ImportError as _import_error:  # pragma: no cover
+    raise ImportError(
+        'PyYAML is required to load Agent Skills. Install it with: pip install "pydantic-ai-harness[skills]"'
+    ) from _import_error
 
 # These fields affect invocation, permissions, model selection, execution, or
 # prompt rendering in clients that implement them. Skills accepts their files
@@ -58,9 +71,11 @@ class SkillDefinition:
     description: str
     body: str
     ignored_behavioral_fields: tuple[str, ...]
+    path: str
+    """Absolute workspace path of the `SKILL.md` it was read from."""
 
 
-def _extract_frontmatter(text: str, source: Path) -> tuple[str, str]:
+def _extract_frontmatter(text: str, source: str) -> tuple[str, str]:
     lines = text.splitlines()
     if not lines or lines[0] != '---':
         raise ValueError(f'{source} must start with YAML frontmatter delimited by `---`.')
@@ -79,14 +94,7 @@ def _extract_frontmatter(text: str, source: Path) -> tuple[str, str]:
     return frontmatter, body
 
 
-def _parse_frontmatter(frontmatter: str, source: Path) -> _SkillFrontmatter:
-    try:
-        import yaml
-    except ImportError:  # pragma: no cover - exercised in an environment without the skills extra
-        raise ImportError(
-            'PyYAML is required to load Agent Skills. Install it with: pip install "pydantic-ai-harness[skills]"'
-        ) from None
-
+def _parse_frontmatter(frontmatter: str, source: str) -> _SkillFrontmatter:
     # Agent Skills frontmatter fields are strings. BaseLoader preserves valid
     # scalar names such as `123` and `on` instead of applying YAML implicit types.
     # PyYAML otherwise also accepts duplicate mapping keys and keeps the last value.
@@ -129,20 +137,32 @@ def _normalize_name(name: str) -> str:
     return unicodedata.normalize('NFKC', name)
 
 
-def _discover_skills(libraries: Sequence[Path]) -> list[tuple[str, Path]]:
-    discovered: list[tuple[str, Path]] = []
+async def _stat(workspace: Workspace, path: str) -> FileEntry | None:
+    try:
+        return await workspace.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+
+
+async def _is_file(workspace: Workspace, path: str) -> bool:
+    entry = await _stat(workspace, path)
+    return entry is not None and not entry.is_dir
+
+
+async def _discover_skills(workspace: Workspace, libraries: Sequence[str]) -> list[tuple[str, str]]:
+    discovered: list[tuple[str, str]] = []
     for library in libraries:
-        with os.scandir(library) as children:
-            for child in sorted(children, key=lambda entry: entry.name):
-                if not child.is_dir():
-                    continue
-                skill_file = Path(child.path) / 'SKILL.md'
-                if skill_file.is_file():
-                    discovered.append((_normalize_name(child.name), skill_file))
+        # Sorted by name so the catalog, and so the instructions, are the same for every run over the same files.
+        for child in sorted(await workspace.list_dir(library), key=lambda entry: entry.name):
+            if not child.is_dir:
+                continue
+            skill_file = posixpath.join(library, child.name, 'SKILL.md')
+            if await _is_file(workspace, skill_file):
+                discovered.append((_normalize_name(child.name), skill_file))
     return discovered
 
 
-def _validate_name(name: str, source: Path) -> str:
+def _validate_name(name: str, source: str) -> str:
     normalized = _normalize_name(name)
     if (
         not normalized
@@ -160,12 +180,12 @@ def _validate_name(name: str, source: Path) -> str:
     return normalized
 
 
-def load_skill(skill_file: Path) -> SkillDefinition:
-    """Load one `SKILL.md` into a validated construction-time definition."""
-    frontmatter_text, body = _extract_frontmatter(skill_file.read_text(encoding='utf-8'), skill_file)
+def parse_skill(text: str, skill_file: str) -> SkillDefinition:
+    """Parse one `SKILL.md`, read from `skill_file`, into a validated definition."""
+    frontmatter_text, body = _extract_frontmatter(text, skill_file)
     frontmatter = _parse_frontmatter(frontmatter_text, skill_file)
 
-    directory_name = skill_file.parent.name
+    directory_name = posixpath.basename(posixpath.dirname(skill_file))
     name = frontmatter.name if frontmatter.name is not None else directory_name
     normalized_name = _validate_name(name, skill_file)
     if frontmatter.name is not None and normalized_name != _normalize_name(directory_name):
@@ -177,35 +197,38 @@ def load_skill(skill_file: Path) -> SkillDefinition:
         description=frontmatter.description,
         body=body,
         ignored_behavioral_fields=ignored_fields,
+        path=skill_file,
     )
 
 
-def load_skill_libraries(
+async def load_skill_libraries(
+    workspace: Workspace,
     directories: Sequence[str | Path],
     *,
     include: Collection[str] | None,
     exclude: Collection[str],
 ) -> tuple[SkillDefinition, ...]:
-    """Discover immediate child skill packages under configured directories."""
-    libraries: list[Path] = []
-    seen_libraries: set[Path] = set()
+    """Discover immediate child skill packages under configured directories in `workspace`.
+
+    Relative directories resolve against the workspace's working directory.
+    """
+    libraries: list[str] = []
     for configured in directories:
-        library = Path(configured)
-        if not library.exists():
-            raise ValueError(f'Skill library directory does not exist: {library}')
-        if not library.is_dir():
-            raise ValueError(f'Skill library path is not a directory: {library}')
-        if (library / 'SKILL.md').is_file():
-            raise ValueError(
-                f'Skill library path points to a skill package: {library}. Pass its parent directory instead.'
-            )
-        resolved = library.resolve()
-        if resolved in seen_libraries:
+        library = await workspace.resolve(workspace_path(Path(configured)))
+        if library in libraries:
             continue
-        seen_libraries.add(resolved)
+        entry = await _stat(workspace, library)
+        if entry is None:
+            raise ValueError(f'Skill library directory does not exist in the workspace: {configured}')
+        if not entry.is_dir:
+            raise ValueError(f'Skill library path is not a directory: {configured}')
+        if await _is_file(workspace, posixpath.join(library, 'SKILL.md')):
+            raise ValueError(
+                f'Skill library path points to a skill package: {configured}. Pass its parent directory instead.'
+            )
         libraries.append(library)
 
-    discovered = _discover_skills(libraries)
+    discovered = await _discover_skills(workspace, libraries)
     available_names = frozenset(name for name, _ in discovered)
     normalized_include = None if include is None else frozenset(_normalize_name(name) for name in include)
     normalized_exclude = frozenset(_normalize_name(name) for name in exclude)
@@ -215,8 +238,8 @@ def load_skill_libraries(
         normalized_include if normalized_include is not None else available_names.difference(normalized_exclude)
     )
 
-    selected_files: list[Path] = []
-    paths_by_name: dict[str, Path] = {}
+    selected_files: list[str] = []
+    paths_by_name: dict[str, str] = {}
     for name, skill_file in discovered:
         if name not in selected_names:
             continue
@@ -225,7 +248,18 @@ def load_skill_libraries(
         paths_by_name[name] = skill_file
         selected_files.append(skill_file)
 
-    return tuple(load_skill(skill_file) for skill_file in selected_files)
+    parsed: list[SkillDefinition] = []
+    for skill_file in selected_files:
+        try:
+            try:
+                text = await workspace.read_text(skill_file)
+            except UnicodeDecodeError as error:
+                raise ValueError(f'{skill_file} is not valid UTF-8: {error}') from error
+            parsed.append(parse_skill(text, skill_file))
+        except ValueError as error:
+            # A model-editable skill should not make unrelated valid skills unusable.
+            warnings.warn(f'Skipping {skill_file}: {error}', UserWarning, stacklevel=2)
+    return tuple(parsed)
 
 
 def _validate_selection(

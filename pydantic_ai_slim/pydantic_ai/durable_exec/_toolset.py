@@ -6,12 +6,11 @@ import inspect
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, replace
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, TypeAlias, assert_never, cast
 
 import anyio
 from pydantic import Discriminator, Tag, ValidationError
 from pydantic_core import PydanticCustomError, PydanticSerializationError, to_jsonable_python
-from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._agent_graph import build_validation_context
@@ -610,14 +609,25 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
         return self.wrapped.id
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        # Its units (Temporal activities) resolve tools on the registered toolset, which a per-run
+        # replacement cannot reach, so the run must list that same toolset's tools.
         if self._lifecycle == 'enter-outside-durable':
             return self
-        return await super().for_run(ctx)
+        return self._with_wrapped(await self.wrapped.for_run(ctx))
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         if self._lifecycle == 'enter-outside-durable':
             return self
-        return await super().for_run_step(ctx)
+        return self._with_wrapped(await self.wrapped.for_run_step(ctx))
+
+    def _with_wrapped(self, wrapped: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        if wrapped is self.wrapped:
+            return self
+        # Engine wrappers carry registered callbacks that `dataclasses.replace` cannot reconstruct.
+        replacement = copy.copy(self)
+        replacement.wrapped = wrapped
+        replacement._run_held = None
+        return replacement
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]

@@ -27,7 +27,7 @@ model = OpenAIRealtimeModel('gpt-realtime', settings=settings)
 Use provider-specific settings only when the shared controls are insufficient:
 `openai_turn_detection`, `xai_turn_detection`, and `google_vad` fully override `turn_detection`.
 Their accepted values, defaults, and limitations are documented on the
-[OpenAI](openai.md#settings), [Azure OpenAI](azure.md#settings),
+[OpenAI](openai.md#gpt-realtime-settings), [Azure OpenAI](azure.md#settings),
 [Google Gemini](gemini.md#settings), and [xAI](xai.md#settings) pages.
 
 ## Text turns
@@ -204,6 +204,13 @@ History records a known cutoff on
 [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms] and marks the
 response state as interrupted. When this history is sent to a text model, Pydantic AI adds a readable
 interruption note to the prepared request without modifying stored history.
+
+Models generate audio several times faster than it plays, so the reply the user speaks over has
+usually finished generating already. History is append-only, so that reply keeps its full
+transcript and `complete` state. The barge-in still truncates the provider's copy where playback
+stopped, so the model doesn't take the whole reply as heard. With `played_bytes` (or
+`handle_barge_in=True`), the session truncates the reply actually being played, and any reply
+generated after it, which the user never heard, at 0.
 
 ## Speaking first
 

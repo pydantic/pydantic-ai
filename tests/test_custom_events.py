@@ -33,8 +33,6 @@ from pydantic_ai.run import AgentRunResultEvent
 
 from ._inline_snapshot import snapshot
 
-pytestmark = pytest.mark.anyio
-
 
 def _has_tool_return(messages: list[ModelMessage]) -> bool:
     return any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)

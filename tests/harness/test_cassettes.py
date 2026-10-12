@@ -19,8 +19,7 @@ from pathlib import Path
 
 import pytest
 from _pytest.mark import ParameterSet
-from pydantic import BaseModel
-from vcr.serializers import yamlserializer
+from cassetter import Cassette, RecordMode
 
 _ROOT = Path(__file__).parents[2]
 
@@ -46,23 +45,6 @@ def _optional_encodings(header_value: str) -> list[str]:
     return optional
 
 
-class _Request(BaseModel):
-    uri: str
-
-
-class _Response(BaseModel):
-    headers: dict[str, list[str]]
-
-
-class _Interaction(BaseModel):
-    request: _Request
-    response: _Response
-
-
-class _Cassette(BaseModel):
-    interactions: list[_Interaction]
-
-
 def _cassettes() -> Iterable[ParameterSet]:
     for directory in ('tests/harness', 'src/pydantic_ai_harness/integration_tests'):
         for path in sorted((_ROOT / directory).glob('**/cassettes/**/*.yaml')):
@@ -76,13 +58,15 @@ def test_cassettes_discovered() -> None:
 
 @pytest.mark.parametrize('path', list(_cassettes()))
 def test_cassette_replays_without_an_optional_decompressor(path: Path) -> None:
-    # `vcr`'s own loader, because a cassette can carry tags `yaml.safe_load` rejects.
-    document = yamlserializer.deserialize(path.read_text(encoding='utf-8'))  # pyright: ignore[reportUnknownMemberType]
-    cassette = _Cassette.model_validate(document)
+    # `cassetter`'s own loader, because a cassette can carry tags `yaml.safe_load` rejects.
+    cassette = Cassette(path, record_mode=RecordMode.NONE)
+    cassette.load()
     needs = [
         f'{interaction.request.uri} responds `Content-Encoding: {encoding}`'
         for interaction in cassette.interactions
-        for value in interaction.response.headers.get('content-encoding', [])
+        for name, values in interaction.response.headers.items()
+        if name.lower() == 'content-encoding'
+        for value in values
         for encoding in _optional_encodings(value)
     ]
     assert not needs, (

@@ -6,10 +6,10 @@ description: "Run a local Macroscope code review from a Pydantic AI agent and ge
 # Macroscope
 
 `Macroscope` runs a local [Macroscope](https://docs.macroscope.com/cli) code
-review from inside an agent: one tool shells out to the installed `macroscope`
-CLI, parses the streamed findings, and returns them as structured data. The
-agent validates each finding and fixes the real ones with the tools it already
-has -- this capability surfaces findings only.
+review from inside an agent: one tool runs the installed `macroscope` CLI in
+the run's workspace, parses the streamed findings, and returns them as
+structured data. The agent validates each finding and fixes the real ones with
+the tools it already has -- this capability surfaces findings only.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/macroscope/)
 
@@ -25,23 +25,38 @@ give a Pydantic AI agent the same review-and-fix loop from your own code.
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import Macroscope
 
-agent = Agent('anthropic:claude-sonnet-5', capabilities=[Macroscope()])
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    capabilities=[
+        LocalWorkspace('.'),
+        Macroscope(),
+    ],
+)
 
 result = agent.run_sync('Run a Macroscope review and fix any real findings.')
 print(result.output)
 ```
 
-The `macroscope` CLI must be installed and authenticated on the host first:
+The review runs in the agent's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/),
+in its working directory, which should be the repository: your machine with
+`LocalWorkspace`, or the sandbox when the run uses one. A run without a workspace fails at its
+start. The `macroscope` CLI must be installed and authenticated in the
+workspace first:
 
 1. Install: `curl -sSL https://raw.githubusercontent.com/prassoai/macroscope-local/main/install.sh | bash`
-2. Sign in and pick a workspace by running `macroscope` once.
+2. Sign in and pick a Macroscope workspace by running `macroscope` once.
 
-The capability cannot install or authenticate on your behalf. If the binary is
-missing, the tool returns the install command; if a review never starts
-(usually because you are not signed in), the tool tells the agent to run
-`macroscope` to finish setup.
+The capability cannot install or authenticate on your behalf. The model cannot
+fix these setup problems either, so the tool raises `UserError` and the run
+stops rather than spending tool retries on them. A missing binary reports the
+install command, a binary that cannot be launched reports the OS error, and a
+review that never starts (usually because you are not signed in) tells you to
+run `macroscope` to finish setup. The exception is a review that fails to start
+with a `base` the model passed: that is reported to the model as a retry so it
+can drop or change the ref.
 
 The tool invokes `macroscope codereview --raw` for machine-readable streaming
 output, which needs a recent CLI build. The installer fetches the latest and the
@@ -69,16 +84,16 @@ from pydantic_ai_harness import Macroscope
 Macroscope(
     base=None,             # git ref to diff against -- None lets the CLI auto-detect
     command='macroscope',  # binary name or path
-    cwd='.',               # repository directory the review runs in
     timeout=600.0,         # max seconds to wait for a review
     guidance=None,         # None = default instructions, '' = none, str = custom
 )
 ```
 
 A per-call `base` argument takes precedence over the field. Reviews call a
-remote service, so the timeout is generous by default; on timeout the CLI's
-process group is killed and the timeout is reported to the model as a
-retryable error.
+remote service, so the timeout is generous by default; on timeout the
+workspace stops the CLI and the timeout is reported to the model as a
+retryable error. The tool is not offered when the workspace cannot run
+commands (for example a read-only one).
 
 ## Scope and composition
 

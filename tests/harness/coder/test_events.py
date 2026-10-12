@@ -10,8 +10,6 @@ from pydantic_ai_harness.filesystem import FileChangeRequestEvent
 
 from .test_tools import call
 
-pytestmark = pytest.mark.anyio
-
 
 class Listener(AbstractCapability[None]):
     @on_event(FileChangeRequestEvent)

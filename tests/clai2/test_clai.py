@@ -28,15 +28,8 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import Session, StreamRenderer
 from pydantic_clai2.commands import Command, Commands, config_command, config_completions, plugins_command
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.splash import Splash
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.rendering.splash import Splash
 
 
 @pytest.fixture(autouse=True)
@@ -92,7 +85,7 @@ async def test_history_tools_and_plugins() -> None:
     snapshot = session.messages
     snapshot.clear()
     assert session.messages
-    session.clear()
+    await session.clear()
     assert not session.messages
 
 
@@ -121,7 +114,7 @@ async def test_cancel_preserves_history_and_rejects_concurrency() -> None:
         with pytest.raises(RuntimeError):
             await session.prompt('overlap')
         with pytest.raises(RuntimeError):
-            session.clear()
+            await session.clear()
         scope.cancel()
     assert scope.cancelled_caught
     assert session.messages[: len(prior)] == prior
@@ -136,7 +129,7 @@ async def test_cancel_preserves_history_and_rejects_concurrency() -> None:
         if isinstance(part, UserPromptPart)
     ]
     assert prompts == ['first', 'make a personality plugin', 'actually, combine playful and pedantic']
-    session.clear()
+    await session.clear()
     assert session.messages == []
 
 

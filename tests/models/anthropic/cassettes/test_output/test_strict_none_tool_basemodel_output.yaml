@@ -1,101 +1,152 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '621'
+      - "621"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Give me info about Sydney including its timezone
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: any
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_timezone
-      - description: Information about a city.
-        input_schema:
-          properties:
-            city:
-              type: string
-            country:
-              type: string
-            population:
-              type: integer
-          required:
-          - city
-          - country
-          - population
-          type: object
-        name: final_result
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Give me info about Sydney including its timezone
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: any
+        tools:
+        - name: get_timezone
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - name: final_result
+          description: Information about a city.
+          input_schema:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+              population:
+                type: integer
+            required:
+            - city
+            - country
+            - population
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '637'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
-      retry-after:
-      - '3'
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-ff6beea9e705095fdb0eabd35d9a918b-87568c1f6f91e2b9-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - id: toolu_01RYjj1KsnCvtj9bmK2sZWRv
-        input:
-          city: Sydney
-        name: get_timezone
-        type: tool_use
-      - id: toolu_01XyJoBaLsPJKMnuWZTYKatf
-        input:
-          city: Sydney
-          country: Australia
-          population: 5312000
-        name: final_result
-        type: tool_use
-      id: msg_01M76KcFqyPXkmfHM85UzJ6o
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 731
-        output_tokens: 110
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3eTYC5Dwvs7f7PehdH","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":731,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_019NEAvMRXwq2pr6yDJvbnRP","name":"get_timezone","input":{},"caller":{"type":"direct"}}           }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"Sydn"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ey\"}"}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_014DabXuvE8ozGQJjjnHcEuH","name":"final_result","input":{},"caller":{"type":"direct"}}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":": \"Sydn"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ey\""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":", \"coun"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"try\": \""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"Austral"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ia\""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":", \"popu"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"lation\""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":": 53120"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"00}"}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1              }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":731,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":110}      }
+
+        event: message_stop
+        data: {"type":"message_stop"         }
+
+  recorded_at: 2026-09-29T16:28:33.696544+00:00

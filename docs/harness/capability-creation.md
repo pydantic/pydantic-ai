@@ -23,22 +23,23 @@ A coding agent often discovers, mid-task, that it wants a behavior its host does
 
 - `author_capability(name, code)` -- write `code` to `<directory>/<name>.py`, import it, and validate it. Validation requires exactly one `pydantic_ai.capabilities.AbstractCapability` subclass that constructs with no arguments; the side-effect-free static getters (`get_instructions`, `get_toolset`, `get_native_tools`, `get_model_settings`, `get_serialization_name`) are exercised. The async lifecycle hooks are not run -- they need a live `RunContext`.
 - `list_authored_capabilities()` -- list authored capabilities with their status and any validation error.
-- `disable_authored_capability(name)` -- stop a capability from being injected on the next run.
+- `disable_authored_capability(name)` -- mark a capability disabled, so `load_active()` skips it.
 
 A "hook" is not a standalone object in pydantic-ai -- it is a method on a capability. So authoring a hook means authoring a capability that overrides one lifecycle method. A single overridden hook is a valid capability.
 
 ## Usage
 
-Construct `CapabilityCreation` with a `directory` for the authored files, then add it to the agent's `capabilities`:
+Construct `CapabilityCreation` with a `directory` for the authored files, then add it to the agent's `capabilities`. `directory` is a path on the machine running the agent, relative to the process's current directory, not a workspace path.
 
 ```python
 from pathlib import Path
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import CapabilityCreation
 
 creation = CapabilityCreation(directory=Path('.authored'))
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[creation])
+agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace('.'), creation])
 ```
 
 The agent can now call `author_capability`, `list_authored_capabilities`, and `disable_authored_capability`. `CapabilityCreation` also contributes static, cache-stable system-prompt guidance explaining these tools. Leave `guidance=None` for the default text, or pass your own string; set `guidance=''` to omit it entirely.
@@ -50,16 +51,19 @@ A capability **cannot** be added to a live, already-executing run. pydantic-ai r
 
 ### Integration contract
 
+The successful `author_capability` result tells the model the capability does not take effect in the current run. Writing and validating a capability does not schedule or inject it automatically.
+
 The orchestrator drives the loop, so it owns the one-line contract: thread the store's active capabilities into each run via `agent.run(..., capabilities=...)`. With that in place, the authored capability is live on the very next loop iteration -- no process restart:
 
 ```python
 from pathlib import Path
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import CapabilityCreation
 
 creation = CapabilityCreation(directory=Path('.authored'))
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[creation])
+agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace('.'), creation])
 
 history = None
 done = False
@@ -81,7 +85,24 @@ Authored capabilities persist to disk: each is one `<directory>/<name>.py` file,
 
 Capability names must be lowercase letters, digits, and underscores, starting with a letter. Reusing a name replaces the previous capability of that name. A code that imports but fails validation is still written to disk (so it can be inspected) and recorded with its `last_error` set; `load_active()` skips it.
 
+## Durable execution
+
+Under [durable execution](durable-execution.md), each authoring, listing, and disabling
+call to the store is recorded, so a recovered run reuses the result instead of
+writing the authored module and manifest again. Temporal and Prefect record
+each tool call in its own activity or task. DBOS runs function tools in
+workflow code, so there the store call runs as its own step.
+
+The records are named after the capability's `id`, which defaults to
+`capability_creation`, so durable execution needs no configuration.
+
 ## Trust boundary
+
+`CapabilityCreation` imports model-written Python into the agent's own process, on this
+machine. A run therefore refuses to start unless its
+[workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) is a writable `LocalWorkspace`: next to a
+sandbox the model's code would run outside the sandbox, and a read-only workspace promises the
+model that it changes nothing.
 
 `CapabilityCreation` executes arbitrary Python in-process at import, construction, and run time. That is the same trust boundary an agent that already runs shell commands and edits files operates under, which is the deliberate choice here. Do not point it at a directory whose contents you would not run yourself, and treat authored capabilities as code the agent is executing on your host.
 

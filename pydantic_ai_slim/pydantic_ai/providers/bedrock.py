@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
@@ -23,6 +24,7 @@ from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers._bedrock_model_names import (
     BEDROCK_GEO_PREFIXES as BEDROCK_GEO_PREFIXES,  # re-exported for backwards compatibility
+    bedrock_claude_cache_retentions,
     remove_bedrock_geo_prefix as remove_bedrock_geo_prefix,  # re-exported for backwards compatibility
     split_bedrock_model_id,
 )
@@ -202,7 +204,7 @@ class BedrockModelProfile(ModelProfile, total=False):
     """
 
     bedrock_supports_adaptive_thinking: bool
-    """Whether this model accepts `{'thinking': {'type': 'adaptive'}}` (Sonnet 4.6+, Opus 4.6+).
+    """Whether this model accepts `{'thinking': {'type': 'adaptive'}}` (Haiku 5.5, Sonnet 4.6+, Opus 4.6+).
 
     Only meaningful for the `'anthropic'` variant. When False, the variant falls back to
     `{'type': 'enabled', 'budget_tokens': N}` for pre-4.6 models.
@@ -211,7 +213,7 @@ class BedrockModelProfile(ModelProfile, total=False):
     """
 
     bedrock_supports_effort: bool
-    """Whether this model emits `output_config.effort` on Bedrock Converse (Sonnet 4.6+, Opus 4.6+).
+    """Whether this model emits `output_config.effort` on Bedrock Converse (Haiku 5.5, Sonnet 4.6+, Opus 4.6+).
 
     Only meaningful for the `'anthropic'` variant AND only honored alongside
     `bedrock_supports_adaptive_thinking=True`. Bedrock has not been verified to accept
@@ -263,6 +265,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
         'claude-opus-4-8',
         'claude-opus-5',
         'claude-sonnet-5',
+        'claude-haiku-5-5',
         'claude-fable-5',
     )
     downstream = anthropic_model_profile(model_name)
@@ -276,6 +279,9 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_send_back_thinking_parts=True,
             bedrock_supports_prompt_caching=True,
             bedrock_supports_tool_caching=True,
+            supports_cache=True,
+            # AWS grants the 1-hour cache TTL to only a subset of Claude models.
+            supported_cache_retentions=bedrock_claude_cache_retentions(model_name),
             bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
             # Anthropic on Bedrock rejects a `toolResult` co-located with a document or video block, but
             # accepts text and images alongside it. See https://github.com/pydantic/pydantic-ai/issues/6081.
@@ -315,6 +321,8 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
             BedrockModelProfile(
                 bedrock_supports_tool_choice=True,
                 bedrock_supports_prompt_caching=True,
+                supports_cache=True,
+                supported_cache_retentions=('5m',),
                 bedrock_top_k_variant='nova',
             ),
         )
@@ -500,13 +508,25 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
     )
 
 
+_BEDROCK_OPENAI_30_MINUTE_CACHE_MODELS = frozenset({'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'})
+
+
 def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an OpenAI model used via Bedrock Converse."""
     # Exact names, not prefixes: GPT-5.6 Cyber is Mantle-only, unlike Sol/Luna/Terra.
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-sol.html
     # GPT-6 Sol/Luna have no AWS model card; their Converse support was verified with live requests.
-    if model_name in {'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra'}:
+    if model_name in {
+        'gpt-5.6-sol',
+        'gpt-5.6-luna',
+        'gpt-5.6-terra',
+        'gpt-6-sol',
+        'gpt-6-luna',
+        'gpt-6-astra',
+        'gpt-6.1-sol',
+    }:
         # Converse rejects `temperature`, `top_p` and `top_k` for these; everything else keeps the defaults.
         return BedrockModelProfile(bedrock_disallows_sampling_settings=True)
     # Keep other proprietary GPT models gated until their Converse support is confirmed.
@@ -553,13 +573,27 @@ class BedrockProvider(Provider[BaseClient]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': bedrock_anthropic_model_profile,
+            'anthropic': lambda model_name: merge_profile(
+                bedrock_anthropic_model_profile(model_name),
+                # Bedrock's Claude model cards document a 5-minute TTL; some models accept a 1-hour
+                # `cachePoint` TTL, which `prompt_cache_outlook` detects in message history.
+                # https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
+                ModelProfile(default_cache_retention=timedelta(minutes=5)),
+            ),
             'mistral': bedrock_mistral_model_profile,
             'cohere': lambda model_name: _strip_builtin_tools(cohere_model_profile(model_name)),
             'amazon': bedrock_amazon_model_profile,
             'meta': bedrock_meta_model_profile,
             'deepseek': lambda model_name: _strip_builtin_tools(bedrock_deepseek_model_profile(model_name)),
-            'openai': bedrock_openai_model_profile,
+            'openai': lambda model_name: merge_profile(
+                bedrock_openai_model_profile(model_name),
+                # Bedrock documents a 30-minute minimum TTL for exactly these; other OpenAI models get
+                # automatic caching with no documented retention.
+                # https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
+                ModelProfile(default_cache_retention=timedelta(minutes=30))
+                if model_name in _BEDROCK_OPENAI_30_MINUTE_CACHE_MODELS
+                else None,
+            ),
             'qwen': bedrock_qwen_model_profile,
             'google': bedrock_google_model_profile,
             'minimax': bedrock_minimax_model_profile,

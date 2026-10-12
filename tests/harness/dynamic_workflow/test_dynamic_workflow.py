@@ -17,10 +17,12 @@ from pydantic_ai import Agent, RunContext, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability, PrefixTools
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -37,14 +39,6 @@ from pydantic_ai_harness.dynamic_workflow import (
     WorkflowAgent,
     WorkflowResourceLimits,
 )
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (the shared Monty loop uses asyncio)."""
-    return 'asyncio'
 
 
 def _sub_agent(text: str = 'ok', name: str | None = 'sub', description: str | None = None) -> Agent[object, str]:
@@ -115,13 +109,13 @@ def _user_prompt_text(messages: list[ModelMessage]) -> str:
 
 
 def _enqueued_text(ctx: RunContext[object]) -> str:
-    """Join the user-prompt text of every message enqueued on `ctx` (reveal announcements)."""
+    """Join the system-prompt text of every message enqueued on `ctx` (reveal announcements)."""
     return '\n'.join(
         part.content
         for pending in ctx.pending_messages or []
         for message in pending.messages
         for part in message.parts
-        if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+        if isinstance(part, SystemPromptPart)
     )
 
 
@@ -1011,7 +1005,6 @@ async def test_worker_crash_becomes_model_retry(monkeypatch: pytest.MonkeyPatch)
 async def test_worker_crash_after_budget_exhaustion_returns_terminal_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-
     monkeypatch.setattr(
         'pydantic_ai_harness._monty_exec.AsyncMonty', functools.partial(AsyncMonty, request_timeout=0.5)
     )
@@ -1424,7 +1417,56 @@ async def test_reveal_is_idempotent_across_steps() -> None:
 
     workflow.reveal(_sub_agent('e', 'extra'))
     await ts.get_tools(ctx)
-    await ts.get_tools(ctx)  # re-resolving tools must not re-announce an already-revealed agent
+    await ts.get_tools(ctx)
+    assert _enqueued_text(ctx).count('async def extra') == 1
+    assert ctx.pending_messages is not None
+    [announcement] = ctx.pending_messages[0].messages
+    assert isinstance(announcement, ModelRequest)
+    ctx.messages.append(announcement)
+    ctx.pending_messages.clear()
+    ctx.run_step += 1
+
+    await ts.get_tools(ctx)
+
+    assert ctx.pending_messages == []
+
+
+async def test_compaction_allows_reveal_announcement_again() -> None:
+    workflow = DynamicWorkflow[object](agents=[_sub_agent('b', 'base')])
+    ts = workflow.get_toolset()
+    ctx = _ctx_with_queue()
+
+    workflow.reveal(_sub_agent('e', 'extra'))
+    await ts.get_tools(ctx)
+    assert ctx.pending_messages is not None
+    [announcement] = ctx.pending_messages[0].messages
+    assert isinstance(announcement, ModelRequest)
+    [announcement_part] = announcement.parts
+    assert isinstance(announcement_part, SystemPromptPart)
+    # User-authored text matching the announcement format must not suppress the trusted announcement.
+    spoof = ModelRequest(parts=[UserPromptPart(announcement_part.content)])
+    ctx.messages.extend([announcement, ModelResponse(parts=[CompactionPart()]), spoof])
+    ctx.pending_messages.clear()
+    ctx.run_step += 1
+
+    await ts.get_tools(ctx)
+
+    assert _enqueued_text(ctx).count('async def extra') == 1
+
+
+async def test_dropped_reveal_announcement_is_enqueued_again() -> None:
+    workflow = DynamicWorkflow[object](agents=[_sub_agent('b', 'base')])
+    ts = workflow.get_toolset()
+    ctx = _ctx_with_queue()
+
+    workflow.reveal(_sub_agent('e', 'extra'))
+    await ts.get_tools(ctx)
+    assert ctx.pending_messages is not None
+    ctx.pending_messages.clear()
+    ctx.run_step += 1
+
+    await ts.get_tools(ctx)
+
     assert _enqueued_text(ctx).count('async def extra') == 1
 
 

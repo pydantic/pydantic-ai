@@ -10,12 +10,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
-from weakref import ReferenceType, ref
+from typing import TYPE_CHECKING, Protocol, Self, assert_never, runtime_checkable
 
-from typing_extensions import Self, assert_never
-
-from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -35,9 +31,10 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    is_multi_modal_content,
 )
 from pydantic_ai.models import AbstractModel, Model
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -59,14 +56,24 @@ if TYPE_CHECKING:
 _CHARS_PER_TOKEN = 4
 """Rough approximation: ~4 characters per token on average."""
 
-_COMPACTION_RECLAIM: ContextVar[tuple[ReferenceType[object], int] | None] = ContextVar(
+_COMPACTION_RECLAIM: ContextVar[tuple[str | None, int, int] | None] = ContextVar(
     'pydantic_ai_harness.compaction.reclaim', default=None
 )
-"""Heuristic reclaim from compaction that ran earlier in this request's hook chain."""
+"""`(run_id, run_step, reclaimed)`: heuristic reclaim from compaction earlier in this request's hook chain.
+
+Keyed by the request (`run_step` advances once per model request) rather than by request-context
+identity: strategies return `replace()` copies of the context, so an identity key would have to be
+re-attached at every hop, and a strategy that forgot would silently drop the correction.
+"""
 
 
 def _collect_message_text(messages: Sequence[ModelMessage]) -> list[str]:
-    """Collect all text segments from a sequence of messages, excluding instructions.
+    """Collect all text segments from a sequence of messages, excluding instructions."""
+    return [segment for segments in _message_segments(messages) for segment in segments]
+
+
+def _message_segments(messages: Sequence[ModelMessage]) -> list[list[str]]:
+    """The text segments of each message, excluding instructions.
 
     Every part that carries text the provider is sent counts, including the ones a run only
     grows under load: a retry prompt, an extended-thinking block, the result of a
@@ -90,8 +97,9 @@ def _collect_message_text(messages: Sequence[ModelMessage]) -> list[str]:
         ),
         default=0,
     )
-    segments: list[str] = []
+    per_message: list[list[str]] = []
     for index, msg in enumerate(messages):
+        segments: list[str] = []
         if isinstance(msg, ModelRequest):
             for request_part in msg.parts:
                 if request_part.part_kind == 'instruction-delta' and index < baseline_index:  # pyright: ignore[reportUnnecessaryComparison]
@@ -100,7 +108,8 @@ def _collect_message_text(messages: Sequence[ModelMessage]) -> list[str]:
         else:
             for response_part in msg.parts:
                 segments.extend(_response_part_text(response_part))
-    return segments
+        per_message.append(segments)
+    return per_message
 
 
 def _collect_text(messages: Sequence[ModelMessage]) -> list[str]:
@@ -119,9 +128,11 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
     # Match the discriminator so this remains importable before the new core part is released.
     elif part.part_kind == 'instruction-delta':  # pyright: ignore[reportUnnecessaryComparison]
         return [part.render()]  # pragma: lax no cover - requires core instruction updates
-    elif isinstance(part, (ToolReturnPart, RetryPromptPart)):
-        # Both are sent in full. The tool-search and capability-load returns subclass
-        # `ToolReturnPart`, so they arrive here too.
+    elif isinstance(part, ToolReturnPart):
+        # Sent in full. The tool-search and capability-load returns subclass `ToolReturnPart`, so
+        # they arrive here too.
+        return [tool_return_text(part)]
+    elif isinstance(part, RetryPromptPart):
         return [str(part.content)]
     # Control bookkeeping rather than message text: it records which tools became available, and
     # the schemas themselves travel in the request's tool definitions. Those schemas are not free
@@ -167,7 +178,7 @@ def _response_part_text(part: ModelResponsePart) -> list[str]:
     elif isinstance(part, NativeToolCallPart):
         return [part.tool_name, str(part.args)]
     elif isinstance(part, NativeToolReturnPart):
-        return [part.tool_name, str(part.content)]
+        return [part.tool_name, part.model_response_str()]
     elif isinstance(part, SpeechPart):
         # `SpeechPart` is in both unions; a realtime assistant turn lands here. Count its
         # transcript for the same reason as on the request side.
@@ -188,6 +199,20 @@ def _instructions_text(messages: Sequence[ModelMessage]) -> list[str]:
         if isinstance(msg, ModelRequest) and msg.instructions:
             return [msg.instructions]
     return []
+
+
+def tool_return_text(part: ToolReturnPart) -> str:
+    """The tool return's content as text, with each file named by identifier rather than spelled out.
+
+    A file's `repr` carries its bytes at ~3 characters per byte, so a 1 MB file would be estimated at
+    ~700k tokens and render into a summary prompt as escaped bytes. The reference is the one a
+    text-only tool result gives the model in its place (`ToolReturnPart.model_response_str_and_user_content`).
+    """
+    if not part.files:
+        return str(part.content)
+    return ' '.join(
+        f'See file {item.identifier}.' if is_multi_modal_content(item) else str(item) for item in part.content_items()
+    )
 
 
 def _user_prompt_text_for_counting(part: UserPromptPart) -> str:
@@ -213,6 +238,13 @@ def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = Non
     return len(text) // _CHARS_PER_TOKEN
 
 
+def _count_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
+    """Token count of text segments: per segment with *tokenizer*, otherwise the heuristic over their total."""
+    if tokenizer is not None:
+        return sum(tokenizer(s) for s in segments)
+    return sum(len(s) for s in segments) // _CHARS_PER_TOKEN
+
+
 def estimate_token_count(
     messages: Sequence[ModelMessage],
     tokenizer: Callable[[str], int] | None = None,
@@ -224,10 +256,7 @@ def estimate_token_count(
         tokenizer: Optional callable that returns the token count for a string.
             When `None`, falls back to a ~4 characters-per-token heuristic.
     """
-    segments = _collect_text(messages)
-    if tokenizer is not None:
-        return sum(tokenizer(s) for s in segments)
-    return sum(len(s) for s in segments) // _CHARS_PER_TOKEN
+    return _count_segments(_collect_text(messages), tokenizer)
 
 
 def estimate_context_tokens(
@@ -244,8 +273,9 @@ def estimate_context_tokens(
     the response's own parts, so their sum is ground truth for the history up to and including
     that response. Only the messages after the anchor are estimated with the character
     heuristic (or *tokenizer*), without re-counting instructions, which the anchor already
-    covers. Tool schemas named by availability deltas after the anchor are estimated from the
-    pending request parameters. This is what makes the estimate robust where the pure heuristic
+    covers; when the instructions changed since the anchor, the estimate swaps the old set for
+    the new one rather than adding the new set on top. Tool schemas named by availability
+    deltas after the anchor are estimated from the pending request parameters. This is what makes the estimate robust where the pure heuristic
     is not: token-dense content (minified JSON, base64, non-Latin scripts) and the tool
     definitions the heuristic cannot see at all are both inside the provider's number.
 
@@ -264,22 +294,79 @@ def estimate_context_tokens(
     if anchor := _latest_usage_anchor(messages):
         index, message = anchor
         anchored = message.usage.input_tokens + message.usage.output_tokens
-        segments = _collect_message_text(messages[index + 1 :])
+        segments = [
+            *_collect_message_text(messages[index + 1 :]),
+            *_revealed_tool_schema_text(messages[index + 1 :], model_request_parameters),
+        ]
         # The anchor paid for the instructions in force when its request was made. When the
-        # latest instructions differ (dynamic instructions, or a persisted history resumed
-        # under a new prompt), the new set is absent from both the anchor and the message
-        # text, so count it; when unchanged, counting it would double what the anchor holds.
+        # latest instructions differ (dynamic instructions such as a clock, or a persisted
+        # history resumed under a new prompt), the next request sends the new set *instead of*
+        # the old one: swap one estimate for the other. Adding the new set on top would count
+        # the instructions twice, and when unchanged neither needs counting.
         current_instructions = _instructions_text(messages)
-        if current_instructions != _instructions_text(messages[: index + 1]):
-            segments = [*segments, *current_instructions]
-        segments.extend(_revealed_tool_schema_text(messages[index + 1 :], model_request_parameters))
-        if tokenizer is not None:
-            return anchored + sum(tokenizer(s) for s in segments)
-        return anchored + sum(len(s) for s in segments) // _CHARS_PER_TOKEN
-    segments = [*_collect_text(messages), *_revealed_tool_schema_text(messages, model_request_parameters)]
+        anchored_instructions = _instructions_text(messages[: index + 1])
+        if current_instructions != anchored_instructions:
+            anchored += _count_segments(current_instructions, tokenizer)
+            anchored -= _count_segments(anchored_instructions, tokenizer)
+        return max(anchored + _count_segments(segments, tokenizer), 0)
+    return _count_segments(
+        [*_collect_text(messages), *_revealed_tool_schema_text(messages, model_request_parameters)], tokenizer
+    )
+
+
+def estimate_message_tokens(
+    messages: Sequence[ModelMessage],
+    tokenizer: Callable[[str], int] | None = None,
+) -> list[int]:
+    """Tokens each message adds to a request, measured with provider-reported usage where the history has it.
+
+    The text estimate (`tokenizer`, or ~4 characters per token) misses what a provider counts but
+    does not return as text, such as thinking kept as an empty part with a signature, and it
+    underestimates token-dense content. Usage measures both. A response counts at least its
+    `output_tokens`. Between two responses that carry usage, the later `input_tokens` minus the
+    earlier one is exactly what the earlier response and the requests after it added, so those
+    messages share that difference in proportion to their estimates. Where the history did not grow
+    between two such responses, as across a compaction, the difference measures nothing and the
+    estimates stand; so do messages before the first such response and after the last.
+
+    Instructions are left out: they are sent with every request, not carried by any one message.
+    """
+    counts = [
+        max(
+            _estimate_segments(segments, tokenizer),
+            message.usage.output_tokens if isinstance(message, ModelResponse) else 0,
+        )
+        for message, segments in zip(messages, _message_segments(messages))
+    ]
+    anchors = [index for index, message in enumerate(messages) if _reported_input_tokens(message)]
+    for start, end in zip(anchors, anchors[1:]):
+        span = _reported_input_tokens(messages[end]) - _reported_input_tokens(messages[start])
+        if span <= 0:
+            continue
+        estimated = max(sum(counts[start:end]), 1)
+        shares = [count * span // estimated for count in counts[start:end]]
+        shares[0] += span - sum(shares)
+        counts[start:end] = shares
+    return counts
+
+
+def _estimate_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
     if tokenizer is not None:
         return sum(tokenizer(s) for s in segments)
     return sum(len(s) for s in segments) // _CHARS_PER_TOKEN
+
+
+def _reported_input_tokens(message: ModelMessage) -> int:
+    """The provider-reported input tokens of a response, or 0 for a request or a response without usage."""
+    return message.usage.input_tokens if isinstance(message, ModelResponse) else 0
+
+
+def _has_reported_usage(messages: Sequence[ModelMessage]) -> bool:
+    """Whether any response carries provider-reported input or output tokens."""
+    return any(
+        isinstance(message, ModelResponse) and (message.usage.input_tokens or message.usage.output_tokens)
+        for message in messages
+    )
 
 
 def has_context_usage_anchor(messages: Sequence[ModelMessage]) -> bool:
@@ -326,21 +413,26 @@ def _tool_schema_text(tool: ToolDefinition) -> str:
     return ''.join((tool.name, tool.description or '', dumps(tool.parameters_json_schema, sort_keys=True)))
 
 
-def record_compaction_reclaim(request_context: ModelRequestContext, before: int, after: int) -> None:
+def reset_compaction_reclaim() -> None:
+    """Start a run without corrections inherited from a previous invocation."""
+    _COMPACTION_RECLAIM.set(None)
+
+
+def record_compaction_reclaim(ctx: RunContext[AgentDepsT], before: int, after: int) -> None:
     """Record a conservative correction for a later usage reporter in this hook chain."""
     previous = _COMPACTION_RECLAIM.get()
     reclaimed = max(before - after, 0)
-    if previous is not None and previous[0]() is request_context:
-        reclaimed += previous[1]
-    _COMPACTION_RECLAIM.set((ref(request_context), reclaimed))
+    if previous is not None and previous[:2] == (ctx.run_id, ctx.run_step):
+        reclaimed += previous[2]
+    _COMPACTION_RECLAIM.set((ctx.run_id, ctx.run_step, reclaimed))
 
 
-def get_compaction_reclaim(request_context: ModelRequestContext) -> int:
-    """Return the reclaim recorded for *request_context*, if it is still current."""
+def get_compaction_reclaim(ctx: RunContext[AgentDepsT]) -> int:
+    """Return the reclaim recorded for this request, or 0 for one left over from another."""
     previous = _COMPACTION_RECLAIM.get()
-    if previous is None or previous[0]() is not request_context:
+    if previous is None or previous[:2] != (ctx.run_id, ctx.run_step):
         return 0
-    return previous[1]
+    return previous[2]
 
 
 def exceeds(
@@ -656,9 +748,21 @@ def find_token_cutoff(
 ) -> int:
     """Binary-search for a cutoff such that `messages[cutoff:]` fits in *target_tokens*.
 
-    Adjusts the result so that no tool-call pairs are orphaned.
+    A history with provider-reported usage is measured with `estimate_message_tokens`, so the
+    tail holds *target_tokens* as the provider counts them; one without falls back to the text
+    estimate. Adjusts the result so that no tool-call pairs are orphaned.
     """
-    if not messages or estimate_token_count(messages, tokenizer) <= target_tokens:
+    if _has_reported_usage(messages):
+        counts = estimate_message_tokens(messages, tokenizer)
+
+        def tail_tokens(start: int) -> int:
+            return sum(counts[start:])
+    else:
+
+        def tail_tokens(start: int) -> int:
+            return estimate_token_count(messages[start:], tokenizer)
+
+    if not messages or tail_tokens(0) <= target_tokens:
         return 0
 
     lo, hi = 0, len(messages)
@@ -666,14 +770,14 @@ def find_token_cutoff(
 
     while lo < hi:
         mid = (lo + hi) // 2
-        if estimate_token_count(messages[mid:], tokenizer) <= target_tokens:
+        if tail_tokens(mid) <= target_tokens:
             candidate = mid
             hi = mid
         else:
             lo = mid + 1
 
     if candidate >= len(messages):
-        candidate = max(0, len(messages) - 1)  # pragma: no cover
+        candidate = max(0, len(messages) - 1)
 
     # Walk backward to a safe point.
     for idx in range(candidate, -1, -1):

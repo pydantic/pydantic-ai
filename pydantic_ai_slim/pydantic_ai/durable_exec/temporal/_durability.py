@@ -16,10 +16,10 @@ from pydantic_ai._utils import aclose_if_supported
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler
-from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._base import (
     MODEL_RESPONSE_STREAM_EVENT_TYPES,
     BaseDurabilityCapability,
+    conversation_id_from_run_id,
 )
 from pydantic_ai.durable_exec._capability_operation import CapabilityMethodDeclaration
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
@@ -77,7 +77,11 @@ from ._transports import (
     _ModelRequestTransport,
     _RequestParams as _RequestParams,
     _StreamedActivityPayload,
+    _WorkspaceCallTransport,
 )
+
+_STABLE_DEFAULT_RUN_ID_PATCH = 'pydantic_ai:stable_default_run_id'
+"""`workflow.patched()` ID marking histories in which every agent run drew its default `run_id`."""
 
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
 """Default `heartbeat_timeout` for the model-request activities.
@@ -329,6 +333,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         )
         self._register_activities(agent)
 
+    def _workspace_call_transport(self) -> _WorkspaceCallTransport:
+        return _WorkspaceCallTransport(self)
+
     def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Bind common model/event operations and adopt the existing toolset activities."""
         backend = self._operation_backend
@@ -487,6 +494,26 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return workflow.in_workflow()
 
+    def _default_run_id(self) -> str | None:
+        if not self.in_durable_context:
+            return None
+        # `workflow.uuid4()` draws from the workflow's random sequence. Histories recorded before every
+        # durable run got a stable default only drew here when the root capability supplied workspaces
+        # and reached this capability directly (not through a wrapper), so the rest replay without the
+        # draw and keep the sequence (and the random run ID) they were recorded with.
+        root = self._agent.root_capability if self._agent is not None else None
+        drew_before = (
+            root is not None
+            and root._has_get_workspace  # pyright: ignore[reportPrivateUsage]
+            and any(capability is self for capability in root.capabilities)
+        )
+        if not drew_before and not workflow.patched(_STABLE_DEFAULT_RUN_ID_PATCH):
+            return None
+        return f'{workflow.info().run_id}:{workflow.uuid4()}'
+
+    def _default_conversation_id(self, run_id: str) -> str | None:
+        return conversation_id_from_run_id(run_id) if self.in_durable_context else None
+
     async def wrap_run(
         self,
         ctx: RunContext[AgentDepsT],
@@ -500,12 +527,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         with disable_threads(), set_agent_graph_sleep(workflow.sleep):
             return await handler()
 
-    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
-        """Bind to the agent, pairing with the terminal-event publisher when a topic is set."""
-        bound = self._bind_for_agent(agent)
-        if bound._event_stream_topic is None:
-            return bound
-        return CombinedCapability([_TerminalEventPublisher(bound), bound])
+    def _companion_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
+        """Pair with the terminal-event publisher when a topic is set; it wraps outside the base's companions."""
+        companions = super()._companion_capabilities()
+        if self._event_stream_topic is None:
+            return companions
+        return [_TerminalEventPublisher(self), *companions]
 
     def _publish_terminal_event(self, result: AgentRunResult[Any]) -> None:
         """Publish the run's terminal event. Called by `_TerminalEventPublisher.after_run`."""

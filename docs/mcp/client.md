@@ -371,6 +371,8 @@ MCP tools can include metadata that provides additional information about the to
 
 [`MCPToolset`][pydantic_ai.mcp.MCPToolset] additionally exposes a `task: bool` flag indicating whether the toolset will use [task-augmented execution](#background-tasks) for the tool. For tools where task support is optional, this reflects the `prefer_tasks` setting.
 
+Tools with an [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) `_meta.ui.visibility` that leaves out `"model"` are not exposed to the model, since the server meant them only for its own UI.
+
 ## Background tasks
 
 [`MCPToolset`][pydantic_ai.mcp.MCPToolset] supports MCP [task-augmented execution](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks) (SEP-1686). Servers using SEP-1686, including FastMCP 3 servers, can declare per-tool task support via `execution.taskSupport`, and `MCPToolset` routes calls accordingly:
@@ -547,7 +549,7 @@ toolset = MCPToolset('http://localhost:3001/sse', http_client=http_client)  # (1
 agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
 
-1. When you supply `http_client`, Pydantic AI reuses this client for every request. Anything supported by HTTPX (`verify`, `cert`, custom proxies, timeouts, etc.) therefore applies to all MCP traffic. On FastMCP 3, build the client with legacy `httpx` instead.
+1. When you supply `http_client`, Pydantic AI reuses this client for every request. Anything supported by HTTPX (`verify`, `cert`, custom proxies, timeouts, etc.) therefore applies to all MCP traffic. The toolset never closes the client, so it can be reused across runs and you are responsible for closing it. On FastMCP 3, build the client with legacy `httpx` instead.
 
 ## Client identification
 

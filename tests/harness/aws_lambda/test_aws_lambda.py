@@ -229,6 +229,44 @@ class TestCapabilityOperation:
         assert resumed.invoked == []
         assert contributor.calls == 1
 
+    def test_operation_called_from_a_tool_runs_inside_the_tool_step(self) -> None:
+        class Contributor(AbstractCapability[Any]):
+            id = 'contributor'
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            @durable_operation('fetch')
+            async def fetch(self, ctx: RunContext[Any]) -> str:
+                self.calls += 1
+                return 'fetched'
+
+            def get_toolset(self) -> FunctionToolset[Any]:
+                toolset = FunctionToolset[Any](id=self.id)
+
+                @toolset.tool
+                async def act(ctx: RunContext[Any]) -> str:
+                    return await self.fetch(ctx)
+
+                return toolset
+
+        contributor = Contributor()
+        agent = Agent(tool_then_text(), name='a', capabilities=[contributor, AWSLambdaDurability()])
+
+        first = FakeDurableContext()
+        result = run_durable(lambda: agent.run('go'), context=first)
+
+        assert result.output == 'done'
+        assert not [name for name in first.step_names if name is not None and '__capability__' in name]
+        assert contributor.calls == 1
+
+        resumed = FakeDurableContext(journal=first.operations)
+        result = run_durable(lambda: agent.run('go'), context=resumed)
+
+        assert result.output == 'done'
+        assert resumed.invoked == []
+        assert contributor.calls == 1
+
     def test_operation_receives_base_step_config(self) -> None:
         class Contributor(AbstractCapability[Any]):
             id = 'contributor'
@@ -962,7 +1000,7 @@ class TestBridgeFailureModes:
         started_waiting = time.monotonic()
         deadline = time.monotonic() + 5
         while not abandoned.is_closed() and time.monotonic() < deadline:
-            time.sleep(0.01)  # pragma: no cover - the retired loop normally closes before polling
+            time.sleep(0.01)  # pragma: lax no cover - the retired loop normally closes before polling
 
         assert abandoned.is_closed()
         assert not abandoned_thread.is_alive()

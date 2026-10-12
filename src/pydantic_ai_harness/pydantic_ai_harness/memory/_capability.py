@@ -10,17 +10,24 @@ from typing import Literal
 
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, TextContent, UserPromptPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
-from pydantic_ai_harness.memory._store import InMemoryStore, MemoryFile, MemoryStore, validate_store_path
+from pydantic_ai_harness._durable import RetryRequest
+from pydantic_ai_harness.memory._store import FileStore, InMemoryStore, MemoryFile, MemoryStore, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
     MAIN_FILENAME,
+    MemoryDeleteResult,
+    MemorySearchResponse,
+    MemoryToolOperations,
     MemoryToolset,
+    MemoryWriteResult,
     injection_listing_limit,
     list_subfiles,
     render_memory_prompt,
+    run_as_operation,
 )
 
 _DEFAULT_GUIDANCE = (
@@ -52,7 +59,9 @@ class Memory(AbstractCapability[AgentDepsT]):
     """
 
     store: MemoryStore = field(default_factory=InMemoryStore)
-    """Storage backend. The default persists only for the process lifetime."""
+    """Storage backend. The default persists only for the process lifetime.
+
+    `FileStore` keeps Markdown files in the run's workspace, or in a workspace of its own."""
 
     store_resolver: Callable[[RunContext[AgentDepsT]], MemoryStore] | None = None
     """Optional per-run store resolver. Resolver failures always propagate."""
@@ -104,6 +113,9 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     _resolved_scope: tuple[MemoryStore, str] | None = field(default=None, init=False, repr=False, compare=False)
 
+    _toolset: MemoryToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
+    """The one `memory` toolset, shared with every per-run copy so durable execution sees the leaf it registered."""
+
     def __post_init__(self) -> None:
         _validate_positive('max_tokens', self.max_tokens)
         _validate_non_negative('max_lines', self.max_lines)
@@ -118,14 +130,27 @@ class Memory(AbstractCapability[AgentDepsT]):
         """Return a clone with scope resolution isolated to this run."""
         clone = copy(self)
         clone._resolved_scope = None
-        clone._resolved_scope = clone._resolve_scope(ctx)
+        store, scope = clone._resolve_scope(ctx)
+        clone._resolved_scope = (store.bind(ctx.workspace) if isinstance(store, FileStore) else store, scope)
         return clone
 
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Fail the run at its start when a `FileStore` has no workspace to keep its files in."""
+        store = self._resolved_scope[0] if self._resolved_scope is not None else self._resolve_scope(ctx)[0]
+        if isinstance(store, FileStore) and store.workspace is None and not ctx.workspace.attached:
+            raise UserError(
+                "`Memory(store=FileStore(...))` keeps memory files in the run's workspace, but none is attached "
+                "to this run. Attach one, such as `LocalWorkspace('.')`, or pass "
+                '`FileStore(..., workspace=LocalWorkspaceBackend(...))` to keep them somewhere else.'
+            )
+
     def resolve_scope(self, ctx: RunContext[AgentDepsT]) -> tuple[MemoryStore, str]:
-        """Return the cached run scope, or resolve one for direct toolset use."""
-        if self._resolved_scope is not None:
-            return self._resolved_scope
-        return self._resolve_scope(ctx)
+        """Return the cached run scope, or resolve one for direct toolset use.
+
+        A `FileStore` without a workspace of its own is bound to `ctx.workspace`.
+        """
+        store, scope = self._resolved_scope if self._resolved_scope is not None else self._resolve_scope(ctx)
+        return (store.bind(ctx.workspace) if isinstance(store, FileStore) else store), scope
 
     def _resolve_scope(self, ctx: RunContext[AgentDepsT]) -> tuple[MemoryStore, str]:
         store = self.store_resolver(ctx) if self.store_resolver is not None else self.store
@@ -135,8 +160,41 @@ class Memory(AbstractCapability[AgentDepsT]):
         return store, scope
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
-        """Provide the stable `memory` toolset."""
-        return MemoryToolset(self)
+        """Provide the stable `memory` toolset, shared with every per-run copy."""
+        return self._memory_toolset
+
+    @property
+    def _memory_toolset(self) -> MemoryToolset[AgentDepsT]:
+        if self._toolset is None:
+            operations = MemoryToolOperations[AgentDepsT](
+                write_memory=self._write_memory,
+                read_memory=self._read_memory,
+                delete_memory=self._delete_memory,
+                search_memory=self._search_memory,
+            )
+            self._toolset = MemoryToolset(self, operations=operations)
+        return self._toolset
+
+    # Each memory tool call is a durable operation, so durable execution records its result instead of
+    # repeating it on recovery. DBOS runs function tools in workflow code, where a forked workflow's new
+    # run id would otherwise give a repeated write a new idempotency key.
+    @durable_operation('write_memory')
+    async def _write_memory(
+        self, ctx: RunContext[AgentDepsT], content: str, file: str, old_text: str | None
+    ) -> MemoryWriteResult | RetryRequest:
+        return await run_as_operation(self._memory_toolset.write_memory(ctx, content, file, old_text))
+
+    @durable_operation('read_memory')
+    async def _read_memory(self, ctx: RunContext[AgentDepsT], file: str) -> str | RetryRequest:
+        return await run_as_operation(self._memory_toolset.read_memory(ctx, file))
+
+    @durable_operation('delete_memory')
+    async def _delete_memory(self, ctx: RunContext[AgentDepsT], file: str) -> MemoryDeleteResult | RetryRequest:
+        return await run_as_operation(self._memory_toolset.delete_memory(ctx, file))
+
+    @durable_operation('search_memory')
+    async def _search_memory(self, ctx: RunContext[AgentDepsT], query: str) -> MemorySearchResponse | RetryRequest:
+        return await run_as_operation(self._memory_toolset.search_memory(ctx, query))
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Provide trusted static guidance about using memory.
@@ -171,6 +229,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         # Scope-qualify the marker so several `Memory` capabilities on one agent
         # each refresh only their own injection instead of clobbering each other.
         marker = f'{_MEMORY_PART_METADATA}:{scope_hash}'
+        self._remove_previous_injection(ctx.messages, marker)
         self._remove_previous_injection(request_context.messages, marker)
         if not self.inject_memory:
             return request_context

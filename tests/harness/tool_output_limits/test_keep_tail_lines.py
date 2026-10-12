@@ -7,13 +7,6 @@ from pydantic_ai.messages import ToolReturn, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.tool_output_limits import Band, Passthrough, ToolOutputLimits, Truncate, TruncationStrategy
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 async def _run(value: object, capability: ToolOutputLimits[object]) -> tuple[ToolReturnPart, list[UserPromptPart]]:
     agent = Agent(TestModel(call_tools=['output']), capabilities=[capability])

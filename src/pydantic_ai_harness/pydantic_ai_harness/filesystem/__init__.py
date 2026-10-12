@@ -1,4 +1,4 @@
-"""Filesystem capability: gives agents configurable, sandboxed file system access."""
+"""Filesystem capability: gives agents configurable, bounded file system access."""
 
 from pydantic_ai_harness.filesystem._capability import FileSystem
 from pydantic_ai_harness.filesystem._events import (

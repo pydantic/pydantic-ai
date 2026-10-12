@@ -12,13 +12,6 @@ from pydantic_ai_harness.filesystem import FileEditedEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import StreamRenderer
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 async def test_shell_header_includes_argument_once() -> None:
     output = io.StringIO()
@@ -40,6 +33,15 @@ async def test_shell_header_includes_argument_once() -> None:
         )
     )
     assert output.getvalue() == '● shell ls /tmp\n\n'
+
+
+async def test_shell_header_without_a_command_shows_only_the_tool_name() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, show_tool_output=True)
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': ''}, tool_call_id='empty-shell'))
+    )
+    assert output.getvalue() == '● shell\n\n'
 
 
 async def test_shell_sgr_colors_across_chunks_and_lines() -> None:
@@ -156,8 +158,42 @@ async def test_shell_progress_replaces_carriage_return_frames() -> None:
     text = output.getvalue()
     assert 'header\n100%\ndone\n' in text
     assert '10%' not in text and '50%' not in text and '\\x0d' not in text
-    assert '(+2 command lines)' in text and 'print(123)' not in text
+    assert text.startswith('● shell python3 - <<PY\n        print(123)\n        PY\n\n')
     assert 'Truncated' not in text
+
+
+async def test_long_shell_command_wraps_under_a_hanging_indent() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=40), stop_loading=lambda: None)
+    command = 'cd /repo/src; cat pkg/module.py; grep -n "needle" -r pkg | head -40'
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id='long'))
+    )
+    assert output.getvalue() == (
+        '● shell cd /repo/src; cat pkg/module.py;\n        grep -n "needle" -r pkg | head\n        -40\n\n'
+    )
+
+
+async def test_shell_command_wraps_rather_than_clips_on_a_narrow_console() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=16), stop_loading=lambda: None)
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'echo abcdefghijkl'}, tool_call_id='narrow'))
+    )
+    assert output.getvalue() == '● shell echo\n        abcdefgh\n        ijkl\n\n'
+
+
+async def test_shell_command_rows_beyond_the_limit_are_counted() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None)
+    command = '\n'.join(f'echo {index}' for index in range(15))
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id='script'))
+    )
+    lines = output.getvalue().splitlines()
+    assert lines[0] == '● shell echo 0'
+    assert lines[9] == '        echo 9'
+    assert lines[10:] == ['        … +5 lines', '']
 
 
 async def test_edit_uses_termflow_diff_renderer() -> None:
@@ -177,5 +213,5 @@ async def test_edit_uses_termflow_diff_renderer() -> None:
     text = output.getvalue()
     assert '● edit_file demo.py' in Text.from_ansi(text).plain
     assert 'old' in text and 'new' in text
-    assert '\x1b[48;2;70;82;88m' in text  # addition rows: Aqua over Dark Purple
-    assert '\x1b[48;2;104;43;54m' in text  # deletion rows: Calcium over Dark Purple
+    assert '\x1b[48;2;34;92;43m' in text  # addition rows: green
+    assert '\x1b[48;2;122;41;54m' in text  # deletion rows: red

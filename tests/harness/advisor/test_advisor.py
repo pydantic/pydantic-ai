@@ -30,13 +30,6 @@ from tests.harness.conftest import agent_run_names
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 class _ProviderFunctionModel(FunctionModel):
     def __init__(

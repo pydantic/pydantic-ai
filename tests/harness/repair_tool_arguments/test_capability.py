@@ -11,11 +11,10 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, T
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
-
-pytestmark = pytest.mark.anyio
 
 
 def model_for(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse]) -> FunctionModel:
@@ -34,7 +33,7 @@ def model_for(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse])
 @pytest.fixture(params=['standalone', 'coder'])
 def capabilities(request: pytest.FixtureRequest, tmp_path: Path) -> list[AbstractCapability[object]]:
     if request.param == 'coder':
-        return [Coder(tmp_path)]
+        return [Coder()]
     return [RepairToolArguments(), FileSystem(root_dir=tmp_path, content_hashes=False)]
 
 
@@ -42,7 +41,7 @@ class TestRepairToolArguments:
     async def test_dictionary_arguments(self, capabilities: list[AbstractCapability[object]], tmp_path: Path) -> None:
         model = TestModel(call_tools=['write_file'], seed=0)
         agent = Agent(model, capabilities=capabilities)
-        result = await agent.run('Write a file')
+        result = await agent.run('Write a file', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
         assert not any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
 
     @pytest.mark.parametrize('error', [ValueError, RecursionError])
@@ -82,7 +81,7 @@ class TestRepairToolArguments:
             return ModelResponse(parts=[TextPart('done')])
 
         agent = Agent(model_for(respond), capabilities=capabilities)
-        result = await agent.run('Write hello.txt')
+        result = await agent.run('Write hello.txt', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
         assert result.output == 'done'
         assert (tmp_path / 'hello.txt').read_text() == 'hello'
         assert calls == 2
@@ -103,7 +102,7 @@ class TestRepairToolArguments:
             return ModelResponse(parts=[TextPart('invalid arguments')])
 
         agent = Agent(model_for(respond), capabilities=capabilities)
-        await agent.run('Write hello.txt')
+        await agent.run('Write hello.txt', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
         assert not (tmp_path / 'hello.txt').exists()
 
     async def test_repaired_edit_preserves_code(
@@ -129,7 +128,7 @@ class TestRepairToolArguments:
             return ModelResponse(parts=[TextPart('done')])
 
         agent = Agent(model_for(respond), capabilities=capabilities)
-        await agent.run('Edit hello.py')
+        await agent.run('Edit hello.py', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
         assert path.read_text() == 'print("日本語")\npath = "C:\\tmp"\n'
 
     @pytest.mark.parametrize('arguments', ['{"value": "secret"}', '{"value": "secret",}', {'value': 'secret'}])

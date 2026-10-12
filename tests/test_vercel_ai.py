@@ -6,7 +6,7 @@ import uuid
 import warnings
 from collections.abc import AsyncIterator, MutableMapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 import pytest
@@ -139,7 +139,6 @@ with try_import() as openai_import_successful:
 
 pytestmark = [
     pytest.mark.skipif(not starlette_import_successful(), reason='starlette not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -1567,6 +1566,84 @@ async def test_run_stream_text_and_thinking():
     )
 
 
+async def test_vercel_ai_id_only_tool_call_delta_emits_no_args_fragment():
+    """An ID-only `DeltaToolCall` streams no argument bytes, so it must not contribute a `'null'` fragment."""
+    calls: list[int] = []
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='f', json_args='{"x":', tool_call_id='c')}
+            yield {0: DeltaToolCall(tool_call_id='c')}  # ID-only update: no `args_delta`
+            yield {0: DeltaToolCall(json_args='1}')}
+        else:
+            yield 'Done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def f(x: int) -> str:
+        calls.append(x)
+        return 'ok'
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    args_fragments: list[str] = [
+        event['inputTextDelta'] for event in events if isinstance(event, dict) and event['type'] == 'tool-input-delta'
+    ]
+    assert args_fragments == snapshot(['{"x":', '1}'])
+    assert json.loads(''.join(args_fragments)) == {'x': 1}
+    assert calls == [1]
+
+
+async def test_vercel_ai_null_string_args_delta_preserved_verbatim():
+    """A genuine `'null'` `args_delta` string must be emitted verbatim: the skip is `is None`, not falsiness."""
+    calls: list[int | None] = []
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='f', json_args='{"x":', tool_call_id='c')}
+            yield {0: DeltaToolCall(tool_call_id='c', json_args='null')}
+            yield {0: DeltaToolCall(json_args='}')}
+        else:
+            yield 'Done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def f(x: int | None) -> str:
+        calls.append(x)
+        return 'ok'
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    args_fragments: list[str] = [
+        event['inputTextDelta'] for event in events if isinstance(event, dict) and event['type'] == 'tool-input-delta'
+    ]
+    assert args_fragments == snapshot(['{"x":', 'null', '}'])
+    assert json.loads(''.join(args_fragments)) == {'x': None}
+    assert calls == [None]
+
+
 async def test_run_stream_thinking_with_signature():
     """Test that thinking parts with signatures include providerMetadata in reasoning-end events."""
 
@@ -1646,7 +1723,7 @@ async def test_tool_call_start_args_are_emitted_raw():
             index=1,
             part=ToolCallPart(
                 tool_name='whole',
-                args={'query': 'hello', 'when': datetime(2025, 1, 1, tzinfo=timezone.utc)},
+                args={'query': 'hello', 'when': datetime(2025, 1, 1, tzinfo=UTC)},
                 tool_call_id='call_2',
             ),
             previous_part_kind='tool-call',
@@ -1731,7 +1808,7 @@ async def test_tool_call_delta_dict_args_are_serialized_compactly():
                 args_delta={
                     'type': 'search',
                     'query': 'weather',
-                    'when': datetime(2025, 1, 1, tzinfo=timezone.utc),
+                    'when': datetime(2025, 1, 1, tzinfo=UTC),
                 },
                 tool_call_id='call_1',
             ),
@@ -5433,6 +5510,21 @@ async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserve
             id='file-url-media-type-not-inferable',
         ),
         pytest.param(
+            {'kind': 'image-url', 'url': 'https://e.com/report', 'media_type': None},
+            snapshot(ImageUrl(url='https://e.com/report')),
+            snapshot(
+                {
+                    'url': 'https://e.com/report',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': None,
+                    'identifier': '41cafe',
+                }
+            ),
+            id='file-url-media-type-not-inferable-null',
+        ),
+        pytest.param(
             {'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'},
             snapshot({'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'}),
             snapshot({'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'}),
@@ -5469,9 +5561,10 @@ async def test_adapter_load_tool_return_completes_documented_file_shapes(
     A URL shape is documented without a `media_type`, so the adapter completes it from the URL the way
     the type itself would — including when the client left the key `null` or empty, which is what
     `File.type` gives a browser that cannot tell — and an `uploaded-file` shape needs nothing
-    completed. The dump is asserted for every case because it is the leg the completion protects: a
-    URL with no readable media type is left as the mapping it is, where reconstructing it would raise
-    `Could not infer media type` here. A mapping the type rejects keeps exactly the keys the client
+    completed. The dump is asserted for every case, so every file reconstructed here is proven to dump
+    again. A URL with no readable media type is left as the client sent it: a mapping when `media_type`
+    is absent or empty, and a file with no media type when it is `null`, the value our own dump writes
+    for such a URL. A mapping the type rejects keeps exactly the keys the client
     sent: the completion validates the mapping as it stands, so it never writes a `media_type` into
     something that stays a plain mapping.
     """
@@ -6122,6 +6215,38 @@ async def test_adapter_dump_messages_with_thinking():
     )
 
 
+@pytest.mark.parametrize('url_type', [ImageUrl, AudioUrl, VideoUrl, DocumentUrl])
+def test_dump_messages_extensionless_url_round_trips(
+    url_type: type[ImageUrl | AudioUrl | VideoUrl | DocumentUrl],
+) -> None:
+    """A URL whose media type can't be inferred dumps an empty `media_type`, and comes back as itself.
+
+    `FileUIPart.media_type` is a required string, so a URL Pydantic AI can't read a media type out of is
+    dumped with an empty one rather than raising. That value is also what the load side reads the URL's
+    kind from, and an empty one reads as no kind at all, so the kind rides along in `provider_metadata`
+    instead of every URL kind coming back as a document.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[url_type(url='https://example.com/file')])])
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    file_part = next(part for part in ui_messages[0].parts if isinstance(part, FileUIPart))
+    assert file_part.model_dump(exclude_none=True) == {
+        'type': 'file',
+        'media_type': '',
+        'url': 'https://example.com/file',
+        'provider_metadata': {'pydantic_ai': {'kind': url_type.kind}},
+    }
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    assert list(iter_message_parts(reloaded, ModelRequest, UserPromptPart)) == [
+        UserPromptPart(content=[url_type(url='https://example.com/file')], timestamp=IsDatetime())
+    ]
+    # URL parts compare without their media type, so pin the whole dumped part rather than the part alone.
+    assert VercelAIAdapter.dump_messages(reloaded)[0].parts[-1] == file_part
+
+
 async def test_adapter_dump_messages_with_files():
     """Test dumping messages with file parts."""
     messages = [
@@ -6505,8 +6630,8 @@ async def test_adapter_dump_load_roundtrip_with_message_metadata():
     and response-confirmed recovery in `ModelResponse.provider_details` are both deliberately
     excluded from the client-controlled wire.
     """
-    request_timestamp = datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc)
-    response_timestamp = datetime(2026, 4, 15, 12, 0, 45, tzinfo=timezone.utc)
+    request_timestamp = datetime(2026, 4, 15, 12, 0, tzinfo=UTC)
+    response_timestamp = datetime(2026, 4, 15, 12, 0, 45, tzinfo=UTC)
     original_messages: list[ModelRequest | ModelResponse] = [
         ModelRequest(
             parts=[
@@ -6583,7 +6708,7 @@ async def test_adapter_message_metadata_application_only_roundtrip():
     """Application-only metadata (no `pydantic_ai` key) round-trips unchanged."""
     response = ModelResponse(
         parts=[TextPart(content='Response text')],
-        timestamp=datetime(2026, 4, 15, 12, 0, 45, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 15, 12, 0, 45, tzinfo=UTC),
         metadata={'createdAt': '2026-04-15T12:00:45Z'},
     )
     [ui_message] = VercelAIAdapter.dump_messages([response])
@@ -6699,7 +6824,7 @@ async def test_adapter_load_preserves_application_metadata_across_merged_message
     [reloaded] = VercelAIAdapter.load_messages([system_message, user_message])
     assert isinstance(reloaded, ModelRequest)
     assert reloaded.metadata == {'app_key': 'app_value', '__pydantic_ai__': {'ui_message_id': 'usr-1'}}
-    assert reloaded.timestamp == datetime(2026, 4, 15, 12, 0, 45, tzinfo=timezone.utc)
+    assert reloaded.timestamp == datetime(2026, 4, 15, 12, 0, 45, tzinfo=UTC)
 
 
 async def test_adapter_dump_messages_deterministic_ids():
@@ -6913,7 +7038,7 @@ async def test_event_stream_emits_message_metadata():
     response = ModelResponse(
         parts=[TextPart(content='Hello')],
         usage=RequestUsage(input_tokens=4, output_tokens=2),
-        timestamp=datetime(2026, 4, 15, 12, 0, 45, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 15, 12, 0, 45, tzinfo=UTC),
         provider_name='openai',
         provider_details={'model': 'gpt-4.1'},
         provider_response_id='resp-123',
@@ -10871,7 +10996,7 @@ async def test_roundtrip_native_tool_search():
                     content={'discovered_tools': [{'name': 'refund_tool'}]},
                 ),
             ],
-            timestamp=datetime(2026, 6, 15, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 6, 15, tzinfo=UTC),
         ),
     ]
 
@@ -11200,7 +11325,7 @@ def test_compaction_ui_round_trip_and_sanitization():
             'pydantic_ai_standing_prompt_planted': True,
         },
     )
-    messages = [ModelResponse(parts=[compaction], timestamp=datetime(2026, 8, 7, tzinfo=timezone.utc))]
+    messages = [ModelResponse(parts=[compaction], timestamp=datetime(2026, 8, 7, tzinfo=UTC))]
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
     assert [message.model_dump(exclude_none=True) for message in ui_messages] == snapshot(
