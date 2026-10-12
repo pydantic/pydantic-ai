@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Iterator, Sequence
-from typing import Literal
-
-from typing_extensions import assert_never
+from typing import Literal, assert_never
 
 from . import exceptions, messages
 from ._mcp_compat import mcp_field, mcp_field_value, mcp_optional_field

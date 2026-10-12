@@ -83,6 +83,7 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
+    WebRTCSession,
 )
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
@@ -326,7 +327,7 @@ class AnyioScopeActivityCancellationWorkflow:
 
         try:
             await asyncio.wait_for(run_in_task_group(), timeout=0.1)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return 'timed out cleanly'
         return 'completed'  # pragma: no cover
 
@@ -360,7 +361,7 @@ class WaitForNonStreamingAgentTimeoutWorkflow:
     async def run(self) -> str:
         try:
             result = await asyncio.wait_for(_wait_for_nonstreaming_agent.run('say hi'), timeout=0.5)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return 'clean-timeout'
         return f'unexpected-success:{result.output}'  # pragma: no cover
 
@@ -434,7 +435,7 @@ class WaitForAgentTimeoutWorkflow:
     async def run(self) -> str:
         try:
             await asyncio.wait_for(_wait_for_timeout_agent.run('go slowly'), timeout=0.5)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return 'timed out cleanly'
         return 'completed'  # pragma: no cover
 
@@ -456,10 +457,6 @@ async def test_wait_for_agent_timeout_in_workflow_does_not_livelock(client: Clie
     assert result == 'timed out cleanly'
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 11),
-    reason='the cancellation backstop needs `Task.cancelling()` (Python 3.11+); on 3.10 the absorbed cancel legitimately completes',
-)
 async def test_temporal_cancellation_backstop_survives_absorbed_activity_cancel(client: Client) -> None:
     """A cancelled workflow cannot complete after its streaming model activity absorbs cancellation."""
     global _cancellation_activity_cancel_absorbed, _cancellation_activity_started
@@ -714,6 +711,7 @@ async def test_temporal_durability_accepts_legacy_cancel_activity_payload() -> N
     assert failing_events == ['enter', 'cancel:failing', 'exit:RuntimeError']
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_complex_agent_run_in_workflow(
     allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire
 ):
@@ -1905,6 +1903,8 @@ async def test_temporal_agent_realtime_signaling_in_workflow():
             await realtime.answer_webrtc_offer('v=0')
         with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
             await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+            await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
 class _FakeRealtimeConnection(RealtimeConnection):

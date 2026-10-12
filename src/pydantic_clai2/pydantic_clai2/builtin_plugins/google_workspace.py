@@ -280,6 +280,7 @@ class GoogleWorkspacePlugin(Plugin[GoogleWorkspaceSettings, DepsT]):
                 name='google_workspace',
                 description='Google Workspace settings: products, read-only tools, and the /keys token',
                 handler=partial(configure, self.host),
+                during_turn=True,
             ),
         )
 

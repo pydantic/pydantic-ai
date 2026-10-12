@@ -20,6 +20,12 @@ safe-outputs:
   report-failure-as-issue: false
   noop:
     report-as-issue: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   create-issue:
     max: 1
     title-prefix: "[bug-hunter] "
@@ -43,11 +49,12 @@ imports:
   - shared/rigor.md
   - shared/adversarial-review.md
   - shared/checkout.md
-  - shared/engine-minimax.md
+  - shared/engine-zai.md
   - shared/provider-health.md
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
   - shared/issue-filing-context.md
+  - shared/security-findings.md
 
 jobs:
   fetch_dynamic_prompt:

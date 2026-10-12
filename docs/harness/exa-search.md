@@ -268,11 +268,12 @@ to proceed. Each result includes the run ID, which the model can pass back as
 
 ## Multiple instances
 
-Two instances of the same capability register the same tool names, which is an
+Two instances of the same capability register the same tool names, and share
+the default `id` (`exa_search` or `exa_agent`), so two that differ raise an
 error. To run several differently configured instances in one agent (for
-example one open-web `ExaSearch` and one pinned to specific domains), wrap the
-extra instances in core's `PrefixTools` capability, which prefixes their tool
-names:
+example one open-web `ExaSearch` and one pinned to specific domains), give each
+extra instance a distinct `id` and wrap it in core's `PrefixTools` capability,
+which prefixes their tool names:
 
 ```python
 from pydantic_ai import Agent
@@ -285,7 +286,7 @@ agent = Agent(
     capabilities=[
         ExaSearch(),  # web_search, get_page
         PrefixTools(
-            wrapped=ExaSearch(include_domains=['crunchbase.com'], guidance=''),
+            wrapped=ExaSearch(include_domains=['crunchbase.com'], guidance='', id='crunchbase_search'),
             prefix='cb',
         ),  # cb_web_search, cb_get_page
     ],
@@ -300,6 +301,28 @@ This also works for `ExaAgent`: it identifies its deferred calls by metadata
 it wrote when deferring, not by tool name, so a prefixed `exa_agent` still
 resolves inline, and multiple `ExaAgent` instances never claim each other's
 calls.
+
+## Durable execution
+
+Under [durable execution](durable-execution.md), each Exa request is recorded, so a
+recovered run reuses the result instead of making the request again. Temporal
+and Prefect record each tool call in its own activity or task. DBOS runs
+function tools in workflow code, so there the request runs as its own step.
+`ExaAgent` records creating the Exa run and, with `execution='inline'`,
+polling it to completion.
+
+On Temporal an activity has 60 seconds by default, which `deep_search` can
+exceed. Give the tool calls longer with
+`TemporalDurability(toolset_activity_config={'exa_search': ActivityConfig(...)})`,
+keyed by the capability's `id`,
+as in [Temporal timeouts](durable-execution.md#temporal-timeouts). `ExaAgent` polls its run in a capability
+activity, which takes the base `activity_config`, so set its
+`start_to_close_timeout` above `timeout_ms`.
+
+The records are named after the capability's `id`, which defaults to
+`exa_search` for `ExaSearch` and `exa_agent` for `ExaAgent`, so durable
+execution needs no configuration. Changing an `id` renames the records, which
+in-flight runs then cannot find.
 
 ## Custom client
 

@@ -146,6 +146,14 @@ def _parse_command_id(result: str) -> str:
     return result.split('ID: ')[1].strip()
 
 
+async def _check_until(ts: ShellToolset[None], working_dir: Path, command_id: str, expected: str) -> str:
+    """Poll `check_command` until its result contains `expected`, rather than sleeping a fixed time."""
+    with anyio.fail_after(10):
+        while expected not in (result := await ts.check_command(_ctx(working_dir), command_id)):
+            await anyio.sleep(0.01)
+    return result
+
+
 async def _job(ts: ShellToolset[None], ctx: RunContext[None], command_id: str) -> Job:
     job = await ts._job(ctx, command_id)  # pyright: ignore[reportPrivateUsage]
     assert job is not None
@@ -1161,7 +1169,7 @@ class TestBackgroundCommands:
         start_result = await ts.start_command(_ctx(shell_dir), 'echo hello_bg')
         command_id = _parse_command_id(start_result)
 
-        await anyio.sleep(0.5)
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
 
         stop_result = await ts.stop_command(_ctx(shell_dir), command_id)
         assert 'stopped' in stop_result
@@ -1191,7 +1199,7 @@ class TestBackgroundCommands:
         ts = _shell_toolset(shell_dir, max_output_chars=200)
         start_result = await ts.start_command(_ctx(shell_dir), "printf '%0400d' 0; sleep 30")
         command_id = _parse_command_id(start_result)
-        await anyio.sleep(0.5)
+        await _check_until(ts, shell_dir, command_id, '0' * 400)
 
         try:
             check_result = await _call_shell_tool(ts, shell_dir, 'check_command', command_id=command_id)
@@ -1239,9 +1247,7 @@ class TestBackgroundCommands:
         start_result = await ts.start_command(_ctx(shell_dir), 'echo done_quick')
         command_id = _parse_command_id(start_result)
 
-        await anyio.sleep(0.5)
-
-        check_result = await ts.check_command(_ctx(shell_dir), command_id)
+        check_result = await _check_until(ts, shell_dir, command_id, '[status: finished]')
         assert 'finished' in check_result
         assert 'done_quick' in check_result
         assert check_result.splitlines()[-2:] == ['[status: finished]', '[exit code: 0]']
@@ -1274,7 +1280,7 @@ class TestBackgroundCommands:
         start_result = await ts.start_command(_ctx(shell_dir), 'echo err_bg >&2')
         command_id = _parse_command_id(start_result)
 
-        await anyio.sleep(0.5)
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
 
         stop_result = await ts.stop_command(_ctx(shell_dir), command_id)
         assert 'err_bg' in stop_result
@@ -1292,7 +1298,7 @@ class TestBackgroundCommands:
         start_result = await ts.start_command(_ctx(shell_dir), 'true')
         command_id = _parse_command_id(start_result)
 
-        await anyio.sleep(0.5)
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
 
         stop_result = await ts.stop_command(_ctx(shell_dir), command_id)
         assert '(no output)' in stop_result
@@ -1328,7 +1334,7 @@ class TestBackgroundCommands:
         start_result = await ts.start_command(_ctx(shell_dir), 'echo err_check >&2')
         command_id = _parse_command_id(start_result)
 
-        await anyio.sleep(0.5)
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
 
         check_result = await ts.check_command(_ctx(shell_dir), command_id)
         assert '[stderr]' in check_result
@@ -1349,7 +1355,7 @@ class TestBackgroundCommands:
         start_result = await ts.start_command(_ctx(shell_dir), 'pwd')
         command_id = _parse_command_id(start_result)
 
-        await anyio.sleep(0.5)
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
 
         stop_result = await ts.stop_command(_ctx(shell_dir), command_id)
         assert str(shell_dir) in stop_result
@@ -1368,7 +1374,7 @@ class TestBackgroundCommands:
         start_result = await ts.start_command(_ctx(shell_dir), 'true')
         command_id = _parse_command_id(start_result)
 
-        await anyio.sleep(0.5)
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
 
         await ts.stop_command(_ctx(shell_dir), command_id)
 
@@ -1606,18 +1612,25 @@ class TestStopEscalation:
 
     async def test_stop_signals_group_after_wrapper_exits(self, shell_dir: Path) -> None:
         ts = _shell_toolset(shell_dir)
-        command_id = _parse_command_id(await ts.start_command(_ctx(shell_dir), 'exec sleep 30'))
+        ready = shell_dir / 'finished-group-ready'
+        start = await ts.start_command(
+            _ctx(shell_dir), f"trap '' TERM; echo ready > {shlex.quote(str(ready))}; while :; do sleep 1; done"
+        )
+        command_id = _parse_command_id(start)
         job = await _job(ts, _ctx(shell_dir), command_id)
-        # A published finished status may precede the exit of another group member.
-        with patch.object(Job, 'status', return_value=(False, 0)):
-            assert '[stopped]' in await ts.stop_command(_ctx(shell_dir), command_id)
         try:
+            with anyio.fail_after(10):
+                while not ready.exists() or not ready.read_text().strip():
+                    await anyio.sleep(0.01)  # pragma: lax no cover
+            # Published completion can precede a surviving group member; it must need SIGKILL, not win a TERM race.
+            with patch.object(Job, 'status', return_value=(False, 0)):
+                assert '[stopped]' in await ts.stop_command(_ctx(shell_dir), command_id)
             await _wait_for_exit(job.pid)
         finally:
-            try:
-                os.kill(job.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            with anyio.CancelScope(shield=True):
+                await job.kill()
+                await _wait_for_exit(job.pid)
+                await job.cleanup()
 
     async def test_stop_escalates_to_sigkill(self, shell_dir: Path) -> None:
         """A group that ignores SIGTERM is killed after the grace period, with no exit code to report."""
@@ -2134,7 +2147,7 @@ class TestEnvControlExecution:
         ts = _env_toolset(shell_dir, env={'BG_TOKEN': 'bg-present'})
         start_result = await ts.start_command(_ctx(shell_dir), _read_env_var('BG_TOKEN'))
         command_id = _parse_command_id(start_result)
-        await anyio.sleep(0.5)
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
         stop_result = await ts.stop_command(_ctx(shell_dir), command_id)
         assert 'bg-present' in stop_result
 

@@ -14,7 +14,7 @@ from rich.console import Console
 from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
 from pydantic_ai.messages import NativeToolCallPart, TextPart, ToolCallPart, ToolCallPartDelta, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2._app import _reset_status, create_shell  # pyright: ignore[reportPrivateUsage]
+from pydantic_clai2._app import create_shell
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -114,14 +114,10 @@ async def test_footer_paints_the_context_figure_on_alert(monkeypatch: pytest.Mon
     assert f'{sgr(WARNING)}9{sgr(WARNING)}0' in painted and f'{sgr(WARNING)}m' not in painted
 
 
-@pytest.mark.parametrize('command', ['/new', '/clear', '/resume'])
-def test_new_resets_the_figures_whatever_follows_it(command: str) -> None:
+def test_clearing_the_conversation_resets_its_figures() -> None:
     status = Status(context_tokens=90, context_window=100, context_alert=True, output_tokens=5, streamed_chars=8)
-    _reset_status(f'{command} please', status)
+    status.clear_conversation()
     assert status == Status()
-    status.context_alert = True
-    _reset_status(f'{command}er', status)
-    assert status.context_alert
 
 
 async def test_model_change_clears_the_previous_context_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -149,6 +145,51 @@ async def test_model_change_clears_the_previous_context_window(tmp_path: Path, m
     shell.commands.register(Command(name='inspect', description='Read status', handler=inspect))
     await shell.run()
     assert readings == [(1_000_000, True), (None, False)]
+
+
+@pytest.mark.parametrize(
+    ('model_window', 'measured', 'expected'),
+    [(1_000_000, None, 1_000_000), (None, None, None), (1_000_000, 200_000, 200_000)],
+)
+async def test_the_shell_shows_the_model_window_without_compaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    model_window: int | None,
+    measured: int | None,
+    expected: int | None,
+) -> None:
+    """`coder` keeps `compaction` and its gauge off, so the shell reads the request model's window itself.
+
+    A window the gauge already measured, such as its `context_window` override, is kept.
+    """
+    inputs(monkeypatch, ['/measure', 'hello', '/inspect', '/exit'])
+    shell = create_shell(
+        Agent(TestModel(profile={'context_window': model_window})),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+    )
+    readings: list[str] = []
+
+    def measure(args: list[str]) -> str:
+        shell.status.context_window = measured
+        return ''
+
+    def inspect(args: list[str]) -> str:
+        readings.append(shell.status.text())
+        return ''
+
+    shell.commands.register(Command(name='measure', description='Act as the gauge', handler=measure))
+    shell.commands.register(Command(name='inspect', description='Read status', handler=inspect))
+    await shell.run()
+    assert shell.status.context_window == expected
+    assert re.search(r'context: \d+/', readings[0])
+    assert shell.session.on_context_window is None
 
 
 def test_tool_status_transitions() -> None:
