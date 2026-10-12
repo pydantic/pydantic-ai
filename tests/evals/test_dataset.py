@@ -6,7 +6,7 @@ import json
 import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from functools import partial
+from functools import partial, wraps
 from pathlib import Path
 from typing import Any, Literal
 
@@ -123,6 +123,26 @@ def test_evaluate_sync_creates_missing_event_loop(missing_event_loop: asyncio.Ab
     assert replacement_loop is not missing_event_loop
     assert not replacement_loop.is_closed()
     assert not asyncio.all_tasks(replacement_loop)
+
+
+async def test_evaluate_decorated_partial() -> None:
+    """A local task isolates name inference without making any model requests."""
+
+    def add(inputs: int, offset: int) -> int:
+        return inputs + offset
+
+    task = partial(add, offset=2)
+
+    @wraps(task)
+    def wrapped_task(inputs: int) -> int:
+        return task(inputs)
+
+    dataset = Dataset[int, int, None](name='test', cases=[Case(inputs=3)])
+    report = await dataset.evaluate(wrapped_task, progress=False)
+
+    assert report.name == 'add'
+    assert report.cases[0].output == 5
+    assert report.failures == []
 
 
 class TaskMetadata(BaseModel):
