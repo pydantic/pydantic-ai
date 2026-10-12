@@ -1061,6 +1061,18 @@ async def test_interrupted_stream_has_a_failure_terminal_result(
     assert events[-1].data['status'] == 'failure'
 
 
+def code_mode_off_args(tmp_path: Path) -> tuple[str, str]:
+    """CLI arguments that point CLAI at a settings database with code mode off.
+
+    CLAI folds tools into `run_code` by default, and `TestModel` cannot write code that runs.
+    """
+    from pydantic_clai2.config.settings_store import SettingsStore
+
+    database = tmp_path / 'clai2.db'
+    SettingsStore(database).set('run.code_mode', False)
+    return '--database', str(database)
+
+
 @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
 @pytest.mark.parametrize(
     ('cli_fails', 'expected_exit_code', 'expected_status'),
@@ -1108,7 +1120,7 @@ sys.__stdout__ = _FailTerminalWrites(sys.__stdout__)
     extra_cli_args = ('--gh-aw-invalid',) if cli_fails else ()
 
     completed = subprocess.run(
-        [sys.executable, *arguments, *extra_cli_args],
+        [sys.executable, *arguments, *code_mode_off_args(tmp_path), *extra_cli_args],
         cwd=invocation.cwd,
         env=invocation.env,
         input=invocation.stdin,
@@ -1171,7 +1183,17 @@ class TestLauncherProgram:
     @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
     @requires_clai2
     def test_the_agent_module_is_imported_once_and_not_from_the_checkout(self, tmp_path: Path) -> None:
-        completed = self.run(tmp_path, 'gh_aw_agent:agent', '-a', 'gh_aw_agent:agent', '-m', 'test', '-p', 'hello')
+        completed = self.run(
+            tmp_path,
+            'gh_aw_agent:agent',
+            '-a',
+            'gh_aw_agent:agent',
+            '-m',
+            'test',
+            '-p',
+            'hello',
+            *code_mode_off_args(tmp_path),
+        )
 
         assert completed.returncode == 0, completed.stderr
         # One line, from the module directory: the CLI reused the module the launcher
