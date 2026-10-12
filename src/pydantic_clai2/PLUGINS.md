@@ -434,6 +434,10 @@ same saved conversation IDs. A root is exported only when it ends, at exit, so a
 `CLAI session opened` log under it carries its `agent_session_id` and email
 from the start. With `--resume`, the root opens before the conversation is
 chosen, so it is logged again with the saved ID once startup selects it.
+Logfire rejects spans that started more than a day before they arrive, so a
+root is also ended once it has been open for `ROOT_LIFETIME` (12 hours) in
+`pydantic_clai2.builtin_plugins.logfire_session`. The next record opens a new
+root with the same `agent_session_id`; a run under way stays in the old trace.
 
 `user_tag` (default `logfire-account`) tags each session root, and only the
 root and its `CLAI session opened` log, with your email, as a Logfire tag and
