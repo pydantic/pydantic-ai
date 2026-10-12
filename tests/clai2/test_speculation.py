@@ -43,7 +43,6 @@ def speculation(tmp_path: Path, console: Console | None = None) -> Speculation:
     context = CommandContext(
         settings=store.load(),
         store=store,
-        clear_history=lambda: None,
         apply_setting=lambda key, settings: None,
     )
     return Speculation(context=context, console=console or Console(file=io.StringIO()))
