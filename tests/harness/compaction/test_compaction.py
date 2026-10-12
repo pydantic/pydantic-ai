@@ -68,6 +68,7 @@ from pydantic_ai_harness.compaction import (
     WarnNearLimits,
     drain_summary_events,
     estimate_context_tokens,
+    estimate_message_tokens,
     estimate_token_count,
     is_pinned,
     pin,
@@ -267,6 +268,26 @@ class TestEstimateContextTokens:
         msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
         assert estimate_context_tokens(msgs) == 50_500 + 10 + 1_000
 
+    def test_changed_instructions_replace_the_anchored_set(self):
+        # The next request sends the new set instead of the one the anchor paid for, as when
+        # an hourly clock in the instructions ticks over: count the difference, not both sets.
+        request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='o' * 4_000)
+        request_after = ModelRequest(parts=[UserPromptPart(content='a' * 40)], instructions='n' * 4_400)
+        msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
+        assert estimate_context_tokens(msgs) == 50_500 + 10 + 100
+
+    def test_shorter_instructions_lower_the_estimate(self):
+        request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='o' * 4_000)
+        request_after = ModelRequest(parts=[UserPromptPart(content='a' * 40)], instructions='n' * 400)
+        msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
+        assert estimate_context_tokens(msgs) == 50_500 + 10 - 900
+
+    def test_changed_instructions_are_swapped_with_a_tokenizer(self):
+        request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='one two')
+        request_after = ModelRequest(parts=[UserPromptPart(content='three')], instructions='one two three four')
+        msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
+        assert estimate_context_tokens(msgs, tokenizer=lambda s: len(s.split())) == 50_500 + 1 + 2
+
     def test_tokenizer_applies_to_the_suffix(self):
         msgs: list[ModelMessage] = [
             _assistant_with_usage('short', 50_000, 500),
@@ -386,6 +407,65 @@ class TestFindTokenCutoff:
         # messages[2:] = 8 tokens (fits), messages[1:] = 12 (does not) -> candidate is 2,
         # which splits the pair, so it walks back to 1.
         assert find_token_cutoff(msgs, 8, tokenizer=len) == 1
+
+    def test_measures_the_tail_with_provider_usage(self):
+        """Thinking a provider returns without text counts, so the tail is not mostly unseen tokens."""
+        msgs: list[ModelMessage] = [
+            _user('start'),
+            _reported(input_tokens=100, output_tokens=5000),
+            _user('next'),
+            _reported(input_tokens=5200, output_tokens=10),
+            _user('last'),
+        ]
+        assert estimate_token_count(msgs) <= 100, 'the text estimate alone would keep everything'
+        assert find_token_cutoff(msgs, 100) == 2
+
+    def test_output_usage_alone_counts(self):
+        """A provider that reports only output tokens still has its thinking counted."""
+        msgs: list[ModelMessage] = [
+            _user('start'),
+            _reported(input_tokens=0, output_tokens=5000),
+            _user('next'),
+            _reported(input_tokens=0, output_tokens=10),
+            _user('last'),
+        ]
+        assert find_token_cutoff(msgs, 100) == 2
+
+
+def _reported(*, input_tokens: int, output_tokens: int) -> ModelResponse:
+    """A response whose thinking came back without text, as some providers return it, with its usage."""
+    return ModelResponse(
+        parts=[ThinkingPart(content='', signature='sig'), TextPart(content='ok')],
+        usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+    )
+
+
+class TestEstimateMessageTokens:
+    def test_without_usage_each_message_is_estimated(self):
+        msgs: list[ModelMessage] = [_user('x' * 40), _assistant('y' * 80)]
+        assert estimate_message_tokens(msgs) == [10, 20]
+        assert estimate_message_tokens(msgs, tokenizer=len) == [40, 80]
+
+    def test_usage_between_responses_is_shared_and_a_shrunk_history_keeps_estimates(self):
+        msgs: list[ModelMessage] = [
+            _user('x' * 40),  # before the first reported response: estimated
+            _reported(input_tokens=1000, output_tokens=300),
+            _user('y' * 400),  # with the response above, shares 2001 - 1000 in proportion 300:100
+            _reported(input_tokens=2001, output_tokens=200),
+            _user('z' * 40),  # the next response reports less input: compacted in between, so estimated
+            _reported(input_tokens=500, output_tokens=50),
+            _user('w' * 80),  # after the last reported response: estimated
+        ]
+        assert estimate_message_tokens(msgs) == [10, 751, 250, 200, 10, 50, 20]
+
+    def test_unchanged_input_between_responses_keeps_estimates(self):
+        """Equal input usage says nothing about the messages between, so it does not zero them."""
+        msgs: list[ModelMessage] = [
+            _reported(input_tokens=1000, output_tokens=300),
+            _user('y' * 400),
+            _reported(input_tokens=1000, output_tokens=200),
+        ]
+        assert estimate_message_tokens(msgs) == [300, 100, 200]
 
 
 # ---------------------------------------------------------------------------
@@ -2699,6 +2779,27 @@ class TestHelperBranchCoverage:
         assert estimate_token_count(msgs) == 0
         assert _format_messages(msgs) == ''
 
+    def test_a_file_in_a_tool_return_counts_as_its_reference(self):
+        """A tool return's file is measured and summarized as the reference the model gets, not its `repr`."""
+        image = BinaryContent(data=b'\x00' * 4_000, media_type='image/png')
+        reference = f'See file {image.identifier}.'
+        bare = ToolReturnPart(tool_name='screenshot', content=image, tool_call_id='c1')
+        mixed = ToolReturnPart(tool_name='screenshot', content=['taken', image], tool_call_id='c2')
+
+        assert estimate_token_count([ModelRequest(parts=[bare])]) == len(reference) // 4
+        assert estimate_token_count([ModelRequest(parts=[mixed])]) == len(f'taken {reference}') // 4
+        assert _format_messages([ModelRequest(parts=[bare, mixed])], tool_return_max_chars=None) == (
+            f'Tool [screenshot]: {reference}\nTool [screenshot]: taken {reference}'
+        )
+
+    def test_a_file_returned_by_a_provider_side_tool_is_not_counted_as_characters(self):
+        """A generated image travels as an attachment, like `FilePart`; only the text is counted."""
+        image = BinaryContent(data=b'\x89PNG' * 75_000, media_type='image/png')
+        msgs: list[ModelMessage] = [
+            ModelResponse(parts=[NativeToolReturnPart(tool_name='image_generation', content=image, tool_call_id='c1')]),
+        ]
+        assert estimate_token_count(msgs) == len('image_generation') // 4
+
     def test_user_prompt_text_skips_non_text_content(self):
 
         part = UserPromptPart(content=[ImageUrl(url='https://example.com/y.png'), 'hello'])
@@ -3424,7 +3525,7 @@ class TestSlidingWindowCompactionReceipts:
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True)
         messages: list[ModelMessage] = [_user('original task'), _assistant('a'), _user('later'), _assistant('b')]
         result = await sw.compact(messages, _make_ctx())
-        assert _receipt_parts(result)[0].startswith('[History before this point (3 messages,')
+        assert _receipt_parts(result)[0].startswith('[History before this point (2 messages,')
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -4020,6 +4121,51 @@ class TestStructuralFeaturesThroughAgent:
         # `preserve_first_user_message` defaults on, so the real opening turn -- not the
         # receipt that now sits ahead of it -- is what gets carried forward.
         assert 'FIRST' in _user_texts(seen[1])
+
+    @pytest.mark.parametrize('preserve_first_user_message', [False, True])
+    async def test_receipt_does_not_take_the_only_kept_slot(self, preserve_first_user_message: bool):
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(
+            _recording_model(seen),
+            capabilities=[
+                SlidingWindowCompaction(
+                    max_messages=3,
+                    keep_messages=1,
+                    receipts=True,
+                    preserve_first_user_message=preserve_first_user_message,
+                )
+            ],
+        )
+        history: list[ModelMessage] = [_user('first'), _assistant('b'), _user('c'), _assistant('d')]
+        prompts = ['one', 'two', 'three']
+        for prompt in prompts:
+            history = (await agent.run(prompt, message_history=history)).all_messages()
+
+        for request, prompt in zip(seen, prompts, strict=True):
+            assert _user_texts(request)[-1] == prompt
+            assert ('first' in _user_texts(request)) is preserve_first_user_message
+            assert _receipt_parts(request[:1])
+
+    async def test_receipt_token_reservation_keeps_the_current_request(self):
+        # The token trigger reserves room for the receipt out of `keep_tokens`; the newest
+        # message must still survive even when that reservation exhausts the budget.
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(
+            _recording_model(seen),
+            capabilities=[
+                SlidingWindowCompaction(
+                    max_tokens=10, keep_tokens=5, receipts=True, preserve_first_user_message=False, tokenizer=len
+                )
+            ],
+        )
+        history: list[ModelMessage] = [_user('a' * 20), _assistant('b' * 20), _user('c' * 20)]
+        prompts = ['one', 'two', 'three']
+        for prompt in prompts:
+            history = (await agent.run(prompt, message_history=history)).all_messages()
+
+        for request, prompt in zip(seen, prompts, strict=True):
+            assert _user_texts(request)[-1] == prompt
+            assert _receipt_parts(request[:1])
 
     async def test_pin_survives_compaction_in_a_run(self):
         seen: list[list[ModelMessage]] = []

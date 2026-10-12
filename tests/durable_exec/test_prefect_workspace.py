@@ -9,7 +9,6 @@ adds what only Prefect has.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -28,23 +27,13 @@ from .workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenar
 try:
     from prefect import flow
     from prefect.context import FlowRunContext, TaskRunContext
-    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
-    from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import PrefectDurability, TaskConfig
 except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
 
 
-pytestmark = pytest.mark.xdist_group(name='prefect')
-
-
-@pytest.fixture(autouse=True, scope='session')
-def setup_prefect_test_harness() -> Iterator[None]:
-    # See `test_prefect.py`: the task-run recorder's background writer contends for the sqlite file.
-    with temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}):
-        with prefect_test_harness(server_startup_timeout=60):
-            yield
+pytestmark = [pytest.mark.xdist_group(name='prefect'), pytest.mark.usefixtures('prefect_test_server')]
 
 
 @pytest.fixture(autouse=True)

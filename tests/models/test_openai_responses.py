@@ -1668,54 +1668,69 @@ async def test_openai_responses_stream_function_call_done_appends_missing_suffix
     assert response.parts[0].args == full_args
 
 
-async def test_openai_responses_stream_function_call_done_replaces_disagreeing_args(allow_model_requests: None):
-    """Defensive: deltas that disagree with the done snapshot are replaced by it.
+async def test_openai_responses_stream_function_call_done_keeps_disagreeing_streamed_args(allow_model_requests: None):
+    """Defensive: deltas that disagree with the done snapshot are kept.
 
     Mocked: no live API sends this reliably.
     """
     item = _function_call_item('fc_1', '', name='lookup_weather', namespace='weather')
-    events, response = await _collect_function_call_stream(
-        [
-            resp.ResponseOutputItemAddedEvent(
-                item=item, output_index=0, type='response.output_item.added', sequence_number=0
-            ),
-            resp.ResponseFunctionCallArgumentsDeltaEvent(
-                delta='{"city":"Londo',
-                item_id='fc_1',
-                output_index=0,
-                type='response.function_call_arguments.delta',
-                sequence_number=0,
-            ),
-            resp.ResponseFunctionCallArgumentsDoneEvent(
-                arguments='{"city":"Paris"}',
-                item_id='fc_1',
-                output_index=0,
-                type='response.function_call_arguments.done',
-                sequence_number=0,
-            ),
-        ]
+    warning = (
+        'The provider sent a `function_call_arguments.done`/`output_item.done` snapshot whose arguments differ '
+        "from the streamed argument deltas for function call item 'fc_1' (tool 'lookup_weather'); the streamed "
+        'arguments were kept. Please open an issue at https://github.com/pydantic/pydantic-ai/issues.'
     )
+    with pytest.warns(UserWarning, match=re.escape(warning)):
+        events, response = await _collect_function_call_stream(
+            [
+                resp.ResponseOutputItemAddedEvent(
+                    item=item, output_index=0, type='response.output_item.added', sequence_number=0
+                ),
+                resp.ResponseFunctionCallArgumentsDeltaEvent(
+                    delta='{"city":"Londo',
+                    item_id='fc_1',
+                    output_index=0,
+                    type='response.function_call_arguments.delta',
+                    sequence_number=0,
+                ),
+                resp.ResponseFunctionCallArgumentsDoneEvent(
+                    arguments='{"city":"Paris"}',
+                    item_id='fc_1',
+                    output_index=0,
+                    type='response.function_call_arguments.done',
+                    sequence_number=0,
+                ),
+            ]
+        )
 
     starts = [event for event in events if isinstance(event, PartStartEvent)]
-    assert starts[-1] == snapshot(
-        PartStartEvent(
-            index=0,
-            part=ToolCallPart(
-                tool_name='lookup_weather',
-                args='{"city":"Paris"}',
-                tool_call_id='call_fc_1',
-                id='fc_1',
-                provider_name='openai',
-                provider_details={'namespace': 'weather'},
-            ),
-            previous_part_kind='tool-call',
-        )
+    assert starts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='lookup_weather',
+                    args='',
+                    tool_call_id='call_fc_1',
+                    id='fc_1',
+                    provider_name='openai',
+                    provider_details={'namespace': 'weather'},
+                ),
+            )
+        ]
+    )
+    assert [event for event in events if isinstance(event, PartDeltaEvent)] == snapshot(
+        [
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta='{"city":"Londo', tool_call_id='call_fc_1'),
+            )
+        ]
     )
     assert response.parts == snapshot(
         [
             ToolCallPart(
                 tool_name='lookup_weather',
-                args='{"city":"Paris"}',
+                args='{"city":"Londo',
                 tool_call_id='call_fc_1',
                 id='fc_1',
                 provider_name='openai',
@@ -14436,6 +14451,50 @@ async def test_response_error_event_first_falls_back(allow_model_requests: None)
             output = await result.get_output()
 
     assert output == 'from fallback'
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize('call', ['request', 'retrieve', 'count_tokens', 'compact'])
+async def test_text_plain_response_body_raises_model_api_error(allow_model_requests: None, call: str):
+    """A 200 response with a `text/plain` body, which the SDK returns as a `str`, raises `ModelAPIError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9579
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'upstream connect error', headers={'content-type': 'text/plain'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+        with pytest.raises(ModelAPIError) as exc_info:
+            if call == 'request':
+                await Agent(model).run('Hello')
+            elif call == 'retrieve':
+                suspended = ModelResponse(
+                    parts=[], state='suspended', provider_name='openai', provider_response_id='resp_123'
+                )
+                await model.request([*messages, suspended], None, ModelRequestParameters())
+            elif call == 'count_tokens':
+                await model.count_tokens(messages, None, ModelRequestParameters())
+            else:
+                await model.compact_messages(
+                    ModelRequestContext(
+                        model=model,
+                        messages=messages,
+                        model_settings=None,
+                        model_request_parameters=ModelRequestParameters(),
+                    )
+                )
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == snapshot("Expected a JSON response, got: 'upstream connect error'")
 
 
 async def test_stream_response_incomplete_content_filter_finish_reason(allow_model_requests: None):

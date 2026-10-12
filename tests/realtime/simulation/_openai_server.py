@@ -14,7 +14,7 @@ the session, each observed live:
 - the input transcript arrives on its own schedule, often after the response it prompted;
 - an empty `input_audio_buffer.commit` is refused;
 - a dropped connection loses whatever was in flight; a re-dial starts a fresh server session, with an
-  empty conversation (a tool output for a call it never made is refused) unless xAI resumes it.
+  empty conversation (a tool output for a call it never made is refused) that the client replays history into.
 
 Content the server can generate is driven by the simulation (`speak`, `call_tool`, `finish`, ...), so
 the trace decides *what* the model says and *when*; the server decides what the protocol makes of it.
@@ -117,8 +117,6 @@ class ServerSession:
     ended_responses: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     """The `response.done` frames sent on this session, for duplicate-terminal faults."""
     late_done: dict[str, Any] | None = None
-    resumed: bool = False
-    """An xAI re-dial that resumed the conversation."""
     answers_every_turn: bool = False
     """xAI echoes `create_response: False` back but answers anyway (see `XaiRealtimeModelSettings`)."""
     ptt_speech: str | None = None
@@ -172,11 +170,6 @@ class OpenAIServer:
         # inputs for its whole life, across re-dials, so this outlives any one server session.
         self._client_items: dict[int, str] = {}
         self._client_images: dict[int, bool] = {}
-        self._conversation_id = 'conv_simulated'
-        # What an xAI resumption replays of the conversation, in order. Assistant messages are recorded
-        # (`test_xai_ws/test_session_resumption_after_drop`, which replays no user message); function calls
-        # and their outputs are inferred: no recording has a tool round before a resumption.
-        self._finished_items: list[dict[str, Any]] = []
         # Azure OpenAI speaks the GA event names too (every `test_azure_ws` cassette does); only Voice Live, which
         # has a connection class of its own that isn't simulated, still uses the beta names.
         self._audio_delta = 'response.output_audio.delta'
@@ -188,10 +181,6 @@ class OpenAIServer:
     def on_connect(self, socket: FakeWebSocket, url: str) -> None:
         self.truth.connections += 1
         session = ServerSession(index=len(self.sessions), socket=socket)
-        # xAI resumes a conversation natively: a re-dial naming it gets the finished conversation back.
-        session.resumed = self.dialect == 'xai' and f'conversation_id={self._conversation_id}' in url
-        if session.resumed and self.sessions:
-            session.conversation = set(self.sessions[-1].conversation)
         session.answers_every_turn = self.dialect == 'xai'
         self.sessions.append(session)
         socket.emit(
@@ -212,7 +201,8 @@ class OpenAIServer:
                 {
                     'type': 'conversation.created',
                     'event_id': 'evt_conversation',
-                    'conversation': {'id': self._conversation_id, 'object': 'realtime.conversation'},
+                    # Every dial is a new conversation: a reconnect doesn't resume the dropped one.
+                    'conversation': {'id': f'conv_{socket.index}', 'object': 'realtime.conversation'},
                 },
                 immediately=True,
             )
@@ -336,23 +326,6 @@ class OpenAIServer:
             config['turn_detection'] if 'turn_detection' in config else audio_input.get('turn_detection')
         )
         session.transcription = audio_input.get('transcription') is not None
-        if session.resumed:
-            # xAI replays the resumed conversation during the handshake, under fresh item ids (recorded:
-            # `test_xai_ws/test_session_resumption_after_drop`).
-            for item in self._finished_items:
-                session.socket.emit(
-                    {
-                        'type': 'conversation.item.added',
-                        'event_id': f'evt_replay_{self._next_item}',
-                        'item': {
-                            'id': self._new_item('item_replayed'),
-                            'object': 'realtime.item',
-                            'status': 'completed',
-                            **item,
-                        },
-                    },
-                    immediately=True,
-                )
         session.socket.emit(
             {'type': 'session.updated', 'event_id': 'evt_updated', 'session': {**config, 'model': self.model}},
             immediately=True,
@@ -459,9 +432,6 @@ class OpenAIServer:
                 # Replayed with the rest of the history on a re-dial: already part of the conversation.
                 return
             call.output_received = True
-            self._finished_items.append(
-                {'type': 'function_call_output', 'call_id': call_id, 'output': item.get('output', '')}
-            )
             self.truth.add_input(call_id, 'tool_output')
             session.unanswered_tool_outputs.append(call_id)
             return
@@ -719,9 +689,6 @@ class OpenAIServer:
             return
         item = next(item for item in active.output if item['id'] == active.message_item)
         transcript = item['content'][0]['transcript']
-        self._finished_items.append(
-            {'type': 'message', 'role': 'assistant', 'content': [{'type': 'text', 'text': transcript}]}
-        )
         session.conversation.add(f'assistant:{transcript}')
         self._emit(
             session,
@@ -820,7 +787,6 @@ class OpenAIServer:
         }
         active.output.append(item)
         session.conversation.add(f'function_call:{call_id}')
-        self._finished_items.append({key: item[key] for key in ('type', 'call_id', 'name', 'arguments')})
         self._emit(
             session,
             {
