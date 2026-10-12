@@ -43,7 +43,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._workspace import READ_ONLY_FAILURE
 from pydantic_ai_harness.code_mode import CodeMode
-from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
+from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, SHELL_TOOL_NAMES, Shell
 from pydantic_ai_harness.shell._jobs import Job
 from pydantic_ai_harness.shell._policy import is_interactive_command
 from pydantic_ai_harness.shell._toolset import ShellToolset
@@ -1563,40 +1563,46 @@ async def _tools_offered_to_model(cwd: Path, *, shell_first: bool) -> dict[str, 
 
 
 class TestCodeModeInterop:
-    """`run_command` and `start_command` take a command line, so CodeMode leaves them native.
+    """Every Shell tool declares `code_mode_native`, so CodeMode leaves the whole family native.
 
-    Folding them into `run_code` would make the model write a Monty script whose argument is a
-    shell script quoted as a Python string. The command-id tools carry no command line, so they
-    stay sandboxed like any other tool.
+    Folding `run_command` or `start_command` into `run_code` would make the model write a Monty
+    script whose argument is a shell script quoted as a Python string. Folding only the command-id
+    tools would split a background command's lifecycle, with its id copied from a native
+    `start_command` result into sandboxed code.
     """
 
     @pytest.mark.parametrize('shell_first', [True, False], ids=['shell-first', 'code-mode-first'])
-    async def test_command_tools_stay_native(self, tmp_path: Path, shell_first: bool) -> None:
+    async def test_shell_tools_stay_native(self, tmp_path: Path, shell_first: bool) -> None:
 
         if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
             pytest.skip('Agent.run() requires asyncio')
         tools = await _tools_offered_to_model(tmp_path, shell_first=shell_first)
 
-        assert 'run_command' in tools
-        assert 'start_command' in tools
+        assert sorted(tools) == ['check_command', 'run_code', 'run_command', 'start_command', 'stop_command']
         run_code_description = tools['run_code']
         assert run_code_description is not None
-        assert 'async def run_command' not in run_code_description
-        assert 'async def start_command' not in run_code_description
+        assert '_command' not in run_code_description
 
-    @pytest.mark.parametrize('shell_first', [True, False], ids=['shell-first', 'code-mode-first'])
-    async def test_command_id_tools_are_still_sandboxed(self, tmp_path: Path, shell_first: bool) -> None:
-
-        if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
-            pytest.skip('Agent.run() requires asyncio')
-        tools = await _tools_offered_to_model(tmp_path, shell_first=shell_first)
-
-        assert 'check_command' not in tools
-        assert 'stop_command' not in tools
-        run_code_description = tools['run_code']
-        assert run_code_description is not None
-        assert 'async def check_command' in run_code_description
-        assert 'async def stop_command' in run_code_description
+    def test_command_tools_keep_their_trace_hint(self) -> None:
+        """`code_arg_name` stays on the tools that take a command line, for trace rendering only."""
+        ts = ShellToolset[None](
+            allowed_commands=[],
+            denied_commands=[],
+            denied_operators=[],
+            default_timeout=10,
+            max_output_chars=50_000,
+            persist_cwd=False,
+            allow_interactive=False,
+            tools=SHELL_TOOL_NAMES,
+        )
+        hints = {name: (tool.metadata or {}).get('code_arg_name') for name, tool in ts.tools.items()}
+        assert hints == {
+            'run_command': 'command',
+            'start_command': 'command',
+            'check_command': None,
+            'stop_command': None,
+            'shell': 'command',
+        }
 
 
 class TestStopEscalation:

@@ -61,12 +61,13 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     By default (`tools='all'`) every eligible regular tool the agent has is wrapped
     behind a single `run_code` tool -- the model writes Python that calls them as
     functions instead of issuing tool calls directly. Framework control tools,
-    undiscovered deferred tools, native fallbacks, and other code-execution tools
-    remain native.
+    undiscovered deferred tools, native fallbacks, and tools whose author declares
+    `metadata={'code_mode_native': True}` (such as `Shell`'s) remain native.
 
     Pass a list of tool names or a callable predicate to `tools` to split the
     toolset: matching tools become callables inside the sandbox, and the rest
-    stay visible to the model as normal tool calls.
+    stay visible to the model as normal tool calls. List capability classes in
+    `native_capabilities` to keep all of their tools native without naming them.
 
     ```python
     from pydantic_ai import Agent
@@ -112,6 +113,14 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     """Maximum number of retries for the `run_code` tool (syntax errors count as retries)."""
 
     _: KW_ONLY
+
+    native_capabilities: Sequence[type[AbstractCapability[Any]]] = ()
+    """Capability classes whose tools stay regular tool calls rather than being sandboxed.
+
+    A tool matches when the capability that contributed it is an instance of a listed class, so
+    you don't need to know the names of the tools a capability registers. Applies whatever `tools`
+    selects.
+    """
 
     max_tool_calls: int = 100
     """Maximum nested tool calls dispatched by one `run_code` invocation.
@@ -258,6 +267,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             return EagerCodeModeToolset(
                 wrapped=toolset,
                 tool_selector=self.tools,
+                native_capabilities=self.native_capabilities,
                 max_retries=self.max_retries,
                 max_tool_calls=self.max_tool_calls,
                 resource_limits=self.resource_limits,
@@ -271,6 +281,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         return CodeModeToolset(
             wrapped=toolset,
             tool_selector=self.tools,
+            native_capabilities=self.native_capabilities,
             max_retries=self.max_retries,
             max_tool_calls=self.max_tool_calls,
             resource_limits=self.resource_limits,
