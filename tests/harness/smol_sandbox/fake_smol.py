@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 
+import anyio
 import smol
 
 
@@ -147,10 +148,11 @@ class FakeAsyncMachine:
                     yield event
                 yield event
             finally:
-                # Synchronous, like the real SDK's `stream.close()`, so it completes under cancellation.
                 _kill(process)
                 self._vm.processes.discard(process)
-                waiter.cancel()
+                # Reap the process before the stream ends, shielded because a cancelled caller closes it.
+                with anyio.CancelScope(shield=True):
+                    await waiter
 
     async def _report(self, process: asyncio.subprocess.Process, events: asyncio.Queue[dict[str, object]]) -> None:
         async def pump(stream: asyncio.StreamReader | None, kind: str) -> None:
