@@ -204,7 +204,7 @@ class BedrockModelProfile(ModelProfile, total=False):
     """
 
     bedrock_supports_adaptive_thinking: bool
-    """Whether this model accepts `{'thinking': {'type': 'adaptive'}}` (Sonnet 4.6+, Opus 4.6+).
+    """Whether this model accepts `{'thinking': {'type': 'adaptive'}}` (Haiku 5.5, Sonnet 4.6+, Opus 4.6+).
 
     Only meaningful for the `'anthropic'` variant. When False, the variant falls back to
     `{'type': 'enabled', 'budget_tokens': N}` for pre-4.6 models.
@@ -213,7 +213,7 @@ class BedrockModelProfile(ModelProfile, total=False):
     """
 
     bedrock_supports_effort: bool
-    """Whether this model emits `output_config.effort` on Bedrock Converse (Sonnet 4.6+, Opus 4.6+).
+    """Whether this model emits `output_config.effort` on Bedrock Converse (Haiku 5.5, Sonnet 4.6+, Opus 4.6+).
 
     Only meaningful for the `'anthropic'` variant AND only honored alongside
     `bedrock_supports_adaptive_thinking=True`. Bedrock has not been verified to accept
@@ -265,6 +265,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
         'claude-opus-4-8',
         'claude-opus-5',
         'claude-sonnet-5',
+        'claude-haiku-5-5',
         'claude-fable-5',
     )
     downstream = anthropic_model_profile(model_name)

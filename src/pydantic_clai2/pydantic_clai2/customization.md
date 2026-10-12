@@ -23,7 +23,7 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   to CLAI's settings (/spinner init writes a starter). /spinner picks one; the
   choice persists as display.spinner.
 - React to prompts or session lifecycle: override on_session_start,
-  on_session_end, on_turn_start, or on_turn_end.
+  on_session_end, on_turn_start, on_turn_end, or on_conversation_changed.
 - Configure a plugin: declare a Pydantic settings model as the class's type
   parameter, `Plugin[MySettings]`, and read self.settings.
 - Offer a settings menu: override async configure().
@@ -176,7 +176,10 @@ appear in the transcript and reach the model as a one-item list under the questi
 The built-in observability plugin (pydantic_clai2.builtin_plugins.logfire) is enabled by default in the
 stock CLI. It contributes core's Instrumentation capability using an isolated
 Logfire instance. It exports to Logfire only when credentials are present, with
-no interactive setup or console logging. Text and binary images are included by
+no interactive setup or console logging. Errors CLAI shows and recovers from (plugin
+load failures, failed turns, unexpected slash command failures, failing plugin
+handlers) are recorded with their traceback, or only their type with include_content
+false; usage errors are not. Text and binary images are included by
 default, so review the telemetry destination before setting LOGFIRE_TOKEN. Use
 /plugins disable observability to remove it, or replace its settings with:
 
@@ -268,14 +271,15 @@ are not recursively reloaded. Use `/plugins reload NAME` to reload only one plug
 
 ## Hooks, tools and settings
 
-The four CLAI moments are async methods returning None:
+The CLAI moments are async methods returning None:
 
 | Method | Event | Use |
 | --- | --- | --- |
-| on_session_start | SessionStart(agent, settings) | Initialize session resources |
+| on_session_start | SessionStart(agent, settings, conversation_chosen) | Initialize session resources |
 | on_session_end | SessionEnd(reason) | Clean up; reason is exit, eof, or error |
 | on_turn_start | TurnStart(text) | Rewrite event.text or event.cancel() |
 | on_turn_end | TurnEnd(text, outcome, result, error) | Observe completion or failure |
+| on_conversation_changed | ConversationChanged(conversation_id, title) | Follow /new, /clear, /resume, and retitles |
 
 Import these event classes from pydantic_clai2.plugins. Event payloads are typed,
 keyword-only dataclasses. A raising on_turn_start cancels the turn. Do not

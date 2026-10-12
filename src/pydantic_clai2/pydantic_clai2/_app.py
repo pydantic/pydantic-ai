@@ -31,7 +31,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_clai2 import warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
-from pydantic_clai2.cli.self_update import Relaunch, Updates
+from pydantic_clai2.cli.self_update import Relaunch, Updates, installed
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
     Command,
@@ -52,6 +52,7 @@ from pydantic_clai2.models import login_names
 from pydantic_clai2.models.chains import settings_model as chain_settings_model
 from pydantic_clai2.models.profiles import ALL, DEFAULT, ModelRef, base_model, parse_model, provider_of
 from pydantic_clai2.plugins import (
+    ConversationChanged,
     ModelProvider,
     PluginLogin,
     Renderer,
@@ -74,6 +75,7 @@ from pydantic_clai2.runtime._session import (
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES, ImportSource
+from pydantic_clai2.runtime.launch import launch_session_id
 from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
@@ -105,6 +107,8 @@ from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 from pydantic_clai2.ui.rendering.usage_report import cost_line, session_usage
+from pydantic_clai2.ui.stderr_relay import relay_stderr
+from pydantic_clai2.ui.telemetry_log import telemetry_log
 
 if TYPE_CHECKING:
     from pydantic_clai2.auth import CodexAuth
@@ -267,6 +271,8 @@ async def chat(
     resume: str | None = None,
     resume_from: ImportSource | None = None,
     load_plugins: bool = True,
+    session_id: str | None = None,
+    fork_session: bool = False,
     worktree: Worktree | None = None,
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
@@ -277,8 +283,13 @@ async def chat(
     `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.
     `load_plugins=False` loads no built-in, project, saved, or drop-in plugin and turns `/plugins` off for this
     session only; saved plugin preferences are untouched.
+    `resume` restores a saved conversation (`''` opens the browser); `fork_session` then continues in a copy.
+    `session_id` names the new conversation, or the copy. These follow the CLI's rules: a bad combination,
+    or a `session_id` that is not a UUID, raises `ValueError` before anything is drawn.
     `worktree` is the checkout `--worktree` opened; its path and branch are shown under the launch banner.
     """
+    # Before anything is drawn, as the CLI checks these before it starts.
+    session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
     console = console or Console()
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
@@ -302,87 +313,117 @@ async def chat(
         )
     fresh = False
     warming: Thread | None = None
-    async with agent:
-        while True:
-            reason: SessionEndReason = 'error'
-            with theme.use(lambda: shell.context.settings.theme, output=console.file if console.is_terminal else None):
-                try:
-                    async with create_task_group() as workers:
-                        workers.start_soon(shell.sessions.namer.run)
-                        try:
-                            with (
-                                transcript.capture(console),
-                                shell.defer_identity() if resume is not None else nullcontext(),
-                            ):
-                                await shell.loader.load_all(fresh=fresh)
-                                _report_project_plugins(shell.loader, console)
-                                if resume is not None:
-                                    source = [resume_from] if resume_from else []
-                                    console.print(
-                                        await shell.sessions.command([*source, resume] if resume else source),
-                                        markup=False,
-                                    )
-                                    resume = None
-                            warming = warming or warm_imports.start()
-                            reason = await shell.run()
-                        finally:
-                            workers.cancel_scope.cancel()
-                except BaseExceptionGroup as exc:
-                    if len(exc.exceptions) == 1:
-                        raise exc.exceptions[0] from None
-                    raise
-                finally:
-                    with transcript.capture(console):
-                        await shell.loader.close(reason)
-            if not shell.reload_requested:
-                if (executable := shell.updates.relaunch) is not None:
-                    summary = shell.session.summary
-                    raise Relaunch(executable=executable, session_id=summary.id if summary.revision else None)
-                return
-            shell.reload_requested = False
-            if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
-                warming.join()
-            try:
-                shell = reload_clai(
-                    lambda shell=shell: create_shell(
-                        rebuild_stock(()) if rebuild_stock is not None else agent,
-                        deps=deps,
-                        plugins=plugins,
-                        usage_limits=shell.session.usage_limits,
-                        console=console,
-                        settings=shell.context.settings,
-                        store=SettingsStore(shell.context.store.path),
-                        builtin_plugins=(
-                            STOCK_PLUGINS
-                            if use_stock_defaults
-                            else DEFAULT_PLUGINS
-                            if use_defaults
-                            else builtin_plugins
-                        ),
-                        project=project,
-                        message_history=shell.session.messages,
-                        summary=shell.session.summary,
-                        transcript=shell.transcript,
-                        load_plugins=load_plugins,
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
-                with transcript.capture(console):
-                    console.print(
-                        f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
-                    )
-                    if isinstance(exc, ImportError) and exc.name and exc.name.startswith('pydantic_ai_harness'):
-                        console.print(
-                            'Harness is not refreshed by /reload. Restart CLAI2 with the same launch options and '
-                            '--resume to continue this session. Keep the worktree if asked to remove it.',
-                            style=theme.color(theme.INFO),
-                            markup=False,
+    with (
+        telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console),
+        relay_stderr() if console.is_terminal else nullcontext(),
+    ):
+        async with agent:
+            while True:
+                reason: SessionEndReason = 'error'
+                with theme.use(
+                    lambda: shell.context.settings.theme, output=console.file if console.is_terminal else None
+                ):
+                    try:
+                        async with create_task_group() as workers:
+                            workers.start_soon(shell.sessions.namer.run)
+                            try:
+                                with transcript.capture(console):
+                                    # Apply launch options first, so plugins start with the conversation they
+                                    # name. The browser waits for plugins, whose models may name its sessions,
+                                    # and until it picks one, telemetry has no session to assign.
+                                    browse = resume == ''
+                                    restored = bool(resume)
+                                    notice = ''
+                                    if not browse and (resume is not None or session_id is not None):
+                                        notice = await shell.sessions.start(
+                                            resume=resume,
+                                            resume_from=resume_from,
+                                            session_id=session_id,
+                                            fork=fork_session,
+                                        )
+                                    with shell.defer_identity() if browse else nullcontext():
+                                        await shell.loader.load_all(fresh=fresh)
+                                        _report_project_plugins(shell.loader, console)
+                                        if restored:
+                                            # Now that observability has subscribed and renderers have loaded.
+                                            shell.session.record_resumed()
+                                            await shell.sessions.show_resumed()
+                                        if browse:
+                                            notice = await shell.sessions.start(
+                                                resume='',
+                                                resume_from=resume_from,
+                                                session_id=session_id,
+                                                fork=fork_session,
+                                            )
+                                        if notice:
+                                            console.print(notice, markup=False)
+                                    resume = session_id = None
+                                warming = warming or warm_imports.start()
+                                reason = await shell.run()
+                            finally:
+                                workers.cancel_scope.cancel()
+                    except BaseExceptionGroup as exc:
+                        if len(exc.exceptions) == 1:
+                            raise exc.exceptions[0] from None
+                        raise
+                    finally:
+                        with transcript.capture(console):
+                            await shell.loader.close(reason)
+                if not shell.reload_requested:
+                    if (executable := shell.updates.relaunch) is not None:
+                        summary = shell.session.summary
+                        raise Relaunch(
+                            executable=executable,
+                            session_id=summary.id if summary.revision else None,
+                            # A conversation named with `--session-id` keeps its ID until its first prompt saves it.
+                            new_session_id=summary.id if not summary.revision and shell.sessions.chosen else None,
                         )
-                fresh = False
-            else:
-                with transcript.capture(console):
-                    console.print('CLAI2 reloaded. Conversation preserved.', style=theme.color(theme.INFO))
-                fresh = True
+                    return
+                shell.reload_requested = False
+                if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
+                    warming.join()
+                try:
+                    shell = reload_clai(
+                        lambda shell=shell: create_shell(
+                            rebuild_stock(()) if rebuild_stock is not None else agent,
+                            deps=deps,
+                            plugins=plugins,
+                            usage_limits=shell.session.usage_limits,
+                            console=console,
+                            settings=shell.context.settings,
+                            store=SettingsStore(shell.context.store.path),
+                            builtin_plugins=(
+                                STOCK_PLUGINS
+                                if use_stock_defaults
+                                else DEFAULT_PLUGINS
+                                if use_defaults
+                                else builtin_plugins
+                            ),
+                            project=project,
+                            message_history=shell.session.messages,
+                            summary=shell.session.summary,
+                            launched=shell.sessions.launched,
+                            transcript=shell.transcript,
+                            load_plugins=load_plugins,
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
+                    with transcript.capture(console):
+                        console.print(
+                            f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
+                        )
+                        if isinstance(exc, ImportError) and exc.name and exc.name.startswith('pydantic_ai_harness'):
+                            console.print(
+                                'Harness is not refreshed by /reload. Restart CLAI2 with the same launch options and '
+                                '--resume to continue this session. Keep the worktree if asked to remove it.',
+                                style=theme.color(theme.INFO),
+                                markup=False,
+                            )
+                    fresh = False
+                else:
+                    with transcript.capture(console):
+                        console.print('CLAI2 reloaded. Conversation preserved.', style=theme.color(theme.INFO))
+                    fresh = True
 
 
 def _parse(name: str) -> ModelRef:
@@ -527,6 +568,7 @@ def create_shell(
     project: ProjectSettings,
     message_history: Sequence[ModelMessage] = (),
     summary: ConversationSummary | None = None,
+    launched: str | None = None,
     transcript: TranscriptBuffer | None = None,
     headless: bool = False,
     load_plugins: bool = True,
@@ -547,9 +589,8 @@ def create_shell(
         usage_limits=usage_limits,
         message_history=message_history,
         conversations=conversations,
+        summary=summary,
     )
-    if summary is not None:
-        session.summary = summary
     session.model = settings.model
     session.model_chosen = 'model' in settings.model_fields_set
     session.tool_retries = settings.tool_retries
@@ -561,9 +602,7 @@ def create_shell(
 
     session_settings = SessionSettings(session=session, console=console, settings=settings)
 
-    context = CommandContext(
-        settings=settings, store=store, clear_history=session.clear, apply_setting=session_settings, project=project
-    )
+    context = CommandContext(settings=settings, store=store, apply_setting=session_settings, project=project)
     models.pool_accounts = lambda: context.settings.pool_accounts
 
     def fast(args: list[str]) -> str:
@@ -583,7 +622,7 @@ def create_shell(
             + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
         )
 
-    sessions = Sessions(session=session, store=conversations, context=context)
+    sessions = Sessions(session=session, store=conversations, context=context, launched=launched)
     commands = Commands()
     commands.register(
         Command(
@@ -709,8 +748,8 @@ def create_shell(
         transcript.clear()
         _print_welcome(project, console)
 
-    def clear(_: list[str]) -> str:
-        session.clear()
+    async def clear(_: list[str]) -> str:
+        await session.clear()
         reset_screen()
         return ''
 
@@ -758,7 +797,7 @@ def create_shell(
         store=store,
         console=console,
         commands=commands,
-        session_start=lambda: SessionStart(agent=agent, settings=context.settings),
+        session_start=lambda: SessionStart(agent=agent, settings=context.settings, conversation_chosen=sessions.chosen),
         builtin=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins),
         full_screen=screen.full,
         project=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in project.plugins),
@@ -768,6 +807,7 @@ def create_shell(
         enabled=load_plugins,
         submit_prompt=lambda text: shell.submit_prompt(text),
     )
+    session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -873,6 +913,22 @@ def create_shell(
 
 
 @dataclass(kw_only=True)
+class _ConversationFooter:
+    """Tells plugins about a conversation change, starting the footer afresh when the ID changed."""
+
+    status: Status
+    fire: Callable[[ConversationChanged], Awaitable[None]]
+    shown: str
+
+    async def changed(self, event: ConversationChanged) -> None:
+        # The footer belongs to one conversation: any switch, by command or plugin, starts it afresh.
+        if event.conversation_id != self.shown:
+            self.shown = event.conversation_id
+            self.status.clear_conversation()
+        await self.fire(event)
+
+
+@dataclass(kw_only=True)
 class _Shell(Generic[DepsT, OutputT]):
     """The prompt loop; one turn is one `TurnStart`, one agent run, one `TurnEnd`."""
 
@@ -937,6 +993,7 @@ class _Shell(Generic[DepsT, OutputT]):
             fire=self.loader.fire,
             models=self.context.store.models,
         )
+        self.sessions.quiet = self.forks.quiet
         self.session.on_setup_error = self.capability_failed
 
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
@@ -1105,8 +1162,7 @@ class _Shell(Generic[DepsT, OutputT]):
             self.console.print()
             if self.plugins_busy(text):
                 return
-            # A running conversation cannot be replaced, so the turn's footer counters stay.
-            await _execute_command(self.commands, text, console=self.console, status=None)
+            await _execute_command(self.commands, text, console=self.console)
             self._show_status_segments()
 
     def _show_status_segments(self) -> None:
@@ -1203,9 +1259,7 @@ class _Shell(Generic[DepsT, OutputT]):
                 exiting = self.interrupts.exit_requested
             else:
                 async with self.forks.busy(), self._released():
-                    completed = await self.interrupts.run(
-                        _execute_command(self.commands, text, console=self.console, status=self.status)
-                    )
+                    completed = await self.interrupts.run(_execute_command(self.commands, text, console=self.console))
                 exiting = (
                     text == '/exit'
                     or self.interrupts.exit_requested
@@ -1230,9 +1284,7 @@ class _Shell(Generic[DepsT, OutputT]):
         async with self.forks.busy():
             self.status.activity = 'working'
             try:
-                completed = await self.interrupts.run(
-                    _execute_command(self.commands, text, console=self.console, status=self.status)
-                )
+                completed = await self.interrupts.run(_execute_command(self.commands, text, console=self.console))
             finally:
                 self.status.activity = 'ready'
                 await editor.output.drain()
@@ -1353,9 +1405,10 @@ class _Shell(Generic[DepsT, OutputT]):
 
 
 def _print_welcome(project: ProjectSettings, console: Console, *, worktree: Worktree | None = None) -> None:
-    """The banner and hints a fresh launch shows, which `/clear` returns to without the launch's worktree notice."""
+    """The banner, version, and hints a fresh launch shows, which `/clear` returns to without the worktree notice."""
     console.print()
     print_banner(console)
+    console.print(f'pydantic-clai2 {installed().label}', style=theme.color(theme.MUTED))
     if worktree is not None:
         # Soft wrap keeps the path copyable: hard wrapping would break it with newlines.
         console.print(worktree.notice, style=theme.color(theme.MUTED), markup=False, highlight=False, soft_wrap=True)
@@ -1389,7 +1442,7 @@ def _report_interrupt(completed: bool, console: Console) -> None:
         console.print()
 
 
-async def _execute_command(commands: Commands, text: str, *, console: Console, status: Status | None) -> None:
+async def _execute_command(commands: Commands, text: str, *, console: Console) -> None:
     try:
         result = await commands.execute_async(text)
         # The echoed command already ends in a blank line; a menu closed without changes adds nothing.
@@ -1399,18 +1452,6 @@ async def _execute_command(commands: Commands, text: str, *, console: Console, s
     except Exception as exc:  # noqa: BLE001 -- command failures must not exit the interactive shell.
         console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
         console.print()
-    if status is not None:
-        _reset_status(text, status)
-
-
-def _reset_status(command: str, status: Status) -> None:
-    if command.split(maxsplit=1)[0] in ('/new', '/clear', '/resume'):
-        status.context_tokens = None
-        status.context_window = None
-        status.context_alert = False
-        status.output_tokens = None
-        status.cost = None
-        status.streamed_chars = 0
 
 
 def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:

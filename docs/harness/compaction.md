@@ -115,11 +115,28 @@ agent = Agent(
 With a usage anchor, the provider-reported usage covers everything billed for the anchored request,
 including its instructions, tool definitions, and `FilePart` payloads. For the suffix after the
 anchor, and for a whole history with no usage anchor, the estimator uses `tokenizer` when supplied
-or a ~4-characters-per-token heuristic. That estimated portion cannot see `FilePart` payloads.
-Pending tool schemas newly revealed for the request are conservatively estimated by the
+or a ~4-characters-per-token heuristic. That estimated portion cannot see `FilePart` payloads, and
+counts a file inside a tool return as the `See file <identifier>.` reference that stands in for it.
+When the instructions changed since the anchor, the new set replaces the old one in the estimate
+rather than adding to it, since a request sends only one. Pending tool schemas newly revealed for the request are conservatively estimated by the
 implementation, since they are not covered by the earlier anchor.
 
 **If you already set an absolute `max_tokens`, re-check it.** The estimator used to count only user and system prompts, tool returns, response text, and tool calls. `ThinkingPart` / `CompactionPart` content, `RetryPromptPart` content, `NativeToolCallPart` / `NativeToolReturnPart`, and the most recent `ModelRequest.instructions` are now counted too, so the same history measures higher and an unchanged `max_tokens` compacts earlier. How much earlier depends on how much of the history is thinking blocks, retries, and instructions; on a thinking-heavy tool-calling history it can be several times the old count. What each strategy clears is unchanged -- only when it runs.
+
+### What counts toward `keep_tokens`
+
+The retained tail is measured per message with `estimate_message_tokens`, so `keep_tokens` means
+tokens as the provider counts them. A response counts at least its reported `output_tokens`, which
+includes thinking that some providers return as an empty part with only a signature. The messages
+between two responses that carry usage share the difference between their `input_tokens`, which is
+exactly what the provider counted for them. Before the first such response, after the last, and
+where the history did not grow between two of them (as across an earlier compaction), `tokenizer` or the
+~4-characters-per-token heuristic applies. Instructions are not part of the tail. A history with no
+provider usage is measured with the heuristic as before.
+
+**If you set `keep_tokens`, re-check it.** It used to be measured with the heuristic alone, which
+on a thinking-heavy history can see a third of the real tokens or less, so the same budget kept
+several times more history than it named. It now keeps the named amount, so fewer messages.
 
 ## Reporting usage: `ReportContextUsage`
 
@@ -361,7 +378,7 @@ agent = Agent(
 )
 ```
 
-`model` accepts a model name or a `Model`; when left `None` it inherits the running agent's model. That model has to write text, so an agent running a model that can't, such as a decision model like TypeSafe's Jev, needs `model=` set to a language model; without it, the first compaction raises a `UserError` saying so. Its nested summary run inherits the parent usage limits and reserves one request from a finite request limit for the pending parent request. Pass `model_settings` to give the dedicated summary call settings that differ from defaults carried by that model; the supplied settings merge over the model defaults without mutating the model or the settings dictionary. Pass `summarization_capabilities` to attach capabilities to the summary agent; capabilities on the outer agent do not run on the summary call. By default `incremental=True` updates the newest existing summary as an anchor. This changes the summary-call prompt from earlier releases; set `incremental=False` to retain the prior regeneration behavior.
+`model` accepts a model name or a `Model`; when left `None` it inherits the running agent's model. That model has to write text, so an agent running a model that can't, such as a decision model like TypeSafe's Jev, needs `model=` set to a language model; without it, the first compaction raises a `UserError` saying so. A summary that is empty or only whitespace is retried within the summary run's output retries. Exhausting those retries raises `UnexpectedModelBehavior` rather than replacing the history with an empty summary. Its nested summary run inherits the parent usage limits and reserves one request from a finite request limit for the pending parent request. These limits also apply to retries: if the summary run exhausts its budget first, it raises `UsageLimitExceeded` instead. To fall back on either failure, set `FallbackCompaction`'s `fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded)`, preferably with a fallback strategy that makes no model requests. This does not increase the parent run's limits. Pass `model_settings` to give the dedicated summary call settings that differ from defaults carried by that model; the supplied settings merge over the model defaults without mutating the model or the settings dictionary. Pass `summarization_capabilities` to attach capabilities to the summary agent; capabilities on the outer agent do not run on the summary call. By default `incremental=True` updates the newest existing summary as an anchor. This changes the summary-call prompt from earlier releases; set `incremental=False` to retain the prior regeneration behavior.
 
 Both prompt surfaces of the summary request are fields: `summary_prompt` is the user-turn template (it must contain a `{messages}` placeholder), and `instructions` sets the internal agent's static instructions, which Pydantic AI sends in the request's system prompt. Override `instructions` when the summarizer endpoint requires a fixed leading instruction.
 
@@ -451,6 +468,8 @@ SlidingWindowCompaction(max_messages=80, keep_messages=40, receipts=True)
 The receipt text carries no timestamp, so it is a pure function of the compaction. The message part still has its ordinary request timestamp.
 
 Wording follows what actually survived. `SummarizingCompaction` leaves a summary, so its receipt says the summary above is secondhand; `SlidingWindowCompaction` drops history outright, so its receipt says that context is gone. The blank-in-place strategies (`ClearToolResults`, `DeduplicateFileReads`, `ClampOversizedMessages`) keep every message and cross no boundary, so they emit no receipt.
+
+`SlidingWindowCompaction` counts its receipt toward `keep_messages`, so `keep_messages=40` keeps the receipt and 39 messages. The receipt never takes the last slot: `keep_messages=1` keeps the receipt and the newest message.
 
 Attach any capability exposing `compaction_transcript_handle() -> str | None` -- the `TranscriptHandleProvider` protocol -- and the receipt gains a `Persisted run handle: <handle>` pointer. `StepPersistence` implements it, returning its `run_id`, so attaching it is enough. Each receipt is also emitted as a `compaction.receipt` event on the `compact_messages` span, carrying `compaction.receipt.strategy`, `compaction.receipt.messages_dropped`, `compaction.receipt.tokens_dropped`, `compaction.receipt.by`, and `compaction.receipt.handle` when a handle was found.
 

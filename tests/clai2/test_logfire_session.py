@@ -198,7 +198,7 @@ async def test_clear_resume_and_reload_follow_saved_conversation_ids(recorder: R
         assert (await shell.run_turn(TurnStart(text='first'), headless=True)).outcome == 'completed'
         child = shell.fork_session(None, [])
         await child.prompt('fork')
-        shell.session.clear()
+        await shell.session.clear()
         second_id = shell.session.summary.id
         assert (await shell.run_turn(TurnStart(text='second'), headless=True)).outcome == 'completed'
         with telemetry.span('resume command'):
@@ -313,7 +313,16 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
         startup = next(span for span in ui if span.name == 'session started')
         resumed = next(span for span in ui if span.name == 'conversation resumed')
         assert startup.parent == resumed.parent == root_context
-    assert all(span.context is not None and span.context.trace_id == root_context.trace_id for span in recorder.spans())
+    # The browser names sessions in the background, before any root is chosen: its own traces.
+    namer = {
+        span.context.trace_id
+        for span in recorder.spans()
+        if span.name == 'invoke_agent session_namer' and span.context is not None
+    }
+    assert all(
+        span.context is not None and span.context.trace_id in {root_context.trace_id, *namer}
+        for span in recorder.spans()
+    )
 
 
 @pytest.mark.parametrize(('prompt', 'outcome'), [('hello', 'completed'), ('explode', 'failed'), ('block', 'cancelled')])

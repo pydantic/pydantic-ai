@@ -2,7 +2,10 @@ import os
 import subprocess
 import sys
 
+import pytest
 
+
+@pytest.mark.subprocess(reason='asserts what a fresh interpreter imports')
 def test_media_import_does_not_load_pydantic_ai() -> None:
     """Importing a light submodule must not pull in `pydantic_ai` via the root package (#9916).
 
