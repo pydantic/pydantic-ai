@@ -5334,6 +5334,23 @@ async def test_openai_gateway_prefix_preserves_sampling(allow_model_requests: No
         await agent.run('hello')
 
 
+async def test_openai_text_verbosity_chat_completions(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """`openai_text_verbosity` goes out as Chat Completions' top-level `verbosity`, and only when set."""
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    agent = Agent(OpenAIChatModel('gpt-5.6-luna', provider=provider))
+
+    result = await agent.run('What is 2+2?', model_settings=OpenAIChatModelSettings(openai_text_verbosity='low'))
+    assert result.output == snapshot('4')
+    await agent.run('What is 2+2?')
+
+    assert [
+        {key: value for key, value in body.items() if key == 'verbosity'}
+        for body in request_capture.bodies('/chat/completions')
+    ] == [{'verbosity': 'low'}, {}]
+
+
 async def test_openai_gpt_5_2_temperature_allowed_by_default(allow_model_requests: None):
     """GPT-5.2 allows temperature by default (reasoning_effort defaults to 'none')."""
     c = completion_message(ChatCompletionMessage(content='Paris.', role='assistant'))
