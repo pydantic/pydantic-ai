@@ -68,6 +68,13 @@ repos:
         # `clai` never imports `pydantic-clai2`, so a commit confined to it cannot change the output.
         exclude: ^(src/pydantic_clai2|tests/clai2)/
         pass_filenames: false
+      - id: docs-map
+        name: Docs atlas
+        entry: uv
+        args: [run, python, scripts/generate_docs_map.py]
+        language: system
+        files: ^(docs/.*\.md|docs/navigation\.yml|scripts/generate_docs_map\.py|scripts/docs_map/.*)$
+        pass_filenames: false
       - id: format
         name: Format
         entry: make
