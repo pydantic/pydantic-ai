@@ -848,10 +848,10 @@ class MistralStreamedResponse(StreamedResponse):
                             yield event
 
                 # Handle the explicit tool calls
-                for index, dtc in enumerate(choice.delta.tool_calls or []):
+                for dtc in choice.delta.tool_calls or []:
                     # It seems that mistral just sends full tool calls, so we just use them directly, rather than building
                     yield self._parts_manager.handle_tool_call_part(
-                        vendor_part_id=index,
+                        vendor_part_id=dtc.index,
                         tool_name=dtc.function.name,
                         args=dtc.function.arguments,
                         tool_call_id=dtc.id,
