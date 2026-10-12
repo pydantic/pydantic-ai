@@ -229,6 +229,13 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
                 'To allowlist one tool, pass a one-element list.'
             )
+        entries: Sequence[object] = self.native_capabilities
+        for entry in entries:
+            if not (isinstance(entry, type) and issubclass(entry, AbstractCapability)):
+                raise UserError(
+                    f'`native_capabilities` takes capability classes such as `FileSystem`, not {entry!r}, '
+                    'so it cannot be set from an agent spec.'
+                )
 
     def get_ordering(self) -> CapabilityOrdering:
         """CodeMode wraps around ToolSearch so that search_tools stays native."""

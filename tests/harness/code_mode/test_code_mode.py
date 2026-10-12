@@ -1980,6 +1980,13 @@ class TestCodeMode:
         assert 'async def search' in run_code_description
         assert 'lookup_' not in run_code_description
 
+    def test_native_capabilities_rejects_names(self) -> None:
+        """A spec can only pass capability names, which `native_capabilities` can't match, so fail at construction."""
+        with pytest.raises(
+            UserError, match="`native_capabilities` takes capability classes such as `FileSystem`, not 'FileSystem'"
+        ):
+            CodeMode[object].from_spec(native_capabilities=['FileSystem'])
+
     async def test_unless_native_tool_not_sandboxed(self) -> None:
         """Tools annotated with `unless_native` stay native so `Model.prepare_request` can filter them."""
         td_fallback = ToolDefinition(
