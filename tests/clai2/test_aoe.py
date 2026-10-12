@@ -6,6 +6,7 @@ import io
 import os
 import stat
 import subprocess
+import sys
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +39,9 @@ from pydantic_clai2.plugins import (
     load_plugin,
 )
 from pydantic_clai2.runtime._session import Session
+
+# AoE only starts CLAI in a tmux pane on a POSIX system; the fakes and hook-file checks assume one too.
+pytestmark = pytest.mark.skipif(sys.platform == 'win32', reason='AoE and its hook files are POSIX-only')
 
 READINESS_WAIT_TIMEOUT = 10
 INSTANCE = 'abcd1234ef567890'
