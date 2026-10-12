@@ -103,9 +103,11 @@ class _Output:
         self.size = 0
 
     def add(self, stream: list[str], data: str) -> None:
-        stream.append(data)
         self.size += len(data.encode())
         if self.size > _MAX_OUTPUT_BYTES:
+            # Only the preview of the event that crosses the cap is kept, so a single huge event
+            # can't grow what is retained past the cap.
+            stream.append(data[:_OUTPUT_PREVIEW_CHARS])
             stdout, stderr = self.text(_OUTPUT_PREVIEW_CHARS)
             raise WorkspaceOutputLimitError(
                 'smol command output exceeded the 10 MiB limit; redirect it to a file and read part of it instead',
@@ -113,6 +115,7 @@ class _Output:
                 stdout=stdout,
                 stderr=stderr,
             )
+        stream.append(data)
 
     def text(self, chars: int | None = None) -> tuple[str, str]:
         return ''.join(self.stdout)[:chars], ''.join(self.stderr)[:chars]
