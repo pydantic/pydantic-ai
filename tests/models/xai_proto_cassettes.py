@@ -387,7 +387,7 @@ class XaiProtoCassetteClient:
     # Index into the ordered interactions list.
     interaction_idx: int = 0
     # The `messages` each `chat.create()` was called with, as the code built them; see `get_sent_request_messages`.
-    sent_messages: list[list[chat_pb2.Message]] = field(default_factory=list[list[chat_pb2.Message]])
+    sent_messages: list[list[chat_pb2.Message]] = field(default_factory=list[list['chat_pb2.Message']])
 
     @classmethod
     def from_path(cls, path: Path) -> XaiProtoCassetteClient:
@@ -532,7 +532,7 @@ class XaiProtoCassetteHybridClient:
     include_debug_json: bool = False
     interaction_idx: int = 0
     dirty: bool = False
-    sent_messages: list[list[chat_pb2.Message]] = field(default_factory=list[list[chat_pb2.Message]])
+    sent_messages: list[list[chat_pb2.Message]] = field(default_factory=list[list['chat_pb2.Message']])
 
     def _can_replay(self) -> bool:
         """Check if there are more recorded interactions to replay."""
@@ -741,7 +741,7 @@ class XaiProtoRecorder:
     _inner: AsyncClient
     cassette: XaiProtoCassette = field(default_factory=XaiProtoCassette)
     include_debug_json: bool = False
-    sent_messages: list[list[chat_pb2.Message]] = field(default_factory=list[list[chat_pb2.Message]])
+    sent_messages: list[list[chat_pb2.Message]] = field(default_factory=list[list['chat_pb2.Message']])
 
     @property
     def client(self) -> Any:
