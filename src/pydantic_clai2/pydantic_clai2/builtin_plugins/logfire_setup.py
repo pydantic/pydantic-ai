@@ -151,8 +151,12 @@ async def run_setup(
         name = await to_thread.run_sync(lambda: _save(project.key_name, value, owned=owned))
         read_token = None
         if read_value is not None:
-            read_name = await to_thread.run_sync(lambda: _save(project.read_key_name, read_value, owned=owned_read))
-            read_token = KeyReference(name=read_name)
+            try:
+                read_name = await to_thread.run_sync(lambda: _save(project.read_key_name, read_value, owned=owned_read))
+            except SetupError as exc:  # Tracing does not need it, so the saved write token is still used.
+                _without_read_token(setup.announce, project, exc)
+            else:
+                read_token = KeyReference(name=read_name)
         await to_thread.run_sync(remember, destination)
         span.set('outcome', 'saved')
     return Chosen(
@@ -247,8 +251,12 @@ async def _read_token(
         )
         return _parse(_UserToken, response).token
     except SetupError as exc:
-        announce(f'{exc} Traces still go to {project.label}, but /logfire optimize needs a read token.')
+        _without_read_token(announce, project, exc)
         return None
+
+
+def _without_read_token(announce: Announce, project: Project, error: SetupError) -> None:
+    announce(f'{error} Traces still go to {project.label}, but /logfire optimize needs a read token.')
 
 
 async def _call(request: Awaitable[httpx.Response]) -> httpx.Response:

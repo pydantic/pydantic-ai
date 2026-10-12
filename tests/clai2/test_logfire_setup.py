@@ -326,6 +326,30 @@ async def test_a_refused_read_token_still_sets_up_tracing(answer: Answer, config
     assert list(load_keys()) == ['LOGFIRE_TOKEN_PYDANTIC_CLAI2']
 
 
+async def test_no_room_for_the_read_token_still_sets_up_tracing(
+    configure: Configure, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def save(*, name: str, value: str, replace: bool = True) -> str:
+        if name.startswith('LOGFIRE_READ_TOKEN_'):
+            raise KeyExistsError(name)
+        return save_key(name=name, value=value, replace=replace)
+
+    monkeypatch.setattr(logfire_setup, 'save_key', save)
+    host = make_host()
+    harness = Harness()
+    message = await configure(host, harness.setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
+    saved = host.settings(LogfireSettings)
+    # The write token already saved is the one in use, not an orphan.
+    assert saved.token == KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2')
+    assert saved.read_access is None
+    assert message.endswith(' /logfire optimize stays off without a read token.')
+    assert harness.lines[-1] == (
+        'Too many /keys entries start with LOGFIRE_READ_TOKEN_PYDANTIC_CLAI2; delete some and retry. '
+        'Traces still go to pydantic/clai2, but /logfire optimize needs a read token.'
+    )
+    assert list(load_keys()) == ['LOGFIRE_TOKEN_PYDANTIC_CLAI2']
+
+
 async def test_polling_survives_blips_and_expires(monkeypatch: pytest.MonkeyPatch, configure: Configure) -> None:
     blips = FakeLogfire(
         polls=[refuse, httpx.Response(502), httpx.Response(200), httpx.Response(200, json={'token': 't'})]
