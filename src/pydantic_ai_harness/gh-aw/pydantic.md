@@ -136,6 +136,7 @@ engine:
       _started = False
       _finished = False
       _partial: dict[int, tuple[str, str]] = {}
+      _native_tool_call_ends: set[tuple[int, int]] = set()
 
 
       def _json_value(value: object) -> object:
@@ -189,6 +190,12 @@ engine:
                   native = isinstance(event, PartEndEvent)
                   if native:
                       _partial.pop(event.index, None)
+                      # Anthropic's block-stop normalization replaces this part with another same-index PartStartEvent.
+                      # Scope deduplication to this response so a later index reuse is recorded.
+                      native_end = (ctx.run_step, event.index)
+                      if native_end in _native_tool_call_ends:
+                          return
+                      _native_tool_call_ends.add(native_end)
                       part = event.part
                       tool_call_id = part.tool_call_id
                   else:

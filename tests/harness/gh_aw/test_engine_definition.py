@@ -1058,6 +1058,102 @@ async def test_native_tool_calls_and_returns_are_tool_events(
     ]
 
 
+async def test_native_tool_part_replacement_is_recorded_once_per_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    (workspace / 'native_agent.py').write_text(
+        'from pydantic_ai import Agent\nagent = Agent(name="native")\n',
+        encoding='utf-8',
+    )
+    invocation = launch(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'native_agent:agent'})
+    event_output = io.StringIO()
+    monkeypatch.setattr(sys, '__stdout__', event_output)
+    module = import_generated_agent(invocation, monkeypatch)
+    agent: Agent[None, str] = module.agent
+
+    @agent.tool_plain
+    def continue_run() -> str:
+        return 'continue'
+
+    async def stream(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls | dict[int, NativeToolCallPart | NativeToolReturnPart]]:
+        if len(messages) == 1:
+            yield {0: NativeToolCallPart(provider_name='function', tool_name='web_search', tool_call_id='native-id')}
+            yield {
+                0: NativeToolCallPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='native-id',
+                    args={'query': 'canonical input'},
+                )
+            }
+            yield {1: DeltaToolCall(name='continue_run', json_args='{}', tool_call_id='continue-id')}
+        else:
+            yield {
+                0: NativeToolCallPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='native-id',
+                    args={'query': 'later response'},
+                )
+            }
+            yield {
+                1: NativeToolReturnPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='native-id',
+                    content={'results': ['later']},
+                )
+            }
+            yield 'answer'
+
+    async with agent.run_stream_events('search', model=FunctionModel(stream_function=stream)) as events:
+        _ = [type(event).__name__ async for event in events]
+    module._recorder.finish(exit_code=0)
+
+    prefix = f'\x1eGH-AW-SESSION/{invocation.frame_key} '
+    events = [
+        _CanonicalEvent.model_validate_json(line.removeprefix(prefix))
+        for line in event_output.getvalue().split('\n')
+        if line.startswith(prefix)
+    ]
+    parsed = parse_log(tmp_path, invocation.stdout + event_output.getvalue())
+    starts = [event.data for event in events if event.type == 'tool.execution_start']
+    completions = [event.data for event in events if event.type == 'tool.execution_complete']
+    native_completions = [event for event in completions if event.get('sourceType') == 'native_tool']
+    assert parsed.log_entries == events
+    assert starts == [
+        {
+            'toolCallId': 'native-id',
+            'toolName': 'web_search',
+            'input': {'query': 'canonical input'},
+            'sourceType': 'native_tool',
+        },
+        {'toolCallId': 'continue-id', 'toolName': 'continue_run', 'input': {}},
+        {
+            'toolCallId': 'native-id',
+            'toolName': 'web_search',
+            'input': {'query': 'later response'},
+            'sourceType': 'native_tool',
+        },
+    ]
+    assert native_completions == [
+        {
+            'toolCallId': 'native-id',
+            'toolName': 'web_search',
+            'success': True,
+            'status': 'success',
+            'output': {'results': ['later']},
+            'sourceType': 'native_tool',
+        }
+    ]
+    assert [event.type for event in events].count('tool.execution_start') == 3
+    assert '**Tool calls:** 3' in parsed.markdown.split(' · ')
+
+
 async def test_tool_event_inputs_preserve_json_scalars_arrays_null_and_malformed_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
