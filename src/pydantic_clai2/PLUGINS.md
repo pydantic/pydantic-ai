@@ -326,8 +326,10 @@ there are no background workers to stop.
 
 The built-in `observability` plugin (`pydantic_clai2.builtin_plugins.logfire`) is enabled by default in
 the stock CLI. It registers Pydantic AI's `Instrumentation` capability with an
-isolated Logfire instance, not process-wide agent instrumentation or custom tracing
-hooks. Agent/model/tool spans include timing, token usage, failures, text content,
+isolated Logfire instance, not custom tracing hooks, and while loaded points
+`Agent.instrument_all` at that instance, so agents built elsewhere (the compaction
+summariser, sub-agents, session naming) and `/compact`'s `compact_messages` span are traced too.
+Unloading restores the previous `Agent.instrument_all` setting. Agent/model/tool spans include timing, token usage, failures, text content,
 and binary image attachments by default, including retained history used by
 later turns. This may export source code, file contents, and screenshots; verify
 the configured telemetry destination first.
@@ -461,7 +463,7 @@ With `ui_events` on, the attributes that only hold names (`command`, `menu`,
 `prompt`, which agent spans already record unscrubbed.
 
 Unload flushes and shuts down only this plugin's providers. Reload creates a new
-instance. The supplied agent and global providers are unchanged, and the existing
+instance. The supplied agent and global OpenTelemetry providers are unchanged, and the existing
 global propagator is preserved. The SDK may install shared executor propagation
 helpers; those hooks are not removed on unload. Core's normal
 instrumentation precedence applies: the plugin's explicit per-run capability
@@ -984,7 +986,8 @@ so two compaction chains never run together.
 `compaction` directly registers harness `FallbackCompaction` with
 `max_fraction=threshold`; harness owns the automatic trigger. `/compact` runs the
 same chain unconditionally, with the protected tail capped at half the
-conversation, and keeps the history unless the result is smaller. Its optional
+conversation, and keeps the history unless the result is smaller, counted as the provider reported
+the tokens. Its optional
 focus is free text, not shell arguments:
 `/compact don't lose the "auth" decisions` preserves the apostrophe and quotes in
 the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
