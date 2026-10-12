@@ -39,7 +39,7 @@ separately.
 /mcp status NAME                      target, env references, tools, last error
 /mcp tools NAME                       connect and list the tools the agent sees
 /mcp logs NAME [LINES]                server stderr and lifecycle events
-/mcp auth NAME [logout]               sign in to an OAuth server again, or sign out
+/mcp auth NAME [logout]               sign in to an OAuth server in the browser, or sign out
 /mcp edit NAME                        the same form, prefilled
 /mcp remove NAME
 /mcp trust [status|accept|revoke]     load this repository's .clai/mcp_servers.json and .mcp.json
@@ -70,14 +70,17 @@ separately.
   server's JSON, with a one-line input as a fallback when no editor runs. The
   preview says whether it is valid and why not.
 - **OAuth sign-in** appears for `http` and `sse` servers. Switching it on sets
-  `"auth": "oauth"`, allows 330 seconds for the handshake so there is time to
-  sign in, and drops any `Authorization` header. FastMCP runs discovery, dynamic
-  client registration, PKCE, and a browser sign-in through a loopback callback
-  when the server connects. The access and refresh tokens and the registered
-  client go to your OS keyring (the `mcp-NAME` entry under `pydantic-clai2`, or a
-  private `credentials-mcp-NAME.json` when no keyring exists), so restarting CLAI
-  reuses or refreshes them instead of signing in again. Tokens belong to the URL
-  they were issued for: changing the URL signs in again. OAuth needs `https`,
+  `"auth": "oauth"`, allows 330 seconds for the handshake, and drops any
+  `Authorization` header. After saving, `/mcp auth NAME` signs in: FastMCP runs
+  discovery, dynamic client registration, PKCE, and a browser sign-in through a
+  loopback callback, behind a waiting screen that Esc cancels. Connecting never
+  opens the browser. A server that is not signed in shows as `error` with
+  `Not signed in to NAME. Run /mcp auth NAME to sign in.`, and the prompt goes on
+  without it. The access and refresh tokens and the registered client go to your
+  OS keyring (the `mcp-NAME` entry under `pydantic-clai2`, or a private
+  `credentials-mcp-NAME.json` when no keyring exists), so restarting CLAI reuses
+  or refreshes them instead of signing in again. Tokens belong to the URL they
+  were issued for: after changing the URL, sign in again. OAuth needs `https`,
   except for loopback servers.
 
 The dashboard shows each server as `running` (connected), `ready` (enabled;
@@ -287,17 +290,18 @@ answers, or tool contents are sent; session IDs, database paths, and conversatio
 titles are sent to the local herdr socket.
 
 The pane title follows the persisted conversation title, including background
-naming and manual renames, checked every two seconds. Each metadata update keeps
-the current title. Only single-pane tabs are renamed. The original tab label is
-restored on session changes or clean unload, but a manually renamed or shared
-tab is left alone. An abrupt exit may leave the last tab label in place.
+naming and manual renames in `/resume`, as `on_conversation_changed` reports
+them. Each metadata update keeps the current title. Only single-pane tabs are
+renamed. The original tab label is restored on session changes or clean unload,
+but a manually renamed or shared tab is left alone. An abrupt exit may leave the
+last tab label in place.
 
 Socket IO uses a plugin-owned daemon worker with bounded, latest-wins mailboxes.
 State and session reports take priority over activity and metadata. Requests
 retry up to three times with the same sequence number; missing sockets and
-server errors are nonfatal. Unloading cancels and drains the title watcher,
-discards queued work, and attempts one release with bounded shutdown. A departed
-or unresponsive herdr may miss reports; they do not fail the agent turn.
+server errors are nonfatal. Unloading discards queued work and attempts one
+release with bounded shutdown. A departed or unresponsive herdr may miss
+reports; they do not fail the agent turn.
 
 ## Desktop notifications
 
@@ -326,8 +330,10 @@ there are no background workers to stop.
 
 The built-in `observability` plugin (`pydantic_clai2.builtin_plugins.logfire`) is enabled by default in
 the stock CLI. It registers Pydantic AI's `Instrumentation` capability with an
-isolated Logfire instance, not process-wide agent instrumentation or custom tracing
-hooks. Agent/model/tool spans include timing, token usage, failures, text content,
+isolated Logfire instance, not custom tracing hooks, and while loaded points
+`Agent.instrument_all` at that instance, so agents built elsewhere (the compaction
+summariser, sub-agents, session naming) and `/compact`'s `compact_messages` span are traced too.
+Unloading restores the previous `Agent.instrument_all` setting. Agent/model/tool spans include timing, token usage, failures, text content,
 and binary image attachments by default, including retained history used by
 later turns. This may export source code, file contents, and screenshots; verify
 the configured telemetry destination first.
@@ -337,6 +343,23 @@ are recorded with their exception and traceback through this same instance. This
 `ui_events`. Reporting waits until startup loading finishes, so failures before the
 observability plugin loaded are included. Disabling observability stops this reporting;
 the existing terminal messages remain.
+
+Other errors CLAI shows and then carries on from are recorded the same way, as `error` logs
+with their exception and traceback, also without `ui_events`:
+
+- A failed turn, from `TurnEnd.error`, under the session root. An error that left the agent
+  run is already recorded on the run's span, so this covers failures before or around it,
+  such as a model provider with no login or a failing `on_turn_start`.
+- A failed slash command, such as an HTTP error from `/update`, under the command's span
+  when `ui_events` is on and the session root otherwise. A usage error (`ValueError` or
+  `UserError`, including settings a plugin rejects on `/plugins add`) is expected, so it is
+  not recorded; with `ui_events` on, the command's span notes its type.
+- A plugin handler that fails without stopping CLAI (`on_turn_end`, `on_session_end`,
+  `on_plugin_load_failed`), with the plugin's name.
+
+The exception message and traceback get Logfire's normal scrubbing. They can quote a prompt
+or a pasted secret, so with `include_content: false` these records, and startup load
+failures, keep only the exception's type in their `exception` event, as agent spans do.
 
 Credentials are read from `LOGFIRE_TOKEN` or the SDK's `logfire_credentials.json`
 in `$XDG_CONFIG_HOME/pydantic-clai2/logfire/`, defaulting to
@@ -349,6 +372,15 @@ telemetry destination through its own files. Without credentials the default
 such as explicit OTLP exporters, still applies. The SDKs' own log messages, such as
 failed or retried exports, never print to the terminal; a logging handler that a
 plugin configures still receives them.
+
+Export problems, such as a request to Logfire timing out, are logged as
+warnings and errors by the `logfire` and `opentelemetry` loggers. Logfire retries
+failed span exports from disk; OpenTelemetry drops a metrics batch it could not
+send. In the interactive shell these records go to `telemetry.log` next to
+`config.db` (owner-only, rotated at 1 MB, one previous file kept) instead of over the editor,
+and CLAI names that file on exit when the session wrote to it. A logger your own
+application already handles, when embedding `chat()`, is left alone. Headless
+`clai2 -p` still writes them to stderr, separate from the answer on stdout.
 
 Previously named `logfire`, this plugin keeps existing enabled/disabled choices,
 settings, and saved token references. No reconfiguration is needed. Old commands
@@ -383,12 +415,13 @@ With `include_content=true`, Logfire captures HTTP headers and request and respo
 bodies too; with it off, those are not captured. HTTP instrumentation is removed
 on unload unless it was already installed by another owner.
 
-`base_url` (an https origin) is the Logfire to send to; unset, the SDK uses
-`LOGFIRE_BASE_URL`, else the region the token names. The **Logfire project** row
+`base_url` is the Logfire to send to: any address [Which Logfire](#which-logfire)
+accepts, saved as its https origin. Unset, the SDK uses `LOGFIRE_BASE_URL`, else
+the region the token names. The **Logfire project** row
 sets `token`, `base_url`, `account`, and `send_to_logfire` for you (`R` on it
-clears `token`, `base_url`, and `account` again): it asks where traces go, runs
+clears `token`, `base_url`, and `account` again): it asks which Logfire, runs
 Logfire's own device sign-in there (the one behind `logfire auth`, not
-`logfire_mcp`'s MCP OAuth, whose tokens only the MCP server accepts), reads your
+the Logfire plugin's MCP OAuth, whose tokens only the MCP server accepts), reads your
 account's email, lists the projects you can write to, and saves a new write
 token for the one you pick in `/keys`. The sign-in token is used only during
 setup. The flow lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
@@ -397,10 +430,14 @@ Agent runs and UI records nest under a `CLAI session` root whose
 `agent_session_id` is the saved conversation ID. `/clear` selects a new root;
 `/resume` reuses that conversation's root if this plugin instance already opened
 it. Unloading the plugin ends its roots; reloading starts new traces with the
-same saved conversation IDs.
+same saved conversation IDs. A root is exported only when it ends, at exit, so a
+`CLAI session opened` log under it carries its `agent_session_id` and email
+from the start. With `--resume`, the root opens before the conversation is
+chosen, so it is logged again with the saved ID once startup selects it.
 
 `user_tag` (default `logfire-account`) tags each session root, and only the
-root, with your email, as a Logfire tag and the `user.email` attribute.
+root and its `CLAI session opened` log, with your email, as a Logfire tag and
+the `user.email` attribute.
 `logfire-account` uses the email in `account`, the account that signed in during
 the **Logfire project** setup, while `token` still names the key that setup
 saved. A token from elsewhere, a setup made before this setting existed, or a
@@ -430,7 +467,7 @@ With `ui_events` on, the attributes that only hold names (`command`, `menu`,
 `prompt`, which agent spans already record unscrubbed.
 
 Unload flushes and shuts down only this plugin's providers. Reload creates a new
-instance. The supplied agent and global providers are unchanged, and the existing
+instance. The supplied agent and global OpenTelemetry providers are unchanged, and the existing
 global propagator is preserved. The SDK may install shared executor propagation
 helpers; those hooks are not removed on unload. Core's normal
 instrumentation precedence applies: the plugin's explicit per-run capability
@@ -486,8 +523,12 @@ prints a warning and each run fails with an error naming `/plugins configure lin
 rather than running without Linear. Harness's `LINEAR_ACCESS_TOKEN` environment
 variable is not read.
 
-With browser sign-in, the key row is hidden. Tokens go to the keyring the way
-`/mcp` OAuth tokens do, and `/linear logout` signs out.
+With browser sign-in, the key row is hidden. Choosing it signs in right away,
+behind a waiting screen that Esc cancels; `/linear login` signs in again later,
+`/linear logout` signs out, and `/linear` shows whether you are signed in. Tokens
+go to the keyring the way `/mcp` OAuth tokens do. Loading and prompts never open
+the browser: until you sign in, runs have no Linear tools and the session start
+says how to sign in.
 
 The settings are also plain JSON, for scripts:
 
@@ -512,13 +553,15 @@ menu closes, so the next turn uses the new settings.
 | Row | Default | Does |
 |---|---|---|
 | Key | none | the `/keys` entry to connect with: pick a saved key from a searchable list, or type a new one into a masked field; `R` clears the choice |
-| Sign-in | automatic | automatic uses the key when one is chosen and otherwise signs in through the browser; key only never opens a browser; browser always does |
+| Sign-in | browser | browser uses the browser sign-in, and choosing it signs in if needed; key only uses the chosen key and never the browser. Choosing a key switches to key only, and `R` on the key switches back |
 | Tools | read and write | read-only keeps only the tools the server marks as read-only |
 | Server instructions | forwarded | whether the Notion server's own instructions reach the agent |
 
 Notion's server has one fixed URL, and the workspace is the one the connected
 account belongs to, so there is no URL or workspace row. The settings JSON uses
-`auth` (`"key"`, `"oauth"`, or unset), `read_only`, and `include_instructions`:
+`auth` (`"oauth"`, the default, or `"key"`), `read_only`, and `include_instructions`.
+Earlier builds offered an automatic sign-in, saved as `null`; it now means `"oauth"`.
+For example:
 
 ```text
 /plugins add notion pydantic_clai2.builtin_plugins.notion '{"auth": "key", "read_only": true}'
@@ -543,23 +586,28 @@ you manage with `/keys`:
   plugin does not read `NOTION_ACCESS_TOKEN` either. Notion integration tokens do
   not work with the hosted server; use a Notion OAuth access token.
 
-With no key chosen, the first run that connects opens your browser to sign in.
-Those OAuth tokens go to the OS keyring, or CLAI's private credential file when
-there is no keyring, so later launches reuse and refresh them. `/notion logout`
-forgets the browser sign-in and the chosen key name; the key itself stays in
-`/keys`.
+By default, Notion uses a browser sign-in, made with `/notion login` (or by
+choosing browser sign-in in the menu) behind a waiting screen that Esc
+cancels. Those OAuth tokens go to the OS keyring, or CLAI's private credential
+file when there is no keyring, so later launches reuse and refresh them. Loading
+and prompts never open the browser: until you sign in, runs have no Notion tools
+and the session start says how to sign in. `/notion` shows how Notion connects;
+`/notion logout` forgets the browser sign-in and the chosen key name, and the key
+itself stays in `/keys`.
 
 The browser sign-in needs a browser on the machine CLAI runs on. For headless
 runs or remote machines, choose a key and set Sign-in to key only: without a
-key, CLAI warns at startup and runs fail with a message instead of waiting for a
-sign-in. The plugin emits no telemetry of its own; tool calls appear in core's
-spans.
-## Logfire MCP: query your telemetry
+key, CLAI warns at startup and runs fail with a message. The plugin emits no
+telemetry of its own; tool calls appear in core's spans.
+## Logfire: query your telemetry
 
-The built-in `logfire_mcp` plugin (`pydantic_clai2.builtin_plugins.logfire_mcp`) gives the agent
-the tools of Logfire's hosted MCP server through harness
+The built-in Logfire plugin (id `logfire_mcp`, `pydantic_clai2.builtin_plugins.logfire_mcp`) gives the agent
+the tools of Logfire's MCP server through harness
 [`LogfireMCP`](../../docs/harness/logfire-mcp.md), each named `logfire_` plus the
-server's name for it (`logfire_query_run`). It starts disabled.
+server's name for it (`logfire_query_run`). It starts disabled. Its id
+stays `logfire_mcp`: `logfire` is the `observability` plugin's old id, which older
+CLAI builds sharing your settings still store it under, so `/plugins enable logfire`
+keeps meaning `observability`. Its command is `/logfire`; `/logfire_mcp` still works.
 Turning it on (Space in `/plugins`, or `/plugins enable logfire_mcp`) loads it and
 opens its settings menu; reopen the menu any time with
 `/plugins configure logfire_mcp` or `c` in `/plugins`.
@@ -572,10 +620,43 @@ its default.
 | Row | Setting | Default | Does |
 |---|---|---|---|
 | API key | `key` | none | name of the `/keys` entry to connect with (see below) |
-| Destination | `url` | Logfire US | Logfire US, Logfire EU, or type the `https://` MCP URL of a self-hosted Logfire |
+| Which Logfire | `url` | Logfire US, or the region you last set up | Logfire US, Logfire EU, or another typed in; see [Which Logfire](#which-logfire). Saved as its MCP URL |
 | Tools | `read_only` | read-only | offer only the tools the server marks read-only; "read and write" also allows tools that change Logfire resources |
 | Server instructions | `include_instructions` | forwarded | whether the server's instructions, query guidance, and current UTC time reach the agent |
-| Browser sign-in | `oauth` | when there is no key | sign in, or sign up, through the browser when no key is chosen, set, or saved; the row shows whether you are signed in |
+| Browser sign-in | `oauth` | when there is no key | use a browser sign-in, made with `/logfire login`, when no key is chosen, set, or saved; the row shows whether you are signed in |
+
+### Which Logfire
+
+The Logfire plugin and `observability` setup ask which Logfire with the same
+picker. Enter on **Logfire US** or **Logfire EU** chooses that hosted region.
+Enter on **Another Logfire...** opens a field for a self-hosted or staging
+Logfire, where you can type any of these for the same Logfire:
+
+| You type | Example |
+|---|---|
+| a host | `logfire.example.com` or `logfire-eu.pydantic.info` |
+| the URL you open Logfire at | `https://logfire.example.com` |
+| its MCP URL | `https://logfire.example.com/mcp` |
+
+Logfire serves its UI, its API, and its MCP server (at `/mcp`) from one host, so
+CLAI derives the rest: `observability` sends traces to the https origin, and this
+plugin connects to the origin plus `/mcp`. The hosted regions come from harness's
+`LOGFIRE_US_MCP_URL` and `LOGFIRE_EU_MCP_URL`, which match the Logfire SDK's
+regions. The pre-region hosts `logfire.pydantic.dev` and `logfire-api.pydantic.dev`
+mean Logfire US. In this plugin's JSON settings, a host or the URL you open Logfire
+at becomes its MCP URL, but an MCP URL is kept exactly as given, and so is the one
+saved when you pick the same Logfire again: browser sign-ins are stored under it, so
+an MCP URL saved by an earlier build keeps its sign-in. Only https is accepted, and
+an address with a password, another path, a query, or a fragment is refused as you
+type. Enter uses the address; Esc goes back to the list, and Esc there cancels
+without changing anything.
+
+Whichever Logfire you last chose in either plugin is remembered, in
+`~/.config/pydantic-clai2/logfire/destination.json` (or under `$XDG_CONFIG_HOME`),
+so the other starts from it: the picker highlights it. Opening this plugin's menu
+before any of its settings were saved also switches it to that Logfire, and says so,
+when it is Logfire US or EU; any other Logfire is only highlighted, so a key you
+already use is never sent to a server you did not pick for it.
 
 ### Keys live in `/keys`
 
@@ -604,8 +685,8 @@ every run, so saving it there later connects without a reload.
 
 Browser sign-in uses the OAuth device flow
 ([RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628)), as Code Puppy's
-Logfire plugin does. The first run with no usable token, or `/logfire_mcp login`
-at any time, prints a link and a code and opens the link:
+Logfire plugin does. `/logfire login` opens a waiting screen with a link and
+a code, and opens the link:
 
 ```text
 Sign in to Logfire (new users can sign up there): open https://logfire-us.pydantic.dev/auth/oauth-device?code=ABCD-EFGH
@@ -614,18 +695,20 @@ Approve only the code shown here. You can open the link on another device.
 ```
 
 On that Logfire page you sign in, or create an account if you have none, and
-approve the code. CLAI waits up to 660 seconds (Logfire's codes last 600). No
-local callback server is involved, so this also works over SSH: open the link on
-any device.
+approve the code. CLAI waits until the code expires (Logfire's last 600 seconds),
+and Esc stops waiting. No local callback server is involved, so this also works
+over SSH: open the link on any device. A run never starts a sign-in: until you
+sign in, runs have no Logfire tools, and the session start says how to sign in.
+`/logfire` (or `/logfire status`) says whether you are signed in.
 
-- **Discovery:** the Logfire server is found from the Destination URL
+- **Discovery:** the Logfire server is found from the MCP URL
   ([RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) resource metadata),
   so self-hosted Logfire works too, including an issuer with a path
   ([RFC 8414](https://datatracker.ietf.org/doc/html/rfc8414)). CLAI registers
   itself as a client ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591))
   and uses PKCE. It registers again if the server has forgotten the earlier
   registration.
-- **Binding:** every request names the Destination URL as the token's resource
+- **Binding:** every request names the MCP URL as the token's resource
   ([RFC 8707](https://datatracker.ietf.org/doc/html/rfc8707)), and the
   discovered metadata must describe that same URL (and the authorization
   server's metadata its own issuer). A token is only issued for the MCP server
@@ -635,13 +718,13 @@ any device.
 - **Scopes:** read-only tools ask only for `project:read`. With Tools set to read
   and write, CLAI asks for every scope the MCP server lists (on Logfire's hosted
   servers that includes `organization:create_project`). Switching Tools to read
-  and write signs in again for those scopes. If Logfire grants fewer scopes, CLAI
+  and write needs `/logfire login` again for those scopes. If Logfire grants fewer scopes, CLAI
   says so once and keeps the sign-in, since asking again would get the same
-  grant; `/logfire_mcp login` asks again when you want to.
-- **Tokens:** kept per Destination URL in the OS keyring (or the private
+  grant; `/logfire login` asks again when you want to.
+- **Tokens:** kept per MCP URL in the OS keyring (or the private
   credential file) under the `logfire-oauth` account, so restarting CLAI does
   not mean signing in again. An expired or rejected token is refreshed; if that
-  fails, the next run signs in again. `/logfire_mcp logout` forgets every
+  fails, runs ask you to run `/logfire login`. `/logfire logout` forgets every
   Logfire sign-in, including one still waiting for approval, and keeps keys in
   `/keys`.
   If the keyring or file refuses to save a sign-in, CLAI says so and keeps it in
@@ -802,7 +885,7 @@ CLAI plugins written for them, such as the disabled built-ins
 [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
 [`grain`](#grain-meetings-with-a-saved-sign-in),
 [`linear`](#linear-issues-and-projects),
-[`logfire_mcp`](#logfire-mcp-query-your-telemetry),
+[`logfire_mcp`](#logfire-query-your-telemetry),
 [`notion`](#notion-workspace-tools),
 [`ordinal`](#ordinal-social-posts-in-ordinal),
 [`posthog`](#posthog-posthog-analytics-signed-in-for-clai),
@@ -917,7 +1000,8 @@ so two compaction chains never run together.
 `compaction` directly registers harness `FallbackCompaction` with
 `max_fraction=threshold`; harness owns the automatic trigger. `/compact` runs the
 same chain unconditionally, with the protected tail capped at half the
-conversation, and keeps the history unless the result is smaller. Its optional
+conversation, and keeps the history unless the result is smaller, counted as the provider reported
+the tokens. Its optional
 focus is free text, not shell arguments:
 `/compact don't lose the "auth" decisions` preserves the apostrophe and quotes in
 the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
@@ -951,7 +1035,9 @@ is restored on exit, and the question and your picks are printed to the transcri
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
-multi-select questions. Enter submits nonblank text. Esc returns to the choices
+multi-select questions. With `Other` highlighted, start typing; you do not need
+to press Enter first, and number keys type digits there instead of picking
+choices. Enter submits nonblank text. Esc returns to the choices
 and keeps your draft; Ctrl-C declines the whole request. Backspace and arrow keys
 edit the text. Multiline paste is inserted as text and waits for Enter; it does
 not submit an answer or select choices. The conversation stays visible while you type. Custom answers
@@ -1189,11 +1275,13 @@ name. For example, a GitHub plugin and Copilot tooling can both reference
 `GITHUB_TOKEN`, so replacing it once updates both.
 
 Pylon only accepts OAuth access tokens, not its REST API keys. With the
-**Browser sign-in** option, CLAI signs in for you: the first run that uses Pylon
-opens the browser, as `/mcp` servers with OAuth do, and waits up to five minutes
-for you to finish. Those tokens stay in the keyring (account `mcp-plugin_pylon`,
-or a private `0600` file when there is no keyring). They are refreshed as
-needed and never touch `/keys` or plugin settings.
+**Browser sign-in** option, CLAI signs in for you: choosing it opens the browser
+right away, behind a waiting screen that Esc cancels, and `/pylon login` signs
+in again later. Loading and prompts never open the browser: until you sign in,
+runs have no Pylon tools and the session start says how to sign in. Those tokens
+stay in the keyring (account `mcp-plugin_pylon`, or a private `0600` file when
+there is no keyring). They are refreshed as needed and never touch `/keys` or
+plugin settings. `/pylon logout` forgets them.
 
 ### `day_ai`: Day AI CRM tools
 
@@ -1211,7 +1299,7 @@ one row for each option harness `DayAI` takes:
 
 | Row | Setting | Choices |
 | --- | --- | --- |
-| Sign-in | `auth` | **automatic** (default): `DAY_AI_ACCESS_TOKEN` from `/keys` if it is saved, else a browser sign-in you completed earlier; **choose or enter a key in /keys**; **browser sign-in** |
+| Sign-in | `auth` | **browser sign-in** (default) or **choose or enter a key in /keys** |
 | Server instructions | `include_instructions` | **forwarded** (default) or **left out**: whether the Day AI server's own instructions reach the agent |
 
 Day AI runs one hosted endpoint (`https://day.ai/api/mcp`), and harness `DayAI`
@@ -1232,21 +1320,21 @@ Tokens are kept out of plugin settings, which are stored in plaintext:
   reaches the next run, and deleting it makes runs fail with a message until
   you save it again. Rename, replace, or delete keys in `/keys`. Plugins that
   name the same key share one value.
-- **Browser sign-in.** This keeps the tokens in the OS keyring (credential
-  `mcp-day_ai`), the way `/mcp` signs in to an OAuth server, so later sessions
-  reuse and refresh them. Choosing it saves `{"auth": "oauth"}`, which keeps
-  using the browser even when `DAY_AI_ACCESS_TOKEN` is saved. If you are not
-  signed in yet, the browser opens right away, behind a waiting screen. Esc
-  cancels it, and a failed sign-in is reported in the menu. Either way Day AI
-  stays signed out and CLAI keeps working. Loading never opens the browser.
-  While browser sign-in is chosen but not finished, the plugin loads without
-  Day AI tools and prints how to sign in, so a sign-in you cannot finish never
-  holds up a session.
+- **Browser sign-in**, the default. This keeps the tokens in the OS keyring
+  (credential `mcp-day_ai`), the way `/mcp` signs in to an OAuth server, so
+  later sessions reuse and refresh them. It is saved as `{"auth": "oauth"}` and
+  keeps using the browser even when `DAY_AI_ACCESS_TOKEN` is saved. Choosing
+  **browser sign-in** in the menu signs in: if you are not signed in yet, the
+  browser opens right away, behind a waiting screen. Esc
+  cancels it, and a failed sign-in is reported in the menu. `/day_ai login`
+  signs in the same way at any time, `/day_ai logout` signs out, and `/day_ai`
+  shows whether you are signed in. Loading and prompts never open the browser:
+  until you sign in, runs have no Day AI tools and the session start says how to
+  sign in. Signing in applies to the next prompt, without a reload.
 
-Until you choose one, with no `DAY_AI_ACCESS_TOKEN` and no earlier sign-in,
-the plugin loads without Day AI tools and prints how to connect. A key named
-in `auth` that is missing from `/keys` never falls back to the browser, and the
-menu marks it "missing from /keys".
+A key named in `auth` that is missing from `/keys` never falls back to the
+browser, and the menu marks it "missing from /keys". Earlier builds offered an
+**automatic** choice, saved as `{"auth": null}`; it now means browser sign-in.
 
 If you enabled `day_ai` from the earlier harness catalog, your saved
 `pydantic_ai_harness.day_ai:DayAI` declaration still takes precedence and reads
@@ -1272,7 +1360,7 @@ menu closes.
 
 | Row | Default | Does |
 |---|---|---|
-| Sign-in | Automatic | which credential runs use: Automatic (a `/keys` entry, else `ORDINAL_ACCESS_TOKEN`, else the browser), or only a saved key, only the environment variable, or only the browser |
+| Sign-in | Browser sign-in | which credential runs use: only the browser sign-in, only a saved key, or only the environment variable. Choosing a `/keys` entry switches to the saved key |
 | `/keys` entry | none | opens the `/keys` picker: choose a saved key, or type a new token masked; `R` stops using the key |
 | Server instructions | Included | pass Ordinal's own server instructions to the model |
 
@@ -1289,17 +1377,20 @@ run, and deleting it makes runs fail instead of connecting without it. `/keys`
 will not rename a key while Ordinal uses it. Several plugins and providers can
 name the same key, as GitHub and Copilot can both use `GITHUB_TOKEN`.
 
-A browser sign-in opens your browser on the first run that uses Ordinal. CLAI
-keeps the OAuth tokens in the OS keyring (the private credential file when no
-keyring exists), as `/mcp` does for OAuth servers, so later launches reuse them.
-It only works on the machine you run CLAI on. With no credential for the chosen
-sign-in and no terminal (a headless run from CI, say), the plugin fails to load
-with a message naming `/plugins configure ordinal`, rather than adding tools that
-cannot connect.
+`/ordinal login` (or choosing browser sign-in in the menu) signs in through the
+browser, behind a waiting screen that Esc cancels. CLAI keeps the OAuth tokens in
+the OS keyring (the private credential file when no keyring exists), as `/mcp`
+does for OAuth servers, so later launches reuse them. It only works on the
+machine you run CLAI on. Loading and prompts never open the browser: until you
+sign in, runs have no Ordinal tools and the session start says how to sign in.
+With a key or environment variable chosen that is missing and no terminal (a
+headless run from CI, say), the plugin fails to load with a message naming
+`/plugins configure ordinal`, rather than adding tools that cannot connect.
+Earlier builds offered an Automatic sign-in (`"sign_in": "auto"`); it now means
+the browser.
 
 `/ordinal` shows which credential the next run uses. `/ordinal logout` forgets the
-saved browser sign-in and drops the one in use, so the next browser run signs in
-again; it does not touch a `/keys` entry or the environment variable. Disabling
+browser sign-in; it does not touch a `/keys` entry or the environment variable. Disabling
 the plugin does not sign you out.
 
 ### `slack`: your Slack workspace, as you
@@ -1434,10 +1525,13 @@ PostHog uses it. Until a key is chosen, or if the chosen key is deleted, the
 plugin still loads with a warning and keeps its menu, and each run fails with an
 error naming the fix instead of connecting without the key.
 
-With browser sign-in, the first prompt that uses PostHog opens the browser. The
-tokens go to the keyring (the `mcp-posthog_plugin` entry under `pydantic-clai2`),
-the same storage `/mcp` uses for OAuth servers, so the sign-in lasts across turns
-and launches. Pick the EU region if your account is on the EU instance.
+With browser sign-in, `/posthog login` (or choosing browser sign-in in the menu)
+opens the browser behind a waiting screen that Esc cancels. Loading and prompts
+never open the browser: until you sign in, runs have no PostHog tools and the
+session start says how to sign in. The tokens go to the keyring (the
+`mcp-posthog_plugin` entry under `pydantic-clai2`), the same storage `/mcp` uses
+for OAuth servers, so the sign-in lasts across turns and launches. Pick the EU
+region if your account is on the EU instance.
 
 `/posthog` shows the key or sign-in in use; `/posthog logout` forgets the browser
 sign-in. The plugin always builds its own connection instead of passing `auth` to
@@ -1492,17 +1586,16 @@ the first of these that applies:
    `/keys` refuses to rename it while Grain uses it. Several plugins can share one
    named key, the way `vllm` and `openrouter` connections can. Choose "No API
    key" to go back to the browser sign-in.
-3. A browser sign-in. The first prompt that connects opens your browser and
-   prints the sign-in URL, in case the browser does not open (over SSH, for
-   example). The tokens go to the OS keyring (or CLAI's private credential file
-   when there is no keyring), the way `/mcp` OAuth servers keep theirs, so later
-   sessions refresh them instead of signing in again. A headless run
-   (`clai2 -p`) cannot sign in: with no saved sign-in, its Grain connection fails
-   and says so.
+3. A browser sign-in, made with `/grain login`, behind a waiting screen that
+   shows the sign-in URL in case the browser does not open (over SSH, for
+   example) and that Esc cancels. The tokens go to the OS keyring (or CLAI's
+   private credential file when there is no keyring), the way `/mcp` OAuth
+   servers keep theirs, so later sessions refresh them instead of signing in
+   again. Loading and prompts never open the browser: until you sign in, runs
+   have no Grain tools and the session start says how to sign in.
 
 `/grain status` says which of the three this session uses. `/grain logout`
-forgets the browser sign-in and the tokens the session holds, so the next prompt
-that uses Grain signs in again. It cannot revoke `GRAIN_ACCESS_TOKEN` (unset it,
+forgets the browser sign-in, so Grain has no tools until `/grain login`. It cannot revoke `GRAIN_ACCESS_TOKEN` (unset it,
 then `/plugins reload grain`) or a `/keys` entry (pick "No API key").
 
 If you enabled `grain` from the old `/plugins` catalog, which saved
@@ -1720,16 +1813,16 @@ contributes nothing:
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_plugin_load_failed` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_plugin_load_failed` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, and its
 saved settings. Set up state in `__init__`; call `super().__init__(host, settings)`
 first.
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_plugin_load_failed`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_plugin_load_failed`
 
-Five `async` methods fire outside the agent run, in the shell:
+Six `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
@@ -1737,6 +1830,7 @@ Five `async` methods fire outside the agent run, in the shell:
 | `on_session_end` | CLAI is quitting, or the plugin is unloading | `reason`: `exit`, `eof`, or `error` | no |
 | `on_turn_start` | you pressed Enter on a prompt | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |
+| `on_conversation_changed` | the shell switched conversations, or the current one got a new title | `conversation_id`, `title` | no |
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
@@ -1745,6 +1839,15 @@ of load order. It covers startup loading, not individual `/plugins` actions. Dec
 whose own module is not installed stay quiet, as on the terminal; a missing dependency
 inside an available plugin is reported. A handler failure is printed without stopping
 startup or preventing other handlers from running.
+
+`on_conversation_changed` receives a `ConversationChanged` event after `/new`, `/clear`,
+and `/resume`, when the first prompt of a new conversation gives it a title, and when
+background naming or a rename in the `/resume` browser retitles the current conversation.
+`title` is `None` until the first prompt is saved. A startup `--resume SESSION-ID` is restored
+before plugins load, so `on_session_start` already sees that conversation in `host.conversation`;
+a session picked from the `--resume` browser arrives as this event. The event fires once per
+change, never for a background `/fork`, and a name from background naming waits until no turn
+or command is running.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
@@ -2220,6 +2323,33 @@ returns a `KeyReference` to persist in place of the secret. Call it through
 `plugin_keys.on_loop` from the menu's worker thread. The built-in `slack` plugin
 is a complete example.
 
+### Sign in only when the user asks: `plugins.sign_in`
+
+CLAI waits for every plugin to load before the first prompt, and a prompt waits
+for its tools. A browser sign-in started there that the user cannot finish holds
+everything up. So a plugin signs in only when the user asks, from its settings
+menu or a command, and runs use only what is already stored.
+`pydantic_clai2.plugins.sign_in` provides one way to do that:
+
+- A `SignInMethod` is one service's sign-in: `service`, `setup` (the command that
+  signs in), `signed_in()`, `async sign_in(show=...)`, and `sign_out()`.
+  `pydantic_clai2.mcp.OAuthSignIn(name=..., service=..., setup=..., url=...)` is
+  the one for an MCP server with OAuth (FastMCP's flow, with tokens in the keyring
+  as `/mcp` keeps them). Its `client()` builds a run's connection, which uses and
+  refreshes the stored tokens and raises `SignInRequired` instead of opening a
+  browser.
+- `await sign_in_now(method)` signs in behind a waiting screen that shows what
+  `sign_in` passes to `show` (a link, a code). Esc cancels it. It returns the
+  message to show: signed in, cancelled, or why it failed.
+- `sign_in_command('NAME', method)` is `/NAME [login | logout | status]`.
+  `run_subcommand(method, args)` handles the same words inside a command that has
+  more of its own.
+- In `on_session_start`, `await warn_if_signed_out(method, host.console)` prints
+  how to sign in. Return a per-run capability factory that returns `None` while
+  `method.signed_in()` is false, so signing in applies to the next prompt.
+
+The built-in `day_ai` plugin is a short, complete example.
+
 ### Sign in through the browser: `pkce.PKCESignIn`
 
 For a service whose OAuth needs a registered app but accepts PKCE instead of a
@@ -2261,7 +2391,9 @@ again. Services with Dynamic Client Registration need none of this: add them as
 model CLAI or the user selected for the next prompt. A capability that selects a model, such as
 Logfire's `AgentControl`, can replace CLAI's default per request; `resolved_model()` and the
 status row still name the selected one, and `/compact` and session naming (without a
-`sessions.naming_model`) run on it. Local `!command` executions append a user message
+`sessions.naming_model`) run on it. `conversation_id` is the ID `--resume` restores it by, and
+`title` its saved title (`None` until the first prompt is saved); `on_conversation_changed` says
+when either changes. Local `!command` executions append a user message
 with the command, stdout, stderr, and completion status. They do not start an
 agent turn or fire turn hooks; the context reaches the model on the next prompt.
 
@@ -2579,7 +2711,7 @@ them as environment variables.
 When saved keys exist, vLLM's token prompt, OpenRouter's **Enter API key** flow,
 and plugins such as [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
 [`grain`](#grain-meetings-with-a-saved-sign-in), [`linear`](#linear-issues-and-projects),
-[`logfire_mcp`](#logfire-mcp-query-your-telemetry), [`notion`](#notion-workspace-tools),
+[`logfire_mcp`](#logfire-query-your-telemetry), [`notion`](#notion-workspace-tools),
 [`pylon`](#pylon-support-issues-and-accounts-in-pylon), and
 [`slack`](#slack-your-slack-workspace-as-you) show a
 searchable list of names. Choose one, enter a different key privately, or
@@ -2812,7 +2944,8 @@ already committed snapshot. No new CLAI lifecycle hooks are introduced.
 
 Session naming is a shell-owned background service (`runtime/session_naming.py`).
 It never writes into the agent transcript or loads plugin code. `/resume` does
-not fire plugin load/unload hooks or restore previous plugin approvals. Cross-project
+not fire plugin load/unload hooks or restore previous plugin approvals; it fires
+`on_conversation_changed`, as does a name the namer saves for the current conversation. Cross-project
 resume keeps the current working directory and the saved conversation's original
 project grouping. The
 project/session browser is a dedicated Termflow widget: unlike a single-pane
@@ -2856,7 +2989,7 @@ abort the run. The `ask_user` plugin is skipped even if saved settings enable or
 replace it; this does not change those settings. `host.full_screen()` raises in
 headless mode. Plugins must not bypass the host by reading terminal input or
 printing directly to stdout. `--resume SESSION-ID` restores history without a
-browser or tool replay.
+browser or tool replay, before plugins load.
 
 ## The stock agent from code
 

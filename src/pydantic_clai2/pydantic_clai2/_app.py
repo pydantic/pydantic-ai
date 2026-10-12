@@ -31,7 +31,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_clai2 import warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
-from pydantic_clai2.cli.self_update import Relaunch, Updates
+from pydantic_clai2.cli.self_update import Relaunch, Updates, installed
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
     Command,
@@ -80,6 +80,7 @@ from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, task_row
 from pydantic_clai2.runtime.worktrees import Worktree
+from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
@@ -104,6 +105,8 @@ from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 from pydantic_clai2.ui.rendering.usage_report import cost_line, session_usage
+from pydantic_clai2.ui.stderr_relay import relay_stderr
+from pydantic_clai2.ui.telemetry_log import telemetry_log
 
 if TYPE_CHECKING:
     from pydantic_clai2.auth import CodexAuth
@@ -301,87 +304,102 @@ async def chat(
         )
     fresh = False
     warming: Thread | None = None
-    async with agent:
-        while True:
-            reason: SessionEndReason = 'error'
-            with theme.use(lambda: shell.context.settings.theme, output=console.file if console.is_terminal else None):
+    with (
+        telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console),
+        relay_stderr() if console.is_terminal else nullcontext(),
+    ):
+        async with agent:
+            while True:
+                reason: SessionEndReason = 'error'
+                with theme.use(
+                    lambda: shell.context.settings.theme, output=console.file if console.is_terminal else None
+                ):
+                    try:
+                        async with create_task_group() as workers:
+                            workers.start_soon(shell.sessions.namer.run)
+                            try:
+                                with transcript.capture(console):
+                                    # Restore a named session first, so plugins start with it. The browser
+                                    # waits for plugins, whose models may name the sessions it lists, and
+                                    # until it picks one, telemetry has no session to assign.
+                                    notice: str | None = None
+                                    if resume:
+                                        if resume_from is not None:
+                                            resume = await shell.sessions.import_session(resume_from, resume)
+                                        notice = await shell.session.resume(resume, record=False)
+                                        resume = None
+                                    with shell.defer_identity() if resume is not None else nullcontext():
+                                        await shell.loader.load_all(fresh=fresh)
+                                        _report_project_plugins(shell.loader, console)
+                                        if notice is not None:
+                                            # Now that observability has subscribed and renderers have loaded.
+                                            shell.session.record_resumed()
+                                            await shell.sessions.show_resumed()
+                                            console.print(notice, markup=False)
+                                        if resume is not None:
+                                            source = [resume_from] if resume_from else []
+                                            console.print(await shell.sessions.command(source), markup=False)
+                                            resume = None
+                                warming = warming or warm_imports.start()
+                                reason = await shell.run()
+                            finally:
+                                workers.cancel_scope.cancel()
+                    except BaseExceptionGroup as exc:
+                        if len(exc.exceptions) == 1:
+                            raise exc.exceptions[0] from None
+                        raise
+                    finally:
+                        with transcript.capture(console):
+                            await shell.loader.close(reason)
+                if not shell.reload_requested:
+                    if (executable := shell.updates.relaunch) is not None:
+                        summary = shell.session.summary
+                        raise Relaunch(executable=executable, session_id=summary.id if summary.revision else None)
+                    return
+                shell.reload_requested = False
+                if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
+                    warming.join()
                 try:
-                    async with create_task_group() as workers:
-                        workers.start_soon(shell.sessions.namer.run)
-                        try:
-                            with (
-                                transcript.capture(console),
-                                shell.defer_identity() if resume is not None else nullcontext(),
-                            ):
-                                await shell.loader.load_all(fresh=fresh)
-                                _report_project_plugins(shell.loader, console)
-                                if resume is not None:
-                                    source = [resume_from] if resume_from else []
-                                    console.print(
-                                        await shell.sessions.command([*source, resume] if resume else source),
-                                        markup=False,
-                                    )
-                                    resume = None
-                            warming = warming or warm_imports.start()
-                            reason = await shell.run()
-                        finally:
-                            workers.cancel_scope.cancel()
-                except BaseExceptionGroup as exc:
-                    if len(exc.exceptions) == 1:
-                        raise exc.exceptions[0] from None
-                    raise
-                finally:
-                    with transcript.capture(console):
-                        await shell.loader.close(reason)
-            if not shell.reload_requested:
-                if (executable := shell.updates.relaunch) is not None:
-                    summary = shell.session.summary
-                    raise Relaunch(executable=executable, session_id=summary.id if summary.revision else None)
-                return
-            shell.reload_requested = False
-            if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
-                warming.join()
-            try:
-                shell = reload_clai(
-                    lambda shell=shell: create_shell(
-                        rebuild_stock(()) if rebuild_stock is not None else agent,
-                        deps=deps,
-                        plugins=plugins,
-                        usage_limits=shell.session.usage_limits,
-                        console=console,
-                        settings=shell.context.settings,
-                        store=SettingsStore(shell.context.store.path),
-                        builtin_plugins=(
-                            STOCK_PLUGINS
-                            if use_stock_defaults
-                            else DEFAULT_PLUGINS
-                            if use_defaults
-                            else builtin_plugins
-                        ),
-                        project=project,
-                        message_history=shell.session.messages,
-                        summary=shell.session.summary,
-                        transcript=shell.transcript,
-                        load_plugins=load_plugins,
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
-                with transcript.capture(console):
-                    console.print(
-                        f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
-                    )
-                    if isinstance(exc, ImportError) and exc.name and exc.name.startswith('pydantic_ai_harness'):
-                        console.print(
-                            'Harness is not refreshed by /reload. Restart CLAI2 with the same launch options and '
-                            '--resume to continue this session. Keep the worktree if asked to remove it.',
-                            style=theme.color(theme.INFO),
-                            markup=False,
+                    shell = reload_clai(
+                        lambda shell=shell: create_shell(
+                            rebuild_stock(()) if rebuild_stock is not None else agent,
+                            deps=deps,
+                            plugins=plugins,
+                            usage_limits=shell.session.usage_limits,
+                            console=console,
+                            settings=shell.context.settings,
+                            store=SettingsStore(shell.context.store.path),
+                            builtin_plugins=(
+                                STOCK_PLUGINS
+                                if use_stock_defaults
+                                else DEFAULT_PLUGINS
+                                if use_defaults
+                                else builtin_plugins
+                            ),
+                            project=project,
+                            message_history=shell.session.messages,
+                            summary=shell.session.summary,
+                            transcript=shell.transcript,
+                            load_plugins=load_plugins,
                         )
-                fresh = False
-            else:
-                with transcript.capture(console):
-                    console.print('CLAI2 reloaded. Conversation preserved.', style=theme.color(theme.INFO))
-                fresh = True
+                    )
+                except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
+                    with transcript.capture(console):
+                        console.print(
+                            f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
+                        )
+                        if isinstance(exc, ImportError) and exc.name and exc.name.startswith('pydantic_ai_harness'):
+                            console.print(
+                                'Harness is not refreshed by /reload. Restart CLAI2 with the same launch options and '
+                                '--resume to continue this session. Keep the worktree if asked to remove it.',
+                                style=theme.color(theme.INFO),
+                                markup=False,
+                            )
+                    fresh = False
+                else:
+                    with transcript.capture(console):
+                        console.print('CLAI2 reloaded. Conversation preserved.', style=theme.color(theme.INFO))
+                    fresh = True
 
 
 def _parse(name: str) -> ModelRef:
@@ -546,9 +564,8 @@ def create_shell(
         usage_limits=usage_limits,
         message_history=message_history,
         conversations=conversations,
+        summary=summary,
     )
-    if summary is not None:
-        session.summary = summary
     session.model = settings.model
     session.model_chosen = 'model' in settings.model_fields_set
     session.tool_retries = settings.tool_retries
@@ -560,9 +577,7 @@ def create_shell(
 
     session_settings = SessionSettings(session=session, console=console, settings=settings)
 
-    context = CommandContext(
-        settings=settings, store=store, clear_history=session.clear, apply_setting=session_settings, project=project
-    )
+    context = CommandContext(settings=settings, store=store, apply_setting=session_settings, project=project)
     models.pool_accounts = lambda: context.settings.pool_accounts
 
     def fast(args: list[str]) -> str:
@@ -708,8 +723,8 @@ def create_shell(
         transcript.clear()
         _print_welcome(project, console)
 
-    def clear(_: list[str]) -> str:
-        session.clear()
+    async def clear(_: list[str]) -> str:
+        await session.clear()
         reset_screen()
         return ''
 
@@ -766,6 +781,7 @@ def create_shell(
         status=status,
         enabled=load_plugins,
     )
+    session.on_change = loader.fire
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -908,12 +924,13 @@ class _Shell(Generic[DepsT, OutputT]):
 
     @contextmanager
     def defer_identity(self) -> Generator[None]:
-        """Keep startup telemetry unassigned until the requested conversation is selected."""
+        """Keep startup telemetry unassigned until the requested conversation is selected, then bind roots to it."""
         self._identity_pending = True
         try:
             yield
         finally:
             self._identity_pending = False
+        telemetry.conversation_selected()
 
     def __post_init__(self) -> None:
         self.tasks = Tasks(
@@ -932,6 +949,7 @@ class _Shell(Generic[DepsT, OutputT]):
             fire=self.loader.fire,
             models=self.context.store.models,
         )
+        self.sessions.quiet = self.forks.quiet
         self.session.on_setup_error = self.capability_failed
 
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
@@ -1322,9 +1340,10 @@ class _Shell(Generic[DepsT, OutputT]):
 
 
 def _print_welcome(project: ProjectSettings, console: Console, *, worktree: Worktree | None = None) -> None:
-    """The banner and hints a fresh launch shows, which `/clear` returns to without the launch's worktree notice."""
+    """The banner, version, and hints a fresh launch shows, which `/clear` returns to without the worktree notice."""
     console.print()
     print_banner(console)
+    console.print(f'pydantic-clai2 {installed().label}', style=theme.color(theme.MUTED))
     if worktree is not None:
         # Soft wrap keeps the path copyable: hard wrapping would break it with newlines.
         console.print(worktree.notice, style=theme.color(theme.MUTED), markup=False, highlight=False, soft_wrap=True)

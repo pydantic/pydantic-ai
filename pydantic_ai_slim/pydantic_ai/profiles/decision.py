@@ -40,11 +40,12 @@ class DecisionModelProfile(ModelProfile, total=False):
 def decision_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for a [decision model][pydantic_ai.models.decision.DecisionModel].
 
-    A decision model answers typed questions about a state; it does not generate text, call tools, or read anything
-    but text. Tool-mode structured output is how a decision model fills an `output_type`, and it rides on
-    `supports_tools`, so that stays on. A system prompt anywhere in the history is part of what the model judges, so
-    it needs no wrapping. Every other capability flag is off, and what no flag covers, such as a file in a prompt,
-    the model refuses itself.
+    A decision model answers typed questions about a state; it does not generate text or tool calls.
+    Tool-mode structured output is how a decision model fills an `output_type`, and it rides on `supports_tools`,
+    so that stays on. A system prompt anywhere in the history is part of what the model judges, so it needs no
+    wrapping. Image input is declared by the adapter's
+    [`supports_image_input`][pydantic_ai.models.decision.DecisionModel.supports_image_input], rather than by this
+    profile. The model refuses unsupported input itself.
     """
     return ModelProfile(
         supports_tools=True,
