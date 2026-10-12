@@ -6,10 +6,9 @@ import io
 import random
 import wave
 from collections.abc import Awaitable, Callable, MutableMapping, Sequence
-from typing import Literal, overload
+from typing import Literal, assert_never, overload
 
 import anyio
-from typing_extensions import assert_never
 
 from ..exceptions import UserError
 from ..messages import (

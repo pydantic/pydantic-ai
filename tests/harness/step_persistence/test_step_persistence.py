@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
@@ -1564,8 +1564,8 @@ class TestListRunsChronologicalOrdering:
         """`InMemoryStepStore.list_runs` sorts by `started_at`, not insertion order."""
 
         store = InMemoryStepStore()
-        await store.register_run(RunRecord(run_id='z-newer', started_at=datetime(2026, 5, 24, 12, tzinfo=timezone.utc)))
-        await store.register_run(RunRecord(run_id='a-older', started_at=datetime(2026, 5, 24, 10, tzinfo=timezone.utc)))
+        await store.register_run(RunRecord(run_id='z-newer', started_at=datetime(2026, 5, 24, 12, tzinfo=UTC)))
+        await store.register_run(RunRecord(run_id='a-older', started_at=datetime(2026, 5, 24, 10, tzinfo=UTC)))
         runs = await store.list_runs()
         assert [r.run_id for r in runs] == ['a-older', 'z-newer']
 
@@ -1574,8 +1574,8 @@ class TestListRunsChronologicalOrdering:
 
         store = FileStepStore(tmp_path)
         # `a-new` is lexicographically first but chronologically last.
-        await store.register_run(RunRecord(run_id='z-old', started_at=datetime(2026, 5, 24, 10, tzinfo=timezone.utc)))
-        await store.register_run(RunRecord(run_id='a-new', started_at=datetime(2026, 5, 24, 12, tzinfo=timezone.utc)))
+        await store.register_run(RunRecord(run_id='z-old', started_at=datetime(2026, 5, 24, 10, tzinfo=UTC)))
+        await store.register_run(RunRecord(run_id='a-new', started_at=datetime(2026, 5, 24, 12, tzinfo=UTC)))
         runs = await store.list_runs()
         assert [r.run_id for r in runs] == ['z-old', 'a-new']
 

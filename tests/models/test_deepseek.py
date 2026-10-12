@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone, tzinfo
+from datetime import UTC, datetime, tzinfo
 from decimal import Decimal
 
 import pytest
@@ -42,7 +42,7 @@ pytestmark = [
 @pytest.fixture
 def freeze_deepseek_off_peak_pricing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make DeepSeek's time-of-day pricing deterministic for snapshot assertions."""
-    timestamp = datetime(2026, 8, 13, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 8, 13, tzinfo=UTC)
 
     class FrozenDatetime(datetime):
         @classmethod

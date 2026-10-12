@@ -62,6 +62,7 @@ from ..messages import (
     RealtimeSessionReconnectEvent,
 )
 from ..models import ModelRequestParameters
+from ..models.openai import _map_api_errors as map_openai_api_errors  # pyright: ignore[reportPrivateUsage]
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
@@ -112,7 +113,13 @@ from ._openai_protocol import (
     user_message_item,
     with_realtime_query,
 )
-from ._openai_webrtc import answer_webrtc_offer as _answer_webrtc_offer, mint_client_secret as _mint_client_secret
+from ._openai_webrtc import (
+    HANG_UP_MAX_RETRIES,
+    HANG_UP_TIMEOUT,
+    answer_webrtc_offer as _answer_webrtc_offer,
+    ignore_ended_call,
+    mint_client_secret as _mint_client_secret,
+)
 from ._utils import (
     DEFAULT_MAX_RECONNECTS,
     inject_trace_context,
@@ -561,8 +568,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     @property
     def reconnect_restores_in_flight_state(self) -> bool:
         # Local replay restores only the finalized turns; the response and tool calls in flight when
-        # the socket dropped are gone, so the session settles them. (The xAI clone resumes natively and
-        # overrides this back to `True`.)
+        # the socket dropped are gone, so the session settles them.
         return False
 
     @property
@@ -1217,51 +1223,38 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # rather than leaving the session waiting for a turn that can never start. Two shapes qualify:
             # one deferred behind a now-dead active response (`_pending_response`), and one solicited but
             # not yet confirmed by its `response.created` (`_response_active` without `_response_started`)
-            # — the answer the caller is waiting on, which `_pending_response` alone does not cover. That
-            # second case is only ours to re-ask on a local-replay connection: one that restores in-flight
-            # state (`reconnect_restores_in_flight_state`, e.g. the inherited xAI clone) has the server
-            # resume that response itself, so re-asking would duplicate it. A response already streaming
-            # when it dropped is *not* re-asked either: its partial reply is settled as interrupted,
+            # — the answer the caller is waiting on, which `_pending_response` alone does not cover. A
+            # response already streaming when it dropped is *not* re-asked: its partial reply is settled as interrupted,
             # matching the state-lost contract of staying quiet until the next input. Nor is one the
             # caller cancelled (`_cancel_sent`) before it started: re-asking would resurrect a response a
             # barge-in explicitly stopped. Sent inside this guard because the new socket can drop before
             # the frame reaches it, which has to consume an attempt like any other failed reconnect.
             replay_response = self._pending_response or (
-                not self.reconnect_restores_in_flight_state
-                and self._response_active
-                and not self._response_started
-                and not self._cancel_sent
+                self._response_active and not self._response_started and not self._cancel_sent
             )
             replay_inputs, replay_answers = (
                 (tuple(self._deferred_response_inputs), tuple(self._deferred_response_answers))
                 if self._pending_response
                 else (self._response_request_inputs, self._response_request_answers)
             )
-            # The requests the new socket will never answer, where it doesn't carry on the old one's: an
-            # unstarted request not asked for again (only the deferred ones are, when there are any, and none
-            # the caller cancelled), and the tool calls whose batches go below.
+            # The requests the new socket will never answer: an unstarted request not asked for again (only
+            # the deferred ones are, when there are any, and none the caller cancelled), and the tool calls
+            # whose batches go below.
             lost_inputs: list[InputId] = []
-            if not self.reconnect_restores_in_flight_state:
-                if self._response_active and not self._response_started:
-                    lost_inputs += self._response_request_answers
-                lost_inputs += [input_ for batch in self._tool_call_batches.values() for input_ in batch.inputs]
+            if self._response_active and not self._response_started:
+                lost_inputs += self._response_request_answers
+            lost_inputs += [input_ for batch in self._tool_call_batches.values() for input_ in batch.inputs]
             replayed = set(replay_answers) if replay_response else set[InputId]()
             lost_inputs = [input_ for input_ in dict.fromkeys(lost_inputs) if input_ not in replayed]
             self._clear_active_response()
             # A fresh socket also drops anything the old one was still holding for us, including the
-            # output items a barge-in could have named. Where the provider doesn't restore the calls in
-            # flight, the session settles them rather than sending their results, so their batches go
-            # too; where it does (xAI), their results still get answered.
+            # output items a barge-in could have named. The calls in flight are gone too: the session settles
+            # them rather than sending their results, so their batches go.
             self._cancelled_response_id = None
             self._output_items.clear()
-            if not self.reconnect_restores_in_flight_state:
-                self._tool_call_batches.clear()
-                self._tool_call_responses.clear()
-            self._lifecycle.reconnected(
-                restores_in_flight=self.reconnect_restores_in_flight_state,
-                lost_inputs=lost_inputs,
-                asked_again=tuple(replayed),
-            )
+            self._tool_call_batches.clear()
+            self._tool_call_responses.clear()
+            self._lifecycle.reconnected(lost_inputs=lost_inputs, asked_again=tuple(replayed))
             if replay_response:
                 await self._create_response(replay_inputs, replay_answers)
             # Cleared only once the replay is on the wire, so a send that failed above leaves the
@@ -1519,7 +1512,11 @@ class OpenAIRealtimeModel(RealtimeModel):
         instructions: str | None = None,
         tools: Sequence[ToolDefinition] | None = None,
         model_settings: RealtimeModelSettings | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
     ) -> WebRTCAnswer:
+        # The Realtime API's calls endpoint takes no conversation items (`session.input` is rejected), so
+        # history is seeded by the sideband when it attaches, as `connect_webrtc` does.
+        del message_history
         return await _answer_webrtc_offer(
             http_client=self._http_client,
             calls_url=self._webrtc_calls_url(),
@@ -1530,6 +1527,15 @@ class OpenAIRealtimeModel(RealtimeModel):
             session_config=self._webrtc_session_config(instructions, tools, model_settings),
         )
 
+    def _check_hang_up(self, session: RealtimeProviderSession) -> None:
+        self._check_webrtc_session_provider(session)
+
+    async def hang_up(self, session: RealtimeProviderSession) -> None:
+        self._check_hang_up(session)
+        client = self.client.with_options(timeout=HANG_UP_TIMEOUT, max_retries=HANG_UP_MAX_RETRIES)
+        with ignore_ended_call('call_id_not_found'), map_openai_api_errors(self.model_name):
+            await client.realtime.calls.hangup(session.session_id)
+
     @asynccontextmanager
     async def connect_webrtc(
         self,
@@ -1539,12 +1545,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
-        if session.provider_name != self.system:
-            raise UserError(
-                f'This WebRTC call was negotiated by provider {session.provider_name!r}, but this realtime '
-                f'model connects through {self.system!r}. Answer the offer and attach the sideband with the '
-                'same model/provider.'
-            )
+        self._check_webrtc_session_provider(session)
         settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
         instructions = get_instructions(messages, model_request_parameters) or ''
@@ -1673,6 +1674,5 @@ class OpenAIRealtimeModel(RealtimeModel):
             dial_url=lambda: self._realtime_url(settings),
             session_model=session_model,
             build_connection=build_connection,
-            replay_on_redial=True,
         ) as connection:
             yield connection

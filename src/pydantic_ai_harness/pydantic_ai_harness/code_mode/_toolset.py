@@ -11,12 +11,12 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeGuard
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NotRequired, Self, TypeGuard
 from urllib.parse import urlsplit
 
 from pydantic import Field, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
-from typing_extensions import NotRequired, Self, TypedDict, TypeIs
+from typing_extensions import TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.capabilities import AbstractCapability
@@ -397,7 +397,7 @@ Write and run Python code in a sandboxed environment.
 
 The sandbox uses Monty, a subset of Python. Key restrictions:
 - **No third-party libraries**: only the standard library modules listed below can be used
-- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`. These must be imported before use, just like in regular Python."""
+- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`. These must be imported before use, just like in regular Python."""
 
 # Timing/OS restriction line, swapped depending on what host access the agent
 # configured. Three states, because `mount` and `os` enable different things:

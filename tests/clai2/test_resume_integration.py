@@ -1,9 +1,7 @@
 """The command, startup flag, naming resolver and terminal worker share one service."""
 
-import os
-import subprocess
-import sys
-from collections.abc import Callable
+from builtins import BaseExceptionGroup
+from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
@@ -17,7 +15,8 @@ from rich.console import Console
 from termflow.tui.keys import Key
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelRequest, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord, StepEvent, ToolEffectRecord
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
@@ -29,9 +28,7 @@ from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.session_naming import SessionNamer
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup
+from tests.clai2.cli_runner import CliRunner
 
 
 async def test_reload_keeps_saved_conversation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -40,7 +37,7 @@ async def test_reload_keeps_saved_conversation(tmp_path: Path, monkeypatch: pyte
 
     monkeypatch.setattr('pydantic_clai2._app.reload_clai', rebuild)
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('first\n/reload\nsecond\n/exit\n')
+        pipe.send_text('first\r/reload\rsecond\r/exit\r')
         await chat(
             Agent(TestModel(call_tools=[], custom_output_text='answer')),
             deps=None,
@@ -70,13 +67,12 @@ async def test_resume_command_uses_browser_and_naming_model(tmp_path: Path, monk
     context = CommandContext(
         settings=Settings(model=None),
         store=SettingsStore(tmp_path / 'config.db'),
-        clear_history=session.clear,
         apply_setting=lambda key, settings: None,
     )
     service = Sessions(session=session, store=store, context=context)
     await session.prompt('name this session')
     saved_id = session.summary.id
-    session.clear()
+    await session.clear()
 
     def select(browser: SessionBrowser) -> str:
         browser.reload()
@@ -113,6 +109,41 @@ async def test_resume_command_uses_browser_and_naming_model(tmp_path: Path, monk
     assert context.settings.session_namer_model is None
 
 
+async def test_browser_opened_mid_turn_defers_the_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    prior = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
+    await prior.prompt('saved turn')
+    started, release = anyio.Event(), anyio.Event()
+
+    async def wait(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        started.set()
+        await release.wait()
+        yield 'done'
+
+    session = Session(Agent(FunctionModel(stream_function=wait)), deps=None, conversations=store, workspace=tmp_path)
+    context = CommandContext(
+        settings=Settings(model=None, session_namer=False),
+        store=SettingsStore(tmp_path / 'config.db'),
+        apply_setting=lambda key, settings: None,
+    )
+    service = Sessions(session=session, store=store, context=context)
+
+    def select(browser: SessionBrowser) -> str:
+        return prior.summary.id
+
+    monkeypatch.setattr(SessionBrowser, 'run', select)
+    async with anyio.create_task_group() as running:
+        running.start_soon(session.prompt, 'busy')
+        await started.wait()
+        assert await service.command([]) == (
+            f'A turn is running. Enter /resume {prior.summary.id} to restore that session once it ends.'
+        )
+        release.set()
+    assert session.summary.id != prior.summary.id
+    assert 'Resumed' in await service.command([])
+    assert session.summary.id == prior.summary.id
+
+
 async def test_browser_resumes_other_directory_without_confirmation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -127,7 +158,6 @@ async def test_browser_resumes_other_directory_without_confirmation(
     context = CommandContext(
         settings=Settings(model=None, session_namer=False),
         store=SettingsStore(tmp_path / 'config.db'),
-        clear_history=session.clear,
         apply_setting=lambda key, settings: None,
     )
     service = Sessions(session=session, store=store, context=context)
@@ -153,7 +183,7 @@ async def test_startup_restore_and_new_session_are_persisted(tmp_path: Path) -> 
     await prior.prompt('earlier turn')
     output = StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('followup\n/new\nother session\n/exit\n')
+        pipe.send_text('followup\r/new\rother session\r/exit\r')
         await chat(
             Agent(TestModel(call_tools=[], custom_output_text='answer')),
             deps=None,
@@ -167,13 +197,14 @@ async def test_startup_restore_and_new_session_are_persisted(tmp_path: Path) -> 
     assert len(entries) == 2
     assert (await store.get(conversation_id=prior.summary.id)).summary.message_count > prior.summary.message_count
     assert 'Resumed' in output.getvalue()
-    assert 'Previous session remains saved' in output.getvalue()
+    # `/new` is `/clear`, so the banner follows the resumed conversation.
+    assert '/resume restores one' in output.getvalue().rsplit('Resumed', 1)[1]
 
 
 async def test_empty_startup_browser_and_invalid_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(SessionBrowser, 'run', cancel_browser)
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('/exit\n')
+        pipe.send_text('/exit\r')
         await chat(
             Agent(TestModel()),
             deps=None,
@@ -192,16 +223,8 @@ async def test_empty_startup_browser_and_invalid_restore(tmp_path: Path, monkeyp
 
 
 @pytest.mark.parametrize('args', [['--resume', 'missing'], ['--resume=missing', 'config']])
-def test_resume_cli_errors_are_normal_parser_errors(tmp_path: Path, args: list[str]) -> None:
-    result = subprocess.run(
-        [sys.executable, '-m', 'pydantic_clai2', '--database', str(tmp_path / 'settings.db'), *args],
-        input='/exit\n',
-        capture_output=True,
-        text=True,
-        timeout=20,
-        check=False,
-        env=dict(os.environ, CLAI_NO_SPLASH='1'),
-    )
+def test_resume_cli_errors_are_normal_parser_errors(tmp_path: Path, run_cli: CliRunner, args: list[str]) -> None:
+    result = run_cli('--database', str(tmp_path / 'settings.db'), *args, cwd=tmp_path)
     assert result.returncode == 2
     assert 'error:' in result.stderr
     assert 'Traceback' not in result.stderr
@@ -214,7 +237,6 @@ async def test_empty_usage_missing_model_and_recovery_preview(tmp_path: Path, mo
     context = CommandContext(
         settings=Settings(model=None),
         store=SettingsStore(tmp_path / 'config.db'),
-        clear_history=session.clear,
         apply_setting=lambda key, settings: None,
     )
     service = Sessions(session=session, store=store, context=context)
