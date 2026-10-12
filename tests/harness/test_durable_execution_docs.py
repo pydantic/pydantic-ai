@@ -11,7 +11,7 @@ import pytest
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._docs_examples import python_blocks, run_block
-from .conftest import skip_temporal_sandbox_on_314
+from ._temporal import skip_temporal_sandbox_on_314
 
 _PAGE = 'docs/harness/durable-execution.md'
 
@@ -64,11 +64,6 @@ def test_dbos_example(workspace: Path, dbos_teardown: None) -> None:
     _run('coder_dbos.py', workspace)
 
 
-def test_prefect_example(workspace: Path) -> None:
-    pytest.importorskip('prefect')
-    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
-    from prefect.testing.utilities import prefect_test_harness
-
-    with temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}):
-        with prefect_test_harness(server_startup_timeout=120):
-            _run('coder_prefect.py', workspace)
+@pytest.mark.xdist_group(name='prefect')
+def test_prefect_example(workspace: Path, prefect_test_server: None) -> None:
+    _run('coder_prefect.py', workspace)

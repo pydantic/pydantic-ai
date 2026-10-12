@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, TypeAlias
-
-from typing_extensions import Self
+from typing import Any, Self, TypeAlias
 
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart

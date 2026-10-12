@@ -1,6 +1,8 @@
-"""The built-in `pylon` plugin: Pylon's support issues, accounts, and contacts through harness `Pylon`.
+"""Look up Pylon support issues, accounts, and contacts.
 
-The settings menu is registered with `@host.configure`, so turning the plugin on opens it, as do `C` in
+The built-in `pylon` plugin: Pylon's support issues, accounts, and contacts through harness `Pylon`.
+
+The settings menu is `PylonPlugin.configure`, so turning the plugin on opens it, as do `c` in
 `/plugins`, `/plugins configure pylon`, and `/pylon`. Each edit is saved to the plugin's settings at once and
 applies from the next run, because the capability is rebuilt per run from the current settings.
 
@@ -9,21 +11,22 @@ named key from `/keys`, chosen through the shared key picker; only the key's nam
 on every run, so replacing it in `/keys` takes effect on the next run, and a deleted key fails the run instead
 of connecting without it.
 
-With browser sign-in, CLAI signs in the way `/mcp` OAuth servers do, keeping the tokens in the keyring.
-Harness `Pylon(auth='oauth')` would keep them in memory and give the browser the 5-second connect timeout,
-so CLAI builds that client itself.
+With browser sign-in, CLAI signs in the way `/mcp` OAuth servers do, keeping the tokens in the keyring under
+`mcp-plugin_pylon`. The sign-in runs only from the settings menu or `/pylon login`, never while loading or in a
+prompt; see `pydantic_clai2.plugins.sign_in`. Until then, runs get no Pylon tools.
 """
 
 import asyncio
 import json
 from collections.abc import Callable, Sequence
+from functools import partial
 from typing import Literal
 
-from fastmcp import Client
-from fastmcp.client.transports import StreamableHttpTransport
+import anyio
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.pylon import Pylon
@@ -38,13 +41,15 @@ from pydantic_clai2.config.api_keys import (
     save_key_connection,
 )
 from pydantic_clai2.config.credential_store import load_codex_credentials
-from pydantic_clai2.mcp import OAUTH_TIMEOUT, http_client, sign_in
-from pydantic_clai2.plugins import DepsT, PluginHost
+from pydantic_clai2.mcp import OAuthSignIn
+from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
+from pydantic_clai2.plugins.keys import on_loop
+from pydantic_clai2.plugins.sign_in import SUBCOMMANDS, run_subcommand, sign_in_now, status, warn_if_signed_out
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 
 PYLON_MCP_URL = 'https://mcp.usepylon.com'
-"""Harness `Pylon`'s endpoint, repeated here because a custom client owns its URL."""
+"""Harness `Pylon`'s endpoint, repeated here because the browser sign-in's client owns its URL."""
 
 KEY_NAME = 'PYLON_ACCESS_TOKEN'
 """The `/keys` label for a new token: harness `Pylon`'s documented variable name, used as a label only."""
@@ -55,8 +60,15 @@ ACCOUNT = 'pylon'
 TOKEN_ACCOUNT = 'plugin_pylon'
 """Browser tokens are stored as `mcp-plugin_pylon`; `/mcp` server names cannot contain `_`, so none shares them."""
 
+SIGN_IN = OAuthSignIn(name=TOKEN_ACCOUNT, service='Pylon', setup='/pylon login', url=PYLON_MCP_URL)
+"""The browser sign-in; its tokens are the keyring credential `mcp-plugin_pylon`."""
+
 NOT_CHOSEN = '(not chosen)'
-_HELP = 'Usage: /pylon (settings menu), /pylon key (choose the /keys entry), or /pylon status'
+_WORDS = ('key', *SUBCOMMANDS)
+_HELP = (
+    'Usage: /pylon (settings menu), /pylon key (choose the /keys entry), /pylon login or logout (browser sign-in), '
+    'or /pylon status'
+)
 
 
 class PylonSettings(BaseModel):
@@ -102,17 +114,7 @@ class PylonConfig:
 
     def rows(self) -> Sequence[FieldRow]:
         """Sign-in first, the key only when it is used, then the capability's switches."""
-        rows = [
-            FieldRow(
-                key='auth',
-                label='Sign-in',
-                description='How Pylon authenticates. Pylon only accepts OAuth access tokens, not REST API keys.',
-                default='key',
-                choices=('key', 'browser'),
-                choice_labels={'key': 'Named key from /keys', 'browser': 'Browser sign-in (OAuth)'},
-                allow_custom=False,
-            )
-        ]
+        rows = [_AUTH]
         if self.settings.auth == 'key':
             rows.append(
                 FieldRow(
@@ -190,6 +192,18 @@ class PylonConfig:
         return message
 
 
+_AUTH = FieldRow(
+    key='auth',
+    label='Sign-in',
+    description='How Pylon authenticates. Pylon only accepts OAuth access tokens, not REST API keys. Choosing '
+    'browser sign-in signs in now if needed; /pylon login signs in again later.',
+    default='key',
+    choices=('key', 'browser'),
+    choice_labels={'key': 'Named key from /keys', 'browser': 'Browser sign-in (OAuth)'},
+    allow_custom=False,
+)
+
+
 def _text(value: object) -> str:
     return json.dumps(value) if isinstance(value, bool) else str(value)
 
@@ -201,11 +215,26 @@ def _release_for_key() -> list[str]:
 async def configure(config: PylonConfig, runners: Runners | None = None) -> str:
     """Open the settings menu until Esc, stepping out of the menu worker whenever the key picker is needed."""
     notes = len(config.notes)
+    shown = runners or TERMINAL
+    loop = asyncio.get_running_loop()
+
+    def pick_auth(menu: FieldMenu) -> list[str]:
+        pick = shown.run_choice(menu.build_choices(_AUTH))
+        if pick.cancelled or pick.item is None:
+            return []
+        menu.apply(_AUTH, str(pick.item.value))
+        if pick.item.value == 'browser' and not SIGN_IN.signed_in():
+            message = on_loop(lambda: sign_in_now(SIGN_IN, shown), loop)
+            config.notes.extend([] if message is None else [message])
+        return []
+
+    def flow() -> list[str]:
+        menu = FieldMenu(config)
+        return run_flow(menu, shown, submenus={'key': _release_for_key, 'auth': lambda: pick_auth(menu)})
+
     while True:
         try:
-            await run_worker(
-                lambda: run_flow(FieldMenu(config), runners or TERMINAL, submenus={'key': _release_for_key})
-            )
+            await run_worker(flow)
         except _ChooseKey:
             try:
                 config.notes.append(await choose_key())
@@ -215,16 +244,46 @@ async def configure(config: PylonConfig, runners: Runners | None = None) -> str:
         return '\n'.join(config.notes[notes:]) or 'Pylon settings unchanged.'
 
 
-def activate(host: PluginHost[DepsT]) -> None:
-    """Add a per-run `Pylon` built from the current settings, its settings menu, and `/pylon`."""
-    config = PylonConfig(host.settings(PylonSettings), host.save_settings)
+class PylonPlugin(Plugin[PylonSettings, DepsT]):
+    """A per-run `Pylon` built from the current settings, its settings menu, and `/pylon`."""
 
-    def for_run(_: RunContext[DepsT]) -> Pylon[DepsT] | None:
+    def __init__(self, host: PluginHost[DepsT], settings: PylonSettings) -> None:
+        super().__init__(host, settings)
+        self.config = PylonConfig(settings, host.save_settings)
+
+    def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
+        return (self._for_run,)
+
+    def get_commands(self) -> Sequence[Command]:
+        return (
+            Command(
+                name='pylon',
+                description='Pylon settings: sign-in, the /keys entry, and tool options '
+                '(/pylon key, /pylon login|logout, /pylon status).',
+                handler=self._command,
+                complete=lambda args: (
+                    [word for word in _WORDS if word.startswith(args[0] if args else '')] if len(args) <= 1 else []
+                ),
+                during_turn=True,
+            ),
+        )
+
+    async def configure(self) -> str:
+        return await configure(self.config)
+
+    async def on_session_start(self, event: SessionStart) -> None:
+        if self.config.settings.auth == 'browser':
+            await warn_if_signed_out(SIGN_IN, self.host.console)
+
+    async def _for_run(self, _: RunContext[DepsT]) -> Pylon[DepsT] | None:
         # The token is resolved here, not passed as a callable `auth`: Pylon would answer with a
         # `DynamicToolset`, and pydantic-ai 2.49 drops a dynamic toolset returned from a `CapabilityFunc`.
-        settings = config.settings
+        settings = self.config.settings
         if settings.auth == 'browser':
-            client, token = _browser_client(), None
+            # Checked per run, so signing in from the menu or `/pylon login` applies to the next prompt.
+            if not await anyio.to_thread.run_sync(SIGN_IN.signed_in, abandon_on_cancel=True):
+                return None
+            client, token = SIGN_IN.client(), None
         else:
             reference = saved_key()
             if reference is None:
@@ -237,40 +296,24 @@ def activate(host: PluginHost[DepsT]) -> None:
             include_instructions=settings.include_instructions,
         )
 
-    host.add(for_run)
-
-    @host.configure
-    async def settings_menu() -> str:
-        return await configure(config)
-
-    async def command(args: list[str]) -> str:
+    async def _command(self, args: list[str]) -> str:
         if not args:
-            return await settings_menu()
+            return await self.configure()
         if args == ['key']:
             return await choose_key()
         if args == ['status']:
-            return await asyncio.to_thread(_status, config)
-        raise ValueError(_HELP)
-
-    host.commands.register(
-        Command(
-            name='pylon',
-            description='Pylon settings: sign-in, the /keys entry, and tool options (/pylon key, /pylon status).',
-            handler=command,
-            complete=lambda args: (
-                [word for word in ('key', 'status') if word.startswith(args[0] if args else '')]
-                if len(args) <= 1
-                else []
-            ),
-        )
-    )
+            return await anyio.to_thread.run_sync(_status, self.config, abandon_on_cancel=True)
+        message = await run_subcommand(SIGN_IN, args)
+        if message is None:
+            raise ValueError(_HELP)
+        return message
 
 
 def _status(config: PylonConfig) -> str:
     settings = config.settings
     options = f'read-only tools {_text(settings.read_only)}, server instructions {_text(settings.include_instructions)}'
     if settings.auth == 'browser':
-        return f'Pylon signs in through the browser; {options}.'
+        return f'{status(SIGN_IN)} Pylon uses the browser sign-in; {options}.'
     reference = saved_key()
     if reference is None:
         return f'Pylon has no key yet, so runs get no Pylon tools. Choose one with /pylon key; {options}.'
@@ -287,7 +330,7 @@ async def choose_key() -> str:
     if isinstance(token, str):
         if not token.strip():
             raise ValueError('A Pylon access token is required.')
-        if KEY_NAME in await asyncio.to_thread(load_keys):
+        if KEY_NAME in await anyio.to_thread.run_sync(load_keys, abandon_on_cancel=True):
             try:
                 answer = await prompt.prompt_async(
                     f'Replace {KEY_NAME} in /keys for every connection using it? [y/N]: '
@@ -296,16 +339,10 @@ async def choose_key() -> str:
                 return 'Pylon key unchanged.'
             if answer.strip().lower() != 'y':
                 return 'Pylon key unchanged.'
-        await asyncio.to_thread(save_key, name=KEY_NAME, value=token)
+        await anyio.to_thread.run_sync(partial(save_key, name=KEY_NAME, value=token), abandon_on_cancel=True)
         token = KeyReference(name=KEY_NAME)
     saved = json.dumps({'token': token.model_dump()})
-    await asyncio.to_thread(save_key_connection, account=ACCOUNT, token=token, value=saved)
-    return f'Pylon connects with {token.name} from /keys.'
-
-
-def _browser_client() -> Client[StreamableHttpTransport]:
-    """A Pylon connection that signs in on first use and allows the browser as long as `/mcp` does."""
-    transport = StreamableHttpTransport(
-        url=PYLON_MCP_URL, auth=sign_in(TOKEN_ACCOUNT), httpx_client_factory=http_client
+    await anyio.to_thread.run_sync(
+        partial(save_key_connection, account=ACCOUNT, token=token, value=saved), abandon_on_cancel=True
     )
-    return Client(transport, init_timeout=OAUTH_TIMEOUT)
+    return f'Pylon connects with {token.name} from /keys.'

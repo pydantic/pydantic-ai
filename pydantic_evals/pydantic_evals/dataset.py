@@ -10,7 +10,6 @@ a task function to produce an evaluation report.
 from __future__ import annotations as _annotations
 
 import functools
-import sys
 import time
 import traceback
 import warnings
@@ -18,7 +17,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, Self, Union, cast
 
 import anyio
 import logfire_api
@@ -28,7 +27,7 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_seria
 from pydantic_core import to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from rich.progress import Progress
-from typing_extensions import Self, TypeVar
+from typing_extensions import TypeVar
 
 from pydantic_ai._spec import build_registry, build_schema_types, load_from_registry
 from pydantic_ai._utils import await_maybe, is_async_callable
@@ -52,11 +51,6 @@ from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate, Report
 
 if TYPE_CHECKING:
     from pydantic_ai.retries import RetryConfig
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 __all__ = (
     'Case',

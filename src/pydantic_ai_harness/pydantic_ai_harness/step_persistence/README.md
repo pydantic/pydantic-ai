@@ -10,15 +10,21 @@
 >
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-`StepPersistence` records what an agent did at each boundary, separate from
-whether the run can be safely resumed. It is the persistence substrate for
-orchestrators that delegate to sub-agents (e.g. an AICA orchestrator spawning
-a `code_librarian` to investigate one symbol, then continuing that delegate's
-investigation with a follow-up question).
+`StepPersistence` saves a snapshot of an agent run at every settled step and
+when the run fails, so you can resume the run, or fork it from an earlier step,
+in the same process or another one, from memory, files, SQLite, MongoDB, or your
+own store. Alongside the snapshots it keeps an append-only trail of step events
+and a ledger of tool side effects, so after a crash you can tell which tool
+calls completed and which may or may not have run. It is also the persistence
+layer for orchestrators that delegate to sub-agents, for example continuing a
+delegate's investigation with a follow-up question.
 
-It is not a full graph-state checkpoint. Capability-state restore, workspace
-snapshots, and graph-node resume are out of scope and tracked separately
-(see `pydantic-ai-harness` issues #149 and #196).
+A snapshot holds the run's message history, not everything around it:
+capability state outside the messages, workspace files, and resuming from the
+middle of a step are tracked separately (see `pydantic-ai-harness` issues #149
+and #196). For recovery inside a step, run the agent on
+[durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/),
+which `StepPersistence` works alongside.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/step_persistence/)
 
@@ -79,8 +85,8 @@ primitive for it (see [Three-level identity](#three-level-identity)).
   pair. The encoding is injective within `FileStepStore`'s 200-character
   limit, so replay addresses the same stored run without collisions between
   distinct accepted context ids. A longer derived id raises `ValueError`
-  before backend selection, including with the memory, SQLite, and Mongo
-  stores.
+  before backend selection, including with the memory, SQLite, Mongo, and
+  Postgres stores.
 - **Neither set** uses `ctx.run_id` unchanged. A missing context run id raises
   `RuntimeError` because inventing one would disconnect replayed writes.
 
@@ -192,12 +198,15 @@ when captured. Snapshots are written at these boundaries:
   produces a `complete` snapshot; a crash mid-tool-cycle produces an
   `interrupted` one carrying every completed cycle.
 
-An `interrupted` snapshot is sendable on resume -- pydantic-ai (>= 2.10)
-repairs broken tool-call/result pairing before every model request -- but
-not necessarily *safe*: a pending tool call may be re-executed (resuming
-without a new prompt) or closed out with a synthesized `interrupted`
-return, and neither says whether the original side effect happened. That
-is the tool-effect ledger's job. So the default read path skips
+An `interrupted` snapshot is sendable, but not necessarily *safe*: a
+pending tool call may be re-executed or closed out with a synthesized
+`interrupted` return, and neither says whether the original side effect
+happened. That is the tool-effect ledger's job. Which one happens depends on
+how you continue. Resuming without a new prompt executes the pending calls.
+With a new prompt, calls are closed out if some of their batch already
+returned; if none did, the run raises `UserError` rather than abandon calls
+that could still be answered, so call `pydantic_ai.messages.repair_messages`
+on the history first to close them out yourself. So the default read path skips
 `interrupted` snapshots; pass `include_interrupted=True` to
 `continue_run` / `fork_run` / `latest_snapshot` after checking
 `list_unresolved_tool_effects`. If no matching snapshot exists,
@@ -373,10 +382,24 @@ configured retention can delete older snapshots.
   offload, not an aggregate cap: a snapshot of many below-threshold parts can
   still exceed MongoDB's 16 MiB document limit and fail on insert -- lower the
   threshold if that is a risk for your workload.
+- `PostgresStepStore(pool, table='step_persistence')` -- PostgreSQL tables
+  `{table}_runs`, `{table}_events`, `{table}_snapshots`,
+  `{table}_snapshot_keys`, and `{table}_tool_effects`, plus `{table}_media`
+  for externalized blobs (see [Persisting media](#persisting-media) below).
+  `table` is a prefix, not a table name. `pool` is a caller-owned
+  asyncpg-compatible pool: the harness imports no driver and defines no extra
+  for it, and the store does not close the pool. Run registration inserts by
+  the `run_id` primary key of `{table}_runs`; duplicate ids raise
+  `ValueError`. Events and snapshots are ordered by a
+  `BIGINT GENERATED ALWAYS AS IDENTITY` `seq`, which keeps counting when
+  `ctx.run_step` resets to 0; `{table}_snapshot_keys` holds the
+  replay-suppression keys independently of snapshot pruning;
+  `{table}_tool_effects` upserts per `(run_id, tool_call_id)` so the latest
+  state wins. Timestamps and JSON are stored as `TEXT`.
 
 All implement the same async `StepStore` protocol, so capability hooks never
 block the event loop on the file/sqlite backends (I/O is dispatched via
-`anyio.to_thread`); the Mongo backend is natively async.
+`anyio.to_thread`); the Mongo and Postgres backends are natively async.
 
 `FileStepStore` validates `run_id` against `[A-Za-z0-9_.-]{1,200}` (and
 rejects `..`) to prevent path traversal -- callers passing user-controlled
@@ -422,6 +445,68 @@ pip:
 pip install "pydantic-ai-harness[mongodb]"
 ```
 
+### What `PostgresStepStore` creates on first use
+
+The store creates its schema on the first operation of each store instance,
+reads included: the five tables listed under [Backends](#backends), indexes on
+`conversation_id` and `parent_run_id` on `{table}_runs`, `(run_id, seq)`
+indexes on `{table}_events` and `{table}_snapshots`, and a unique index on
+`(run_id, idempotency_key)` on `{table}_events` that covers only rows whose
+key is not `NULL`, so `None` retains append behavior. Every statement is
+`CREATE ... IF NOT EXISTS`, and they run in one transaction that first takes
+`pg_advisory_xact_lock` on a hash of `table`. Its default `PostgresMediaStore`
+creates `{table}_media` the same way on its own first use (see the
+[media docs](../media/)). Four consequences worth knowing before pointing the
+store at an existing database:
+
+- The connecting role needs `CREATE` on the schema for that first call. A role
+  without it fails on the first operation, not at construction.
+- Processes that start together wait on the advisory lock instead of colliding
+  in the catalog, which `CREATE TABLE IF NOT EXISTS` alone does not rule out.
+  The lock is released when the transaction ends.
+- `table` must match `[a-z_][a-z0-9_]*` and is limited to 40 characters, so
+  that every derived table, index, and constraint name fits PostgreSQL's
+  63-byte identifier limit. Lowercase only, because PostgreSQL folds unquoted
+  identifiers and `'Orders'` would share tables with `'orders'`. Anything else
+  raises `ValueError` at construction.
+- There is no migration step. An existing table with one of these names and a
+  different layout is left as it is, and the mismatch surfaces on the first
+  statement that uses a missing column.
+
+`PostgresStepStore` accepts the driver-neutral `PostgresPool` protocol
+(exported from `pydantic_ai_harness.media`), so the harness does not require a
+particular PostgreSQL driver. Install and manage the driver in your
+application, for example:
+
+uv:
+
+```bash
+uv add asyncpg
+```
+
+pip:
+
+```bash
+pip install asyncpg
+```
+
+```python
+import asyncpg
+
+from pydantic_ai_harness import StepPersistence
+from pydantic_ai_harness.step_persistence import PostgresStepStore
+
+
+async def build_persistence() -> tuple[StepPersistence, asyncpg.Pool]:
+    pool = await asyncpg.create_pool('postgres://localhost/app')
+    persistence = StepPersistence(store=PostgresStepStore(pool), agent_name='code_librarian')
+    return persistence, pool
+```
+
+Call `build_persistence` during application startup and close the returned
+pool during shutdown. The store does not manage it. CI exercises both Postgres
+backends against `postgres:17`.
+
 ## Bounding snapshot growth
 
 Each step writes a new full-history snapshot keyed by an incrementing `seq`,
@@ -429,10 +514,11 @@ and nothing is pruned by default. Within one long `Agent.run` the snapshot
 count equals the number of settled tool-call steps, so a long single run pays a
 growing storage cost.
 
-All four stores -- `InMemoryStepStore`, `FileStepStore`, `SqliteStepStore`, and
-`MongoStepStore` -- accept an opt-in `max_snapshots_per_run: int | None`
-(default `None`, unbounded -- byte-for-byte the prior behavior). When set to
-`N >= 1`, each `save_snapshot` prunes the run down to a retain set:
+All five stores -- `InMemoryStepStore`, `FileStepStore`, `SqliteStepStore`,
+`MongoStepStore`, and `PostgresStepStore` -- accept an opt-in
+`max_snapshots_per_run: int | None` (default `None`, unbounded -- byte-for-byte
+the prior behavior). When set to `N >= 1`, each `save_snapshot` prunes the run
+down to a retain set:
 
 - the newest `N` snapshots by `seq`,
 - the newest snapshot overall (serves `latest_snapshot(include_interrupted=True)`),
@@ -442,7 +528,8 @@ The last two keep both read modes correct even when the newest `N` snapshots
 are all `interrupted` and the newest resumable `complete` sits below that
 window, so the retain set can exceed `N`. `from_spec(..., max_snapshots_per_run=N)`
 forwards the bound to the store it constructs (`backend='memory'`, `'file'`, or
-`'sqlite'`; a Mongo store is built directly, not from a spec).
+`'sqlite'`; a Mongo or Postgres store takes a live client or pool, so it is
+built directly, not from a spec).
 
 ```python
 from pydantic_ai_harness.step_persistence import FileStepStore
@@ -471,7 +558,7 @@ base64 inside a snapshot would balloon every file/row containing the
 message; a large text part (e.g. a big tool-return string) does the same and
 can push a `MongoStepStore` snapshot past MongoDB's 16 MiB document cap
 ([#440](https://github.com/pydantic/pydantic-ai-harness/issues/440)). The
-file/sqlite/mongo backends externalize any `BinaryContent.data`, and any
+file/sqlite/mongo/postgres backends externalize any `BinaryContent.data`, and any
 part whose string `content` is at or above 64 KiB, through a configured
 `MediaStore`, leaving a URI reference in the snapshot. The same
 `media_threshold_bytes` governs both binary and text; there is no separate
@@ -498,8 +585,8 @@ re-inlines the externalized field correctly, but it leaves both reserved keys
 sitting in the restored payload rather than removing them. A marker carrying
 both, stamped with a version this reader does not know, is rejected rather than
 restored with the reserved values stripped: `restore_media` raises `ValueError`,
-and `latest_snapshot` surfaces it to the caller for the file, sqlite, and mongo
-stores. `list_snapshots` is different: each store treats the failed snapshot as
+and `latest_snapshot` surfaces it to the caller for the file, sqlite, mongo, and
+postgres stores. `list_snapshots` is different: each store treats the failed snapshot as
 unparsable, skips it, and logs the error, so an unknown version shows up as a
 missing snapshot rather than an exception. That rejection is the version gate
 and is intended, but store users have to anticipate it. Keep a current reader
@@ -511,6 +598,7 @@ for persisted snapshots that contain escaped markers.
 | `FileStepStore`     | `DiskMediaStore(<root>/media/)`        | `<root>/media/<sha256>.bin`           |
 | `SqliteStepStore`   | `SqliteMediaStore(database=<same db>)` | sibling `media` table in the same DB  |
 | `MongoStepStore`    | `MongoMediaStore(client=<same client>)` | sibling `media` + `media_chunks` collections |
+| `PostgresStepStore` | `PostgresMediaStore(<same pool>)`      | `{table}_media` table on the same pool |
 
 Override the destination by passing your own `MediaStore`:
 
@@ -561,6 +649,12 @@ implementations are:
   `MediaContext.metadata` inline and is not chunked, so keep per-blob metadata
   small. `collection=` renames both collections and `chunk_size_bytes=`
   (default 8 MiB) sets the split size.
+- `PostgresMediaStore(pool, table='media')` -- PostgreSQL over a
+  caller-owned asyncpg-compatible pool; no extra is needed. One row per
+  blob keyed by the sha256 digest (`ON CONFLICT (sha256) DO NOTHING` for
+  content-addressed dedup). The bytes are one `BYTEA` value, which
+  PostgreSQL caps at 1 GB. There is no streaming API, so each blob is held
+  whole in process memory on both `put` and `get`.
 
 ### Exposing externalized bytes as URLs
 
@@ -617,7 +711,7 @@ All fields default; new fields are added non-breakingly as use cases
 emerge. Pass what you have, ignore the rest.
 
 **Persistence by store.** `get_metadata(uri)` round-trips the
-user-supplied `metadata` mapping on all four stores. `media_type` is
+user-supplied `metadata` mapping on all five stores. `media_type` is
 also persisted but is not part of what `get_metadata` returns (it is
 stored for the byte payload itself, e.g. as the `Content-Type`).
 
@@ -635,12 +729,14 @@ stored for the byte payload itself, e.g. as the `Content-Type`).
   collection by default); `get_metadata` decodes the JSON string back.
   Because the mapping is one JSON string rather than nested fields,
   metadata keys are not subject to BSON field-name rules here
+- `PostgresMediaStore` writes `metadata` as a JSON string to a `TEXT`
+  column and `media_type` to a dedicated column
 
 ### `key_strategy` -- controlling the backend storage path
 
 Default is `<sha256>.bin`. `DiskMediaStore` and `S3MediaStore` accept
-overrides to fit existing layouts; `SqliteMediaStore` and `MongoMediaStore`
-do not (the digest is their primary key, so a user-chosen key would either
+overrides to fit existing layouts; `SqliteMediaStore`, `MongoMediaStore`, and
+`PostgresMediaStore` do not (the digest is their primary key, so a user-chosen key would either
 break dedup or be a no-op -- use `table=` / `collection=` to move the rows
 or documents):
 
@@ -664,7 +760,7 @@ doesn't apply.
 `DiskMediaStore` rejects strategies that produce absolute paths or paths
 containing `..` segments, to prevent escaping the store directory.
 
-Separately, all four stores accept a `public_url=` resolver, useful
+Separately, all five stores accept a `public_url=` resolver, useful
 when a CDN, local HTTP server, or signed-URL service fronts the bytes.
 Without it `public_url(...)` returns `None` (the model never sees a URL
 unless a resolver is configured and it returns a string).
@@ -681,7 +777,7 @@ always safe -- you only ever lose wire savings, never correctness.
 
 ### Persisting unsupported backends
 
-DynamoDB, Postgres, Redis, GCS, and other backends are out of scope for
+DynamoDB, Redis, GCS, and other backends are out of scope for
 this release. Write your own `StepStore` (about ten methods on a Protocol) or
 your own `MediaStore` (five methods: `put`, `get`, `exists`, `public_url`,
 `get_metadata`) and pass it via `store=` / `media_store=`. Please open an issue if you ship one -- we want to feed
@@ -716,7 +812,14 @@ between hosts. PID reuse is conservatively treated as busy.
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.
 
-`pydantic_ai_harness.step_persistence.naming` provides a tool-free naming agent
+`pydantic_ai_harness.step_persistence.naming` is deprecated and emits a
+`HarnessDeprecationWarning` on import. Its naming prompt, queue bounds, and
+failure policy are CLAI's resume-browser policy rather than a Harness primitive,
+so CLAI now owns its own copy. Copy the helpers you use into your application;
+the module will be removed in a future release. The conversation store above is
+unaffected.
+
+Until then, the module provides a tool-free naming agent
 and `SessionNamer`, a worker owned by the application's task group. `submit(id)`
 coalesces jobs in a queue bounded to ten sessions. `run()` processes one job at a
 time until its owner cancels it. `backfill(entries)` considers up to ten newest
@@ -764,8 +867,8 @@ in-memory checkpoint through shared references.
 
 `SnapshotSaved` is a typed capability event emitted after a checkpoint write
 completes. It carries `persistence_run_id`, `conversation_id`, `step_index`, and
-`state`. Subscribe using core's `hooks.on.event(SnapshotSaved)` or CLAI's
-`host.on(SnapshotSaved)`. Store writes are the source of truth; notifications may
+`state`. Subscribe using core's `hooks.on.event(SnapshotSaved)`, which a CLAI plugin
+returns from `get_capabilities`. Store writes are the source of truth; notifications may
 repeat during durable replay and observer failures cannot undo committed writes.
 
 ### Core boundary for stronger interrupted-step recovery

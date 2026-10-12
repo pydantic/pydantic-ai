@@ -5,7 +5,7 @@ import re
 import warnings
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -105,8 +105,8 @@ async def test_streamed_text_limits() -> None:
             assert result.all_messages() == snapshot(
                 [
                     ModelRequest(
-                        parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
-                        timestamp=IsNow(tz=timezone.utc),
+                        parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC))],
+                        timestamp=IsNow(tz=UTC),
                         run_id=IsStr(),
                         conversation_id=IsStr(),
                     ),
@@ -120,7 +120,7 @@ async def test_streamed_text_limits() -> None:
                         ],
                         usage=RequestUsage(input_tokens=51),
                         model_name='test',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                         provider_name='test',
                         run_id=IsStr(),
                         conversation_id=IsStr(),
@@ -130,11 +130,11 @@ async def test_streamed_text_limits() -> None:
                             ToolReturnPart(
                                 tool_name='ret_a',
                                 content='a-apple',
-                                timestamp=IsNow(tz=timezone.utc),
+                                timestamp=IsNow(tz=UTC),
                                 tool_call_id=IsStr(),
                             )
                         ],
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                         run_id=IsStr(),
                         conversation_id=IsStr(),
                     ),

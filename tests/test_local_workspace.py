@@ -59,6 +59,20 @@ def _background_sleep_command(pid_file: Path) -> str:
     return f'sleep 3600 & echo $! > {shlex.quote(str(pid_file))}'
 
 
+def _record_spawned_pids(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record the PID of every process the backend spawns, without waiting for the command to report it."""
+    pids: list[int] = []
+    real_open_process = anyio.open_process
+
+    async def recording_spawn(*args: Any, **kwargs: Any) -> anyio.abc.Process:
+        process = await real_open_process(*args, **kwargs)
+        pids.append(process.pid)
+        return process
+
+    monkeypatch.setattr(anyio, 'open_process', recording_spawn)
+    return pids
+
+
 async def _wait_for_pid_file(pid_file: Path) -> None:
     with anyio.fail_after(30):
         while not (pid_file.exists() and pid_file.read_text(encoding='ascii').strip()):
@@ -187,17 +201,18 @@ async def test_a_program_that_cannot_run_is_a_result_like_in_sh(tmp_path: Path):
         locked.chmod(0o700)
 
 
-async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
+async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     workspace = LocalWorkspaceBackend(tmp_path)
-    pid_file = tmp_path / 'pid'
-    with pytest.raises(WorkspaceTimeoutError, match='after 2s and was killed') as exc_info:
+    pids = _record_spawned_pids(monkeypatch)
+    with pytest.raises(WorkspaceTimeoutError, match=r'after 0\.5s and was killed') as exc_info:
         # `exec` makes the shell's own PID the sleeping direct child, so the timeout applies to
         # a command that has not completed rather than to a descendant holding a pipe open.
-        await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 3600', shell=True, timeout=2)
+        await workspace.run('exec sleep 3600', shell=True, timeout=0.5)
 
     assert isinstance(exc_info.value, TimeoutError)
 
-    await _assert_process_gone(int(pid_file.read_text()))
+    [pid] = pids
+    await _assert_process_gone(pid)
 
 
 async def test_output_limit_preserves_the_start_of_both_streams(tmp_path: Path):
@@ -233,6 +248,7 @@ async def test_background_child_holding_a_pipe_returns_after_the_drain_grace(
     """
     if force_pipe_bound_wait:
         monkeypatch.setattr(local_module, '_ANYIO_WAITS_FOR_PIPES', True)
+    monkeypatch.setattr(local_module, '_OUTPUT_DRAIN_GRACE', 0.05)
     workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
     child_pid_file = tmp_path / 'child-pid'
@@ -369,6 +385,7 @@ async def test_stalled_spawn_is_bounded(tmp_path: Path, monkeypatch: pytest.Monk
 async def test_stalled_reap_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     workspace = LocalWorkspaceBackend(tmp_path)
     real_close = workspace._close  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(local_module, '_REAP_GRACE', 0.05)
     entered = anyio.Event()
 
     async def timed_out_after_spawn(
@@ -533,7 +550,7 @@ async def test_timeout_with_denied_group_kill_still_raises_timeout(tmp_path: Pat
     """The timeout contract promises a `WorkspaceTimeoutError` even when a hardened host denies the
     group kill: the denial rides along as the cause, and the direct child is still killed."""
     workspace = LocalWorkspaceBackend(tmp_path)
-    pid_file = tmp_path / 'pid'
+    pids = _record_spawned_pids(monkeypatch)
 
     def deny_killpg(pgid: int, sig: int) -> None:
         raise PermissionError('signal denied')
@@ -541,9 +558,10 @@ async def test_timeout_with_denied_group_kill_still_raises_timeout(tmp_path: Pat
     monkeypatch.setattr(os, 'killpg', deny_killpg)
     with pytest.raises(WorkspaceTimeoutError, match='denied') as exc_info:
         # `exec` makes the shell's own PID the sleeping direct child.
-        await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 3600', shell=True, timeout=5)
+        await workspace.run('exec sleep 3600', shell=True, timeout=0.5)
     assert isinstance(exc_info.value.__cause__, PermissionError)
-    await _assert_process_gone(int(pid_file.read_text()))
+    [pid] = pids
+    await _assert_process_gone(pid)
 
 
 @pytest.mark.parametrize('timeout', [-1, 0, math.nan, math.inf, '5'])

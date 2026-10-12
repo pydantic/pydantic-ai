@@ -316,7 +316,10 @@ agent = Agent(model, model_settings=model_settings)
 ```
 
 Pydantic AI resolves each model's supported levels from Google's documented thinking table and snaps a
-requested effort to the nearest supported level. For a model id the table doesn't cover, declare its
+requested effort to the nearest supported level. `gemini-3.1-flash-image` is the exception: Google
+[documents](https://ai.google.dev/gemini-api/docs/image-generation) `minimal, high` for it, but only the Gemini
+API enforces them, so Pydantic AI applies those levels only when the client talks to the Gemini API, and Vertex AI
+keeps the full scale. For a model id the table doesn't cover, declare its
 levels with [`GoogleModelProfile.google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
 (default: the full scale); unsupported efforts resolve to the nearest supported level.
 
@@ -412,7 +415,7 @@ Note that Model Armor screening — both prompt and response templates — only 
 
 ### Context caching (`google_cached_content`)
 
-When you've created a Gemini [cached content resource](https://ai.google.dev/gemini-api/docs/caching), pass its resource name through [`google_cached_content`][pydantic_ai.models.google.GoogleModelSettings.google_cached_content] to reuse it across requests:
+When you've created a Gemini [cached content resource](https://ai.google.dev/gemini-api/docs/caching), pass its resource name through [`google_cached_content`][pydantic_ai.models.google.GoogleModelSettings.google_cached_content] to reuse it across requests. (Gemini also caches prompts implicitly, so the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting, which configures request-side caching on other providers, adds nothing to a Google request.)
 
 ```python
 from pydantic_ai import Agent

@@ -7,6 +7,7 @@ import dataclasses
 from collections.abc import AsyncIterable, AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 import pytest
 from opentelemetry.trace import NoOpTracer, Tracer, get_tracer
@@ -15,7 +16,7 @@ import pydantic_ai_harness
 import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryContent,
@@ -67,6 +68,7 @@ from pydantic_ai_harness.compaction import (
     WarnNearLimits,
     drain_summary_events,
     estimate_context_tokens,
+    estimate_message_tokens,
     estimate_token_count,
     is_pinned,
     pin,
@@ -109,6 +111,7 @@ except ImportError:  # pragma: no cover
 
 
 def _make_ctx(
+    messages: list[ModelMessage] | None = None,
     *,
     requests: int = 0,
     input_tokens: int = 0,
@@ -122,6 +125,10 @@ def _make_ctx(
     @dataclasses.dataclass
     class _FakeCtx:
         usage: RunUsage
+        # A distinct run per call: the reclaim correction is keyed by (run_id, run_step).
+        run_id: str = dataclasses.field(default_factory=lambda: str(uuid4()))
+        run_step: int = 1
+        messages: list[ModelMessage] = dataclasses.field(default_factory=list[ModelMessage])
         usage_limits: UsageLimits | None = None
         model: Model = dataclasses.field(default_factory=TestModel)
         deps: None = None
@@ -134,7 +141,7 @@ def _make_ctx(
             default_factory=dict[str, AbstractCapability[None]]
         )
 
-    return _FakeCtx(usage=usage, usage_limits=usage_limits)
+    return _FakeCtx(usage=usage, messages=list(messages or ()), usage_limits=usage_limits)
 
 
 def _make_request_context(messages: list[ModelMessage], model: Model | None = None) -> ModelRequestContext:
@@ -261,6 +268,26 @@ class TestEstimateContextTokens:
         msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
         assert estimate_context_tokens(msgs) == 50_500 + 10 + 1_000
 
+    def test_changed_instructions_replace_the_anchored_set(self):
+        # The next request sends the new set instead of the one the anchor paid for, as when
+        # an hourly clock in the instructions ticks over: count the difference, not both sets.
+        request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='o' * 4_000)
+        request_after = ModelRequest(parts=[UserPromptPart(content='a' * 40)], instructions='n' * 4_400)
+        msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
+        assert estimate_context_tokens(msgs) == 50_500 + 10 + 100
+
+    def test_shorter_instructions_lower_the_estimate(self):
+        request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='o' * 4_000)
+        request_after = ModelRequest(parts=[UserPromptPart(content='a' * 40)], instructions='n' * 400)
+        msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
+        assert estimate_context_tokens(msgs) == 50_500 + 10 - 900
+
+    def test_changed_instructions_are_swapped_with_a_tokenizer(self):
+        request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='one two')
+        request_after = ModelRequest(parts=[UserPromptPart(content='three')], instructions='one two three four')
+        msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
+        assert estimate_context_tokens(msgs, tokenizer=lambda s: len(s.split())) == 50_500 + 1 + 2
+
     def test_tokenizer_applies_to_the_suffix(self):
         msgs: list[ModelMessage] = [
             _assistant_with_usage('short', 50_000, 500),
@@ -381,6 +408,65 @@ class TestFindTokenCutoff:
         # which splits the pair, so it walks back to 1.
         assert find_token_cutoff(msgs, 8, tokenizer=len) == 1
 
+    def test_measures_the_tail_with_provider_usage(self):
+        """Thinking a provider returns without text counts, so the tail is not mostly unseen tokens."""
+        msgs: list[ModelMessage] = [
+            _user('start'),
+            _reported(input_tokens=100, output_tokens=5000),
+            _user('next'),
+            _reported(input_tokens=5200, output_tokens=10),
+            _user('last'),
+        ]
+        assert estimate_token_count(msgs) <= 100, 'the text estimate alone would keep everything'
+        assert find_token_cutoff(msgs, 100) == 2
+
+    def test_output_usage_alone_counts(self):
+        """A provider that reports only output tokens still has its thinking counted."""
+        msgs: list[ModelMessage] = [
+            _user('start'),
+            _reported(input_tokens=0, output_tokens=5000),
+            _user('next'),
+            _reported(input_tokens=0, output_tokens=10),
+            _user('last'),
+        ]
+        assert find_token_cutoff(msgs, 100) == 2
+
+
+def _reported(*, input_tokens: int, output_tokens: int) -> ModelResponse:
+    """A response whose thinking came back without text, as some providers return it, with its usage."""
+    return ModelResponse(
+        parts=[ThinkingPart(content='', signature='sig'), TextPart(content='ok')],
+        usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+    )
+
+
+class TestEstimateMessageTokens:
+    def test_without_usage_each_message_is_estimated(self):
+        msgs: list[ModelMessage] = [_user('x' * 40), _assistant('y' * 80)]
+        assert estimate_message_tokens(msgs) == [10, 20]
+        assert estimate_message_tokens(msgs, tokenizer=len) == [40, 80]
+
+    def test_usage_between_responses_is_shared_and_a_shrunk_history_keeps_estimates(self):
+        msgs: list[ModelMessage] = [
+            _user('x' * 40),  # before the first reported response: estimated
+            _reported(input_tokens=1000, output_tokens=300),
+            _user('y' * 400),  # with the response above, shares 2001 - 1000 in proportion 300:100
+            _reported(input_tokens=2001, output_tokens=200),
+            _user('z' * 40),  # the next response reports less input: compacted in between, so estimated
+            _reported(input_tokens=500, output_tokens=50),
+            _user('w' * 80),  # after the last reported response: estimated
+        ]
+        assert estimate_message_tokens(msgs) == [10, 751, 250, 200, 10, 50, 20]
+
+    def test_unchanged_input_between_responses_keeps_estimates(self):
+        """Equal input usage says nothing about the messages between, so it does not zero them."""
+        msgs: list[ModelMessage] = [
+            _reported(input_tokens=1000, output_tokens=300),
+            _user('y' * 400),
+            _reported(input_tokens=1000, output_tokens=200),
+        ]
+        assert estimate_message_tokens(msgs) == [300, 100, 200]
+
 
 # ---------------------------------------------------------------------------
 # SlidingWindowCompaction
@@ -412,7 +498,7 @@ class TestSlidingWindowCompaction:
         sw = SlidingWindowCompaction(max_messages=10, keep_messages=5)
         messages: list[ModelMessage] = [_user('a'), _assistant('b')]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
         assert len(result.messages) == 2
 
@@ -420,15 +506,17 @@ class TestSlidingWindowCompaction:
         sw = SlidingWindowCompaction(max_messages=5, keep_messages=3, preserve_first_user_message=False)
         messages: list[ModelMessage] = [_user(f'msg-{i}') for i in range(8)]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
         assert len(result.messages) <= 3
+        assert ctx.messages == result.messages
+        assert ctx.messages is not result.messages
 
     async def test_trims_by_token_threshold(self):
         sw = SlidingWindowCompaction(max_tokens=10, keep_messages=2)
         messages: list[ModelMessage] = [_user('x' * 40) for _ in range(5)]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
         assert len(result.messages) < 5
 
@@ -442,7 +530,7 @@ class TestSlidingWindowCompaction:
             _assistant('done'),
         ]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
         # Should not split the tool pair.
         assert _orphan_free(result.messages)
@@ -452,7 +540,7 @@ class TestSlidingWindowCompaction:
         # Each message = 20 chars = 5 tokens.  Total = 50 tokens.
         messages: list[ModelMessage] = [_user('x' * 20) for _ in range(10)]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
         assert estimate_token_count(result.messages) <= 10
         assert len(result.messages) < 10
@@ -649,7 +737,7 @@ class TestWarnNearLimits:
         # Create a message that exceeds 70% of 10 tokens.
         messages: list[ModelMessage] = [_user('x' * 40)]  # ~10 tokens.
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await lw.before_model_request(ctx, rc)
         assert len(result.messages) == 2
 
@@ -734,7 +822,7 @@ class TestCompaction:
         comp = SummarizingCompaction(model='test', max_messages=100)
         messages: list[ModelMessage] = [_user('hi')]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await comp.before_model_request(ctx, rc)
         assert result.messages == messages
 
@@ -778,7 +866,7 @@ class TestCompaction:
             _user('third'),
         ]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
 
         mock_result = AsyncMock()
         mock_result.output = 'Summary of conversation.'
@@ -809,7 +897,7 @@ class TestCompaction:
             _assistant('response 2'),
         ]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
 
         mock_result = AsyncMock()
         mock_result.output = 'A summary.'
@@ -837,7 +925,7 @@ class TestCompaction:
             _assistant('response'),
         ]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
 
         mock_result = AsyncMock()
         mock_result.output = 'Summary.'
@@ -856,7 +944,7 @@ class TestCompaction:
         comp = SummarizingCompaction(model='test:m', max_tokens=5, keep_messages=1)
         messages: list[ModelMessage] = [_user('x' * 40) for _ in range(5)]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
 
         mock_result = AsyncMock()
         mock_result.output = 'Token-based summary.'
@@ -877,7 +965,7 @@ class TestCompaction:
         comp = SummarizingCompaction(model='test:m', max_messages=3, keep_tokens=5)
         messages: list[ModelMessage] = [_user('x' * 40) for _ in range(5)]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
 
         mock_result = AsyncMock()
         mock_result.output = 'Token-keep summary.'
@@ -1092,7 +1180,7 @@ class TestWarnNearLimitsEdgeCases:
         lw = WarnNearLimits(max_context_tokens=1000)
         messages: list[ModelMessage] = [_user('hi')]  # ~0.5 tokens, well below 70%.
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await lw.before_model_request(ctx, rc)
         assert len(result.messages) == 1
 
@@ -1115,7 +1203,7 @@ class TestWarnNearLimitsEdgeCases:
         lw = WarnNearLimits(max_context_tokens=5)
         messages: list[ModelMessage] = [_user('x' * 40)]  # ~10 tokens, well above 5.
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await lw.before_model_request(ctx, rc)
         last = result.messages[-1]
         assert isinstance(last, ModelRequest)
@@ -1139,7 +1227,7 @@ class TestCompactionEdgeCases:
         # Only 3 messages, keep_messages=10 means cutoff=0.
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c')]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await comp.before_model_request(ctx, rc)
         assert len(result.messages) == 3
 
@@ -1153,7 +1241,7 @@ class TestSlidingWindowCompactionEdgeCases:
         # 3 messages, but keep_messages=10 => cutoff=0.
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c')]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
         assert len(result.messages) == 3
 
@@ -1162,7 +1250,7 @@ class TestSlidingWindowCompactionEdgeCases:
         sw = SlidingWindowCompaction(max_tokens=999999, keep_messages=2)
         messages: list[ModelMessage] = [_user('hi')]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
         assert len(result.messages) == 1
 
@@ -1253,7 +1341,7 @@ class TestTokenizerParameter:
         # Each message has 4 chars = 4 tokens with this tokenizer. 5 messages = 20 tokens.
         messages: list[ModelMessage] = [_user('abcd') for _ in range(5)]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
         # With keep_tokens=5 and 4 tokens per message, should keep 1 message.
         remaining_tokens = estimate_token_count(result.messages, tokenizer=lambda s: len(s))
@@ -1271,7 +1359,7 @@ class TestTokenizerParameter:
         # 2 chars * 100 = 200 tokens per message. Only 1 message but still > 50.
         messages: list[ModelMessage] = [_user('ab'), _user('cd')]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
         assert len(result.messages) == 1
 
@@ -1289,7 +1377,7 @@ class TestTokenizerParameter:
         # Each message: 'abcde' = 5 chars = 5 tokens. 4 messages = 20 tokens > 10.
         messages: list[ModelMessage] = [_user('abcde') for _ in range(4)]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
 
         mock_result = AsyncMock()
         mock_result.output = 'Token summary.'
@@ -1353,7 +1441,7 @@ class TestPreserveFirstUserMessage:
             _user('follow-up 2'),
         ]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
         # The first user message ('original task') should be preserved even though
         # it was outside the keep window.
@@ -1369,7 +1457,7 @@ class TestPreserveFirstUserMessage:
             _assistant('done'),
         ]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
         assert len(result.messages) == 4  # Not triggered since 4 < 5 keep.
 
@@ -1384,7 +1472,7 @@ class TestPreserveFirstUserMessage:
             _user('last'),
         ]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
         assert len(result.messages) == 1
         assert 'original' not in _user_texts(result.messages)
@@ -1399,7 +1487,7 @@ class TestPreserveFirstUserMessage:
             _user('third'),
         ]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
 
         mock_result = AsyncMock()
         mock_result.output = 'Summary.'
@@ -1433,7 +1521,7 @@ class TestPreserveFirstUserMessage:
             _assistant('done'),
         ]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await comp.before_model_request(ctx, rc)
         # Not triggered since keep_messages > len(messages).
         assert len(result.messages) == 4
@@ -1447,7 +1535,7 @@ class TestPreserveFirstUserMessage:
             _assistant('c'),
         ]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
         assert len(result.messages) == 1
 
@@ -1502,7 +1590,7 @@ class TestIncrementalSummarization:
             _assistant('response 2'),
         ]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
 
         mock_result = AsyncMock()
         mock_result.output = 'Extended summary.'
@@ -1536,7 +1624,7 @@ class TestIncrementalSummarization:
             _assistant('response 2'),
         ]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
 
         mock_result = AsyncMock()
         mock_result.output = 'Fresh summary.'
@@ -1569,7 +1657,7 @@ class TestIncrementalSummarization:
             _assistant('another response'),
         ]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
 
         mock_result = AsyncMock()
         mock_result.output = 'Regenerated summary.'
@@ -1602,7 +1690,7 @@ class TestIncrementalSummarization:
             _assistant('d'),
         ]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
 
         mock_result = AsyncMock()
         mock_result.output = 'Extended context summary.'
@@ -1746,7 +1834,7 @@ class TestClearToolResults:
         cap = ClearToolResults(max_messages=100, keep_pairs=0)
         messages: list[ModelMessage] = [*_pair('fn', 'tc1'), *_pair('fn', 'tc2')]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert result.messages == messages
 
     async def test_clears_old_keeps_recent_pairs(self):
@@ -1757,7 +1845,7 @@ class TestClearToolResults:
             *_pair('fn', 'tc3'),
         ]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         contents = _return_contents(result.messages)
         assert contents == ['[tool result cleared]', '[tool result cleared]', 'result content here']
 
@@ -1765,14 +1853,14 @@ class TestClearToolResults:
         cap = ClearToolResults(max_tokens=5, keep_pairs=0)
         messages: list[ModelMessage] = [*_pair('fn', 'tc1', 'x' * 80)]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert _return_contents(result.messages) == ['[tool result cleared]']
 
     async def test_exclude_tools(self):
         cap = ClearToolResults(max_messages=1, keep_pairs=0, exclude_tools=frozenset({'keep'}))
         messages: list[ModelMessage] = [*_pair('drop', 'tc1'), *_pair('keep', 'tc2')]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert _return_contents(result.messages) == ['[tool result cleared]', 'result content here']
 
     async def test_clear_tool_inputs(self):
@@ -1780,7 +1868,7 @@ class TestClearToolResults:
         call = ModelResponse(parts=[ToolCallPart(tool_name='fn', args='{"q": "x"}', tool_call_id='tc1')])
         messages: list[ModelMessage] = [call, _tool_return('fn', 'tc1')]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         # Cleared args stay JSON-valid so they don't reach a provider as malformed function-args.
         assert _call_args(result.messages) == ['{}']
 
@@ -1788,7 +1876,7 @@ class TestClearToolResults:
         cap = ClearToolResults(max_messages=1, keep_pairs=0, min_clear_tokens=10_000)
         messages: list[ModelMessage] = [*_pair('fn', 'tc1', 'tiny')]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         # Reclaim is far below min_clear_tokens, so nothing is cleared.
         assert _return_contents(result.messages) == ['tiny']
 
@@ -1796,14 +1884,14 @@ class TestClearToolResults:
         cap = ClearToolResults(max_messages=1, keep_pairs=0, min_clear_tokens=1)
         messages: list[ModelMessage] = [*_pair('fn', 'tc1', 'x' * 400)]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert _return_contents(result.messages) == ['[tool result cleared]']
 
     async def test_no_tool_pairs_is_noop(self):
         cap = ClearToolResults(max_messages=1, keep_pairs=0)
         messages: list[ModelMessage] = [_user('a'), _assistant('b')]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert result.messages == messages
 
     async def test_idempotent(self):
@@ -1828,7 +1916,7 @@ class TestClearToolResults:
             ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args='{}', tool_call_id='ts1')]),
             ModelRequest(parts=[ToolSearchReturnPart(content=search_content, tool_call_id='ts1')]),
         ]
-        result = await cap.before_model_request(_make_ctx(), _make_request_context(messages))
+        result = await cap.before_model_request(_make_ctx(messages), _make_request_context(messages))
 
         returns = {
             p.tool_call_id: p
@@ -1889,7 +1977,7 @@ class TestDeduplicateFileReads:
             _read_return('tc3', 'second a'),
         ]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert _return_contents(result.messages) == ['[superseded file read]', 'b body', 'second a']
 
     async def test_non_file_read_ignored(self):
@@ -1899,7 +1987,7 @@ class TestDeduplicateFileReads:
             *_pair('search', 'tc2'),
         ]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         # search is not a file read -> file_key returns None -> nothing cleared.
         assert _return_contents(result.messages) == ['result content here', 'result content here']
 
@@ -1912,7 +2000,7 @@ class TestDeduplicateFileReads:
             _read_return('tc2', 'b body'),
         ]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert result.messages == messages
 
     async def test_runs_always_without_trigger(self):
@@ -1924,7 +2012,7 @@ class TestDeduplicateFileReads:
             _read_return('tc2', 'second'),
         ]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert _return_contents(result.messages) == ['[superseded file read]', 'second']
 
     async def test_trigger_gate_not_exceeded(self):
@@ -1936,7 +2024,7 @@ class TestDeduplicateFileReads:
             _read_return('tc2', 'second'),
         ]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         # Below the trigger threshold, so no dedup despite the duplicate.
         assert result.messages == messages
 
@@ -1949,7 +2037,7 @@ class TestDeduplicateFileReads:
             _read_return('tc2', 'second'),
         ]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert _return_contents(result.messages) == ['[superseded file read]', 'second']
 
 
@@ -1984,7 +2072,7 @@ class TestTieredCompaction:
         cap = TieredCompaction(tiers=[tier], target_tokens=1_000_000)
         messages: list[ModelMessage] = [_user('x' * 40)]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert result.messages == messages
         assert calls == []
 
@@ -1996,7 +2084,7 @@ class TestTieredCompaction:
         cap = TieredCompaction(tiers=[t1, t2], target_tokens=15)
         messages: list[ModelMessage] = [_user('x' * 40) for _ in range(5)]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert calls == ['t1']  # t2 never reached
         assert len(result.messages) == 1
 
@@ -2008,7 +2096,7 @@ class TestTieredCompaction:
         cap = TieredCompaction(tiers=[t1], target_tokens=50_000)
         messages: list[ModelMessage] = [_user('x' * 400), _assistant_with_usage('short', 90_000, 100)]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert calls == ['t1']
         assert len(result.messages) == 1
 
@@ -2024,7 +2112,7 @@ class TestTieredCompaction:
             _tool_return('search', f'tc{i}', 'z' * 400) for i in range(10)
         ]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert calls == ['t1']
         assert len(result.messages) == 5
 
@@ -2040,7 +2128,7 @@ class TestTieredCompaction:
             _tool_return('search', f'tc{i}', 'z' * 400) for i in range(10)
         ]
         rc = _make_request_context(messages)
-        await cap.before_model_request(_make_ctx(), rc)
+        await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert calls == ['t1', 't2']
 
     async def test_full_escalation(self):
@@ -2050,7 +2138,7 @@ class TestTieredCompaction:
         cap = TieredCompaction(tiers=[t1, t2], target_tokens=15)
         messages: list[ModelMessage] = [_user('x' * 40) for _ in range(5)]
         rc = _make_request_context(messages)
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         assert calls == ['t1', 't2']
         assert len(result.messages) == 1
 
@@ -2060,7 +2148,7 @@ class TestTieredCompaction:
         t2 = _RecordingTier('t2', calls, drop=1)
         cap = TieredCompaction(tiers=[t1, t2], target_tokens=10)
         messages: list[ModelMessage] = [_pinned_msg('x' * 40), _user('tail')]
-        result = await cap.before_model_request(_make_ctx(), _make_request_context(messages))
+        result = await cap.before_model_request(_make_ctx(messages), _make_request_context(messages))
         assert calls == ['t1', 't2']
         assert _pinned_texts(result.messages) == ['x' * 40]
 
@@ -2080,7 +2168,7 @@ class TestTieredCompaction:
             mock_agent_instance = AsyncMock()
             mock_agent_instance.run.return_value = mock_result
             MockAgent.return_value = mock_agent_instance
-            result = await cap.before_model_request(_make_ctx(), rc)
+            result = await cap.before_model_request(_make_ctx(rc.messages), rc)
 
         first_msg = result.messages[0]
         assert isinstance(first_msg, ModelRequest)
@@ -2100,7 +2188,7 @@ class TestSummarizingCompactionModel:
         )
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
 
         mock_result = AsyncMock()
         mock_result.output = 'Inherited-model summary.'
@@ -2121,7 +2209,7 @@ class TestSummarizingCompactionModel:
     async def test_nested_summary_reserves_parent_usage_limits(self):
         comp = SummarizingCompaction(max_messages=3, keep_messages=1, preserve_first_user_message=False)
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
-        ctx = _make_ctx(usage_limits=UsageLimits(request_limit=5, tool_calls_limit=2))
+        ctx = _make_ctx(messages, usage_limits=UsageLimits(request_limit=5, tool_calls_limit=2))
 
         mock_result = AsyncMock()
         mock_result.output = 'Bounded summary.'
@@ -2145,7 +2233,7 @@ class TestSummarizingCompactionModel:
             mock_agent_instance = AsyncMock()
             mock_agent_instance.run.return_value = mock_result
             MockAgent.return_value = mock_agent_instance
-            await comp.before_model_request(_make_ctx(), _make_request_context(messages))
+            await comp.before_model_request(_make_ctx(messages), _make_request_context(messages))
 
         assert MockAgent.call_args.kwargs['instructions'] == comp.instructions
         assert 'context summarization assistant' in MockAgent.call_args.kwargs['instructions']
@@ -2166,7 +2254,7 @@ class TestSummarizingCompactionModel:
             mock_agent_instance = AsyncMock()
             mock_agent_instance.run.return_value = mock_result
             MockAgent.return_value = mock_agent_instance
-            await comp.before_model_request(_make_ctx(), _make_request_context(messages))
+            await comp.before_model_request(_make_ctx(messages), _make_request_context(messages))
 
         assert MockAgent.call_args.kwargs['instructions'] == required
 
@@ -2339,7 +2427,7 @@ class TestClampOversizedMessages:
         text = 'q' * 5_000
         cap = ClampOversizedMessages(max_part_chars=1_000, keep_head_chars=50, keep_tail_chars=50)
         rc = _make_request_context([_assistant(text)])
-        result = await cap.before_model_request(_make_ctx(), rc)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
         part = result.messages[0].parts[0]
         assert isinstance(part, TextPart)
         assert '[clamped: removed' in part.content
@@ -2424,6 +2512,146 @@ class TestPublicPath:
         # the outer agent's capabilities never see a request made by a separate `Agent`.
         assert summary.models == ['summarizer']
         assert outer.models == ['test']
+
+    async def test_whitespace_only_summary_is_retried(self):
+        summaries = iter(['  \n\n ', '  the summary\n'])
+        retries: list[str] = []
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            retries.extend(str(p.content) for m in messages for p in m.parts if isinstance(p, RetryPromptPart))
+            return ModelResponse(parts=[TextPart(content=next(summaries))])
+
+        sent: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
+            return ModelResponse(parts=[TextPart(content='ok')])
+
+        history: list[ModelMessage] = []
+        for i in range(5):
+            history += [_user(f'q{i}'), _assistant(f'a{i}')]
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[
+                SummarizingCompaction(
+                    FunctionModel(summarize), max_messages=4, keep_messages=1, preserve_first_user_message=False
+                )
+            ],
+        )
+
+        await agent.run('next', message_history=history)
+
+        assert retries == ['The summary was empty. Write the summary of the conversation.']
+        first = sent[-1][0]
+        assert isinstance(first, ModelRequest)
+        assert [(p.part_kind, getattr(p, 'content', None)) for p in first.parts] == [
+            ('system-prompt', f'{_SUMMARY_PREFIX}the summary'),
+            ('user-prompt', 'next'),
+        ]
+
+    async def test_persistently_empty_summary_raises_instead_of_replacing_history(self):
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content=' \n')])
+
+        sent: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+            sent.append(messages)  # the run must fail before this request
+            return ModelResponse(parts=[TextPart(content='ok')])
+
+        history: list[ModelMessage] = []
+        for i in range(5):
+            history += [_user(f'q{i}'), _assistant(f'a{i}')]
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[
+                SummarizingCompaction(
+                    FunctionModel(summarize), max_messages=4, keep_messages=1, preserve_first_user_message=False
+                )
+            ],
+        )
+
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+            await agent.run('next', message_history=history)
+        assert sent == []
+
+    @pytest.mark.parametrize('summary_text', ['', ' \n'])
+    @pytest.mark.parametrize('request_limit', [2, 3])
+    @pytest.mark.parametrize('fallback_on_usage_limit', [False, True])
+    async def test_empty_summary_fallback_with_request_limit(
+        self, summary_text: str, request_limit: int, fallback_on_usage_limit: bool
+    ):
+        summary_calls = 0
+        summary_errors: list[type[Exception]] = []
+
+        class RecordingSummarizingCompaction(SummarizingCompaction[None]):
+            async def compact(self, messages: list[ModelMessage], ctx: RunContext[None]) -> list[ModelMessage]:
+                try:
+                    return await super().compact(messages, ctx)
+                except Exception as error:
+                    summary_errors.append(type(error))
+                    raise
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal summary_calls
+            summary_calls += 1
+            return ModelResponse(parts=[TextPart(content=summary_text)])
+
+        sent: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
+            return ModelResponse(parts=[TextPart(content='ok')])
+
+        fallback_on = (
+            (UnexpectedModelBehavior, UsageLimitExceeded) if fallback_on_usage_limit else (UnexpectedModelBehavior,)
+        )
+        agent = Agent(
+            FunctionModel(respond),
+            deps_type=None,
+            capabilities=[
+                FallbackCompaction(
+                    fallback_chain=[
+                        RecordingSummarizingCompaction(
+                            FunctionModel(summarize), max_messages=4, keep_messages=1, preserve_first_user_message=False
+                        ),
+                        SlidingWindowCompaction(
+                            max_messages=4, keep_messages=1, receipts=False, preserve_first_user_message=False
+                        ),
+                    ],
+                    fallback_on=fallback_on,
+                    max_tokens=1,
+                )
+            ],
+        )
+        history: list[ModelMessage] = []
+        for i in range(5):
+            history += [_user(f'q{i}'), _assistant(f'a{i}')]
+        usage = RunUsage()
+
+        if request_limit == 2 and not fallback_on_usage_limit:
+            with pytest.raises(UsageLimitExceeded):
+                await agent.run('next', message_history=history, usage=usage, usage_limits=UsageLimits(request_limit=2))
+            assert sent == []
+            assert usage.requests == 1
+        else:
+            result = await agent.run(
+                'next', message_history=history, usage=usage, usage_limits=UsageLimits(request_limit=request_limit)
+            )
+            assert result.output == 'ok'
+            assert len(sent) == 1
+            assert len(sent[0]) == 1
+            assert isinstance(sent[0][0], ModelRequest)
+            assert len(sent[0][0].parts) == 1
+            prompt = sent[0][0].parts[0]
+            assert isinstance(prompt, UserPromptPart)
+            assert prompt.content == 'next'
+            assert usage.requests == request_limit
+
+        # The summary agent defaults to one output retry. With one request reserved for
+        # the parent, limit 2 exhausts usage first; limit 3 exhausts output retries.
+        assert summary_errors == [UsageLimitExceeded if request_limit == 2 else UnexpectedModelBehavior]
+        assert summary_calls == request_limit - 1
 
     async def test_capabilities_wired_into_agent(self):
 
@@ -2551,6 +2779,27 @@ class TestHelperBranchCoverage:
         assert estimate_token_count(msgs) == 0
         assert _format_messages(msgs) == ''
 
+    def test_a_file_in_a_tool_return_counts_as_its_reference(self):
+        """A tool return's file is measured and summarized as the reference the model gets, not its `repr`."""
+        image = BinaryContent(data=b'\x00' * 4_000, media_type='image/png')
+        reference = f'See file {image.identifier}.'
+        bare = ToolReturnPart(tool_name='screenshot', content=image, tool_call_id='c1')
+        mixed = ToolReturnPart(tool_name='screenshot', content=['taken', image], tool_call_id='c2')
+
+        assert estimate_token_count([ModelRequest(parts=[bare])]) == len(reference) // 4
+        assert estimate_token_count([ModelRequest(parts=[mixed])]) == len(f'taken {reference}') // 4
+        assert _format_messages([ModelRequest(parts=[bare, mixed])], tool_return_max_chars=None) == (
+            f'Tool [screenshot]: {reference}\nTool [screenshot]: taken {reference}'
+        )
+
+    def test_a_file_returned_by_a_provider_side_tool_is_not_counted_as_characters(self):
+        """A generated image travels as an attachment, like `FilePart`; only the text is counted."""
+        image = BinaryContent(data=b'\x89PNG' * 75_000, media_type='image/png')
+        msgs: list[ModelMessage] = [
+            ModelResponse(parts=[NativeToolReturnPart(tool_name='image_generation', content=image, tool_call_id='c1')]),
+        ]
+        assert estimate_token_count(msgs) == len('image_generation') // 4
+
     def test_user_prompt_text_skips_non_text_content(self):
 
         part = UserPromptPart(content=[ImageUrl(url='https://example.com/y.png'), 'hello'])
@@ -2566,7 +2815,7 @@ class TestSummarizingCompactionPreserveBranches:
         )
         messages: list[ModelMessage] = [_assistant('a'), _assistant('b'), _assistant('c')]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
 
         mock_result = AsyncMock()
         mock_result.output = 'No-user summary.'
@@ -2587,7 +2836,7 @@ class TestSummarizingCompactionPreserveBranches:
         )
         messages: list[ModelMessage] = [_assistant('x'), _assistant('y'), _user('only user'), _assistant('z')]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
 
         mock_result = AsyncMock()
         mock_result.output = 'Tail summary.'
@@ -2618,14 +2867,14 @@ def _compact_spans(capfire: CaptureLogfire) -> list[dict[str, Any]]:
     return [s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'compact_messages']
 
 
-def _make_ctx_with_tracer() -> Any:
+def _make_ctx_with_tracer(messages: list[ModelMessage] | None = None) -> Any:
     """A fake RunContext whose `tracer` exports to the active `CaptureLogfire` provider.
 
     The `capfire` fixture configures the global OTel provider, so a tracer fetched from it
     captures the `compact_messages` span without needing a full instrumented `Agent` run.
     """
 
-    ctx = _make_ctx()
+    ctx = _make_ctx(messages)
     ctx.tracer = get_tracer('test')
     return ctx
 
@@ -2695,7 +2944,7 @@ class TestCompactionSpan:
         comp = SummarizingCompaction(model='test:m', max_messages=2, keep_messages=1, incremental=False)
         messages: list[ModelMessage] = [_user('first'), _assistant('a'), _user('b'), _assistant('c')]
         rc = _make_request_context(messages)
-        ctx = _make_ctx_with_tracer()
+        ctx = _make_ctx_with_tracer(messages)
 
         mock_result = AsyncMock()
         mock_result.output = 'Summary.'
@@ -2724,11 +2973,11 @@ class TestCompactionSpan:
         comp = ClampOversizedMessages(max_part_chars=4, keep_head_chars=1, keep_tail_chars=1)
 
         not_oversized: list[ModelMessage] = [_assistant('ab')]
-        await comp.before_model_request(_make_ctx_with_tracer(), _make_request_context(not_oversized))
+        await comp.before_model_request(_make_ctx_with_tracer(not_oversized), _make_request_context(not_oversized))
         assert _compact_spans(capfire) == []
 
         oversized: list[ModelMessage] = [_assistant('a' * 50)]
-        await comp.before_model_request(_make_ctx_with_tracer(), _make_request_context(oversized))
+        await comp.before_model_request(_make_ctx_with_tracer(oversized), _make_request_context(oversized))
         spans = _compact_spans(capfire)
         assert len(spans) == 1
         assert spans[0]['attributes']['compaction.strategy'] == 'ClampOversizedMessages'
@@ -2738,7 +2987,7 @@ class TestCompactionSpan:
         messages: list[ModelMessage] = [
             ModelResponse(parts=[ToolCallPart(tool_name='fn', args={'q': 'x' * 50}, tool_call_id='tc1')])
         ]
-        await comp.before_model_request(_make_ctx_with_tracer(), _make_request_context(messages))
+        await comp.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
 
         spans = _compact_spans(capfire)
         assert len(spans) == 1
@@ -2755,7 +3004,7 @@ class TestCompactionSpan:
                 ]
             )
         ]
-        await comp.before_model_request(_make_ctx_with_tracer(), _make_request_context(messages))
+        await comp.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
 
         assert _compact_spans(capfire) == []
 
@@ -2773,7 +3022,7 @@ class TestCompactionSpan:
             _tool_return('fn', 'tc1', 'a long tool result that takes up space'),
             _assistant('done'),
         ]
-        await comp.before_model_request(_make_ctx_with_tracer(), _make_request_context(messages))
+        await comp.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
 
         spans = _compact_spans(capfire)
         # The orchestrator drives each tier's `compact` directly, so only one span is emitted.
@@ -2790,7 +3039,7 @@ class TestCompactionSpan:
             _read_call('tc2', 'b.py'),
             _read_return('tc2', 'b body'),
         ]
-        await comp.before_model_request(_make_ctx_with_tracer(), _make_request_context(messages))
+        await comp.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
 
         assert _compact_spans(capfire) == []
 
@@ -2802,7 +3051,7 @@ class TestCompactionSpan:
             _read_call('tc2', 'a.py'),
             _read_return('tc2', 'second'),
         ]
-        await comp.before_model_request(_make_ctx_with_tracer(), _make_request_context(messages))
+        await comp.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
 
         spans = _compact_spans(capfire)
         assert len(spans) == 1
@@ -2818,7 +3067,7 @@ class TestCompactionSpan:
             _tool_return('fn', 'tc1', 'a long tool result that takes up space'),
             _assistant('done'),
         ]
-        await comp.before_model_request(_make_ctx_with_tracer(), _make_request_context(messages))
+        await comp.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
 
         spans = _compact_spans(capfire)
         assert len(spans) == 1
@@ -3151,7 +3400,7 @@ class TestSummarizingReceipts:
         )
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('SUMMARY')):
             result = await comp.before_model_request(ctx, rc)
         receipts = _receipt_parts(result.messages)
@@ -3175,7 +3424,7 @@ class TestSummarizingReceipts:
             messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
             rc = _make_request_context(messages)
             with patch('pydantic_ai.Agent', return_value=_patched_summary_agent(_run())):
-                result = await comp.before_model_request(_make_ctx(), rc)
+                result = await comp.before_model_request(_make_ctx(rc.messages), rc)
             return _receipt_parts(result.messages)[0]
 
         first = await _once()
@@ -3194,7 +3443,7 @@ class TestSummarizingReceipts:
         )
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
         rc = _make_request_context(messages)
-        ctx = _make_ctx()
+        ctx = _make_ctx(messages)
         ctx.capabilities = {'sp': _FakeTranscriptStore('librarian-42')}
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('SUMMARY')):
             result = await comp.before_model_request(ctx, rc)
@@ -3242,7 +3491,7 @@ class TestSlidingWindowCompactionReceipts:
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True, preserve_first_user_message=False)
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
         rc = _make_request_context(messages)
-        result = await sw.before_model_request(_make_ctx(), rc)
+        result = await sw.before_model_request(_make_ctx(rc.messages), rc)
         first = result.messages[0]
         assert isinstance(first, ModelRequest)
         receipt = first.parts[0]
@@ -3253,7 +3502,7 @@ class TestSlidingWindowCompactionReceipts:
     async def test_receipt_reserves_a_message_slot(self):
         sw = SlidingWindowCompaction(max_messages=4, keep_messages=3, receipts=True, preserve_first_user_message=False)
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d'), _user('e')]
-        result = await sw.before_model_request(_make_ctx(), _make_request_context(messages))
+        result = await sw.before_model_request(_make_ctx(messages), _make_request_context(messages))
         assert len(result.messages) == 3
         assert len(_receipt_parts(result.messages)) == 1
 
@@ -3262,7 +3511,7 @@ class TestSlidingWindowCompactionReceipts:
             max_tokens=10, keep_tokens=5, receipts=True, preserve_first_user_message=False, tokenizer=len
         )
         messages: list[ModelMessage] = [_user('a' * 20), _assistant('b' * 20), _user('c' * 20)]
-        result = await sw.before_model_request(_make_ctx(), _make_request_context(messages))
+        result = await sw.before_model_request(_make_ctx(messages), _make_request_context(messages))
         assert len(_receipt_parts(result.messages)) == 1
 
     async def test_receipt_does_not_displace_the_original_first_user_turn(self):
@@ -3276,7 +3525,7 @@ class TestSlidingWindowCompactionReceipts:
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True)
         messages: list[ModelMessage] = [_user('original task'), _assistant('a'), _user('later'), _assistant('b')]
         result = await sw.compact(messages, _make_ctx())
-        assert _receipt_parts(result)[0].startswith('[History before this point (3 messages,')
+        assert _receipt_parts(result)[0].startswith('[History before this point (2 messages,')
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -3288,7 +3537,7 @@ class TestReceiptSpanEvent:
     async def test_sliding_window_emits_receipt_event(self, capfire: CaptureLogfire) -> None:
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True, preserve_first_user_message=False)
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
-        await sw.before_model_request(_make_ctx_with_tracer(), _make_request_context(messages))
+        await sw.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
         spans = _compact_spans(capfire)
         assert len(spans) == 1
         events: list[dict[str, Any]] = spans[0].get('events') or []
@@ -3301,9 +3550,9 @@ class TestReceiptSpanEvent:
 
     async def test_receipt_event_carries_handle(self, capfire: CaptureLogfire) -> None:
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True, preserve_first_user_message=False)
-        ctx = _make_ctx_with_tracer()
-        ctx.capabilities = {'sp': _FakeTranscriptStore('run-77')}
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
+        ctx = _make_ctx_with_tracer(messages)
+        ctx.capabilities = {'sp': _FakeTranscriptStore('run-77')}
         await sw.before_model_request(ctx, _make_request_context(messages))
         events: list[dict[str, Any]] = _compact_spans(capfire)[0].get('events') or []
         receipt_events = [e for e in events if e['name'] == 'compaction.receipt']
@@ -3339,7 +3588,7 @@ class TestKeepUserMessages:
         ]
         rc = _make_request_context(messages)
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('SUMMARY')):
-            result = await comp.before_model_request(_make_ctx(), rc)
+            result = await comp.before_model_request(_make_ctx(rc.messages), rc)
         kept = _user_texts(result.messages)
         assert any(t.endswith('[...]') and len(t) == 10 for t in kept)
 
@@ -3360,7 +3609,7 @@ class TestKeepUserMessages:
         ]
         rc = _make_request_context(messages)
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('SUMMARY')):
-            result = await comp.before_model_request(_make_ctx(), rc)
+            result = await comp.before_model_request(_make_ctx(rc.messages), rc)
         # Exactly one user part survives the summarized prefix, and content that fits is untouched.
         kept = [
             p for m in result.messages if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, UserPromptPart)
@@ -3388,7 +3637,7 @@ class TestKeepUserMessages:
         ]
         rc = _make_request_context(messages)
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('SUMMARY')):
-            result = await comp.before_model_request(_make_ctx(), rc)
+            result = await comp.before_model_request(_make_ctx(rc.messages), rc)
         bounded = next(
             p
             for m in result.messages
@@ -3437,8 +3686,8 @@ class TestKeepUserMessages:
         messages: list[ModelMessage] = [_user('first'), _assistant('a'), _user('second'), _assistant('b')]
         summary_agent = _patched_summary_agent('S')
         with patch('pydantic_ai.Agent', return_value=summary_agent):
-            first = await comp.before_model_request(_make_ctx(), _make_request_context(messages))
-            second = await comp.before_model_request(_make_ctx(), _make_request_context(first.messages))
+            first = await comp.before_model_request(_make_ctx(messages), _make_request_context(messages))
+            second = await comp.before_model_request(_make_ctx(first.messages), _make_request_context(first.messages))
         assert summary_agent.run.await_count == 1
         assert comp.max_messages is not None
         assert len(first.messages) <= comp.max_messages
@@ -3476,8 +3725,9 @@ class TestKeepUserMessages:
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
             result = await comp.compact(messages, _make_ctx())
         assert _user_texts(result) == ['x']
+        assert result[-1] == messages[-1]
         assert comp.keep_tokens is not None
-        assert estimate_token_count(result[1:], len) <= comp.keep_tokens
+        assert estimate_token_count(result[1:-1], len) <= comp.keep_tokens
 
     async def test_older_user_is_not_retained_when_the_newest_does_not_fit(self):
         comp = SummarizingCompaction(
@@ -3494,6 +3744,64 @@ class TestKeepUserMessages:
             result = await comp.compact(messages, _make_ctx())
         assert _user_texts(result) == []
         assert result[-1] == messages[-1]
+
+    async def test_retained_user_turns_exhausting_keep_messages_preserve_current_request(self):
+        comp = SummarizingCompaction(
+            model='test:m',
+            max_messages=3,
+            keep_messages=2,
+            keep_user_messages=True,
+            bridge_prefix=False,
+        )
+        messages: list[ModelMessage] = [
+            _user('turn 1'),
+            _assistant('a'),
+            _user('turn 2'),
+            _assistant('b'),
+            _user('turn 3'),
+        ]
+        with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
+            result = await comp.compact(messages, _make_ctx())
+        assert _user_texts(result) == ['turn 1', 'turn 2', 'turn 3']
+        assert result[-1] == messages[-1]
+
+    async def test_retained_user_turns_exhausting_single_tail_slot_preserve_current_request(self):
+        comp = SummarizingCompaction(
+            model='test:m',
+            max_messages=3,
+            keep_messages=1,
+            keep_user_messages=True,
+            bridge_prefix=False,
+        )
+        messages: list[ModelMessage] = [
+            _user('turn 1'),
+            _assistant('a'),
+            _user('turn 2'),
+            _assistant('b'),
+            _user('turn 3'),
+        ]
+        with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
+            result = await comp.compact(messages, _make_ctx())
+        assert _user_texts(result) == ['turn 2', 'turn 3']
+        assert result[-1] == messages[-1]
+
+    async def test_retained_user_turns_exhausting_token_tail_budget_preserve_current_request(self):
+        comp = SummarizingCompaction(
+            model='test:m',
+            max_tokens=4,
+            keep_tokens=2,
+            keep_messages=3,
+            keep_user_messages=True,
+            bridge_prefix=False,
+            tokenizer=len,
+        )
+        messages: list[ModelMessage] = [_user('ab'), _assistant('c'), _user('d')]
+        with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
+            result = await comp.compact(messages, _make_ctx())
+        assert _user_texts(result) == ['ab', 'd']
+        assert result[-1] == messages[-1]
+        assert comp.keep_tokens is not None
+        assert estimate_token_count(result[1:-1], len) <= comp.keep_tokens
 
     async def test_pin_is_not_rebuilt_as_a_kept_user_message(self):
         comp = SummarizingCompaction(
@@ -3559,7 +3867,7 @@ class TestAnchoredIncremental:
             _assistant('r2'),
         ]
         rc = _make_request_context(messages)
-        result = await comp.before_model_request(_make_ctx(), rc)
+        result = await comp.before_model_request(_make_ctx(rc.messages), rc)
         prompt = '\n'.join(captured)
         assert _UPDATE_ANCHOR in prompt
         assert '<previous-summary>' in prompt
@@ -3600,7 +3908,8 @@ class TestBridgePrefix:
             ]
         )
         messages: list[ModelMessage] = [_user('a'), tail[0], _user('c'), tail[1]]
-        run_ctx = ctx if ctx is not None else _make_ctx()
+        run_ctx = ctx if ctx is not None else _make_ctx(messages)
+        run_ctx.messages[:] = messages
         # No capability replaces the model here, so the request goes to the run's own model --
         # which is what the bridge gate reads when the history names no model.
         rc = _make_request_context(messages, run_ctx.model)
@@ -3813,6 +4122,51 @@ class TestStructuralFeaturesThroughAgent:
         # receipt that now sits ahead of it -- is what gets carried forward.
         assert 'FIRST' in _user_texts(seen[1])
 
+    @pytest.mark.parametrize('preserve_first_user_message', [False, True])
+    async def test_receipt_does_not_take_the_only_kept_slot(self, preserve_first_user_message: bool):
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(
+            _recording_model(seen),
+            capabilities=[
+                SlidingWindowCompaction(
+                    max_messages=3,
+                    keep_messages=1,
+                    receipts=True,
+                    preserve_first_user_message=preserve_first_user_message,
+                )
+            ],
+        )
+        history: list[ModelMessage] = [_user('first'), _assistant('b'), _user('c'), _assistant('d')]
+        prompts = ['one', 'two', 'three']
+        for prompt in prompts:
+            history = (await agent.run(prompt, message_history=history)).all_messages()
+
+        for request, prompt in zip(seen, prompts, strict=True):
+            assert _user_texts(request)[-1] == prompt
+            assert ('first' in _user_texts(request)) is preserve_first_user_message
+            assert _receipt_parts(request[:1])
+
+    async def test_receipt_token_reservation_keeps_the_current_request(self):
+        # The token trigger reserves room for the receipt out of `keep_tokens`; the newest
+        # message must still survive even when that reservation exhausts the budget.
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(
+            _recording_model(seen),
+            capabilities=[
+                SlidingWindowCompaction(
+                    max_tokens=10, keep_tokens=5, receipts=True, preserve_first_user_message=False, tokenizer=len
+                )
+            ],
+        )
+        history: list[ModelMessage] = [_user('a' * 20), _assistant('b' * 20), _user('c' * 20)]
+        prompts = ['one', 'two', 'three']
+        for prompt in prompts:
+            history = (await agent.run(prompt, message_history=history)).all_messages()
+
+        for request, prompt in zip(seen, prompts, strict=True):
+            assert _user_texts(request)[-1] == prompt
+            assert _receipt_parts(request[:1])
+
     async def test_pin_survives_compaction_in_a_run(self):
         seen: list[list[ModelMessage]] = []
         agent = Agent(
@@ -4024,3 +4378,47 @@ class TestStructuralFeaturesThroughAgent:
         assert len(prompts) == 2
         assert '<previous-summary>\nTHE SUMMARY\n</previous-summary>' in prompts[1]
         assert _UPDATE_ANCHOR in prompts[1]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+@pytest.mark.parametrize('inject_first', [False, True])
+@pytest.mark.parametrize('clamp', [False, True])
+async def test_compaction_replaces_earlier_request_only_edits(inject_first: bool, clamp: bool):
+    class InjectTemporary(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            return dataclasses.replace(
+                request_context,
+                messages=[*request_context.messages, ModelRequest(parts=[UserPromptPart('TEMP')])],
+            )
+
+    captured: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured.extend(
+            part.content
+            for message in messages
+            for part in message.parts
+            if isinstance(part, (UserPromptPart, TextPart)) and isinstance(part.content, str)
+        )
+        return ModelResponse(parts=[TextPart('done')])
+
+    compactor = (
+        ClampOversizedMessages(max_part_chars=100)
+        if clamp
+        else SlidingWindowCompaction(max_messages=2, keep_messages=2, preserve_first_user_message=False)
+    )
+    injector = InjectTemporary()
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[injector, compactor] if inject_first else [compactor, injector],
+    )
+    await agent.run(
+        'new',
+        message_history=[ModelRequest(parts=[UserPromptPart('old')]), ModelResponse(parts=[TextPart('reply')])],
+    )
+
+    expected = ['old', 'reply', 'new'] if clamp else ['reply', 'new']
+    assert captured == (expected if inject_first else [*expected, 'TEMP'])

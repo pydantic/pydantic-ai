@@ -6,7 +6,7 @@ import json
 import sys
 from collections.abc import Sequence
 from contextlib import AsyncExitStack, ExitStack
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -125,7 +125,7 @@ def load_agent(agent_path: str) -> Agent[Any, Any] | None:
 
 @cli_agent.system_prompt
 def cli_system_prompt() -> str:
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     tzinfo = now_utc.astimezone().tzinfo
     tzname = tzinfo.tzname(now_utc) if tzinfo else ''
     return f"""\

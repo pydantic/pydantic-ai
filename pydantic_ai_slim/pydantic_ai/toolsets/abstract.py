@@ -3,10 +3,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, Self
 
 from pydantic_core import SchemaValidator
-from typing_extensions import Self
 
 from .._instructions import normalize_toolset_instruction_parts
 from .._run_context import AgentDepsT, RunContext
