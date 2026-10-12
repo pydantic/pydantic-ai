@@ -89,10 +89,10 @@ connections at the infrastructure layer rather than relying on the `reconnect` p
 
 ### State restoration
 
-OpenAI and Azure OpenAI have no cross-connection server state, so Pydantic AI replays local message
-history into the new session. Prior transcript turns survive; in-flight audio does not. GPT-Live does
-the same by default, or forks a session stored with `openai_live_store=True`, so the new session has
-the whole conversation on OpenAI's side.
+On OpenAI, Azure OpenAI, and xAI, Pydantic AI replays local message history into the new session.
+Prior transcript turns survive; in-flight audio does not. GPT-Live does the same by default, or forks a
+session stored with `openai_live_store=True`, so the new session has the whole conversation on OpenAI's
+side.
 
 Replay sends text, not audio, so a spoken user turn with no transcript (input transcription is off,
 or its transcript never arrived) replays as the text `[The user spoke; no transcript is available.]`.
@@ -101,18 +101,16 @@ out of nowhere. The marker is only sent to the provider: the session's
 [message history](history.md) keeps the turn as the [`SpeechPart`][pydantic_ai.messages.SpeechPart]
 it was.
 
-Gemini and xAI use native in-process session resumption, enabled automatically when a `reconnect`
+Gemini uses native in-process session resumption, enabled automatically when a `reconnect`
 policy is present (an explicit `google_enable_session_resumption=False` alongside a policy raises
 [`UserError`][pydantic_ai.exceptions.UserError] instead of silently losing the conversation); see
-the [Gemini resumption settings](gemini.md#session-resumption). Their handles live only in memory
+the [Gemini resumption settings](gemini.md#session-resumption). Its handles live only in memory
 and cannot be persisted for another process.
 
 [`RealtimeSessionReconnectEvent.state_restored`][pydantic_ai.realtime.RealtimeSessionReconnectEvent.state_restored]
 reports whether the reconnect carried the conversation through without cutting a turn off.
 
-How a reply the drop caught in flight is handled depends on the mechanism. Under native resumption
-(xAI) the recorded response simply stays open: output on the new connection continues it, the turn
-completes with the response terminal as usual, and `state_restored` stays `True`. Gemini reports
+How a reply the drop caught in flight is handled depends on the mechanism. Gemini reports
 `True` once the server has issued a resumption handle (shortly after connect; a drop before that
 reports `False` and cancels running tools) but closes the cut reply as an interrupted response
 (keeping any partial transcript in history) before the
@@ -128,7 +126,7 @@ When its reply hadn't started and no spoken reply was in progress,
 A turn typed while the model was answering speech can't be told apart from that spoken reply, so
 `wait_for_reply()` may keep waiting for it, and the reconnect may report `state_restored=True`.
 
-Local replay (OpenAI, Azure OpenAI) restores only the finalized turns, so a reply in flight when the
+Local replay (OpenAI, Azure OpenAI, xAI) restores only the finalized turns, so a reply in flight when the
 socket dropped cannot continue. The session settles it before emitting the event — the partial reply
 becomes an interrupted response, running tool calls get cancelled returns, and the turn ends so queued
 messages waiting for the boundary still flush — and `state_restored` is `False` to say the turn was
@@ -144,7 +142,7 @@ those limits. Exact limits and provider behavior can change, so provider pages a
 - [OpenAI session behavior](openai.md#feature-support-and-limitations)
 - [Azure OpenAI session behavior](azure.md#feature-support-and-limitations)
 - [Gemini session resumption](gemini.md#session-resumption)
-- [xAI native session resumption](xai.md#session-resumption)
+- [xAI session behavior](xai.md#feature-support-and-limitations)
 
 Gemini sends `GoAway` shortly before its cap but Pydantic AI currently reconnects only after the
 connection drops, so a long call can briefly drop mid-turn.

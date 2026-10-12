@@ -198,7 +198,9 @@ async def test_close_prints_the_session_into_the_main_screen_once() -> None:
     screen.surface.restore()
     assert not screen.terminal.alternate
     assert screen.lines()[:3] == ['$ clai2', 'banner', 'linked answer']
-    printed = Text.from_ansi(screen.terminal.getvalue().rsplit(LEAVE, 1)[1])
+    # The surface prints CRLF rows, and Rich 15.0.0's `from_ansi` blanks each one:
+    # https://github.com/Textualize/rich/issues/4090
+    printed = Text.from_ansi(screen.terminal.getvalue().rsplit(LEAVE, 1)[1].replace('\r\n', '\n'))
     assert printed.get_style_at_offset(Console(), 0).link == 'https://example.com', 'scrollback keeps links'
     screen.surface.restore()
     assert screen.lines()[:4] == ['$ clai2', 'banner', 'linked answer', '']

@@ -17,7 +17,7 @@ from ._warnings import (
 )
 
 if TYPE_CHECKING:
-    from .messages import ModelMessage, ModelResponse, RetryPromptPart, ToolReturnPart
+    from .messages import ModelMessage, ModelRequestAttempt, ModelResponse, RetryPromptPart, ToolReturnPart
     from .usage import RunUsage
 
 __all__ = (
@@ -534,6 +534,12 @@ class ModelHTTPError(ModelAPIError):
     suggested_model_id: str | None
     """A close known model identifier suggested from a provider-confirmed model-name error."""
 
+    hint: str | None
+    """Guidance on resolving the error, appended to the exception message.
+
+    For example, the account setting a provider requires.
+    """
+
     def __init__(
         self,
         status_code: int,
@@ -542,14 +548,18 @@ class ModelHTTPError(ModelAPIError):
         *,
         headers: Mapping[str, str] | None = None,
         suggested_model_id: str | None = None,
+        hint: str | None = None,
     ):
         self.status_code = status_code
         self.body = body
         self.headers = {k.lower(): v for k, v in headers.items()} if headers is not None else None
         self.suggested_model_id = suggested_model_id
+        self.hint = hint
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
         if suggested_model_id is not None:
             message += f'. Did you mean {suggested_model_id!r}?'
+        if hint is not None:
+            message += f'. {hint}'
         super().__init__(model_name=model_name, message=message)
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -559,14 +569,19 @@ class ModelHTTPError(ModelAPIError):
             {
                 'headers': self.headers,
                 'suggested_model_id': self.suggested_model_id,
+                'hint': self.hint,
             },
         )
 
     def __setstate__(self, state: dict[str, Any]) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         self.headers = state.get('headers')
         self.suggested_model_id = state.get('suggested_model_id')
+        self.hint = state.get('hint')
         if self.suggested_model_id is not None:
             self.message += f'. Did you mean {self.suggested_model_id!r}?'
+        if self.hint is not None:
+            self.message += f'. {self.hint}'
+        if self.suggested_model_id is not None or self.hint is not None:
             self.args = (self.message,)
 
     @property
@@ -597,12 +612,21 @@ class ModelHTTPError(ModelAPIError):
                 retry_time = retry_time.replace(tzinfo=UTC)
             wait = (retry_time - datetime.now(UTC)).total_seconds()
             return max(0.0, wait)
-        except (ValueError, TypeError, AssertionError):
+        except (ValueError, TypeError, AssertionError, OverflowError):
             return None
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):
     """A group of exceptions that can be raised when all fallback models fail."""
+
+    attempts: Sequence[ModelRequestAttempt] = ()
+    """Every attempt the [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] made, in order.
+
+    Unlike the grouped exceptions, this includes the usage of any response that was rejected by a
+    `fallback_on` response handler, which the agent also adds to the run's
+    [`RunUsage`][pydantic_ai.usage.RunUsage]. Only set on the group a `FallbackModel` raised itself: it
+    doesn't survive a durable execution boundary, such as a Temporal activity.
+    """
 
 
 class ToolRetryError(Exception):

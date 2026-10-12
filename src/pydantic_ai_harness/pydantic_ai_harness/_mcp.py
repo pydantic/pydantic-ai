@@ -9,6 +9,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._warn import MCPReadOnlyNoToolsWarning
 
 one_connection = one_per_id
 """Resolve hosted MCP capabilities that share an `id`: one connection stated twice is one, two that disagree raise."""
@@ -32,15 +33,6 @@ def is_read_only(tool: ToolDefinition) -> bool:
             return True
         case _:
             return False
-
-
-class MCPReadOnlyNoToolsWarning(UserWarning):
-    """`read_only=True` removed every tool from a hosted MCP server, so the agent gets none of its tools.
-
-    The filter keeps only tools the server annotates with `readOnlyHint: true`, and some servers
-    publish no annotations at all. Disable `read_only`, or filter this category when an empty
-    toolset is intended.
-    """
 
 
 def read_only_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
