@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import sys
 import warnings
 from typing import TYPE_CHECKING, TypeAlias, TypeVar
 
-# Import httpcore2 eagerly: httpx2 defers it to first client construction, which performs blocking
-# I/O if that happens inside the event loop.
-import httpcore2  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import httpx2
+
+# Import httpcore2 eagerly: httpx2 defers it to first client construction, which performs blocking
+# I/O if that happens inside the event loop. httpx2 does not depend on httpcore2 on Emscripten
+# (Pyodide), where it sends requests through the browser's `fetch` instead, so there is nothing to
+# preload there. The check is on the platform rather than on `ImportError` so that a broken install
+# elsewhere still fails loudly here.
+if sys.platform != 'emscripten':  # pragma: no branch
+    import httpcore2  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 from ._warnings import PydanticAIDeprecationWarning
 
