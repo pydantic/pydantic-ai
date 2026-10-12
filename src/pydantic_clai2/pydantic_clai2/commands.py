@@ -14,6 +14,7 @@ from termflow.tui.completion import (
     Document,
 )
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import known_model_names
 from pydantic_clai2.config import (
     SETTING_FIELDS,
@@ -85,6 +86,13 @@ class Command:
     """
     during_turn_subcommands: tuple[str, ...] = ()
     """Subcommands, like `add` in `/model add`, whose bare form also opens its menu mid-turn."""
+    live: bool = False
+    """Keep the editor live while the handler runs, as it is during a turn.
+
+    The working spinner shows, Esc or Ctrl-C cancels, and Enter queues a follow-up. Only for
+    handlers that may take a while and only print through the console: one that reads keys or
+    opens a menu needs the suspended editor every other command gets.
+    """
 
 
 class Commands(Completer):
@@ -145,17 +153,31 @@ class Commands(Completer):
             return command.during_turn
         return command.args_during_turn or (len(words) == 2 and words[1] in command.during_turn_subcommands)
 
+    def runs_live(self, text: str) -> bool:
+        """Whether `text` names an available command that keeps the editor live while it runs."""
+        parts = text.removeprefix('/').split(maxsplit=1)
+        command = self._commands.get(parts[0]) if parts else None
+        return command is not None and command.live and command.available()
+
     async def execute_async(self, text: str) -> str:
         """Await asynchronous plugin commands without blocking the event loop.
 
         The UI telemetry span names a registered command and counts its arguments; the arguments, and any
         unregistered name, which is just typed text, stay out.
+
+        The shell shows a failure instead of raising it, so one that is not a usage error (`ValueError`,
+        `UserError`) is also recorded here as a handled error, under the command's span.
         """
         name, *arguments = text.removeprefix('/').split() or ['help']
         command = name if name in self else 'unknown'
         with telemetry.span('command /{command}', command=command, arguments=len(arguments)):
-            result = self.execute(text)
-            return result if isinstance(result, str) else await result
+            try:
+                result = self.execute(text)
+                return result if isinstance(result, str) else await result
+            except Exception as error:
+                if not isinstance(error, ValueError | UserError):
+                    telemetry.handled_error('command /{command} failed', error, command=command)
+                raise
 
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterator[Completion]:
         """Complete slash commands, contextual arguments, and @file paths."""

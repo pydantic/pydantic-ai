@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pytest_mock import MockerFixture
@@ -14,6 +14,7 @@ from pydantic_ai import (
     CompactionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
+    ModelRequest,
     ModelResponse,
     ModelResponsePart,
     ModelRetry,
@@ -35,6 +36,10 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import try_import
+
+with try_import() as openai_imports:
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 with try_import() as otel_sdk_imports_successful:
     from opentelemetry.context import Context
@@ -931,3 +936,136 @@ def test_concurrent_runs_of_a_new_conversation_keep_each_others_marks() -> None:
     later = CacheHealthDetector(store, 'conversation', 'run-3', alert_on={'unexpected'})
     assert set(later.marks) == {('provider-a', None, 'cache-model'), ('provider-b', None, 'cache-model')}
     assert second.marks is later.marks
+
+
+# ---- Caching not enabled ---------------------------------------------------------------------
+
+
+class ProviderCacheFunctionModel(FunctionModel):
+    """A model that needs caching configured, with a provider-specific `provider_cache` setting."""
+
+    def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
+        return 'provider_cache' in merged_settings
+
+
+def not_enabled_cache_spans(
+    usages: Sequence[RequestUsage],
+    *,
+    settings: dict[str, Any],
+    prompt: str | list[str | CachePoint] = 'prompt',
+    runs: int = 1,
+) -> list[ReadableSpan]:
+    exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    responses = iter(usages)
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')], usage=next(responses))
+
+    model = ProviderCacheFunctionModel(model_function, profile=ModelProfile(supports_cache=True))
+    agent = Agent(
+        model,
+        model_settings=cast(ModelSettings, settings),
+        capabilities=[
+            Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider, include_content=False))
+        ],
+    )
+    history: list[ModelMessage] | None = None
+    for _ in range(runs):
+        history = agent.run_sync(prompt, message_history=history).all_messages()
+    return [span for span in exporter.get_finished_spans() if span.name.startswith('chat ')]
+
+
+def test_caching_not_enabled_is_reported_once() -> None:
+    """A request long enough to cache on a model that needs caching configured, with none configured and no cache
+    usage, is reported once per conversation."""
+    spans = not_enabled_cache_spans(
+        [RequestUsage(input_tokens=5000), RequestUsage(input_tokens=5100)], settings={}, runs=2
+    )
+
+    assert [cache_attributes(span) for span in spans] == [
+        {
+            'pydantic_ai.cache.hit_ratio': 0.0,
+            'pydantic_ai.cache.established_tokens': 0,
+            'pydantic_ai.cache.not_enabled': True,
+        },
+        {},
+    ]
+    assert [(event.name, dict(event.attributes or {})) for event in spans[0].events] == [
+        ('pydantic_ai.cache.not_enabled', {'input_tokens': 5000, 'model_name': 'function:model_function:'})
+    ]
+    assert not spans[1].events
+
+
+@pytest.mark.parametrize(
+    ('settings', 'usage', 'prompt'),
+    [
+        pytest.param({'cache': False}, RequestUsage(input_tokens=5000), 'prompt', id='left-off-on-purpose'),
+        pytest.param({'provider_cache': False}, RequestUsage(input_tokens=5000), 'prompt', id='provider-setting'),
+        pytest.param({'cache': True}, RequestUsage(input_tokens=5000), 'prompt', id='enabled'),
+        pytest.param({}, RequestUsage(input_tokens=1000), 'prompt', id='too-short'),
+        pytest.param({}, RequestUsage(input_tokens=5000), ['context', CachePoint(), 'prompt'], id='cache-point'),
+    ],
+)
+def test_caching_not_enabled_not_reported(
+    settings: dict[str, Any], usage: RequestUsage, prompt: str | list[str | CachePoint]
+) -> None:
+    """Caching that was configured, even to off, a prompt too short to cache, and hand-placed `CachePoint`s are
+    never reported."""
+    spans = not_enabled_cache_spans([usage], settings=settings, prompt=prompt)
+
+    assert [cache_attributes(span) for span in spans] == [{}]
+
+
+def test_caching_enabled_after_not_enabled_report_keeps_the_report() -> None:
+    """Once caching starts working, its marks are judged as usual, and the report isn't repeated."""
+    store = ConversationCacheMarkStore()
+    detector = CacheHealthDetector(store, 'conversation', 'run', alert_on=frozenset({'unexpected'}))
+    model = ProviderCacheFunctionModel(
+        lambda messages, info: ModelResponse(parts=[TextPart('done')]), profile=ModelProfile(supports_cache=True)
+    )
+
+    def observe(settings: dict[str, Any], usage: RequestUsage):
+        context = ModelRequestContext(
+            model=model,
+            messages=[ModelRequest.user_text_prompt('prompt')],
+            model_settings=cast(ModelSettings, settings),
+            model_request_parameters=ModelRequestParameters(),
+        )
+        return detector.observe(context, ModelResponse(parts=[TextPart('done')], usage=usage, model_name='m'))
+
+    first = observe({}, RequestUsage(input_tokens=5000))
+    assert first is not None and first.not_enabled
+    second = observe({'cache': True}, RequestUsage(input_tokens=5000, cache_write_tokens=4900))
+    assert second is not None and not second.not_enabled
+    assert observe({}, RequestUsage(input_tokens=5000)) is not None
+    assert all(mark.not_enabled_alerted for mark in detector.marks.values())
+
+
+def test_fallback_model_never_reports_caching_not_enabled() -> None:
+    """A fallback model can't know which model serves the request, so it claims nothing about its caching."""
+    model = FallbackModel(ProviderCacheFunctionModel(lambda messages, info: ModelResponse(parts=[])))
+    assert not model._caching_not_enabled(None)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'reported'), [('google/gemini-2.5-pro', False), ('anthropic/claude-sonnet-4.5', True)]
+)
+def test_openrouter_gemini_routes_are_not_reported(model_name: str, reported: bool) -> None:
+    """OpenRouter's Gemini routes cache implicitly, so a long request with no cache usage isn't reported there,
+    while its Anthropic routes, which cache nothing unconfigured, are."""
+    model = OpenRouterModel(model_name, provider=OpenRouterProvider(api_key='test'))
+    detector = CacheHealthDetector(ConversationCacheMarkStore(), 'conversation', 'run', alert_on=frozenset())
+    context = ModelRequestContext(
+        model=model,
+        messages=[ModelRequest.user_text_prompt('prompt')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    response = ModelResponse(parts=[TextPart('done')], usage=RequestUsage(input_tokens=5000), model_name=model_name)
+
+    health = detector.observe(context, response)
+
+    assert (health is not None and health.not_enabled) is reported
