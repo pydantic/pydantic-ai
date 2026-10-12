@@ -121,6 +121,21 @@ await parallel([agent('x'), lambda: agent('y'), plain, boom, agent('z', name='mi
     assert await _run(_toolset('a'), code) == ['a:x', 'a:y', 'value', None, None]
 
 
+async def test_fan_out_helpers_resolve_gathered_awaitables() -> None:
+    code = """\
+import asyncio
+
+def both(prev, item, index):
+    return asyncio.gather(agent(prev, name='a'), agent(prev, name='b'))
+
+[
+    await parallel([asyncio.gather(agent('x', name='a'), agent('y', name='b')), lambda: asyncio.gather(agent('z', name='a'))]),
+    await pipeline(['p'], both),
+]
+"""
+    assert await _run(_toolset('a', 'b'), code) == [[['a:x', 'b:y'], ['a:z']], [['a:p', 'b:p']]]
+
+
 async def test_parallel_of_nothing_is_empty() -> None:
     assert await _run(_toolset('a'), 'await parallel([])') == []
 

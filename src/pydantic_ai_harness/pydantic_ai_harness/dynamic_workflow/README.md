@@ -459,7 +459,8 @@ await agent('Summarize: ' + '\n'.join(r for r in reviews if r), name='summarizer
 `meta` needs a `name` equal to the file name and a `description`; the other keys are optional and
 no others are allowed. Only the top-level `required` of the `args` schema is checked. A file naming
 a sub-agent that is not in the catalog is skipped, as is any file that fails to load, with a
-warning.
+warning. Inside the file, `meta` is that dict, so a sub-agent named `meta` is called there as
+`agent(task, name='meta')`.
 
 Each run lists the files to the model in an `<available_workflows>` block of the instructions. The
 model can run one with `run_workflow(name=..., args=...)`, run one from inside a script with

@@ -53,7 +53,7 @@ from pydantic_ai_harness.dynamic_workflow._catalog import (
     validate_workflow_agent,
     visible_revealed_agents,
 )
-from pydantic_ai_harness.dynamic_workflow._library import SavedWorkflow, WorkflowLibrary
+from pydantic_ai_harness.dynamic_workflow._library import META_NAME, SavedWorkflow, WorkflowLibrary
 from pydantic_ai_harness.dynamic_workflow._prelude import ARGS_NAME, HELPER_NAMES, render_prelude
 from pydantic_ai_harness.dynamic_workflow._results import (
     budget_terminal_result,
@@ -482,6 +482,13 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             raise ModelRetry('Pass exactly one of `code`, a script to run, or `name`, a saved workflow to run.')
 
         omitted = self._omitted_helpers()
+        stubs = build_type_check_stubs(self._by_name, omitted_helpers=omitted)
+        if META_NAME in self._by_name:
+            # Inside a saved workflow, the file's `meta` dict shadows this sub-agent; `agent(name='meta')` reaches it.
+            saved_by_name = {name: entry for name, entry in self._by_name.items() if name != META_NAME}
+            saved_stubs = build_type_check_stubs(saved_by_name, omitted_helpers=omitted)
+        else:
+            saved_stubs = stubs
         run = WorkflowRun(
             ctx=ctx,
             agents=self._by_name,
@@ -494,7 +501,8 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             inherit_model=self.inherit_model,
             sub_agent_usage_limits=self.sub_agent_usage_limits,
             prelude=render_prelude(shadowed=omitted, max_items=self.max_items_per_call),
-            stubs=build_type_check_stubs(self._by_name, omitted_helpers=omitted),
+            stubs=stubs,
+            saved_stubs=saved_stubs,
             bind_args=ARGS_NAME not in omitted,
             limits=_resolve_resource_limits(self.resource_limits),
             in_temporal=in_temporal_workflow(),
@@ -512,7 +520,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         in_workflow_token = in_workflow.set(True)
         try:
             with run.workflow_span(frame, args) if frame.stack else nullcontext():
-                session = await run.main_session()
+                session = await run.main_session(frame)
                 completed = await run.execute(session, code, frame=frame, args=args)
         except MontyTypingError as e:
             raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(e.display())}') from e

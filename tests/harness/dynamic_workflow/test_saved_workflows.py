@@ -264,6 +264,16 @@ async def test_saved_workflow_errors_are_retries() -> None:
     assert 'boom' in str(exc_info.value)
 
 
+async def test_saved_workflows_run_alongside_a_sub_agent_named_meta() -> None:
+    ts = DynamicWorkflowToolset[object](
+        agents=[WorkflowAgent(echo_agent('meta'))],
+        library=WorkflowLibrary(workflows={'m': _workflow('m', "[meta['name'], await agent('x', name='meta')]")}),
+    )
+    assert await call_workflow_tool(ts, {'name': 'm'}) == ['m', 'meta:x']
+    out = await call_workflow_tool(ts, {'code': "[await workflow('m'), await meta(task='y')]"})
+    assert out == [['m', 'meta:x'], 'meta:y']
+
+
 # --- Nesting ---------------------------------------------------------------------------------
 
 

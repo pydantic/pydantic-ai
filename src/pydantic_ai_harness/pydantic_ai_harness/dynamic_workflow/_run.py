@@ -104,6 +104,8 @@ class WorkflowRun(Generic[AgentDepsT]):
     sub_agent_usage_limits: UsageLimits | None
     prelude: str
     stubs: str
+    saved_stubs: str
+    """`stubs` for saved workflows, whose `meta` assignment shadows a sub-agent named `meta`."""
     bind_args: bool
     limits: ResourceLimits
     in_temporal: bool
@@ -120,10 +122,13 @@ class WorkflowRun(Generic[AgentDepsT]):
 
     # --- Running scripts ---
 
-    async def main_session(self) -> AsyncMontySession:
-        """The call's own session, where the tool's script or named workflow runs."""
+    async def main_session(self, frame: Frame) -> AsyncMontySession:
+        """The call's own session, where the tool's script or named workflow (per `frame`) runs."""
         return await self.monty.get_session(
-            type_check=True, type_check_stubs=self.stubs, limits=self.limits, in_temporal_workflow=self.in_temporal
+            type_check=True,
+            type_check_stubs=self.saved_stubs if frame.stack else self.stubs,
+            limits=self.limits,
+            in_temporal_workflow=self.in_temporal,
         )
 
     async def execute(
@@ -199,7 +204,7 @@ class WorkflowRun(Generic[AgentDepsT]):
             with self.workflow_span(child, checked):
                 try:
                     async with self.monty.extra_session(
-                        type_check=True, type_check_stubs=self.stubs, limits=self.limits
+                        type_check=True, type_check_stubs=self.saved_stubs, limits=self.limits
                     ) as session:
                         return (await self.execute(session, workflow.source, frame=child, args=checked)).output
                 except (MontyTypingError, MontySyntaxError, MontyRuntimeError) as error:

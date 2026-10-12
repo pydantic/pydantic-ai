@@ -24,6 +24,9 @@ from typing_extensions import TypedDict
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness._workspace import workspace_path
 
+META_NAME = 'meta'
+"""The global a saved workflow file assigns its metadata to; it shadows a sub-agent of that name in the file."""
+
 _NAME_PATTERN = re.compile(r'[a-z0-9][a-z0-9_-]{0,63}')
 _PARSE_FLAGS = ast.PyCF_ONLY_AST | ast.PyCF_ALLOW_TOP_LEVEL_AWAIT
 
@@ -85,7 +88,7 @@ class SavedWorkflow:
             if isinstance(node, ast.Assign)
             and len(node.targets) == 1
             and isinstance(target := node.targets[0], ast.Name)
-            and target.id == 'meta'
+            and target.id == META_NAME
         ]
         if len(meta_nodes) != 1:
             raise ValueError('expected exactly one top-level `meta = {...}` assignment')
