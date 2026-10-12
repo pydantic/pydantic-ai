@@ -184,6 +184,7 @@ pytestmark = [
 ]
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_mcp_tools_cached_across_activities(allow_model_requests: None, client: Client):
     """Verify that MCP tool caching reduces server round-trips across activities.
 
@@ -278,6 +279,7 @@ def _scheduled_get_tools_count(history: WorkflowHistory) -> int:
     )
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_temporal_mcp_get_tools_replay_deterministic(allow_model_requests: None, client: Client):
     """#5875 regression: `get_tools` activity scheduling must be replay-deterministic.
 
@@ -332,6 +334,7 @@ async def test_temporal_mcp_get_tools_replay_deterministic(allow_model_requests:
         mcp_replay_holder['agent'] = warm
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_temporal_mcp_get_tools_not_cached_when_disabled(allow_model_requests: None, client: Client):
     """With `cache_tools=False`, `get_tools` is scheduled for every model request (no run cache).
 
@@ -1021,6 +1024,7 @@ class MCPToolsetInstructionsWorkflow:
         return result.output
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_temporal_mcptoolset_instructions_propagate(client: Client):
     """`MCPToolset` instructions propagate through the `TemporalMCPToolset` wrapper."""
     async with Worker(
@@ -1335,6 +1339,7 @@ class MCPTaskSupportWorkflow:
         return (await _mcp_task_temporal_agent.run(prompt)).output
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_task_server` over stdio')
 async def test_temporal_mcptoolset_preserves_task_routing(client: Client):
     """Effective task routing in `ToolDefinition.metadata` survives Temporal activities."""
     async with Worker(
@@ -1745,6 +1750,7 @@ async def _heartbeats_during_activity(activity_fn: Callable[..., Any], args: Seq
     return beats
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_every_registered_activity_heartbeats(allow_model_requests: None):
     """Every activity Pydantic AI registers beats while it runs, not just the model ones (#6914).
 
