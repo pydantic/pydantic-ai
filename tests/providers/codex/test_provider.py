@@ -14,8 +14,10 @@ import asyncio
 import base64
 import hashlib
 import json
+import locale
 import pickle
 import socket
+import sys
 import time
 from collections.abc import AsyncIterator
 from dataclasses import asdict
@@ -152,6 +154,27 @@ def test_from_codex_cli_honors_code_home(env: TestEnv, tmp_path: Path):
     assert auth_json.read_text() == original
 
 
+@pytest.mark.skipif(bool(sys.flags.utf8_mode), reason='UTF-8 mode decodes as UTF-8 whatever the locale')
+def test_from_codex_cli_non_utf8_locale(env: TestEnv, tmp_path: Path):
+    """`auth.json` is decoded as UTF-8 even when the locale's default codec is not.
+
+    Before CPython 3.15 makes UTF-8 mode the default (PEP 686), the default text codec follows the locale.
+    """
+    (tmp_path / 'auth.json').write_text(
+        json.dumps({'tokens': {'access_token': 'a', 'refresh_token': 'r', 'account_id': 'acc-é'}}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+    env.set('CODEX_HOME', str(tmp_path))
+    previous = locale.setlocale(locale.LC_CTYPE)
+    locale.setlocale(locale.LC_CTYPE, 'C')
+    try:
+        provider = OpenAICodexProvider()
+    finally:
+        locale.setlocale(locale.LC_CTYPE, previous)
+
+    assert provider.credentials.account_id == 'acc-é'
+
+
 def test_from_codex_cli_missing_file(env: TestEnv, tmp_path: Path):
     env.set('CODEX_HOME', str(tmp_path))
     with pytest.raises(UserError, match=r'codex login'):
@@ -169,6 +192,13 @@ def test_from_codex_cli_malformed_json(env: TestEnv, tmp_path: Path):
     (tmp_path / 'auth.json').write_text('not json')
     env.set('CODEX_HOME', str(tmp_path))
     with pytest.raises(UserError, match='Malformed'):
+        OpenAICodexProvider()
+
+
+def test_from_codex_cli_invalid_utf8(env: TestEnv, tmp_path: Path):
+    (tmp_path / 'auth.json').write_bytes(b'\xff')
+    env.set('CODEX_HOME', str(tmp_path))
+    with pytest.raises(UserError, match='not valid UTF-8'):
         OpenAICodexProvider()
 
 

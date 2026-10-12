@@ -20,6 +20,10 @@
     options:
       inherited_members: true
 
+::: pydantic_ai.providers.openai_decisions
+    options:
+      inherited_members: true
+
 ::: pydantic_ai.providers.xai
 
 ::: pydantic_ai.providers.deepseek
@@ -85,5 +89,7 @@
 ::: pydantic_ai.providers.snowflake.SnowflakeProvider
 
 ::: pydantic_ai.providers.typesafe.TypeSafeProvider
+
+::: pydantic_ai.providers.system_one.SystemOneProvider
 
 ::: pydantic_ai.providers.zai.ZaiProvider

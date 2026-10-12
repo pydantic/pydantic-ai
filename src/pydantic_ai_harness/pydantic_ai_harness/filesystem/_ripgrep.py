@@ -129,7 +129,8 @@ async def run_ripgrep(
     # Prepared a batch at a time, so a capped search stops preparing once it has enough.
     for offset in range(0, len(records), _PREPARE_BATCH):
         batch = records[offset : offset + _PREPARE_BATCH]
-        if prepare is not None:
+        # Every caller passes `prepare`.
+        if prepare is not None:  # pragma: no branch
             await prepare(batch)
         if not _collect(batch, accept, results, limit):
             truncated = True

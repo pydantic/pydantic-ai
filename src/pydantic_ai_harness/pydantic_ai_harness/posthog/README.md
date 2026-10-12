@@ -156,7 +156,8 @@ MCP handlers. The client then owns the URL and authentication, so passing
 `read_only=True` keeps only the tools the server marks as read-only, instead of
 asking the server for read-only mode. PostHog's default mode serves one
 `posthog` tool that is not marked read-only, so this filter leaves no PostHog
-tools; have your client send the `x-posthog-read-only: true` header instead.
+tools and emits an `MCPReadOnlyNoToolsWarning`; have your client send the
+`x-posthog-read-only: true` header instead.
 `include_instructions=False` stops the server's own instructions from reaching
 the agent.
 

@@ -25,7 +25,7 @@
 - Put user-facing features where users naturally look for them, not only in API reference docstrings.
 - Use current frontier models in reader-facing examples. Verify the latest supported identifiers instead of copying static examples from this guidance.
 - Use Markdown headings for real document sections. Register new published pages in `docs/navigation.yml`.
-- Link to rendered Pydantic AI Harness documentation when it exists. Use the Harness repository only when no published page covers the capability.
+- Link to the Pydantic AI Harness page under `docs/harness/` when one exists. Link to the source under `src/pydantic_ai_harness/` only when no page covers the capability.
 
 ## Docstrings
 
