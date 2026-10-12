@@ -10,7 +10,7 @@ import sys
 import textwrap
 import time
 from collections.abc import Callable, Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TextIO
 
 from termflow.ansi.utils import visible_length
@@ -37,7 +37,7 @@ def plain(text: str, *, multiline: bool = False) -> str:
 def date_label(moment: datetime, *, now: datetime | None = None) -> str:
     """Local calendar buckets, with a year on older sessions."""
     day = moment.astimezone().date()
-    today = (now or datetime.now(timezone.utc)).astimezone().date()
+    today = (now or datetime.now(UTC)).astimezone().date()
     if day == today:
         return 'TODAY'
     if day == today - timedelta(days=1):
@@ -67,6 +67,7 @@ class SessionBrowser:
         preview: Callable[[str], str],
         delete: Callable[[ConversationSummary], None],
         rename: Callable[[ConversationSummary, str], None],
+        importing: Callable[[ConversationSummary], bool] = lambda entry: False,
         output: TextIO | None = None,
         key_source: Callable[[], str] = menu_key,
         size: Callable[[], tuple[int, int]] = terminal_size,
@@ -79,6 +80,8 @@ class SessionBrowser:
         self.preview = preview
         self.delete = delete
         self.rename = rename
+        self.importing = importing
+        """Whether an entry is a Claude Code or Codex session that resuming copies into the store."""
         self.output = output or sys.stdout
         self.key_source = key_source
         self.size = size
@@ -97,7 +100,6 @@ class SessionBrowser:
         self.preview_text = ''
         self.preview_offset = 0
         self.confirm: ConversationSummary | None = None
-        self.confirm_action = ''
 
     def identity(self, workspace: str) -> ProjectIdentity:
         """Return metadata cached for this browser opening, never reading Git during painting."""
@@ -263,6 +265,8 @@ class SessionBrowser:
             counts = f'{entry.message_count} msgs / {entry.total_tokens:,} tok'
             if len(counts) > width // 2:
                 counts = f'{entry.message_count} msgs'
+            if self.importing(entry):
+                counts = 'to import'
             title = truncate(plain(title), max(1, width - len(counts) - 1))
             if entry == selected and self.mode == 'sessions':
                 title = f'{theme.sgr(theme.INFO, bold=True)}{title}\x1b[0m'
@@ -290,7 +294,7 @@ class SessionBrowser:
     def footer(self) -> str:
         """Mode-specific hints, including explicit confirmation of destructive actions."""
         if self.confirm is not None:
-            return plain(f'{self.confirm_action}: {self.confirm.title}? y confirm / any other key cancel')
+            return plain(f'Delete saved session: {self.confirm.title}? y confirm / any other key cancel')
         if self.mode in ('search', 'rename'):
             return plain(f'{self.mode}: {self.buffer} | Enter apply / Esc cancel')
         if self.mode == 'preview':
@@ -352,31 +356,25 @@ class SessionBrowser:
             self.sort = (self.sort + 1) % 3
         elif entry is not None:
             if key == Key.ENTER:
-                if entry.workspace != self.workspace:
-                    self.confirm, self.confirm_action = (
-                        entry,
-                        f'Resume in current directory (saved in {entry.workspace})',
-                    )
-                else:
-                    return entry.id
+                return entry.id
             elif key in (Key.RIGHT, 'e'):
                 self.preview_text = self.preview(entry.id)
                 self.preview_offset, self.mode = 0, 'preview'
+            elif key in ('d', 'r') and self.importing(entry):
+                self.notice = 'Not imported yet. Enter imports and resumes it; then it can be renamed or deleted.'
             elif key == 'd':
                 if entry.id == self.active_id:
                     self.notice = 'Cannot delete the active session. Use /new first.'
                 else:
-                    self.confirm, self.confirm_action = entry, 'Delete saved session'
+                    self.confirm = entry
             elif key == 'r':
                 self.mode, self.buffer = 'rename', entry.title
         return None
 
-    def _confirm_key(self, key: str) -> str | None:
+    def _confirm_key(self, key: str) -> None:
         entry, self.confirm = self.confirm, None
         if key.lower() != 'y' or entry is None:
             return None
-        if self.confirm_action.startswith('Resume'):
-            return entry.id
         self.delete(entry)
         self.reload()
         return None

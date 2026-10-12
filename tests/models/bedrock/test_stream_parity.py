@@ -11,14 +11,14 @@ from __future__ import annotations as _annotations
 import dataclasses
 import json
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import unquote
 
 import anyio.to_thread
 import pytest
-import yaml
+from cassetter import Cassette, HttpInteraction, RecordMode
 
 from pydantic_ai.messages import BaseToolCallPart, ModelRequest, ModelResponse, ModelResponsePart
 from pydantic_ai.models import ModelRequestParameters
@@ -45,18 +45,17 @@ pytestmark = [
 _TESTS_DIR = Path(__file__).parents[2]
 
 
-def _recorded_streams() -> dict[str, dict[str, Any]]:
-    streams: dict[str, dict[str, Any]] = {}
+def _recorded_streams() -> dict[str, HttpInteraction]:
+    streams: dict[str, HttpInteraction] = {}
     for path in sorted(_TESTS_DIR.rglob('*.yaml')):
-        text = path.read_text()
-        if '/converse-stream' not in text:
+        if '/converse-stream' not in path.read_text():
             continue
-        for index, interaction in enumerate(yaml.safe_load(text)['interactions']):
+        # cassetter reads both its own format and the vcrpy one older cassettes were recorded in.
+        cassette = Cassette(path, record_mode=RecordMode.NONE)
+        cassette.load()
+        for index, interaction in enumerate(cassette.interactions):
             # An error response has no stream to compare.
-            if (
-                interaction['request']['uri'].endswith('/converse-stream')
-                and interaction['response']['status']['code'] == 200
-            ):
+            if interaction.request.uri.endswith('/converse-stream') and interaction.response.status == 200:
                 streams[f'{path.relative_to(_TESTS_DIR)}#{index}'] = interaction
     return streams
 
@@ -76,12 +75,15 @@ class _Replay:
     """A real `bedrock-runtime` client whose `ConverseStream` calls get `interaction`'s recorded response."""
 
     client: BedrockRuntimeClient
-    interaction: dict[str, Any] = field(default_factory=dict[str, Any])
+    interaction: HttpInteraction | None = None
 
     def send(self, request: AWSPreparedRequest, **_: Any) -> AWSResponse:
-        response = self.interaction['response']
-        headers = HTTPHeaders.from_dict({key: value[0] for key, value in response['headers'].items()})
-        return AWSResponse(request.url, response['status']['code'], headers, _RecordedBody(response['body']['string']))
+        assert self.interaction is not None
+        response = self.interaction.response
+        headers = HTTPHeaders.from_dict({key: value[0] for key, value in response.headers.items()})
+        body = response.body.content
+        assert isinstance(body, bytes)
+        return AWSResponse(request.url, response.status, headers, _RecordedBody(body))
 
 
 @pytest.fixture
@@ -133,7 +135,10 @@ def _fold(events: list[dict[str, Any]]) -> dict[str, Any]:
             response |= {key: metadata[key] for key in ('usage', 'metrics', 'trace') if key in metadata}
     for index, tool_input in tool_inputs.items():
         blocks[index]['toolUse']['input'] = json.loads(tool_input) if tool_input else {}
-    return {'output': {'message': {'role': 'assistant', 'content': [blocks[i] for i in sorted(blocks)]}}, **response}
+    # `Converse` leaves out the whitespace-only text blocks that `ConverseStream` sends, like Qwen3's `''` and `'\n\n'`
+    # (live-verified on Qwen3 models; see `test_bedrock_qwen_stream_whitespace_text_blocks`).
+    content = [block for _, block in sorted(blocks.items()) if 'text' not in block or block['text'].strip()]
+    return {'output': {'message': {'role': 'assistant', 'content': content}}, **response}
 
 
 def _comparable(response: ModelResponse) -> dict[str, Any]:
@@ -152,8 +157,10 @@ def _comparable_args(part: ModelResponsePart) -> dict[str, Any]:
     return {'args': part.args_as_dict()} if isinstance(part, BaseToolCallPart) else {}
 
 
-async def _streamed_and_complete(interaction: dict[str, Any], replay: _Replay) -> tuple[dict[str, Any], dict[str, Any]]:
-    model_name = unquote(interaction['request']['uri'].split('/model/')[1].removesuffix('/converse-stream'))
+async def _streamed_and_complete(
+    interaction: HttpInteraction, replay: _Replay
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    model_name = unquote(interaction.request.uri.split('/model/')[1].removesuffix('/converse-stream'))
     model = BedrockConverseModel(model_name, provider=BedrockProvider(bedrock_client=replay.client))
     replay.interaction = interaction
 

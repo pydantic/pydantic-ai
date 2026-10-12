@@ -188,6 +188,17 @@ Before treating a capability as done, check how it composes with:
 `CodeMode` is a useful reference for wrapper-toolset composition, tool
 selection, `ToolSearch` interaction, public docs, and test depth.
 
+### Identify Tools By Kind, Not Name
+
+A capability that needs to recognize another capability's tool (the tool search
+tool, `load_capability`, a file reader) matches it by what it is: `isinstance`
+on its typed part (`ToolSearchCallPart`, `LoadCapabilityReturnPart`, ...) or
+`ToolDefinition.tool_kind`. Never compare `tool_name` against a hard-coded
+name: tools can be renamed or prefixed (`PrefixTools`, MCP prefixes), and the
+check then silently stops matching. When text names such a tool, use the name
+it actually has in the run. If a tool you need to recognize has no kind yet,
+propose one in core rather than matching its name.
+
 ### Deciding What Two Of It Mean
 
 Every capability answers "what if an agent has two of me?", and the answer is

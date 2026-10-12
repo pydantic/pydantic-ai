@@ -44,14 +44,14 @@ on a Pydantic model — an `Enum` has no config to carry a flag, and any assigne
 member, so a base class is the marker.
 
 ```python
-from enum import Enum
+from enum import StrEnum
 
 from pydantic_ai import Agent, UseEnumMemberDocstrings
 
 agent = Agent('openai:gpt-5.2', name='ticket_agent')
 
 
-class Urgency(UseEnumMemberDocstrings, str, Enum):
+class Urgency(UseEnumMemberDocstrings, StrEnum):
     """How urgent the ticket is."""
 
     low = 'low'

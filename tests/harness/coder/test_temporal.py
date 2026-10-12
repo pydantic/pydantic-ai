@@ -230,7 +230,7 @@ def test_workspace_capabilities_register_their_toolsets() -> None:
             FileSystem(),
             Shell(),
             Shell(id='background_shell', tools=['start_command', 'check_command']),
-            RepoContext(),
+            RepoContext(expose_inventory_tool=True),
             ToolOutputLimits(),
             TemporalDurability(activity_config=ACTIVITY_CONFIG),
         ],

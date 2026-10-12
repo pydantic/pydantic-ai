@@ -201,7 +201,7 @@ class TestRender:
 
 
 class TestInstructions:
-    async def test_includes_files_and_inventory_hint(self, tmp_path: Path, workspace: Workspace) -> None:
+    async def test_default_includes_files_without_inventory_hint(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'be nice')
         cap = RepoContext[object]()
         ctx = _run_context(workspace=workspace)
@@ -209,7 +209,17 @@ class TestInstructions:
         instructions = _render_capability_instructions(cap, ctx)
         assert isinstance(instructions, str)
         assert 'be nice' in instructions
-        assert 'inventory_agent_context' in instructions
+        assert 'inventory_agent_context' not in instructions
+
+    async def test_directory_named_like_an_instruction_file_is_skipped(
+        self, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        (tmp_path / 'CLAUDE.md').mkdir()
+        _write(tmp_path / 'AGENTS.md', 'be nice')
+        cap = RepoContext[object](expose_inventory_tool=False)
+        ctx = _run_context(workspace=workspace)
+        await cap.before_run(ctx)
+        assert _render_capability_instructions(cap, ctx) == '<context-file path="AGENTS.md">\nbe nice\n</context-file>'
 
     def test_none_when_all_disabled(self, tmp_path: Path) -> None:
         cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=False)
@@ -217,12 +227,13 @@ class TestInstructions:
 
     async def test_autoload_off_keeps_inventory_hint(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'ignored')
-        cap = RepoContext[object](autoload_instructions=False)
+        cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=True)
         await cap.before_run(_run_context(workspace=workspace))
         instructions = cap.get_instructions()
         assert isinstance(instructions, str)
         assert 'ignored' not in instructions
         assert 'inventory_agent_context' in instructions
+        assert 'translate' not in instructions
 
     async def test_no_files_no_inventory_is_none(self, tmp_path: Path, workspace: Workspace) -> None:
         cap = RepoContext[object](expose_inventory_tool=False)
@@ -259,17 +270,17 @@ class TestInstructions:
 
 
 class TestToolset:
-    def test_get_toolset_none_when_disabled(self, tmp_path: Path) -> None:
-        assert RepoContext[object](expose_inventory_tool=False).get_toolset() is None
+    def test_get_toolset_none_by_default(self, tmp_path: Path) -> None:
+        assert RepoContext[object]().get_toolset() is None
 
-    def test_get_toolset_present(self, tmp_path: Path) -> None:
-        assert isinstance(RepoContext[object]().get_toolset(), RepoContextToolset)
+    def test_get_toolset_present_when_enabled(self, tmp_path: Path) -> None:
+        assert isinstance(RepoContext[object](expose_inventory_tool=True).get_toolset(), RepoContextToolset)
 
     async def test_inventory_tool_runs_through_agent(self, tmp_path: Path) -> None:
         _write(tmp_path / '.claude' / 'skills' / 'foo' / 'SKILL.md', 'skill')
         agent = Agent(
             TestModel(call_tools=['inventory_agent_context']),
-            capabilities=[RepoContext[object]()],
+            capabilities=[RepoContext[object](expose_inventory_tool=True)],
         )
         backend = LocalWorkspaceBackend(working_dir=tmp_path)
         result = await agent.run('go', workspace=backend)
@@ -289,14 +300,13 @@ class TestScanAssets:
         assert claude.agents == ['.claude/agents/bar.md']
         assert claude.settings == '.claude/settings.json'
         assert by_root['.agents'].exists is False
-        assert by_root['.codex'].notes is not None
-        assert by_root['.grok'].notes is not None
+        # The inventory reports what is on disk; it carries no repo-specific notes about how roots relate.
+        assert 'notes' not in claude.model_dump()
 
     async def test_existing_root_without_settings(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / '.claude' / 'skills' / 'foo' / 'SKILL.md', 's')
         inv = await scan_assets(workspace, tmp_path, ('.claude',))
         assert inv.roots[0].settings is None
-        assert inv.roots[0].notes is None
 
     async def test_root_without_skills_directory(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / '.claude' / 'agents' / 'helper.md', 'agent')
