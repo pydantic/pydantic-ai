@@ -55,8 +55,10 @@ class Service:
         self.shown: Callable[[str], object] | None = None
         self.started = threading.Event()
         """Set once the sign-in has shown its first lines, for a waiting screen that runs on another thread."""
+        self.checks = 0
 
     def signed_in(self) -> bool | None:
+        self.checks += 1
         return self.state
 
     async def sign_in(self, *, show: Callable[[str], object]) -> None:
@@ -140,8 +142,13 @@ async def test_sign_out_and_the_session_start_notice() -> None:
     assert await warn_if_signed_out(service, console)
     assert output.getvalue() == ''
     assert await sign_out_now(service) == 'Signed out of Example. Run /example login to sign in again.'
+    checks = service.checks
     assert not await warn_if_signed_out(service, console)
     assert output.getvalue() == 'Not signed in to Example. Run /example login to sign in.\n'
+    assert service.checks == checks + 1, 'the notice reuses the answer read off the loop'
+    service.state = None
+    assert not await warn_if_signed_out(service, console)
+    assert output.getvalue().endswith('Could not tell whether Example is signed in: the keyring could not be read.\n')
 
 
 async def test_the_shared_command(monkeypatch: pytest.MonkeyPatch) -> None:

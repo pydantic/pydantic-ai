@@ -98,7 +98,10 @@ def not_signed_in(method: SignInMethod) -> str:
 
 def status(method: SignInMethod) -> str:
     """Whether `method` is signed in, as one line. Reads the credential store; call it off the loop."""
-    signed_in = method.signed_in()
+    return _status(method, method.signed_in())
+
+
+def _status(method: SignInMethod, signed_in: bool | None) -> str:
     if signed_in is None:
         return f'Could not tell whether {method.service} is signed in: the keyring could not be read.'
     return f'Signed in to {method.service}.' if signed_in else not_signed_in(method)
@@ -108,7 +111,8 @@ async def warn_if_signed_out(method: SignInMethod, console: Console) -> bool:
     """For `on_session_start`: whether `method` is signed in, after printing how to sign in when it is not."""
     signed_in = await to_thread.run_sync(method.signed_in, abandon_on_cancel=True)
     if not signed_in:
-        console.print(status(method), style=theme.color(theme.WARNING), markup=False, highlight=False)
+        # From the answer already read off the loop: reading the keyring again here could block the loop.
+        console.print(_status(method, signed_in), style=theme.color(theme.WARNING), markup=False, highlight=False)
     return bool(signed_in)
 
 

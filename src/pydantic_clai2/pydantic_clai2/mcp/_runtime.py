@@ -153,9 +153,9 @@ class MCPServers:
 
     async def _open(self, name: str, connection: _Connection) -> str | None:
         """Hold the connection and record its tools; the failure, logged, or `None`."""
-        method = sign_in(name, connection.server)
-        if method is not None and not await to_thread.run_sync(method.signed_in, abandon_on_cancel=True):
-            connection.error = not_signed_in(method)
+        signed_out = await _signed_out(name, connection.server)
+        if signed_out is not None:
+            connection.error = signed_out
             self.log(name, f'start failed: {connection.error}')
             return connection.error
         stack = AsyncExitStack()
@@ -230,9 +230,18 @@ class MCPServers:
     async def list_tools(self, name: str) -> list[str]:
         """Connect if needed and list the server's prefixed tool names."""
         entry = self.get(name)
+        signed_out = await _signed_out(name, entry.server)
+        if signed_out is not None:
+            raise ValueError(signed_out)
         connection = await self._connection(entry)
-        async with connection.toolset:
-            tools = await connection.toolset.list_tools()
+        try:
+            async with connection.toolset:
+                tools = await connection.toolset.list_tools()
+        except Exception as exc:
+            required = _sign_in_required(exc)
+            if required is None:
+                raise
+            raise ValueError(str(required)) from None
         connection.error = None
         return [f'{name}_{tool.name}' for tool in tools]
 
@@ -314,6 +323,14 @@ def sign_in(name: str, server: Server) -> OAuthSignIn | None:
         sse=isinstance(server, SSEServer),
         init_timeout=server.timeout,
     )
+
+
+async def _signed_out(name: str, server: Server) -> str | None:
+    """How to sign in, when the server uses OAuth and has no stored sign-in; `None` otherwise."""
+    method = sign_in(name, server)
+    if method is None or await to_thread.run_sync(method.signed_in, abandon_on_cancel=True):
+        return None
+    return not_signed_in(method)
 
 
 def _sign_in_required(error: BaseException) -> SignInRequired | None:

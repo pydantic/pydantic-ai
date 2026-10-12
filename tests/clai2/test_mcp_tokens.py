@@ -17,6 +17,7 @@ from pydantic import AnyUrl, HttpUrl
 from termflow.tui.menu import MenuResult
 
 from pydantic_ai import RunContext
+from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_clai2.config.credential_store import load_codex_credentials
@@ -184,6 +185,35 @@ async def test_a_signed_out_server_is_an_error_and_a_run_never_signs_in(
     method = sign_in_for('docs', entry.server)
     assert method is not None and method.sse and method.headers == {'X-Team': 'a'}
     assert sign_in_for('local', StdioServer(type='stdio', command='python')) is None
+
+
+async def test_listing_tools_never_signs_in(tmp_path: Path, vault: Vault, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(OAuthSignIn, 'sign_in', hang)
+    command, store = make(tmp_path)
+    dead = 'http://127.0.0.1:9/mcp'
+    store.put('docs', HTTPServer(type='http', url=HttpUrl(dead), auth='oauth', timeout=5))
+    hint = r'^Not signed in to docs\. Run /mcp auth docs to sign in\.$'
+    with anyio.fail_after(5), pytest.raises(ValueError, match=hint):
+        await command(['tools', 'docs'])
+
+    await TokenStorageAdapter(TokenStore('docs'), server_url=dead).set_tokens(token())
+
+    async def rejected(toolset: MCPToolset[None]) -> MCPToolset[None]:
+        try:
+            raise SignInRequired('Not signed in to docs. Run /mcp auth docs to sign in.')
+        except SignInRequired as exc:
+            raise RuntimeError('Client failed to connect') from exc
+
+    monkeypatch.setattr(MCPToolset, '__aenter__', rejected)
+    with pytest.raises(ValueError, match=hint):
+        await command(['tools', 'docs'])
+
+    async def refused(toolset: MCPToolset[None]) -> MCPToolset[None]:
+        raise RuntimeError('refused')
+
+    monkeypatch.setattr(MCPToolset, '__aenter__', refused)
+    with pytest.raises(RuntimeError, match='refused'):
+        await command(['tools', 'docs'])
 
 
 def test_a_rejected_sign_in_reads_as_signing_in_again() -> None:
