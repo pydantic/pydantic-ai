@@ -113,8 +113,13 @@ async def test_configure_runs_the_field_menu(monkeypatch: pytest.MonkeyPatch, me
     plugin = CoderPlugin[object].from_host(coder_host(terminal=True))
 
     async def run_worker(work: Callable[[], list[str]]) -> list[str]:
+        return work()
+
+    def run_flow(source: CoderSource[object]) -> list[str]:
+        assert source.host is plugin.host
         return messages
 
+    monkeypatch.setattr(coder_plugin, 'run_coder_flow', run_flow)
     monkeypatch.setattr(coder_plugin, 'run_worker', run_worker)
     assert await plugin.configure() == ('\n'.join(messages) or 'No Coder settings changed.')
 

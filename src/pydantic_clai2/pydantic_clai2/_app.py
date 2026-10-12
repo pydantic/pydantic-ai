@@ -68,6 +68,7 @@ from pydantic_clai2.runtime._session import (
     Session,
     SessionModels,
     StockAgent,
+    agent_capabilities,
     current_session_id,
     local_workspace,
     resolve_model_name,
@@ -150,6 +151,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='grain', factory='pydantic_clai2.builtin_plugins.grain', enabled=False),
     PluginSettings(id='linear', factory='pydantic_clai2.builtin_plugins.linear', enabled=False),
     PluginSettings(id='herdr', factory='pydantic_clai2.builtin_plugins.herdr', enabled=False),
+    PluginSettings(id='aoe', factory='pydantic_clai2.builtin_plugins.aoe', enabled=False),
 )
 """Built-in declarations, each integrated with the shell. `remove` restores their defaults.
 
@@ -999,14 +1001,17 @@ class _Shell(Generic[DepsT, OutputT]):
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
         """Capabilities bound to the next run: supplied, plugin-registered (guarded), then speculation.
 
-        Speculation sees the others unguarded, so its sandbox mount stays within their `FileSystem`.
+        Speculation sees the others unguarded, and the agent's own capabilities too, so its sandbox
+        mount stays within every `FileSystem` and `ToolGuardrail` the run has.
         """
         granted = (*self.plugins, *self.loader.capabilities())
         bound = (*self.plugins, *self.loader.run_capabilities())
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)
-        return (*bound, *self.speculation.capabilities(granted))
+        own = agent_capabilities(self.agent)
+        # An agent that hides its capabilities may guard tools a mount would bypass, so it gets none.
+        return (*bound, *self.speculation.capabilities(None if own is None else (*own, *granted)))
 
     def capability_failed(self, error: CapabilitySetupError) -> None:
         """Report that a failing settings-built capability is left out of later turns."""
