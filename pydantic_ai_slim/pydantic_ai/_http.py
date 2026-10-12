@@ -9,11 +9,11 @@ from typing import TYPE_CHECKING, TypeAlias, TypeVar
 import httpx2
 
 # Import httpcore2 eagerly: httpx2 defers it to first client construction, which performs blocking
-# I/O if that happens inside the event loop. httpx2 does not depend on httpcore2 on Emscripten
-# (Pyodide), where it sends requests through the browser's `fetch` instead, so there is nothing to
-# preload there. The check is on the platform rather than on `ImportError` so that a broken install
-# elsewhere still fails loudly here.
-if sys.platform != 'emscripten':  # pragma: no branch
+# I/O if that happens inside the event loop. Since 2.10, httpx2 does not install httpcore2 on
+# Emscripten (Pyodide), where it sends requests through the browser's `fetch` instead, so the
+# preload is skipped there. The check is on the platform rather than on `ImportError` so that a
+# broken install elsewhere still fails loudly here.
+if sys.platform != 'emscripten':
     import httpcore2  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 from ._warnings import PydanticAIDeprecationWarning

@@ -287,10 +287,11 @@ def test_http_module_imports_on_emscripten_without_httpcore2(monkeypatch: pytest
     assert module.DEFAULT_HTTP_TIMEOUT == 600
 
 
-def test_http_module_still_requires_httpcore2_elsewhere(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize('platform', ['linux', 'darwin', 'win32'])
+def test_http_module_still_requires_httpcore2_elsewhere(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
     """Skipping the preload is limited to Emscripten: a missing `httpcore2` anywhere else is a broken install."""
     with pytest.raises(ModuleNotFoundError, match='httpcore2'):
-        _fresh_http_module_without_httpcore2(monkeypatch, 'linux')
+        _fresh_http_module_without_httpcore2(monkeypatch, platform)
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
