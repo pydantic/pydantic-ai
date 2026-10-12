@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.models.openai import OpenAIResponsesModelSettings
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import CacheRetention, ModelSettings
 from pydantic_clai2.models.custom_params import expand_params
 
 
@@ -44,6 +44,10 @@ class ModelSettingsForm(BaseModel):
     )
     service_tier: Literal['auto', 'default', 'flex', 'priority'] | None = Field(
         default=None, description='Provider service tier (OpenAI).'
+    )
+    cache: bool | CacheRetention | None = Field(
+        default=None,
+        description='Prompt caching: off, on, or a retention (where the provider supports configuring it).',
     )
 
     openai_reasoning_effort: Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] | None = Field(
@@ -148,6 +152,8 @@ class ModelSettingsForm(BaseModel):
             settings['thinking'] = self.thinking
         if self.service_tier is not None:
             settings['service_tier'] = self.service_tier
+        if self.cache is not None:
+            settings['cache'] = self.cache
         settings.update(self._openai_settings())
         settings.update(self._anthropic_settings())
         body = self._glm_body()
@@ -247,15 +253,17 @@ class ModelSettingsForm(BaseModel):
 
 
 def model_defaults(*, model: str) -> dict[str, JsonValue]:
-    """CLAI caching defaults for Anthropic and reasoning defaults for GPT families."""
-    provider = model.partition(':')[0]
-    if provider in ('anthropic', 'gateway/anthropic', 'claude-code'):
-        ttl = '1h' if provider == 'claude-code' else '5m'
-        return {
-            'anthropic_cache': ttl,
-            'anthropic_cache_instructions': ttl,
-            'anthropic_cache_tool_definitions': ttl,
-        }
+    """CLAI's prompt caching default for every model, and reasoning defaults for GPT families.
+
+    Caching uses the unified `cache` setting, which providers without configurable caching ignore. A
+    saved `anthropic_cache*` override still applies, since provider-specific cache settings take
+    precedence over it.
+    """
+    return {'cache': True, **gpt_defaults(model=model)}
+
+
+def gpt_defaults(*, model: str) -> dict[str, JsonValue]:
+    """CLAI's reasoning defaults for GPT-6 and GPT-5.6 families, whichever provider serves them."""
     name = model.partition(':')[2] if ':' in model else model
     name = name.rsplit('/', 1)[-1]
     if not re.match(r'^gpt-(?:6(?:\.\d+)?|5\.6)(?:$|[-:])', name):
@@ -281,9 +289,11 @@ def default_model_settings(*, model: str, saved: Mapping[str, JsonValue]) -> Mod
     return ModelSettingsForm.model_validate(defaults).to_model_settings()
 
 
-def model_settings_from_json(values: dict[str, JsonValue], *, model: str = '') -> ModelSettingsForm:
+def model_settings_from_json(values: dict[str, JsonValue], *, model: str | None = None) -> ModelSettingsForm:
     """Read shared preferences, ignoring keys from newer versions without changing the store.
 
-    Known fields still validate normally. New edits use the strict form directly.
+    Known fields still validate normally. New edits use the strict form directly. With `model`, its
+    family defaults fill the fields `values` leaves unset; without it, only `values` are read.
     """
-    return ModelSettingsForm.model_validate({**model_defaults(model=model), **values}, extra='ignore')
+    defaults = model_defaults(model=model) if model is not None else {}
+    return ModelSettingsForm.model_validate({**defaults, **values}, extra='ignore')

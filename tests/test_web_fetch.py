@@ -15,6 +15,8 @@ from markdownify import MarkdownConverter, markdownify
 
 from pydantic_ai._utils import using_thread_executor
 from pydantic_ai.common_tools.web_fetch import (
+    _MAX_HTML_CONVERSION_COST,  # pyright: ignore[reportPrivateUsage]
+    _MAX_HTML_TEXT_SCAN_COST,  # pyright: ignore[reportPrivateUsage]
     WebFetchLocalTool,
     _convert_html,  # pyright: ignore[reportPrivateUsage]
     web_fetch_tool,
@@ -797,6 +799,27 @@ _CONVERTER_PARITY_CASES = [
     ),
 ]
 
+# Budget tests that would otherwise need tens of megabytes of HTML to cross the real budgets
+# shrink the budget they target by this factor, and their input with it. Every charge is linear in
+# the input's length, so the same shape crosses (or stays under) the scaled budget by the same margin.
+_BUDGET_SCALE = 100
+
+
+@pytest.fixture
+def scaled_conversion_budget():
+    with patch(
+        'pydantic_ai.common_tools.web_fetch._MAX_HTML_CONVERSION_COST', _MAX_HTML_CONVERSION_COST // _BUDGET_SCALE
+    ):
+        yield
+
+
+@pytest.fixture
+def scaled_text_scan_budget():
+    with patch(
+        'pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', _MAX_HTML_TEXT_SCAN_COST // _BUDGET_SCALE
+    ):
+        yield
+
 
 class TestMarkdownConverter:
     @pytest.mark.parametrize('html', _CONVERTER_PARITY_CASES)
@@ -895,35 +918,40 @@ class TestMarkdownConverter:
         html = '<div>' * 30 + f'<a href="/x">{content}</a>' + '</div>' * 30
         assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
 
+    @pytest.mark.usefixtures('scaled_text_scan_budget')
     def test_deep_autolink_is_not_overcharged(self):
         """Autolink syntax replaces its text with the URL rather than appending a copy."""
-        value = 'x' * 9_000_000
+        value = 'x' * 90_000
         html = '<div>' * 300 + f'<a href="{value}">{value}</a>' + '</div>' * 300
         assert _convert_html(html)[1] == f'<{value}>'
 
+    @pytest.mark.usefixtures('scaled_text_scan_budget')
     def test_wrapped_deep_autolink_is_not_overcharged(self):
         """Transparent descendants preserve the converter's autolink shortcut."""
-        value = 'x' * 9_000_000
+        value = 'x' * 90_000
         html = '<div>' * 300 + f'<a href="{value}"><span>{value}</span></a>' + '</div>' * 300
         assert _convert_html(html)[1] == f'<{value}>'
 
+    @pytest.mark.usefixtures('scaled_text_scan_budget')
     def test_wrapped_autolink_with_surrounding_spaces_is_not_overcharged(self):
         """The autolink shortcut strips surrounding whitespace before comparing the URL."""
-        value = 'x' * 9_000_000
+        value = 'x' * 90_000
         html = '<div>' * 300 + f'<a href="{value}"><span> {value} </span></a>' + '</div>' * 300
         assert _convert_html(html)[1] == f'<{value}>'
 
+    @pytest.mark.usefixtures('scaled_text_scan_budget')
     def test_wrapped_autolink_with_ignored_comment_is_not_overcharged(self):
         """Ignored comments do not interrupt autolink text in transparent descendants."""
-        value = 'x' * 9_000_000
-        content = value[:4_500_000] + '<!--ignored-->' + value[4_500_000:]
+        value = 'x' * 90_000
+        content = value[:45_000] + '<!--ignored-->' + value[45_000:]
         html = '<div>' * 300 + f'<a href="{value}"><span>{content}</span></a>' + '</div>' * 300
         assert _convert_html(html)[1] == f'<{value}>'
 
+    @pytest.mark.usefixtures('scaled_text_scan_budget')
     def test_wrapped_autolink_collapses_newlines_across_ignored_comment(self):
         """Autolink detection matches markdownify's newline merging between child strings."""
-        left = 'x' * 4_500_000
-        right = 'x' * 4_499_999
+        left = 'x' * 45_000
+        right = 'x' * 44_999
         href = left + '\n' + right
         content = left + '\n<!--ignored-->\n' + right
         html = '<div>' * 300 + f'<a href="{href}"><span>{content}</span></a>' + '</div>' * 300
@@ -961,15 +989,17 @@ class TestMarkdownConverter:
             with pytest.raises(ModelRetry, match='too complex'):
                 _convert_html(html)
 
+    @pytest.mark.usefixtures('scaled_text_scan_budget')
     def test_pre_padding_is_not_overcharged(self):
         """Preformatted whitespace is stripped before enclosing blocks scan it."""
-        html = '<div>' * 300 + '<pre>' + ' ' * 18_000_000 + '</pre>' + '</div>' * 300
+        html = '<div>' * 300 + '<pre>' + ' ' * 180_000 + '</pre>' + '</div>' * 300
         assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
 
     @pytest.mark.parametrize('container', ['<table><tr><td>{content}</td></tr></table>', '<h3>{content}</h3>'])
+    @pytest.mark.usefixtures('scaled_conversion_budget')
     def test_collapsed_newlines_are_not_overcharged(self, container: str):
         """Cells and headings collapse newlines before outer definition items see them."""
-        html = '<dd>' * 15 + container.format(content='x\n' * 300_000) + '</dd>' * 15
+        html = '<dd>' * 15 + container.format(content='x\n' * 3_000) + '</dd>' * 15
         assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
 
     def test_inline_video_does_not_use_src(self):
@@ -1026,9 +1056,10 @@ class TestMarkdownConverter:
                 _convert_html('<video>' * 3 + comments + '</video>' * 3)
 
     @pytest.mark.parametrize(('tag', 'character'), [('code', '`'), ('h1', 'x')])
+    @pytest.mark.usefixtures('scaled_text_scan_budget')
     def test_generated_text_growth_is_bounded(self, tag: str, character: str):
         """Code delimiters and underlined headings multiply long child text."""
-        html = '<div>' * 300 + f'<{tag}>' + character * 16_000_000 + f'</{tag}>' + '</div>' * 300
+        html = '<div>' * 300 + f'<{tag}>' + character * 160_000 + f'</{tag}>' + '</div>' * 300
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
 
@@ -1039,9 +1070,10 @@ class TestMarkdownConverter:
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
 
+    @pytest.mark.usefixtures('scaled_conversion_budget')
     def test_generated_link_newlines_are_bounded(self):
         """Link URLs can create lines that nested definition items must indent."""
-        html = '<dd>' * 15 + '<a href="' + 'x\n' * 600_000 + '">z</a>' + '</dd>' * 15
+        html = '<dd>' * 15 + '<a href="' + 'x\n' * 6_000 + '">z</a>' + '</dd>' * 15
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
 
@@ -1065,13 +1097,14 @@ class TestMarkdownConverter:
     @pytest.mark.parametrize(
         ('template', 'character', 'length'),
         [
-            pytest.param('{value}', 'x', 18_000_000, id='text'),
-            pytest.param('<a href="{value}">link</a>', 'x', 18_000_000, id='link'),
-            pytest.param('<video src="{value}"></video>', 'x', 18_000_000, id='video'),
-            pytest.param('<video><source src="{value}"></video>', 'x', 18_000_000, id='video-source'),
-            pytest.param('{value}', '*', 16_000_000, id='escaped-asterisks'),
+            pytest.param('{value}', 'x', 180_000, id='text'),
+            pytest.param('<a href="{value}">link</a>', 'x', 180_000, id='link'),
+            pytest.param('<video src="{value}"></video>', 'x', 180_000, id='video'),
+            pytest.param('<video><source src="{value}"></video>', 'x', 180_000, id='video-source'),
+            pytest.param('{value}', '*', 160_000, id='escaped-asterisks'),
         ],
     )
+    @pytest.mark.usefixtures('scaled_text_scan_budget')
     def test_deep_text_scan_is_bounded(self, template: str, character: str, length: int):
         """Large output text copied through hundreds of ancestors has a separate work bound."""
         content = template.format(value=character * length)
@@ -1079,9 +1112,10 @@ class TestMarkdownConverter:
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
 
+    @pytest.mark.usefixtures('scaled_conversion_budget')
     def test_shallow_generated_line_breaks_are_bounded(self):
         """Tags that create line breaks count even without newline text nodes."""
-        html = '<dl>' + '<dd>' * 13 + 'x<br>' * 320_000 + '</dd>' * 13 + '</dl>'
+        html = '<dl>' + '<dd>' * 13 + 'x<br>' * 3_200 + '</dd>' * 13 + '</dl>'
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
 

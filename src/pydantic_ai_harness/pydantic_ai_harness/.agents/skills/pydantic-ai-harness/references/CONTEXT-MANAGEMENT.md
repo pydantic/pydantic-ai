@@ -51,6 +51,8 @@ agent without a reason: both rewrite history.
   a 180,000-token trigger in tests: set `context_window=` there.
 - Token counts anchor on the last response's provider usage, then estimate the suffix with
   `tokenizer=` or ~4 chars per token.
+- `keep_tokens=` is measured per message with provider usage too (`estimate_message_tokens`):
+  responses count their `output_tokens`, including thinking returned without text.
 
 ## TieredCompaction (recommended default)
 

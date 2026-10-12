@@ -2,10 +2,12 @@
 
 The panel reports mouse buttons to scroll with the wheel, which stops most terminals from
 selecting text themselves. So a left-button drag selects here instead, in reading order like a
-terminal's own selection, and the release copies it out.
+terminal's own selection, and the release copies it out. It also stops them opening links, so a
+click on a URL finds it in the painted cells to open.
 """
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
@@ -24,6 +26,7 @@ _MODIFIERS = 4 | 8 | 16
 """Shift, Alt, and Ctrl add these to the button."""
 _REPORT = re.compile(r'\x1b\[<(\d{1,5});(\d{1,5});(\d{1,5})([mM])')
 """Bounded fields: a malformed report too long for `int` is not a report, rather than an error."""
+_URL = re.compile(r'https?://[^\s<>`]+')
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -117,3 +120,51 @@ class Selection:
             ''.join(frame.chars[max(span.start, row * width) : min(span.stop, (row + 1) * width)]).rstrip()
             for row in range(span.start // width, (span.stop - 1) // width + 1)
         ).rstrip('\n')
+
+
+def trim_url(url: str) -> str:
+    """Leave trailing punctuation and unbalanced closing brackets out of a bare URL, as GFM does."""
+    unopened = {')': url.count(')') - url.count('('), ']': url.count(']') - url.count('[')}
+    end = len(url)
+    while url[end - 1] in '.,;:!?\'"*_~)]':
+        char = url[end - 1]
+        if char in unopened:
+            if unopened[char] <= 0:
+                break
+            unopened[char] -= 1
+        end -= 1
+    return url[:end]
+
+
+def url_at(frame: ScreenBuffer, cell: Cell, *, rows: int, joins: Sequence[bool]) -> str | None:
+    """The `http(s)` URL painted under `cell` in the frame's top `rows`, if all of it is on screen.
+
+    `joins[i]` says whether row `i` wraps on from row `i - 1`, and `joins[rows]` whether a row below
+    the transcript wraps on from its last one. Only those genuine wraps join rows, so a URL that ends
+    at the right edge never runs into the next line. A URL cut off by the top or bottom of the
+    transcript is not returned, since its address is incomplete. Painted cells carry no hyperlink,
+    so the URL is read from the visible text.
+    """
+    row, column = cell
+    width = frame.width
+    if not (0 <= row < rows and 0 <= column < width):
+        return None
+
+    def joined(index: int) -> bool:
+        return index < len(joins) and joins[index]
+
+    first, last = row, row
+    while first > 0 and joined(first):
+        first -= 1
+    while last + 1 < rows and joined(last + 1):
+        last += 1
+    cells = frame.chars[first * width : (last + 1) * width]
+    text = ''.join(cells)
+    offset = len(''.join(cells[: (row - first) * width + column]))
+    for match in _URL.finditer(text):
+        url = trim_url(match[0])
+        if match.start() <= offset < match.start() + len(url):
+            above = match.start() == 0 and first == 0 and joined(0)
+            below = match.end() == len(text) and last == rows - 1 and joined(rows)
+            return None if above or below else url
+    return None

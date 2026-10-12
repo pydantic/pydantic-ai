@@ -315,7 +315,7 @@ async def sign_in(
             # Asking again would get the same grant, so say so once rather than on every request.
             announce('Logfire granted fewer scopes than asked; some write tools may be refused.')
     except (httpx.HTTPError, ValidationError) as exc:
-        raise SignInError(f'Logfire sign-in failed: {type(exc).__name__}. Run /logfire_mcp login to retry.') from exc
+        raise SignInError(f'Logfire sign-in failed: {type(exc).__name__}. Run /logfire login to retry.') from exc
     tokens = Tokens(
         client_id=client_id,
         token_endpoint=server.token_endpoint,
@@ -371,8 +371,8 @@ async def _poll(
             interval += 5
         elif problem.error != 'authorization_pending':
             reason = 'was denied' if problem.error == 'access_denied' else f'failed: {problem.error_description}'
-            raise SignInError(f'Logfire sign-in {reason}. Run /logfire_mcp login to retry.')
-    raise SignInError('The Logfire sign-in code expired before it was approved. Run /logfire_mcp login to retry.')
+            raise SignInError(f'Logfire sign-in {reason}. Run /logfire login to retry.')
+    raise SignInError('The Logfire sign-in code expired before it was approved. Run /logfire login to retry.')
 
 
 async def _refresh(http: httpx.AsyncClient, *, resource: str, tokens: Tokens) -> Tokens | None:
