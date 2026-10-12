@@ -7,7 +7,7 @@ is discovered from the MCP URL (RFC 9728), so self-hosted Logfire works too.
 
 Tokens are kept per MCP URL in CLAI's credential store (the OS keyring, or a private file) and refreshed
 when they expire. A run never starts a sign-in: `DeviceAuth` raises `SignInRequired` instead, and
-`LogfireSignIn` signs in when the user asks, from `/logfire_mcp login` or the settings menu.
+`LogfireSignIn` signs in when the user asks, from `/logfire login` or the settings menu.
 """
 
 import base64
@@ -18,11 +18,12 @@ import time
 import webbrowser
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from dataclasses import dataclass, field
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypeVar
 from urllib.parse import urlsplit
 
 import anyio
 import httpx
+import httpx2
 from anyio import to_thread
 from keyring.errors import KeyringError
 from pydantic import (
@@ -38,7 +39,6 @@ from pydantic import (
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
-from pydantic_clai2.mcp import http_client
 from pydantic_clai2.plugins.sign_in import SignInRequired
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
@@ -47,13 +47,14 @@ ACCOUNT = 'logfire-oauth'
 READ_SCOPE = 'project:read'
 """The scope Logfire's MCP server requires; read-and-write sign-ins also ask for every scope it lists."""
 SERVICE = 'Logfire'
-SETUP = '/logfire_mcp login'
+SETUP = '/logfire login'
 """The command that signs in."""
 DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code'
 _REFRESH_MARGIN = 60.0
 
 Announce = Callable[[str], None]
 Sleep = Callable[[float], Awaitable[None]]
+_RequestT = TypeVar('_RequestT', httpx.Request, httpx2.Request)
 
 
 class SignInError(Exception):
@@ -318,7 +319,7 @@ async def sign_in(
             # Asking again would get the same grant, so say so once rather than on every request.
             announce('Logfire granted fewer scopes than asked; some write tools may be refused.')
     except (httpx.HTTPError, ValidationError) as exc:
-        raise SignInError(f'Logfire sign-in failed: {type(exc).__name__}. Run /logfire_mcp login to retry.') from exc
+        raise SignInError(f'Logfire sign-in failed: {type(exc).__name__}. Run /logfire login to retry.') from exc
     tokens = Tokens(
         client_id=client_id,
         token_endpoint=server.token_endpoint,
@@ -374,8 +375,8 @@ async def _poll(
             interval += 5
         elif problem.error != 'authorization_pending':
             reason = 'was denied' if problem.error == 'access_denied' else f'failed: {problem.error_description}'
-            raise SignInError(f'Logfire sign-in {reason}. Run /logfire_mcp login to retry.')
-    raise SignInError('The Logfire sign-in code expired before it was approved. Run /logfire_mcp login to retry.')
+            raise SignInError(f'Logfire sign-in {reason}. Run /logfire login to retry.')
+    raise SignInError('The Logfire sign-in code expired before it was approved. Run /logfire login to retry.')
 
 
 async def _refresh(http: httpx.AsyncClient, *, resource: str, tokens: Tokens) -> Tokens | None:
@@ -411,21 +412,29 @@ async def _refresh(http: httpx.AsyncClient, *, resource: str, tokens: Tokens) ->
     return refreshed
 
 
-class DeviceAuth(httpx.Auth):
+def _http() -> httpx.AsyncClient:
+    """The device flow's own client, with the MCP SDK's timeouts and no redirects."""
+    return httpx.AsyncClient(timeout=httpx.Timeout(30, read=300))
+
+
+# The MCP connection's client is legacy `httpx` under FastMCP 3 and `httpx2` under FastMCP 4, and each
+# rejects another family's `Auth` as an invalid `auth`. The flows below serve either, so be both; the
+# unused `auth_flow` the two declare for their own `Request` is what Pyright objects to.
+class DeviceAuth(httpx.Auth, httpx2.Auth):  # pyright: ignore[reportIncompatibleMethodOverride]
     """Bearer tokens from a stored sign-in, refreshed when they expire; `SignInRequired` when there is none."""
 
-    def __init__(self, *, resource: str, read_only: bool, http: Callable[[], httpx.AsyncClient] = http_client) -> None:
+    def __init__(self, *, resource: str, read_only: bool, http: Callable[[], httpx.AsyncClient] = _http) -> None:
         """Tokens for `resource`, the MCP URL."""
         self._resource = resource
         self._read_only = read_only
         self._http = http
         self._lock = anyio.Lock()
 
-    def sync_auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
+    def sync_auth_flow(self, request: _RequestT) -> Generator[_RequestT, object, None]:
         """Unsupported: signing in waits on the network, and MCP clients are async."""
         raise RuntimeError('Logfire sign-in needs an async client.')
 
-    async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
+    async def async_auth_flow(self, request: _RequestT) -> AsyncGenerator[_RequestT, httpx.Response | httpx2.Response]:
         """Send the token; on a 401, refresh or sign in again and retry once."""
         tokens = await self._tokens(rejected=None)
         request.headers['Authorization'] = f'Bearer {tokens.access_token}'
@@ -459,7 +468,7 @@ class LogfireSignIn:
 
     resource: str
     read_only: bool
-    http: Callable[[], httpx.AsyncClient] = field(default=http_client, repr=False)
+    http: Callable[[], httpx.AsyncClient] = field(default=_http, repr=False)
     sleep: Sleep = field(default=anyio.sleep, repr=False)
     service: str = SERVICE
     setup: str = SETUP
@@ -491,7 +500,7 @@ Status = Literal['signed in', 'expired', 'signed out']
 
 
 def status(*, resource: str, read_only: bool) -> Status:
-    """Whether runs can use a stored sign-in; `expired` ones need `/logfire_mcp login` again."""
+    """Whether runs can use a stored sign-in; `expired` ones need `/logfire login` again."""
     tokens = load(resource)
     if tokens is None or not tokens.serves(read_only=read_only):
         return 'signed out'

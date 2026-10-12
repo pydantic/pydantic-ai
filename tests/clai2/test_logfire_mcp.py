@@ -1,4 +1,4 @@
-"""The `logfire_mcp` built-in: its settings menu, keys kept in `/keys`, credential order, and OAuth."""
+"""The `logfire_mcp` built-in, shown as Logfire: its settings menu, keys kept in `/keys`, credential order, and OAuth."""
 
 import inspect
 import io
@@ -14,7 +14,7 @@ from keyring.errors import KeyringError
 from pydantic import JsonValue, SecretStr
 from rich.console import Console
 from termflow.tui import MenuItem
-from termflow.tui.menu import MenuResult
+from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.textinput import TextInputResult
 
 from pydantic_ai import Agent, RunContext
@@ -22,8 +22,9 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LogfireMCP
+from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL, LogfireMCP
 from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2.builtin_plugins.logfire_destination import OTHER, REGIONS, Destination, remember, remembered
 from pydantic_clai2.builtin_plugins.logfire_mcp import SETUP, LogfireMCPPlugin, LogfireMCPSource
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import api_keys
@@ -32,7 +33,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.logfire_oauth import DeviceAuth, LogfireSignIn, SignInError, Tokens
 from pydantic_clai2.plugins import PluginHost, SessionStart, load_plugin
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
-from pydantic_clai2.ui.menus.field_menu import CUSTOM, is_save_and_close
+from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners, is_save_and_close
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
 from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick, typed
 
@@ -133,15 +134,15 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(
     shown = script(
         monkeypatch,
         lists=[pick('key'), pick('url'), pick('read_only'), pick('include_instructions'), pick('oauth')],
-        choices=[pick(CUSTOM), pick('false'), pick('false'), pick('false')],
-        texts=[typed(SELF_HOSTED)],
+        choices=[pick(OTHER), pick('false'), pick('false'), pick('false')],
+        texts=[typed('logfire.example.com')],
     )
     shell = Shell(tmp_path)
     assert await shell.loader.command(['enable', 'logfire_mcp']) == '\n'.join(
         [
             'Enabled logfire_mcp.',
             'Logfire uses the saved key LOGFIRE_API_KEY. Manage it in /keys.',
-            'Saved Destination.',
+            'Logfire tools connect to logfire.example.com at https://logfire.example.com/mcp.',
             'Saved Tools.',
             'Saved Server instructions.',
             'Saved Browser sign-in.',
@@ -162,6 +163,8 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(
     assert capability == LogfireMCP[None](
         auth=SavedKey(name='LOGFIRE_API_KEY', setup=SETUP), url=SELF_HOSTED, read_only=False, include_instructions=False
     )
+    # Observability setup starts from the same Logfire.
+    assert remembered() == Destination(base_url='https://logfire.example.com')
 
 
 async def test_reopening_repicks_a_saved_key_and_region_without_reinstalling(
@@ -171,11 +174,12 @@ async def test_reopening_repicks_a_saved_key_and_region_without_reinstalling(
     shell = Shell(tmp_path, {'key': {'name': 'LOGFIRE_API_KEY'}})
     script(monkeypatch, lists=[])
     await shell.loader.command(['enable', 'logfire_mcp'])
-    assert 'Logfire MCP has no credential: LOGFIRE_API_KEY is not in /keys. Run /plugins' in shell.output.getvalue()
+    assert 'Logfire has no credential: LOGFIRE_API_KEY is not in /keys. Run /plugins' in shell.output.getvalue()
     key_choice(monkeypatch, KeyReference(name='SHARED'))
-    script(monkeypatch, lists=[pick('key'), pick('url')], choices=[pick(LOGFIRE_EU_MCP_URL)])
+    script(monkeypatch, lists=[pick('key'), pick('url')], choices=[pick(REGIONS['Logfire EU'])])
     assert await shell.loader.command(['configure', 'logfire_mcp']) == (
-        'Logfire uses the saved key SHARED. Manage it in /keys.\nSaved Destination.'
+        'Logfire uses the saved key SHARED. Manage it in /keys.\n'
+        'Logfire tools connect to Logfire EU at https://logfire-eu.pydantic.dev/mcp.'
     )
     assert shell.saved()['key'] == {'name': 'SHARED'}
     assert b'shared-secret' not in shell.path.read_bytes()
@@ -211,7 +215,7 @@ async def test_cancelled_or_blank_key_changes_nothing(
     shell = Shell(tmp_path, {'oauth': False})
     await shell.loader.enable('logfire_mcp')
     script(monkeypatch, lists=[pick('key')], texts=[answer])
-    assert await shell.loader.configure('logfire_mcp') == 'Logfire MCP settings unchanged.'
+    assert await shell.loader.configure('logfire_mcp') == 'Logfire settings unchanged.'
     assert api_keys.load_keys() == {}
 
 
@@ -236,7 +240,7 @@ def test_menu_validates_resets_and_notes_where_the_key_comes_from(monkeypatch: p
 
     rows = {row.key: row for row in source.rows()}
     assert (source.current(rows['key']), note()) == ('(none)', 'browser sign-in, if on')
-    assert rows['oauth'].note == 'signed out: /logfire_mcp login signs in'
+    assert rows['oauth'].note == 'signed out: /logfire login signs in'
     assert (rows['url'].note, rows['read_only'].note) == ('', '')
     api_keys.save_key(name='LOGFIRE_API_KEY', value='saved')
     assert note() == 'LOGFIRE_API_KEY from /keys'
@@ -251,6 +255,14 @@ def test_menu_validates_resets_and_notes_where_the_key_comes_from(monkeypatch: p
         assert source.problem(rows['url'], url) == bad_url
     assert source.problem(rows['read_only'], 'maybe') == 'Input should be a valid boolean'
     assert source.problem(rows['url'], SELF_HOSTED) is None
+    # A host or the URL you open Logfire at is saved as the MCP URL; another path, as earlier builds saved it, is kept.
+    for url, saved in [
+        ('logfire-eu.pydantic.dev', LOGFIRE_EU_MCP_URL),
+        ('https://logfire.example.com', SELF_HOSTED),
+        ('https://logfire.example.com/custom/mcp', 'https://logfire.example.com/custom/mcp'),
+    ]:
+        assert source.apply(rows['url'], url) == 'Saved Which Logfire.'
+        assert source.settings.url == saved
     assert source.current(rows['read_only']) == 'false'
     assert source.reset(rows['read_only']) == 'Reset Tools.'
     assert source.current(rows['read_only']) == 'true'
@@ -351,7 +363,7 @@ async def test_browser_sign_in_is_the_default_and_runs_get_no_tools_until_signed
     shell = Shell(tmp_path, {'url': LOGFIRE_EU_MCP_URL})
     with anyio.fail_after(5):
         await shell.loader.enable('logfire_mcp')
-    assert shell.output.getvalue() == 'Not signed in to Logfire. Run /logfire_mcp login to sign in.\n'
+    assert shell.output.getvalue() == 'Not signed in to Logfire. Run /logfire login to sign in.\n'
     client = shell.capability().client
     assert isinstance(client, Client)
     assert str(client.transport.url) == LOGFIRE_EU_MCP_URL
@@ -368,7 +380,7 @@ async def test_browser_sign_in_is_the_default_and_runs_get_no_tools_until_signed
 async def test_with_sign_in_off_and_no_key_the_menu_still_loads_and_runs_fail_closed(tmp_path: Path) -> None:
     shell = Shell(tmp_path, {'oauth': False})
     await shell.loader.enable('logfire_mcp')
-    assert f'Logfire MCP has no credential: LOGFIRE_API_KEY is not in /keys. {SETUP}' in shell.output.getvalue()
+    assert f'Logfire has no credential: LOGFIRE_API_KEY is not in /keys. {SETUP}' in shell.output.getvalue()
     capability = shell.capability()
     auth = capability.auth
     assert auth == SavedKey(name='LOGFIRE_API_KEY', setup=SETUP)
@@ -382,7 +394,8 @@ def logfire_command(
 ) -> tuple[Callable[[list[str]], Awaitable[str]], io.StringIO]:
     output = io.StringIO()
     host = PluginHost[None](name='logfire_mcp', console=Console(file=output, width=200), settings=settings or {})
-    [command] = load_plugin(LogfireMCPPlugin, host).commands
+    command, old_name = load_plugin(LogfireMCPPlugin, host).commands
+    assert (command.name, old_name.name, old_name.handler) == ('logfire', 'logfire_mcp', command.handler)
 
     async def run(args: list[str]) -> str:
         result = command.handler(args)
@@ -404,12 +417,12 @@ async def test_login_signs_in_now_behind_the_waiting_screen(monkeypatch: pytest.
     assert await command(['login']) == 'Signed in to Logfire.'
     assert calls == [(LOGFIRE_EU_MCP_URL, False)]
     assert output.getvalue() == ''
-    assert await command([]) == 'Not signed in to Logfire. Run /logfire_mcp login to sign in.'
+    assert await command([]) == 'Not signed in to Logfire. Run /logfire login to sign in.'
 
 
 async def test_login_failures_and_cancellation_are_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     async def denied(method: LogfireSignIn, *, show: Callable[[str], object]) -> Tokens:
-        raise SignInError('Logfire sign-in was denied. Run /logfire_mcp login to retry.')
+        raise SignInError('Logfire sign-in was denied. Run /logfire login to retry.')
 
     async def waits(method: LogfireSignIn, *, show: Callable[[str], object]) -> Tokens:
         await anyio.sleep_forever()
@@ -419,12 +432,12 @@ async def test_login_failures_and_cancellation_are_reported(monkeypatch: pytest.
     script(monkeypatch, lists=[], choices=[UNTIL_CLOSED, CLOSE])
     command, _ = logfire_command()
     assert await command(['login']) == (
-        'Could not sign in to Logfire: Logfire sign-in was denied. Run /logfire_mcp login to retry. '
-        'Run /logfire_mcp login to try again.'
+        'Could not sign in to Logfire: Logfire sign-in was denied. Run /logfire login to retry. '
+        'Run /logfire login to try again.'
     )
     monkeypatch.setattr(LogfireSignIn, 'sign_in', waits)
     with anyio.fail_after(5):
-        assert await command(['login']) == 'Logfire sign-in cancelled. Run /logfire_mcp login to try again.'
+        assert await command(['login']) == 'Logfire sign-in cancelled. Run /logfire login to try again.'
 
 
 async def test_logout_forgets_only_the_sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -435,7 +448,7 @@ async def test_logout_forgets_only_the_sign_in(monkeypatch: pytest.MonkeyPatch) 
     assert await command(['logout']) == 'Forgot the Logfire browser sign-in. Keys in /keys are kept.'
     assert await command(['logout']) == 'There was no Logfire browser sign-in to forget.'
     assert 'LOGFIRE_API_KEY' in api_keys.load_keys()
-    with pytest.raises(ValueError, match=r'Usage: /logfire_mcp \[login \| logout \| status\]'):
+    with pytest.raises(ValueError, match=r'Usage: /logfire \[login \| logout \| status\]'):
         await command(['key'])
 
 
@@ -457,7 +470,8 @@ async def test_registers_the_logout_command(tmp_path: Path) -> None:
     shell = Shell(tmp_path)
     await shell.loader.enable('logfire_mcp')
     [loaded] = [entry.loaded for entry in shell.loader.entries() if entry.loaded]
-    assert [c.name for c in loaded.commands] == ['logfire_mcp']
+    assert [c.name for c in loaded.commands] == ['logfire', 'logfire_mcp']
+    assert [c.complete([]) for c in loaded.commands] == [('login', 'logout', 'status')] * 2
 
 
 async def test_add_replacing_the_builtin_opens_the_menu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -592,6 +606,142 @@ async def test_the_settings_menu_reads_keys_and_sign_in_off_the_event_loop(
 
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire_mcp.status', status)
     script(monkeypatch, lists=[])
-    assert await shell.loader.command(['configure', 'logfire_mcp']) == 'Logfire MCP settings unchanged.'
+    assert await shell.loader.command(['configure', 'logfire_mcp']) == 'Logfire settings unchanged.'
     assert threads
     assert threading.get_ident() not in threads
+
+
+async def test_a_new_setup_starts_from_the_logfire_last_set_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pick the region once: observability setup, or this menu, remembers it for the other."""
+    remember(REGIONS['Logfire EU'])
+    shell = Shell(tmp_path)
+    await shell.loader.enable('logfire_mcp')
+    script(monkeypatch, lists=[])
+    assert await shell.loader.configure('logfire_mcp') == (
+        'Logfire tools connect to Logfire EU, the Logfire you last set up. Change it under Which Logfire.'
+    )
+    assert shell.saved()['url'] == LOGFIRE_EU_MCP_URL
+    # With no key, browser sign-in connects: the URL is the client's, as `LogfireMCP` takes no `url` with a client.
+    client = shell.capability().client
+    assert isinstance(client, Client)
+    assert str(client.transport.url) == LOGFIRE_EU_MCP_URL
+    # Once chosen here, even as the default, it stays: a later setup elsewhere does not move it.
+    remember(REGIONS['Logfire US'])
+    script(monkeypatch, lists=[])
+    assert await shell.loader.configure('logfire_mcp') == 'Logfire settings unchanged.'
+    assert shell.saved()['url'] == LOGFIRE_EU_MCP_URL
+
+
+async def test_the_same_logfire_remembered_changes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    remember(REGIONS['Logfire US'])
+    shell = Shell(tmp_path)
+    await shell.loader.enable('logfire_mcp')
+    script(monkeypatch, lists=[])
+    assert await shell.loader.configure('logfire_mcp') == 'Logfire settings unchanged.'
+
+
+async def test_any_saved_setting_keeps_the_logfire_it_has(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Settings given as JSON without `url` chose the default on purpose, so a remembered region does not move it."""
+    remember(REGIONS['Logfire EU'])
+    shell = Shell(tmp_path, {'oauth': False})
+    await shell.loader.enable('logfire_mcp')
+    script(monkeypatch, lists=[])
+    assert await shell.loader.configure('logfire_mcp') == 'Logfire settings unchanged.'
+    assert shell.capability().url == LOGFIRE_US_MCP_URL
+
+
+async def test_resetting_a_seeded_logfire_starts_the_picker_from_the_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    remember(REGIONS['Logfire EU'])
+    shell = Shell(tmp_path)
+    await shell.loader.enable('logfire_mcp')
+    host = PluginHost[None](name='logfire_mcp', console=Console(file=io.StringIO()), settings={})
+    # Its rows read the keyring, so the menu is built off the event loop, as `configure` builds it.
+    menu = await anyio.to_thread.run_sync(FieldMenu, LogfireMCPSource(host))
+    reset = menu.reset_marker(None, MenuItem('Which Logfire', value='url'))
+    highlighted: list[object] = []
+    shown = script(monkeypatch, lists=[reset, pick('url')], choices=[CLOSE])
+    run_choice = shown.run_choice
+
+    def watch(menu: Menu) -> MenuResult:
+        highlighted.append(menu.highlighted.value if menu.highlighted else None)
+        return run_choice(menu)
+
+    monkeypatch.setattr(
+        'pydantic_clai2.builtin_plugins.logfire_mcp.RUNNERS',
+        Runners(run_list=shown.run_list, run_choice=watch, run_text=shown.run_text),
+    )
+    assert await shell.loader.configure('logfire_mcp') == (
+        'Logfire tools connect to Logfire EU, the Logfire you last set up. Change it under Which Logfire.\n'
+        'Reset Which Logfire.'
+    )
+    assert highlighted == [REGIONS['Logfire US']]
+    assert shell.saved()['url'] == LOGFIRE_US_MCP_URL
+
+
+@pytest.mark.parametrize('url', [LOGFIRE_US_MCP_URL, 'https://logfire.example.com/custom/mcp'])
+async def test_the_logfire_picker_starts_from_the_saved_one_and_esc_keeps_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    shell = Shell(tmp_path, {'url': url, 'oauth': False})
+    await shell.loader.enable('logfire_mcp')
+    highlighted: list[object] = []
+    shown = script(monkeypatch, lists=[pick('url')], choices=[CLOSE])
+    run_choice = shown.run_choice
+
+    def watch(menu: Menu) -> MenuResult:
+        highlighted.append(menu.highlighted.value if menu.highlighted else None)
+        return run_choice(menu)
+
+    monkeypatch.setattr(
+        'pydantic_clai2.builtin_plugins.logfire_mcp.RUNNERS',
+        Runners(run_list=shown.run_list, run_choice=watch, run_text=shown.run_text),
+    )
+    assert await shell.loader.configure('logfire_mcp') == 'Logfire settings unchanged.'
+    # A URL at another path, saved by an earlier build, is not one the picker can name, so it starts at the top.
+    assert highlighted == [REGIONS['Logfire US']]
+    assert shell.saved()['url'] == url
+
+
+async def test_another_remembered_logfire_is_only_offered_never_connected_to_unasked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A key this plugin already uses must not reach a server nobody picked for it, so only regions are switched to."""
+    remember(Destination(base_url='https://logfire.example.com'))
+    api_keys.save_key(name='LOGFIRE_API_KEY', value='us-key')
+    shell = Shell(tmp_path)
+    await shell.loader.enable('logfire_mcp')
+    highlighted: list[object] = []
+    shown = script(monkeypatch, lists=[pick('url')] * 3, choices=[CLOSE, pick(REGIONS['Logfire EU']), CLOSE])
+    run_choice = shown.run_choice
+
+    def watch(menu: Menu) -> MenuResult:
+        highlighted.append(menu.highlighted.value if menu.highlighted else None)
+        return run_choice(menu)
+
+    monkeypatch.setattr(
+        'pydantic_clai2.builtin_plugins.logfire_mcp.RUNNERS',
+        Runners(run_list=shown.run_list, run_choice=watch, run_text=shown.run_text),
+    )
+    assert await shell.loader.configure('logfire_mcp') == (
+        'Logfire tools connect to Logfire EU at https://logfire-eu.pydantic.dev/mcp.'
+    )
+    # Offered first; Esc kept Logfire US. Once Logfire EU is picked, reopening starts from it.
+    assert highlighted == [OTHER, OTHER, REGIONS['Logfire EU']]
+    assert shell.capability() == LogfireMCP[None](
+        auth=SavedKey(name='LOGFIRE_API_KEY', setup=SETUP), url=LOGFIRE_EU_MCP_URL, read_only=True
+    )
+
+
+async def test_picking_the_saved_logfire_again_keeps_its_url_and_sign_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Browser sign-ins are stored under the exact MCP URL, so one an earlier build saved is not rewritten."""
+    saved = 'https://logfire-eu.pydantic.dev/mcp/'
+    shell = Shell(tmp_path, {'url': saved, 'oauth': False})
+    await shell.loader.enable('logfire_mcp')
+    script(monkeypatch, lists=[pick('url')], choices=[pick(REGIONS['Logfire EU'])])
+    assert await shell.loader.configure('logfire_mcp') == f'Logfire tools connect to Logfire EU at {saved}.'
+    assert shell.saved()['url'] == saved
+    assert remembered() == REGIONS['Logfire EU']

@@ -118,6 +118,10 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   the model twice. When a built-in takes the id of a row the former harness
   catalog offered, add that old row to `_RETIRED_BUILTINS` in `plugins/loader.py`, so a
   user's saved toggle of it maps to the built-in instead of outranking it.
+- **`open_stock_agent` loads `coder`, `repo_context`, and `compaction` only.** Add a
+  built-in to that list only when it needs no terminal and reads nothing from the
+  user's CLAI configuration directory. Hosts rely on a configuration that the user's
+  saved settings cannot change.
 - **Project declarations rank just above built-ins and start off.**
   `.clai/settings.json` (`project_settings.py`) may declare plugins; the loader
   takes them as `project=`, every one `enabled=False`, because a repository
@@ -207,6 +211,10 @@ one that is not.
   settings are two sources, not two editors. Do not write a third editor.
 - `/set` edits go through `CommandContext.set_setting` / `reset_setting`, the
   same path as the typed command, so validation lives in one place.
+- Multi-line text goes through `text_editor.edit_text`: `$VISUAL` or `$EDITOR`
+  on a temporary file, else (on Windows, unset, or failing to start) a built-in
+  prompt_toolkit editor, since termflow has no multi-line input. Call it from a
+  menu worker between widgets. Do not write another editor.
 - Widget runners are a `Runners` value passed into the loops; tests pass
   scripted ones (`tests/menu_script.py`). Only the real `widget.run()`
   one-liners are `no cover`.
@@ -271,8 +279,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `cli/_cli.py` | argument parsing, startup, `--agent` |
 | `cli/agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
 | `cli/self_update.py` | `/update` and the status-row notice: PyPI (`stable`) or the `clai2-bleeding` GitHub release (`main`: sdists built from the `main` branch by `.github/workflows/clai2-bleeding.yml` with `scripts/build_bleeding.sh`, installed with `--overrides`, no git or GitHub API; `CLAI_BLEEDING_URL` points it elsewhere), reinstalled with `uv tool install --force` |
-| `_app.py` | the prompt loop and built-in `/commands` |
-| `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume, plugin snapshots and stock-agent rebuilding |
+| `_app.py` | the prompt loop, built-in `/commands`, and `open_stock_agent`, the stock agent for code outside the terminal |
+| `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume (a session busy in another process resumes as a saved fork), plugin snapshots and stock-agent rebuilding |
 | `runtime/sessions.py` | resume command and background namer ownership; built-in step capture |
 | `runtime/imported_sessions.py` | Claude Code and Codex sessions for `/resume`, `--resume-claude`, and `--resume-codex`: the on-disk catalog, stable CLAI IDs, and copying into the store (re-reading an uncontinued copy on every resume) |
 | `runtime/claude_code_sessions.py`, `runtime/codex_sessions.py` | read each agent's JSON Lines transcripts: headers for the browser, and the history to continue (the last Claude Code branch, Codex's compacted history) |
@@ -297,6 +305,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
 | `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext` |
+| `ui/menus/system_prompt_menu.py` | `/system_prompt`: the user's `run.instructions`, which `Session` sends after the agent's and plugins' instructions, and the latest request's full instructions, read-only |
+| `ui/menus/text_editor.py` | multi-line editing for menus: `$VISUAL`/`$EDITOR` (shared with the `/mcp` form), else a built-in prompt_toolkit editor |
 | `ui/menus/model_menu.py` | `/model add`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
 | `ui/menus/model_picker.py` | `/model`: selection, completion, and confirmed deletion of saved models and chains, and `/model chains`; protects the current model and saved default |
 | `ui/menus/chain_menu.py` | The `/model` picker's chain editors: new chain, models and their order (`edit_chain`), and `rename_chain` |
@@ -313,8 +323,11 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/menus/custom_params.py` | the editor for custom model parameters |
 | `builtin_plugins/logfire.py` | the default-enabled `observability` plugin, configuring Logfire locally over core `Instrumentation`; `token` picks a `/keys` write token, `ui_events` subscribes it to UI telemetry; `configure` is a `FieldMenu` whose project row runs `logfire_setup` |
 | `builtin_plugins/logfire_session.py` | the `observability` plugin's `CLAI session` roots: `SessionTracing` and the `git_email` lookup for `user_tag: git-email` |
-| `builtin_plugins/logfire_setup.py` | the `observability` plugin's setup menu: region or self-hosted URL, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), account email from `/v1/account/me`, project pick, write token saved in `/keys` |
-| `ui/telemetry.py` | UI telemetry sinks, `record`/`span`, and the menu naming; instrument shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the loader, `/keys`, the prompt), never one menu at a time, and record names, not content; typed text goes only through `prompt_text`, which the subscriber's `include_content` gates |
+| `builtin_plugins/logfire_setup.py` | the `observability` plugin's setup menu: which Logfire, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), account email from `/v1/account/me`, project pick, write token saved in `/keys` |
+| `builtin_plugins/logfire_destination.py` | "which Logfire", shared by `observability` setup and `logfire_mcp`: regions from harness, a host, UI URL, or MCP URL parsed to one origin, the picker, and the last pick remembered for the other plugin |
+| `ui/telemetry_log.py` | sends unhandled `logfire` and `opentelemetry` logger warnings to `telemetry.log` during the interactive session, so `logging.lastResort` never writes over the editor |
+| `ui/stderr_relay.py` | on macOS, holds file descriptor 2 as a pipe during the interactive session and copies it to the terminal without libmalloc's `MallocStackLogging` fork notices, which a memory pressure event makes every `fork()` child print before `exec`; `terminal_stderr()` is the terminal for a child that draws on it (`/update`'s `uv`) |
+| `ui/telemetry.py` | UI telemetry sinks, `record`/`span`, `handled_error`, the menu naming, and `conversation_selected`, which calls every sink's session `root` (a sink subscribed with `ui_events=False` gets only that and handled errors) once startup picks the conversation; instrument shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the loader, `/keys`, the prompt), never one menu at a time, and record names, not content; typed text goes only through `prompt_text`, which the subscriber's `include_content` gates. `handled_error` is for failures CLAI shows and recovers from, sent without `ui_events`; usage errors (`ValueError`, `UserError`) are not recorded |
 | `builtin_plugins/compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert, its settings menu |
 | `commands.py` | `Command`, the registry, completion |
 | `ui/rendering/history.py` | `/resume` and `--resume` replay: the last turns of restored history as synthetic stream events through a non-smoothing `StreamRenderer` |
@@ -324,9 +337,9 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/prompt/prompt_surface.py` | scroll-region ownership, serialized transcript writes and changed-row painting |
 | `ui/prompt/prompt_transcript.py` | bounded styled transcript tail for viewport replay |
 | `ui/prompt/prompt_resize.py` | scoped resize notifications, without terminal IO in signal handlers |
-| `ui/prompt/prompt_buffer.py` | pure draft editing, history navigation, search and cell-width wrapping |
+| `ui/prompt/prompt_buffer.py` | pure draft editing, undo/redo steps (word- and run-grouped, capped, reset on submit), history navigation, search and cell-width wrapping |
 | `ui/prompt/prompt_completion.py` | bounded daemon completion worker; no terminal ownership |
-| `ui/prompt/prompt_keys.py` | prompt-toolkit input attachment and paste, CSI-u, Kitty alternate-key and xterm report normalization; `PromptSurface` enables and releases xterm `CSI >4;1m` and Kitty `CSI >5u`; no prompt-toolkit renderer |
+| `ui/prompt/prompt_keys.py` | prompt-toolkit input attachment and paste, CSI-u, Kitty alternate-key and xterm report normalization, including Super (Cmd) for `super-z`; `PromptSurface` enables and releases xterm `CSI >4;1m` and Kitty `CSI >5u`; no prompt-toolkit renderer |
 | `ui/prompt/prompt_selection.py` | SGR mouse report decoding and the left-button drag selection over the transcript's painted cells: highlight and text |
 | `ui/prompt/text_clipboard.py` | copying text out: the local clipboard command on one background worker where the newest copy wins, or OSC 52 over SSH or without one |
 | `config/__init__.py` | `Settings`, `PluginSettings` |
@@ -354,7 +367,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/rendering/spinner_frames.py` | frame data for the Code Puppy cli-spinners pack |
 | `ui/menus/spinner_picker.py` | `/spinner`: animated picker, by-name selection with speed, `init` |
 
-The other built-in plugin implementations (`notifications`, `github`, `pylon`, `google_workspace`, `day_ai`, `ordinal`, `notion`, `logfire_mcp`, `posthog`, `grain`, and `linear`) also live in `builtin_plugins/`. The loader redirects old factory paths in saved declarations to this package.
+The other built-in plugin implementations (`notifications`, `github`, `pylon`, `google_workspace`, `day_ai`, `ordinal`, `notion`, `logfire_mcp` (shown as Logfire; its id cannot become `logfire`, the `observability` plugin's stored id), `posthog`, `grain`, and `linear`) also live in `builtin_plugins/`. The loader redirects old factory paths in saved declarations to this package.
 
 Keep files concise - we don't need any 10,000 line files. Single responsibility.
 
@@ -445,7 +458,8 @@ Resize rebuilds from `TranscriptBuffer`, not guessed row coordinates or cursor
 reports. Never send erase-scrollback (CSI 3 J). Preserve the draft and scroll
 anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
 Full-screen menus leave the live panel temporarily. Inline questions borrow it
-with `run_worker(inline=True)`. Streamed text and thinking keep Markdown source,
+with `run_worker(inline=True)` and pin the question text in their rows, not the
+transcript, so output streamed meanwhile cannot push it away. Streamed text and thinking keep Markdown source,
 and a tool-call group its call names, for width/theme repaint; tool output keeps styled lines, each tagged with the
 theme that painted it, and `recolor.py` translates them role by role (`theme.roles`)
 when the theme changes. On exit, `restore`

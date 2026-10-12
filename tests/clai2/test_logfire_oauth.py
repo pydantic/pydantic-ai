@@ -7,11 +7,13 @@ import webbrowser
 from urllib.parse import parse_qs
 
 import httpx
+import httpx2
 import keyring
 import pytest
 from keyring.errors import KeyringError
 from pydantic import JsonValue
 
+import pydantic_clai2.mcp._settings as mcp_settings
 from pydantic_clai2 import logfire_oauth
 from pydantic_clai2.config.credential_store import save_codex_credentials
 from pydantic_clai2.logfire_oauth import (
@@ -323,8 +325,8 @@ class TestSignIn:
     @pytest.mark.parametrize(
         ('broken', 'value', 'message'),
         [
-            ('polls', [pending('access_denied')], 'Logfire sign-in was denied. Run /logfire_mcp login to retry.'),
-            ('polls', [pending('invalid_grant')], 'Logfire sign-in failed: invalid grant. Run /logfire_mcp login'),
+            ('polls', [pending('access_denied')], 'Logfire sign-in was denied. Run /logfire login to retry.'),
+            ('polls', [pending('invalid_grant')], 'Logfire sign-in failed: invalid grant. Run /logfire login'),
             ('polls', [(200, {'access_token': ''})], 'Logfire sign-in failed: ValidationError.'),
             ('polls', [granted('access-1', token_type='DPoP')], 'Logfire sign-in failed: ValidationError.'),
             ('polls', [granted('access-1', scope='project:write')], 'Logfire did not grant project:read'),
@@ -363,7 +365,7 @@ class TestSignIn:
                 {**METADATA, 'issuer': 'https://elsewhere.test'},
                 f'{ORIGIN} described itself as https://elsewhere.test; not signing in.',
             ),
-            ('handle', refuse, 'Logfire sign-in failed: ConnectError. Run /logfire_mcp login to retry.'),
+            ('handle', refuse, 'Logfire sign-in failed: ConnectError. Run /logfire login to retry.'),
         ],
         ids=[
             'denied',
@@ -416,7 +418,7 @@ class TestDeviceAuth:
 
     async def test_a_connection_without_a_sign_in_never_starts_one(self, opened: list[str]) -> None:
         logfire = Logfire()
-        with pytest.raises(SignInRequired, match=r'Not signed in to Logfire\. Run /logfire_mcp login to sign in\.'):
+        with pytest.raises(SignInRequired, match=r'Not signed in to Logfire\. Run /logfire login to sign in\.'):
             await self.mcp(logfire)
         assert (opened, logfire.forms, logfire.bearers) == ([], [], [])
 
@@ -487,6 +489,29 @@ class TestDeviceAuth:
             await self.mcp(logfire)
         assert load(RESOURCE) is None
 
+    async def test_fastmcp_4_connections_accept_it(self) -> None:
+        """FastMCP 4 connects with `httpx2`, which rejected a legacy `httpx.Auth` as an invalid `auth`."""
+        remember(stored())
+        logfire = Logfire()
+        logfire.refreshes = [granted('access-2')]
+        auth = DeviceAuth(resource=RESOURCE, read_only=True, http=logfire.client)
+        bearers: list[str] = []
+
+        def mcp(request: httpx2.Request) -> httpx2.Response:
+            bearers.append(request.headers['Authorization'])
+            return httpx2.Response(200 if bearers[-1] == 'Bearer access-2' else 401)
+
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(mcp), auth=auth) as client:
+            assert (await client.post(RESOURCE)).status_code == 200
+        assert bearers == ['Bearer access-1', 'Bearer access-2'], 'a 401 is refreshed and retried once'
+
+    async def test_sign_in_failures_are_reported_under_fastmcp_4(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The device flow keeps its own client: FastMCP 4's SDK builds `httpx2` ones, whose errors it would miss."""
+        monkeypatch.setattr(mcp_settings, 'create_mcp_http_client', httpx2.AsyncClient)
+        method = LogfireSignIn(resource='http://127.0.0.1:1/mcp', read_only=True)
+        with pytest.raises(SignInError, match='Logfire sign-in failed: ConnectError'):
+            await method.sign_in(show=lambda text: None)
+
     def test_sync_clients_are_refused(self) -> None:
         auth = DeviceAuth(resource=RESOURCE, read_only=True)
         with httpx.Client(transport=httpx.MockTransport(Logfire().handle), auth=auth) as client:
@@ -501,7 +526,7 @@ class TestLogfireSignIn:
     async def test_signs_in_on_request_showing_every_line_and_then_runs_connect(self, opened: list[str]) -> None:
         logfire = Logfire()
         method = self.method(logfire)
-        assert (method.service, method.setup) == ('Logfire', '/logfire_mcp login')
+        assert (method.service, method.setup) == ('Logfire', '/logfire login')
         assert not method.signed_in()
         shown: list[str] = []
         await method.sign_in(show=shown.append)

@@ -316,7 +316,7 @@ class LivePrompt:
             return
         recalled = self.buffer.history_index is not None
         self.buffer.history_index = None
-        self.buffer.replace('')
+        self.buffer.reset()
         if target is not None and not text:
             self._discard(target)
             telemetry.record('prompt submitted', route='discarded queued')
@@ -382,7 +382,7 @@ class LivePrompt:
         self.history.append_string(text)
         self.buffer.history.append(text)
         self.buffer.history_index = None
-        self.buffer.replace('')
+        self.buffer.reset()
         if target is not None and target in self._submissions:
             # The steered text was an edit of a queued prompt, so it no longer waits for its own turn.
             self._discard(target)

@@ -107,6 +107,7 @@ def test_startup_without_dotenv_values(
         assert stderr.startswith(f'Ignoring `.env` at {str(tmp_path / ".env")!r}: {error}')
 
 
+@pytest.mark.subprocess(reason='asserts the order of imports in a fresh `pydantic_clai2` process')
 def test_dotenv_loaded_before_startup_imports(tmp_path: Path) -> None:
     (tmp_path / '.env').write_text('CLAI_DOTENV_TEST=loaded before import\n')
     (tmp_path / 'dotenv_agent.py').write_text(

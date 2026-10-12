@@ -180,6 +180,10 @@ class _Line:
             self._rows = (key, wrap(self._themed(), width=width))
         return self._rows[1]
 
+    def continued(self, *, width: int) -> tuple[bool, ...]:
+        """Per row at `width`, whether it wraps on from the row above rather than starting the line."""
+        return tuple(index > 0 for index in range(len(self.rows(width=width))))
+
     def printed(self, *, width: int) -> str:
         return _encode(_clean(self._themed())) + '\n'
 
@@ -256,11 +260,15 @@ class MarkdownBlock(io.StringIO):
         self._stream = _Lines(max_chars=max_chars, max_lines=max_lines)
         self._changed = changed
         self._rows: tuple[object, tuple[str, ...]] = ((), ())
+        self._continued: tuple[bool, ...] = ()
+        """Per cached row, whether it wraps on from the row above."""
 
     @classmethod
     def rebind(cls, block: 'MarkdownBlock') -> 'MarkdownBlock':
         block.__class__ = cls
         block._stream = _Lines.rebind(block._stream)
+        # Blocks from before a reload have no wrap flags, so render their rows again.
+        block._rows, block._continued = ((), ()), ()
         return block
 
     def extend(self, markdown: str) -> None:
@@ -305,8 +313,15 @@ class MarkdownBlock(io.StringIO):
         source = None if self.source is None else len(self.source)
         key = (width, theme.name(), source, self._stream.revision)
         if self._rows[0] != key:
-            self._rows = (key, tuple(row for line in self._lines(width=width) for row in line.rows(width=width)))
+            lines = self._lines(width=width)
+            self._rows = (key, tuple(row for line in lines for row in line.rows(width=width)))
+            self._continued = tuple(flag for line in lines for flag in line.continued(width=width))
         return self._rows[1]
+
+    def continued(self, *, width: int) -> tuple[bool, ...]:
+        """Per row at `width`, whether it wraps on from the row above rather than starting a line."""
+        self.rows(width=width)
+        return self._continued
 
     def printed(self, *, width: int) -> str:
         return ''.join(line.printed(width=width) for line in self._lines(width=width))
@@ -486,6 +501,12 @@ class TranscriptBuffer:
         if item == self.end:
             return _Line(self._tail(), theme_name=self._pending_theme).rows(width=width)
         return self._items[item - self._first].rows(width=width)
+
+    def continued(self, item: int, *, width: int) -> tuple[bool, ...]:
+        """Per row of one item, whether it wraps on from the row above rather than starting a line."""
+        if item == self.end:
+            return _Line(self._tail(), theme_name=self._pending_theme).continued(width=width)
+        return self._items[item - self._first].continued(width=width)
 
     def _tail(self) -> Text:
         decoder = TranscriptDecoder()

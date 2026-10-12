@@ -1,8 +1,5 @@
 """The command, startup flag, naming resolver and terminal worker share one service."""
 
-import os
-import subprocess
-import sys
 from builtins import BaseExceptionGroup
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
@@ -31,6 +28,7 @@ from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.session_naming import SessionNamer
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
+from tests.clai2.cli_runner import CliRunner
 
 
 async def test_reload_keeps_saved_conversation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -225,16 +223,8 @@ async def test_empty_startup_browser_and_invalid_restore(tmp_path: Path, monkeyp
 
 
 @pytest.mark.parametrize('args', [['--resume', 'missing'], ['--resume=missing', 'config']])
-def test_resume_cli_errors_are_normal_parser_errors(tmp_path: Path, args: list[str]) -> None:
-    result = subprocess.run(
-        [sys.executable, '-m', 'pydantic_clai2', '--database', str(tmp_path / 'settings.db'), *args],
-        input='/exit\n',
-        capture_output=True,
-        text=True,
-        timeout=20,
-        check=False,
-        env=dict(os.environ, CLAI_NO_SPLASH='1'),
-    )
+def test_resume_cli_errors_are_normal_parser_errors(tmp_path: Path, run_cli: CliRunner, args: list[str]) -> None:
+    result = run_cli('--database', str(tmp_path / 'settings.db'), *args, cwd=tmp_path)
     assert result.returncode == 2
     assert 'error:' in result.stderr
     assert 'Traceback' not in result.stderr

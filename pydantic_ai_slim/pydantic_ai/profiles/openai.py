@@ -460,7 +460,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # Explicit prompt cache breakpoints are supported on gpt-5.6 and later models, on both the
     # Chat Completions and Responses APIs. Like the other gates in this function, this enumerates
     # known versions rather than matching open-endedly.
-    # See https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints.
+    # See https://developers.openai.com/api/docs/guides/prompt-caching#choose-a-caching-mode.
     supports_prompt_cache_breakpoints = model_name.startswith(('gpt-5.6', *_GPT_6_MODEL_PREFIXES))
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
@@ -603,6 +603,9 @@ _TYPE_BEARING_KEYS = ('type', '$ref', 'anyOf', 'oneOf', 'allOf', 'enum', 'const'
 Used to tell whether an array's `items` actually types its elements. A node without any of these
 (e.g. `{}`, `True`, or `{'description': '...'}`) is untyped and rejected by OpenAI strict mode."""
 
+_TOP_LEVEL_DEFINITION_REF = re.compile(r'#/(\$defs|definitions)/[^/]+')
+"""A local `$ref` to a top-level definition, the only JSON pointer other than `#` that OpenAI strict mode resolves."""
+
 _sentinel = object()
 
 
@@ -640,6 +643,11 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         # that the root schema either has type 'object' or is recursive.
         result = super().walk()
 
+        # Draft-07 `definitions` (where zod v4, via the MCP TypeScript SDK, puts a recursive subschema) are referenced
+        # like `$defs`, so their entries need the same handling to be valid in strict mode.
+        if definitions := result.get('definitions'):
+            result['definitions'] = {key: self._handle(value) for key, value in definitions.items()}
+
         # For recursive models, we need to tweak the schema to make it compatible with strict mode.
         # Because the following should never change the semantics of the schema we apply it unconditionally.
         if self.root_ref is not None:
@@ -667,6 +675,14 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         if schema_ref := schema.get('$ref'):
             if schema_ref == self.root_ref:
                 schema['$ref'] = '#'
+            elif (
+                self.strict is None
+                and schema_ref.startswith('#/')
+                and not _TOP_LEVEL_DEFINITION_REF.fullmatch(schema_ref)
+            ):
+                # A pointer elsewhere in the schema, like the `#/properties/from` that `zod-to-json-schema`
+                # (used by the MCP TypeScript SDK) emits for a reused subschema, is rejected in strict mode.
+                self.is_strict_compatible = False
             if len(schema) > 1:
                 # OpenAI Strict mode doesn't support siblings to "$ref", but _does_ allow siblings to "anyOf".
                 # So if there is a "description" field or any other extra info, we move the "$ref" into an "anyOf":
