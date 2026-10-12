@@ -2,8 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from ._mcp import MCPReadOnlyNoToolsWarning
-from ._warn import HarnessDeprecationWarning
+from ._warn import HarnessDeprecationWarning, MCPReadOnlyNoToolsWarning
 
 if TYPE_CHECKING:
     from .absurd import AbsurdDurability

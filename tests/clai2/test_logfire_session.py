@@ -3,6 +3,7 @@
 import asyncio
 import io
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
 import anyio
@@ -16,6 +17,7 @@ from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
@@ -23,6 +25,8 @@ from pydantic_clai2 import DEFAULT_PLUGINS, chat
 from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins import logfire_session
 from pydantic_clai2.cli import headless
+from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.commands import Command
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -96,6 +100,10 @@ async def test_session_root_groups_turns_tools_and_nested_runs(
     assert children
     assert all(span.context is not None and span.context.trace_id == root.context.trace_id for span in children)
     assert all(span.parent is not None for span in children)
+    # Only the root and the log announcing it carry the identity; that log is queryable before the root ends.
+    opened = [span for span in children if span.name == 'CLAI session opened']
+    assert [(span.attributes or {}).get('user.email') for span in opened] == [email] * len(opened)
+    children = [span for span in children if span.name != 'CLAI session opened']
     assert all({'logfire.tags', 'user.email'}.isdisjoint(span.attributes or {}) for span in children)
     if email:
         assert email not in json.dumps([dict(span.attributes or {}) for span in children])
@@ -148,13 +156,23 @@ async def test_user_tag_chooses_the_root_email_and_only_git_email_runs_git(
         return 'developer@example.com'
 
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire.git_email', configured_email)
-    plugin = load_logfire(make_host(**settings))
+    host = PluginHost(
+        name='observability', console=Console(file=io.StringIO()), settings=settings, session_id=lambda: 'session-1'
+    )
+    plugin = load_logfire(host)
     await plugin.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
     await close(plugin)
     assert looked_up is (settings.get('user_tag') == 'git-email')
     root = next(span for span in recorder.spans() if span.name == 'CLAI session')
     assert (root.attributes or {})['logfire.tags'] == ((email,) if email else ())
     assert (root.attributes or {}).get('user.email') == email
+    # The root is exported only at exit, so a log under it carries the identity while the session runs.
+    [opened] = [span for span in recorder.spans() if span.name == 'CLAI session opened']
+    assert opened.parent is not None and root.context is not None
+    assert opened.parent.span_id == root.context.span_id
+    assert (opened.attributes or {})['agent_session_id'] == (root.attributes or {})['agent_session_id']
+    assert (opened.attributes or {}).get('logfire.tags') == ((email,) if email else None)
+    assert (opened.attributes or {}).get('user.email') == email
 
 
 async def test_clear_resume_and_reload_follow_saved_conversation_ids(recorder: Recorder, tmp_path: Path) -> None:
@@ -212,6 +230,14 @@ async def test_clear_resume_and_reload_follow_saved_conversation_ids(recorder: R
     assert all(exporter.closed for exporter in recorder.exporters)
 
 
+class _Commands(AbstractCapability[None]):
+    def __init__(self, *commands: Command) -> None:
+        self.commands = commands
+
+    def get_commands(self, context: CommandContext) -> Sequence[Command]:
+        return self.commands
+
+
 @pytest.mark.parametrize(('mode', 'run_turn'), [('id', True), ('browser', True), ('headless', True), ('id', False)])
 @pytest.mark.parametrize('ui_events', [False, True])
 async def test_startup_resume_opens_only_the_saved_conversation_root(
@@ -228,6 +254,11 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
         return saved.summary.id
 
     monkeypatch.setattr(SessionBrowser, 'run', select)
+
+    def announced() -> list[object]:
+        opened = [span for span in recorder.spans() if span.name == 'CLAI session opened']
+        return [(span.attributes or {})['agent_session_id'] for span in opened]
+
     store = SettingsStore(tmp_path / 'config.db')
     plugins = tuple(
         plugin.model_copy(update={'settings': {'ui_events': ui_events}})
@@ -248,18 +279,28 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
             == 0
         )
     else:
+        idle: list[object] = []
+
+        def probe(args: list[str]) -> str:
+            idle.extend(announced())
+            return ''
+
         with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-            pipe.send_text(('resumed\n' if run_turn else '') + '/exit\n')
+            pipe.send_text('/probe\n' + ('resumed\n' if run_turn else '') + '/exit\n')
             await chat(
                 agent,
                 deps=None,
+                plugins=[_Commands(Command(name='probe', description='Probe', handler=probe))],
                 console=Console(file=io.StringIO()),
                 store=store,
                 builtin_plugins=plugins,
                 resume='' if mode == 'browser' else saved.summary.id,
             )
+        # Announced again with the saved ID as soon as startup selects it, before the first prompt is handled.
+        assert idle[-1] == saved.summary.id
     roots = [span for span in recorder.spans() if span.name == 'CLAI session']
     assert [(span.attributes or {})['agent_session_id'] for span in roots] == [saved.summary.id]
+    assert announced()[-1] == saved.summary.id
     root_context = roots[0].context
     assert root_context is not None
     ui = [

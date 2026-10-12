@@ -14,6 +14,7 @@ from termflow.tui.completion import (
     Document,
 )
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import known_model_names
 from pydantic_clai2.config import (
     SETTING_FIELDS,
@@ -163,12 +164,20 @@ class Commands(Completer):
 
         The UI telemetry span names a registered command and counts its arguments; the arguments, and any
         unregistered name, which is just typed text, stay out.
+
+        The shell shows a failure instead of raising it, so one that is not a usage error (`ValueError`,
+        `UserError`) is also recorded here as a handled error, under the command's span.
         """
         name, *arguments = text.removeprefix('/').split() or ['help']
         command = name if name in self else 'unknown'
         with telemetry.span('command /{command}', command=command, arguments=len(arguments)):
-            result = self.execute(text)
-            return result if isinstance(result, str) else await result
+            try:
+                result = self.execute(text)
+                return result if isinstance(result, str) else await result
+            except Exception as error:
+                if not isinstance(error, ValueError | UserError):
+                    telemetry.handled_error('command /{command} failed', error, command=command)
+                raise
 
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterator[Completion]:
         """Complete slash commands, contextual arguments, and @file paths."""

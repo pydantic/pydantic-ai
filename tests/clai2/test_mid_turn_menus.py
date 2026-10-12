@@ -161,9 +161,10 @@ def test_session_changes_saved_during_a_turn_wait_for_it_to_end() -> None:
         applied('model', Settings(model='test:second'))
         applied('run.tool_retries', Settings(tool_retries=7))
         applied('model', Settings(model='test:third'))
+        applied('run.instructions', Settings(instructions='Be brief.'))
         applied('display.theme', Settings(theme='default'))
-        assert (session.model, session.tool_retries) == ('test:first', None)
-    assert (session.model, session.tool_retries) == ('test:third', 7)
+        assert (session.model, session.tool_retries, session.instructions) == ('test:first', None, '')
+    assert (session.model, session.tool_retries, session.instructions) == ('test:third', 7, 'Be brief.')
     applied('run.request_limit', Settings(request_limit=12))
     assert session.usage_limits is not None and session.usage_limits.request_limit == 12
 
@@ -232,7 +233,7 @@ async def test_model_settings_saved_mid_turn_reach_the_running_models_next_reque
             await streamed.wait()
             pipe.send_text('/exit\r')
             await done.wait()
-    assert seen == [{'seed': 1}, {'seed': 1, 'max_tokens': 42}]
+    assert seen == [{'cache': True, 'seed': 1}, {'cache': True, 'seed': 1, 'max_tokens': 42}]
     assert 'Saved max_tokens for test.' in output.getvalue()
 
 

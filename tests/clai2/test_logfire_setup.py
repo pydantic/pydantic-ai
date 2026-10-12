@@ -14,16 +14,28 @@ from termflow.tui import MenuItem
 from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.textinput import TextInput, TextInputResult
 
-from pydantic_clai2.builtin_plugins import logfire as logfire_plugin, logfire_setup
+from pydantic_clai2.builtin_plugins import logfire as logfire_plugin, logfire_destination, logfire_setup
 from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireSettings
-from pydantic_clai2.builtin_plugins.logfire_setup import Setup, SetupError, https_origin
+from pydantic_clai2.builtin_plugins.logfire_destination import (
+    OTHER,
+    REGIONS,
+    Destination,
+    destination_problem,
+    logfire_dir,
+    parse_destination,
+    pick_destination,
+    remember,
+    remembered,
+)
+from pydantic_clai2.builtin_plugins.logfire_setup import Setup, SetupError
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, load_keys, save_key
 from pydantic_clai2.plugins import PluginHost, SessionEnd, load_plugin
 from pydantic_clai2.ui.menus.field_menu import Runners
 from tests.clai2.menu_script import Script, pick
 from tests.clai2.test_logfire import Recorder
 
-US = 'https://logfire-us.pydantic.dev'
+US = REGIONS['Logfire US']
+EU = REGIONS['Logfire EU']
 PROJECTS = [
     {'organization_name': 'pydantic', 'project_name': 'clai2'},
     {'organization_name': 'mike', 'project_name': 'my-stuff'},
@@ -177,7 +189,8 @@ async def test_sign_in_pick_a_project_and_save_its_write_token(configure: Config
     saved = host.settings(LogfireSettings)
     assert saved.token == KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2')
     # Saved even for a hosted region, so `LOGFIRE_BASE_URL` cannot send this token elsewhere.
-    assert saved.base_url == US
+    assert saved.base_url == 'https://logfire-us.pydantic.dev'
+    assert remembered() == US, 'the Logfire (MCP) plugin starts from the same Logfire'
     assert (saved.service_name, saved.ui_events) == ('mine', True)  # Other settings are kept.
     assert saved.send_to_logfire == 'if-token-present'  # Setting up a project turns sending on.
     assert saved.account == LogfireAccount(
@@ -192,21 +205,23 @@ async def test_sign_in_pick_a_project_and_save_its_write_token(configure: Config
     assert me.url.path == '/v1/account/me'
     assert me.headers['Authorization'] == listed.headers['Authorization'] == minted.headers['Authorization']
     assert minted.headers['Authorization'] == 'user-token'
-    assert str(minted.url).startswith(US)
+    assert str(minted.url).startswith('https://logfire-us.pydantic.dev/')
 
 
-async def test_self_hosted_logfire_is_remembered(configure: Configure) -> None:
+@pytest.mark.parametrize('typed', ['logfire.example.com/', 'https://logfire.example.com', 'logfire.example.com/mcp'])
+async def test_another_logfire_is_typed_as_a_host_or_any_of_its_urls(typed: str, configure: Configure) -> None:
     harness = Harness()
     host = make_host()
-    runners = scripted([logfire_setup.SELF_HOSTED, logfire_setup.Project(**PROJECTS[0])], ['logfire.example.com/'])
+    runners = scripted([OTHER, logfire_setup.Project(**PROJECTS[0])], [typed])
     await configure(host, harness.setup(runners))
     assert host.settings(LogfireSettings).base_url == 'https://logfire.example.com'
     assert {request.url.host for request in harness.server.requests} == {'logfire.example.com'}
+    assert remembered() == Destination(base_url='https://logfire.example.com')
 
 
 @pytest.mark.parametrize(
     ('choices', 'typed'),
-    [([None], []), ([logfire_setup.SELF_HOSTED], [None]), ([logfire_setup.SELF_HOSTED], ['  ']), ([US, None], [])],
+    [([None], []), ([OTHER, None], [None]), ([US, None], [])],
 )
 async def test_cancelling_changes_nothing(choices: list[object], typed: list[str | None], configure: Configure) -> None:
     host = make_host()
@@ -224,10 +239,14 @@ async def test_the_current_destination_is_preselected(configure: Configure) -> N
         return MenuResult(cancelled=True)
 
     runners = Runners(run_choice=run_choice)
+    await configure(make_host(), Harness().setup(runners))
     host = make_host(base_url='https://logfire-eu.pydantic.dev')
     await configure(host, Harness().setup(runners))
     await configure(make_host(base_url='https://elsewhere.example.com'), Harness().setup(runners))
-    assert seen == ['https://logfire-eu.pydantic.dev', US]
+    # Without a Logfire of its own, setup starts from the one last set up here or in the Logfire (MCP) plugin.
+    remember(EU)
+    await configure(make_host(), Harness().setup(runners))
+    assert seen == [US, EU, OTHER, EU]
 
 
 @pytest.mark.parametrize(
@@ -292,23 +311,111 @@ async def test_polling_survives_blips_and_expires(monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.parametrize(
-    ('typed', 'origin'),
+    ('typed', 'base_url'),
     [
         ('logfire.example.com', 'https://logfire.example.com'),
         (' https://logfire.example.com/ ', 'https://logfire.example.com'),
         ('https://logfire.example.com:8443', 'https://logfire.example.com:8443'),
+        ('https://logfire.example.com/mcp', 'https://logfire.example.com'),
+        ('logfire.example.com/mcp/', 'https://logfire.example.com'),
+        ('logfire-eu.pydantic.info', 'https://logfire-eu.pydantic.info'),
+        ('https://Logfire-EU.pydantic.dev/mcp', 'https://logfire-eu.pydantic.dev'),
+        # From before regions: both are the US region, which serves the MCP server and sign-in.
+        ('https://logfire.pydantic.dev', 'https://logfire-us.pydantic.dev'),
+        ('logfire-api.pydantic.dev', 'https://logfire-us.pydantic.dev'),
     ],
 )
-def test_https_origin_accepts(typed: str, origin: str) -> None:
-    assert https_origin(typed) == origin
+def test_a_logfire_is_typed_as_a_host_its_url_or_its_mcp_url(typed: str, base_url: str) -> None:
+    destination = parse_destination(typed)
+    assert (destination.base_url, destination.mcp_url) == (base_url, f'{base_url}/mcp')
+    assert destination_problem(typed) is None
 
 
 @pytest.mark.parametrize(
-    'typed', ['http://logfire.example.com', 'https://logfire.example.com/app', 'https://', 'x?y=1']
+    'typed',
+    [
+        'http://logfire.example.com',
+        'https://logfire.example.com/app',
+        'https://',
+        '',
+        'not a url',
+        'logfire.example.com:abc',
+        'x?y=1',
+        'x#f',
+    ],
 )
-def test_https_origin_rejects(typed: str) -> None:
-    with pytest.raises(SetupError, match='https URL with no path'):
-        https_origin(typed)
+def test_other_addresses_say_what_to_type(typed: str) -> None:
+    problem = 'Type a host (logfire.example.com), an https URL, or an MCP URL ending in /mcp'
+    with pytest.raises(ValueError, match=re.escape(problem)):
+        parse_destination(typed)
+    assert (destination_problem(typed) or '').startswith(problem)
+
+
+def test_regions_come_from_the_harness_mcp_urls_and_others_are_named_by_host() -> None:
+    assert [(region.base_url, region.mcp_url, region.label) for region in REGIONS.values()] == [
+        ('https://logfire-us.pydantic.dev', 'https://logfire-us.pydantic.dev/mcp', 'Logfire US'),
+        ('https://logfire-eu.pydantic.dev', 'https://logfire-eu.pydantic.dev/mcp', 'Logfire EU'),
+    ]
+    other = parse_destination('logfire.example.com:8443')
+    assert (other.region, other.label) == (None, 'logfire.example.com:8443')
+
+
+def test_esc_while_typing_goes_back_to_the_list_with_the_last_typed_logfire_filled_in() -> None:
+    highlighted: list[object] = []
+    filled: list[str] = []
+    picks: list[object] = [OTHER, OTHER]
+    answers: list[str | None] = [None, 'logfire.example.com']
+
+    def run_choice(menu: Menu) -> MenuResult:
+        highlighted.append(menu.highlighted.value if menu.highlighted else None)
+        wanted = picks.pop(0)
+        return MenuResult(item=MenuItem(str(wanted), value=wanted))
+
+    def run_text(widget: TextInput) -> TextInputResult:
+        filled.append(widget.text)
+        text = answers.pop(0)
+        return TextInputResult(cancelled=True) if text is None else TextInputResult(value=text)
+
+    current = Destination(base_url='https://staging.example.com')
+    runners = Runners(run_choice=run_choice, run_text=run_text)
+    picked = pick_destination(runners, current=current, then='')
+    assert picked == Destination(base_url='https://logfire.example.com')
+    assert highlighted == [OTHER, OTHER]
+    assert filled == ['staging.example.com', 'staging.example.com']
+
+
+@pytest.mark.parametrize('keys', [['enter'], ['down', 'down', 'enter', *'logfire.example.com/mcp', 'enter']])
+def test_the_real_picker_shows_what_each_choice_means(monkeypatch: pytest.MonkeyPatch, keys: list[str]) -> None:
+    output = io.StringIO()
+    monkeypatch.setattr('sys.stdout', output)
+    monkeypatch.setenv('COLUMNS', '160')
+    monkeypatch.setenv('LINES', '30')
+    pressed = iter(keys)
+    monkeypatch.setattr(logfire_destination, 'menu_key', lambda: next(pressed))
+    runners = Runners(run_choice=lambda menu: menu.run(), run_text=lambda widget: widget.run())
+    picked = pick_destination(runners, current=None, then='Then: what happens next.')
+    shown = output.getvalue()
+    assert 'MCP server  https://logfire-us.pydantic.dev/mcp' in shown and 'Then: what happens next.' in shown
+    assert 'Enter choose - Esc cancel, nothing changes' in shown
+    if len(keys) == 1:
+        assert picked == US
+    else:
+        assert picked == Destination(base_url='https://logfire.example.com')
+        assert 'Enter: type its address, as any of' in shown
+        assert 'Enter use this address - Esc back to the list' in shown
+
+
+def test_an_unreadable_or_unwritable_remembered_logfire_is_no_default() -> None:
+    assert remembered() is None
+    directory = logfire_dir()
+    directory.mkdir(parents=True)
+    (directory / 'destination.json').write_text('not json')
+    assert remembered() is None
+    (directory / 'destination.json').unlink()
+    directory.rmdir()
+    directory.write_text('a file where the folder should be')
+    remember(EU)  # Only a default is lost, so setup carries on.
+    assert remembered() is None
 
 
 def test_project_key_names_are_valid_key_names() -> None:
@@ -361,7 +468,7 @@ async def test_running_out_of_key_names_says_so(configure: Configure, monkeypatc
         await configure(make_host(), Harness().setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
 
 
-def test_https_origin_rejects_credentials_without_echoing_them() -> None:
-    with pytest.raises(SetupError, match='Leave credentials out of the URL') as error:
-        https_origin('https://mike:hunter2@logfire.example.com')
+def test_credentials_in_an_address_are_rejected_without_echoing_them() -> None:
+    with pytest.raises(ValueError, match='Leave credentials out of the address') as error:
+        parse_destination('https://mike:hunter2@logfire.example.com')
     assert 'hunter2' not in str(error.value)
