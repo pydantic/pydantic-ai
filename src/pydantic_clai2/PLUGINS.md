@@ -342,8 +342,8 @@ every call:
   `JEV_API_KEY` environment variable). Calls go to `https://api.typesafe.ai` with
   `jev-latest`.
 - **Nimble on Ollama:** without a Jev key, calls go to Ollama at
-  `http://localhost:11434`. Install Ollama 0.35 or later and run
-  `ollama pull nimble`.
+  `http://localhost:11434` with no API key, not even `SYSTEM_ONE_API_KEY`.
+  Install Ollama 0.35 or later and run `ollama pull nimble`.
 
 When neither answers, the tool tells the model to ask you to set one up, and the
 model carries on with the other tools. Settings: `jev_model`, `jev_url`,

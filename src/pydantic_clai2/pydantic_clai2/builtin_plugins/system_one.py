@@ -118,11 +118,22 @@ async def score(chosen: Backend, question: str, candidates: dict[str, str]) -> d
     from pydantic_ai.models.system_one import SystemOneModel
     from pydantic_ai.providers.system_one import SystemOneProvider
 
+    class BackendProvider(SystemOneProvider):
+        """Authenticate with the backend's own key or none, never `SYSTEM_ONE_API_KEY`.
+
+        `SystemOneProvider` falls back to that variable without a key, but it belongs to some other
+        SystemOne service and must not reach Ollama.
+        """
+
+        @property
+        def api_key(self) -> str | None:
+            return chosen.api_key
+
     scores: dict[str, float] = {}
     failures: list[Exception] = []
     limiter = anyio.CapacityLimiter(_CONCURRENCY)
     async with httpx2.AsyncClient(timeout=60) as client:
-        provider = SystemOneProvider(base_url=chosen.url, api_key=chosen.api_key, http_client=client)
+        provider = BackendProvider(base_url=chosen.url, api_key=chosen.api_key, http_client=client)
         agent = Agent(SystemOneModel(chosen.model, provider=provider), output_type=Probability, instructions=question)
 
         async def judge(name: str, text: str) -> None:

@@ -102,8 +102,9 @@ def test_builtin_is_enabled_by_default() -> None:
 
 
 async def test_ranks_with_local_ollama_without_a_key(
-    requests: Callable[[Handler], list[httpx2.Request]],
+    requests: Callable[[Handler], list[httpx2.Request]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv('SYSTEM_ONE_API_KEY', 'another-service')  # Never sent to Ollama.
     seen = requests(answer)
     ranked = await SystemOneContext().rank_relevance(
         'Does this code retry failed requests?', {'a.py': 'def add(a, b): ...', 'b.py': 'def retry(): ...', 'c.py': ' '}
