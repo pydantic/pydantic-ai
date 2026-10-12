@@ -10,7 +10,7 @@ from rich.text import Text
 
 from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart, ThinkingPartDelta
 from pydantic_clai2 import StreamRenderer
-from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import LinkOutput
 
@@ -160,23 +160,20 @@ async def test_abort_mid_label_does_not_leave_a_hyperlink() -> None:
 async def test_streamed_link_survives_surface_resize() -> None:
     output = io.StringIO()
     size = (120, 24)
-    now = 0.0
-    surface = PromptSurface(output=output, size=lambda: size, clock=lambda: now)
+    surface = PromptSurface(output=output, size=lambda: size)
     surface.paint(('prompt',))
     console = Console(file=surface, force_terminal=True, width=120)
     renderer = StreamRenderer(console, stop_loading=lambda: None, smooth_seconds=0)
     await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(f'Opened [PR #1006]({URL}).')))
     await renderer.finish()
     size = (100, 30)
-    surface.paint(('prompt',))
     start = len(output.getvalue())
-    now = 0.3
     surface.paint(('prompt',))
-    replay = output.getvalue()[start:]
-    text = Text.from_ansi(replay)
-    assert text.get_style_at_offset(console, text.plain.index('PR #1006')).link == URL
-    assert text.get_style_at_offset(console, text.plain.index('prompt')).link is None
-    surface.release()
+    assert 'Opened PR #1006' in Text.from_ansi(output.getvalue()[start:]).plain
+    surface.restore()
+    printed = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1])
+    assert printed.get_style_at_offset(console, printed.plain.index('PR #1006')).link == URL
+    assert printed.get_style_at_offset(console, printed.plain.index('Opened')).link is None
 
 
 async def test_model_control_bytes_cannot_inject_terminal_commands() -> None:
@@ -215,3 +212,19 @@ def test_oversized_url_does_not_amplify_slow_label_chunks() -> None:
     writer.write(CLOSE)
     assert len(output.getvalue()) < 10100
     assert Text.from_ansi(output.getvalue()).plain == 'x' * 10000
+
+
+@pytest.mark.parametrize('length', [2048, 2049, 24000])
+@pytest.mark.parametrize('width', [40, 120])
+def test_markdown_replay_caps_hyperlink_metadata(length: int, width: int) -> None:
+    from pydantic_clai2.ui.rendering._rendering import render_markdown
+
+    url = 'https://example.com/' + 'x' * (length - len('https://example.com/'))
+    label = 'label ' * 40
+    rendered = render_markdown(source='[' + label + '](' + url + ')', width=width, thinking=False, colors='truecolor')
+    text = Text.from_ansi(rendered)
+    console = Console(file=io.StringIO())
+    assert text.get_style_at_offset(console, text.plain.index('label')).link == (url if length <= 2048 else None)
+    if length > 2048:
+        assert '\x1b]8;;' + url not in rendered
+        assert len(rendered) < 4 * (len(url) + len(label)), 'wrapped labels must not amplify oversized metadata'

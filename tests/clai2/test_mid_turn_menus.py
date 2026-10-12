@@ -3,7 +3,7 @@
 import asyncio
 import io
 import threading
-from collections.abc import AsyncGenerator, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
@@ -14,24 +14,32 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
+from rich.text import Text
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2 import Session, chat
 from pydantic_clai2._app import create_shell
+from pydantic_clai2.builtin_plugins.google_workspace import GoogleWorkspacePlugin
+from pydantic_clai2.builtin_plugins.grain import GrainPlugin
+from pydantic_clai2.builtin_plugins.pylon import PylonPlugin
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import PluginHost, load_plugin
 from pydantic_clai2.plugins.loader import TURN_NOTICE
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.menu_worker import holding_output, run_worker
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
-from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
+from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from tests.clai2.test_tasks import task
 
@@ -64,19 +72,56 @@ def test_only_bare_opted_in_commands_run_during_a_turn() -> None:
     assert not commands.runs_during_turn('menu')
 
 
+async def test_key_login_resume_and_plugin_settings_menus_open_mid_turn(tmp_path: Path) -> None:
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=Settings(model='test'),
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    assert all(shell.commands.runs_during_turn(text) for text in ('/keys', '/login', '/resume'))
+    assert not any(shell.commands.runs_during_turn(text) for text in ('/login openai-codex', '/resume ID'))
+
+    def host(name: str) -> PluginHost[None]:
+        return PluginHost(name=name, console=Console(file=io.StringIO()), settings={})
+
+    for name, loaded in (
+        ('google_workspace', load_plugin(GoogleWorkspacePlugin, host('google_workspace'))),
+        ('grain', load_plugin(GrainPlugin, host('grain'))),
+        ('pylon', load_plugin(PylonPlugin, host('pylon'))),
+    ):
+        assert loaded.commands.runs_during_turn(f'/{name}')
+        assert not loaded.commands.runs_during_turn(f'/{name} status')
+
+
 async def test_run_worker_holds_output_only_while_the_widget_runs() -> None:
     log: list[str] = []
 
     @contextmanager
-    def hold() -> Generator[None]:
-        log.append('hold')
+    def hold(*, leave_screen: bool) -> Generator[None]:
+        log.append(f'hold leave_screen={leave_screen}')
         yield
         log.append('replay')
 
     with holding_output(hold):
         assert await run_worker(lambda: log.append('menu') or 'done') == 'done'
+        await run_worker(lambda: log.append('inline'), inline=True)
     await run_worker(lambda: log.append('unheld'))
-    assert log == ['hold', 'menu', 'replay', 'unheld']
+    assert log == [
+        'hold leave_screen=True',
+        'menu',
+        'replay',
+        'hold leave_screen=False',
+        'inline',
+        'replay',
+        'unheld',
+    ]
 
 
 async def test_overlay_takes_turns_with_widgets_without_pausing_the_stream() -> None:
@@ -116,9 +161,10 @@ def test_session_changes_saved_during_a_turn_wait_for_it_to_end() -> None:
         applied('model', Settings(model='test:second'))
         applied('run.tool_retries', Settings(tool_retries=7))
         applied('model', Settings(model='test:third'))
+        applied('run.instructions', Settings(instructions='Be brief.'))
         applied('display.theme', Settings(theme='default'))
-        assert (session.model, session.tool_retries) == ('test:first', None)
-    assert (session.model, session.tool_retries) == ('test:third', 7)
+        assert (session.model, session.tool_retries, session.instructions) == ('test:first', None, '')
+    assert (session.model, session.tool_retries, session.instructions) == ('test:third', 7, 'Be brief.')
     applied('run.request_limit', Settings(request_limit=12))
     assert session.usage_limits is not None and session.usage_limits.request_limit == 12
 
@@ -128,14 +174,12 @@ async def test_model_settings_saved_mid_turn_reach_the_running_models_next_reque
 ) -> None:
     """An edit saved from a menu worker thread while a tool runs applies to the same turn's next request."""
     working, finish, streamed, done = anyio.Event(), anyio.Event(), anyio.Event(), anyio.Event()
-    written: list[str] = []
 
     class Surface(PromptSurface):
-        def write(self, text: str) -> int:
-            written.append(text)
-            if 'Finished work' in ''.join(written):
+        def changed(self) -> None:
+            super().changed()
+            if 'Finished work' in _plain(self.transcript):
                 streamed.set()
-            return super().write(text)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     store = SettingsStore(tmp_path / 'config.db')
@@ -189,7 +233,7 @@ async def test_model_settings_saved_mid_turn_reach_the_running_models_next_reque
             await streamed.wait()
             pipe.send_text('/exit\r')
             await done.wait()
-    assert seen == [{'seed': 1}, {'seed': 1, 'max_tokens': 42}]
+    assert seen == [{'cache': True, 'seed': 1}, {'cache': True, 'seed': 1, 'max_tokens': 42}]
     assert 'Saved max_tokens for test.' in output.getvalue()
 
 
@@ -215,14 +259,12 @@ def test_menu_opens_mid_turn_on_a_plain_asyncio_loop(tmp_path: Path, monkeypatch
 async def _open_menu_mid_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     working, finish, streamed, done = anyio.Event(), anyio.Event(), anyio.Event(), anyio.Event()
     opened, close = threading.Event(), threading.Event()
-    written: list[str] = []
 
     class Surface(PromptSurface):
-        def write(self, text: str) -> int:
-            written.append(text)
-            if 'Finished work' in ''.join(written):
+        def changed(self) -> None:
+            super().changed()
+            if 'Finished work' in _plain(self.transcript):
                 streamed.set()
-            return super().write(text)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
 
@@ -267,8 +309,80 @@ async def _open_menu_mid_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
             close.set()
             pipe.send_text('/exit\r')
             await done.wait()
-    text = output.getvalue()
+    text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
     assert text.index('> /menu') < text.index('Finished work') < text.index('menu closed') < text.index('Goodbye.')
+
+
+def test_only_opted_in_available_commands_run_live() -> None:
+    commands = Commands()
+    commands.register(Command(name='slow', description='Slow', handler=lambda args: 'done', live=True))
+    commands.register(
+        Command(name='hidden', description='Hidden', handler=lambda args: 'done', live=True, available=lambda: False)
+    )
+    commands.register(Command(name='menu', description='Menu', handler=lambda args: 'done'))
+    assert commands.runs_live('/slow focus words')
+    assert not commands.runs_live('/hidden')
+    assert not commands.runs_live('/menu')
+    assert not commands.runs_live('/missing')
+    assert not commands.runs_live('/')
+
+
+async def test_live_command_keeps_the_editor_working_and_cancellable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A slow command such as `/compact` keeps the prompt on screen with the spinner and stops on Ctrl-C.
+
+    The draft typed meanwhile shows while it runs and is still there once it stops.
+    """
+    started, working, drafted, kept, done = (anyio.Event() for _ in range(5))
+
+    class Surface(PromptSurface):
+        def paint(self, rows: tuple[str, ...]) -> None:
+            plain = [Text.from_ansi(row).plain.rstrip() for row in rows]
+            busy = any(row.startswith(' Working ') for row in plain)
+            if started.is_set() and busy:
+                working.set()
+                if 'keep me' in plain:
+                    drafted.set()
+            elif drafted.is_set() and 'keep me' in plain:
+                kept.set()
+            super().paint(rows)
+
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
+
+    async def slow(args: list[str]) -> str:
+        if args:
+            return f'finished {args[0]}'
+        started.set()
+        await anyio.sleep_forever()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    output = io.StringIO()
+
+    async def run() -> None:
+        await chat(
+            Agent(TestModel(), deps_type=type(None)),
+            deps=None,
+            plugins=[_MenuCommand(Command(name='slow', description='Slow', handler=slow, live=True))],
+            console=Console(file=output, force_terminal=True, width=80, height=24),
+            store=SettingsStore(tmp_path / 'config.db'),
+        )
+        done.set()
+
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            pipe.send_text('/slow quickly\r')
+            pipe.send_text('/slow\r')
+            await working.wait()
+            pipe.send_text('keep me')
+            await drafted.wait()
+            pipe.send_text('\x1b')
+            await kept.wait()
+            pipe.send_text('\x15/exit\r')
+            await done.wait()
+    text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
+    assert text.index('finished quickly') < text.index('Command cancelled.') < text.index('Goodbye.')
 
 
 async def test_overlay_commands_take_the_screen_without_waiting_for_themselves() -> None:
@@ -396,3 +510,82 @@ async def test_plugins_typed_mid_turn_apply_at_once_and_end_after_the_run(
     else:
         assert f'Disabled alpha.\n{TURN_NOTICE}' in text
         assert text.index(reply) < text.index('alpha ended') < text.index('> /exit')
+
+
+def _plain(transcript: TranscriptBuffer) -> str:
+    """Streamed Markdown lands in the transcript, not in `write`."""
+    return Text.from_ansi('\n'.join(transcript.frame(width=200, height=500).rows)).plain
+
+
+async def test_speculation_toggled_mid_turn_shows_at_once_and_binds_on_the_next_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`Ctrl+X Ctrl+S` saves the switch and repaints at once; the running turn keeps its tools."""
+    working, finish, noticed, answered, done = (anyio.Event() for _ in range(5))
+    frames: list[str] = []
+
+    class Surface(PromptSurface):
+        def changed(self) -> None:
+            super().changed()
+            if _plain(self.transcript).count('Finished work') >= 2:
+                answered.set()
+
+        def paint(self, rows: tuple[str, ...]) -> None:
+            frames.append('\n'.join(Text.from_ansi(row).plain for row in rows))
+            if 'this turn keeps its tools' in frames[-1]:
+                noticed.set()
+            super().paint(rows)
+
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
+    store = SettingsStore(tmp_path / 'config.db')
+    tools: list[list[str]] = []
+    hooks = Hooks[None]()
+
+    @hooks.on.before_model_request
+    async def capture(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+        tools.append(sorted(tool.name for tool in request_context.model_request_parameters.function_tools))
+        return request_context
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='work', json_args='{}')}
+        else:
+            yield 'Finished work'
+
+    agent = Agent(FunctionModel(stream_function=respond), deps_type=type(None))
+
+    @agent.tool_plain
+    async def work() -> str:
+        working.set()
+        await finish.wait()
+        return 'done'
+
+    async def run() -> None:
+        await chat(
+            agent,
+            deps=None,
+            plugins=[hooks],
+            console=Console(file=io.StringIO(), force_terminal=True, width=120, height=24),
+            store=store,
+        )
+        done.set()
+
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            pipe.send_text('start\r')
+            await working.wait()
+            pipe.send_text('\x18\x13')
+            await noticed.wait()
+            assert store.overrides() == {'run.speculative_code_mode': True}
+            assert 'Speculative Execution  0 hits' in frames[-1]
+            assert 'on from the next prompt' in frames[-1]
+            finish.set()
+            pipe.send_text('again\r')
+            await answered.wait()
+            assert 'next prompt' not in frames[-1]
+            pipe.send_text('/exit\r')
+            await done.wait()
+    first, after_tool, next_prompt = tools
+    assert first == after_tool == ['work']
+    assert 'run_code' in next_prompt and 'work' not in next_prompt

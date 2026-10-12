@@ -291,14 +291,18 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     assert len(part.audio.data) > 0
 
 
-async def test_text_context_waits_for_next_turn(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
+async def test_text_context_waits_for_next_turn(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
+) -> None:
     provider, _ = openai_ws_cassette
     model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
     agent = Agent(instructions='Answer in one short sentence.')
 
     async with agent.realtime(model).session() as session:
         await session.send('The visitor is called Ada.', respond=False)
-        await asyncio.sleep(1)
+        # Gives a reply the model shouldn't have started time to arrive. Replay delivers the recorded frames
+        # back to back, so it needs only a moment.
+        await asyncio.sleep(1 if realtime_recording else 0.1)
         assert not [message for message in session.new_messages() if isinstance(message, ModelResponse)]
         await session.send('What is the visitor called?')
         with anyio.fail_after(30):
@@ -1359,6 +1363,28 @@ def _span_tree(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
         }
 
     return [render(root) for root in sorted(children.get(None, []), key=lambda span: span['start_time'])]
+
+
+@pytest.mark.vcr
+async def test_webrtc_hang_up_ends_the_call(
+    openai_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """`hang_up()` on a sideband ends the browser's call; `close()` alone would only detach from it.
+
+    Hanging up again finds no call to end, which is not an error. The offer and both hangups are an HTTP
+    VCR cassette, the sideband a WebSocket cassette.
+    """
+    provider, _ = openai_ws_sideband_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    realtime = Agent(instructions='Answer in two words.').realtime(model)
+
+    answer = await realtime.answer_webrtc_offer(REAL_SDP_OFFER)
+    async with realtime.session(provider_session=answer.session) as session:
+        await session.hang_up()
+    assert session.closed
+
+    # The call is gone now: hanging it up again, without a sideband, finds nothing to end.
+    await realtime.hang_up(answer.session)
 
 
 @pytest.mark.vcr

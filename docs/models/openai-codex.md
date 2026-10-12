@@ -134,6 +134,8 @@ The additional patterns redact the OAuth credentials and account identifiers; Lo
 
 To mirror the official Codex client's prompt-cache affinity, [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel] sends the `session-id`, `thread-id`, and `x-client-request-id` headers and the `prompt_cache_key` request field. All four are derived from the [`conversation_id`](../message-history.md) of the message history, so runs continuing the same conversation reuse a stable identity. An explicit `openai_prompt_cache_key` model setting or explicitly supplied `extra_headers` always win over the derived values. This does not guarantee a cache hit.
 
+The Codex backend caches prompts implicitly and rejects the explicit prompt caching fields of the OpenAI API, so the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting, [`CachePoint`][pydantic_ai.messages.CachePoint]s, and `openai_cache_instructions` have no effect.
+
 ## Limitations
 
 - The Codex backend is streaming-only; for non-streaming runs the library transparently drains a stream, so `agent.run_sync()` and friends work as usual.

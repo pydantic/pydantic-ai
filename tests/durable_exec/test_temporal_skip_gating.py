@@ -82,6 +82,7 @@ def _run_masked_pytest(target: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+@pytest.mark.subprocess(reason='runs pytest in a fresh process to check how it loads the Temporal conftest')
 def test_temporal_suite_skips_when_invoked_on_its_own_directory() -> None:
     """`pytest tests/durable_exec/temporal` reports skips instead of crashing on the conftest import."""
     result = _run_masked_pytest('tests/durable_exec/temporal')
@@ -99,6 +100,7 @@ def test_temporal_suite_skips_when_invoked_on_its_own_directory() -> None:
     assert 'Skipped: ' not in output, output
 
 
+@pytest.mark.subprocess(reason='runs pytest in a fresh process to check how it loads the Temporal conftest')
 def test_temporal_suite_skips_when_invoked_on_a_node_id() -> None:
     """A node id under the suite reports the skip too — the form `test-temporal-latest` runs.
 

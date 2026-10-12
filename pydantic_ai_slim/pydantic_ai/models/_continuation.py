@@ -28,12 +28,12 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, 
 from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from .. import _utils
 from .._run_context import RunContext
-from ..exceptions import UnexpectedModelBehavior
+from ..exceptions import ModelAPIError, UnexpectedModelBehavior
 from ..messages import (
     FinalResultEvent,
     ModelMessage,
@@ -117,7 +117,7 @@ MergeMode = Literal['replace-same-id', 'replace-new', 'accumulate']
 # Deterministic fallback for `timestamp` before any segment has streamed. This is
 # never reached in practice (a segment is always in flight or finalized by the time
 # `timestamp` is read), but keeps the loop free of `now_utc()` for durable replay.
-_FALLBACK_TIMESTAMP = datetime.fromtimestamp(0, tz=timezone.utc)
+_FALLBACK_TIMESTAMP = datetime.fromtimestamp(0, tz=UTC)
 
 
 def _has_replace_marker(response: ModelResponse) -> bool:
@@ -175,7 +175,8 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
     snapshot. Otherwise accumulate parts and usage, and use other fields from the new response.
 
     Either way, `provider_details` and `metadata` accumulate across the turn's segments (latest-wins)
-    so turn-scoped data a later segment omits isn't lost — see below.
+    so turn-scoped data a later segment omits isn't lost — see below — and `failed_attempts` are
+    concatenated.
     """
     mode = merge_mode(existing, new)
     if mode == 'replace-same-id':
@@ -205,6 +206,10 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
         merged = replace(merged, provider_details={**existing.provider_details, **(merged.provider_details or {})})
     if existing.metadata:
         merged = replace(merged, metadata={**existing.metadata, **(merged.metadata or {})})
+    # Attempts that failed before an earlier segment (e.g. the models a `FallbackModel` moved on from
+    # before the one that suspended) belong to the turn as a whole, so they are kept in order.
+    if existing.failed_attempts:
+        merged = replace(merged, failed_attempts=[*existing.failed_attempts, *(merged.failed_attempts or [])])
 
     # Pop the transient `replace_previous_response` marker now that it's been honored above, so it
     # doesn't persist into history where it would wrongly force a later legitimate `pause_turn`
@@ -251,6 +256,9 @@ def observe_continuation_segments(
     is a separately billed request. Some consumers need a single request's usage instead: prompt-cache
     health judges the cache read of the final segment, whose prompt carries the whole prefix. The
     observer is tied to its request, so a nested agent's requests made in the same context don't reach it.
+
+    Private for now: read by the `Instrumentation` capability and, together with `merge_responses`, by the
+    Pydantic AI Harness's `SpendLimits`, which pins this package's exact version.
     """
     token = _segment_observers.set((*_segment_observers.get(), (request_context, observer)))
     try:
@@ -375,6 +383,10 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 yield event
         except self.get_stream_cancel_errors():
             if not self.cancelled:
+                raise
+        except ModelAPIError as e:
+            # Adapters map transport errors to `ModelAPIError`, so one caused by `cancel()` arrives wrapped.
+            if not (self.cancelled and isinstance(e.__cause__, self.get_stream_cancel_errors())):
                 raise
         else:
             if not self._cancelled:

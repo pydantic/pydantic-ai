@@ -263,6 +263,7 @@ async def test_background_title_watcher(
 
     monkeypatch.setattr(store, 'get', no_transcript)
     monkeypatch.setattr(store.media, 'get', no_transcript)
+    monkeypatch.setattr(herdr, 'TITLE_POLL_INTERVAL', 0.01)
     await loaded.dispatch(SessionStart(agent=agent, settings=Settings()))
     try:
         assert await recorded.titles.get() == session.summary.title

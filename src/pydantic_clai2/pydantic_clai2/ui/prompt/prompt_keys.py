@@ -13,7 +13,8 @@ from prompt_toolkit.keys import Keys
 _MODIFIED_KEY = re.compile(r'\x1b\[(?:(\d+)(?::\d*)?(?::(\d+))?(?:;(\d+))?u|27;(\d+);(\d+)~)')
 _CSI_KEY = re.compile(r'\x1b\[(\d+);(\d+)([A-Z~])')
 _LOCK_MODIFIERS = 64 | 128  # Caps Lock, Num Lock.
-_SUPPORTED_MODIFIERS = 1 | 2 | 4  # Shift, Alt, Ctrl.
+_SUPER = 8  # Cmd on macOS; terminals report it only through CSI-u or modifyOtherKeys.
+_SUPPORTED_MODIFIERS = 1 | 2 | 4 | _SUPER  # Shift, Alt, Ctrl, Super.
 _KEY_ALIASES = {
     's-tab': 'backtab',
     'shift-tab': 'backtab',
@@ -26,6 +27,7 @@ _KEY_ALIASES = {
     'ctrl-enter': 'enter',
     'ctrl-shift-enter': 'enter',
     '<bracketed-paste>': 'paste',
+    '<vt100-mouse-event>': 'mouse',
 }
 _NAMED_KEYS = {
     8: 'backspace',
@@ -68,7 +70,7 @@ def _modified_key(sequence: str) -> str | None:
     if (match := _CSI_KEY.fullmatch(sequence)) and sequence not in ANSI_SEQUENCES:
         code, modifier, suffix = match.groups()
         modifiers = _modifiers(modifier)
-        if modifiers is None:
+        if modifiers is None or modifiers & _SUPER:
             return None
         params = f'{code};{modifiers + 1}' if modifiers else code
         if params == '1' and suffix != '~':
@@ -85,17 +87,20 @@ def _modified_key(sequence: str) -> str | None:
     modifiers = _modifiers(modifier or xterm_modifier or '1')
     if modifiers is None:
         return None
-    if modifiers & 4 and codepoint > 127 and base_code:
-        # Kitty supplies the layout-independent identity for non-Latin Ctrl keys.
+    if modifiers & (4 | _SUPER) and codepoint > 127 and base_code:
+        # Kitty supplies the layout-independent identity for non-Latin Ctrl and Cmd keys.
         codepoint = int(base_code)
     name = _NAMED_KEYS.get(codepoint)
     if name is None:
         if not 32 <= codepoint <= 126 or not modifiers:
             return None
-        name = chr(codepoint)
+        # Some terminals report a shifted letter in upper case; the modifier already says Shift.
+        name = chr(codepoint).lower()
     if name == ' ' and modifiers == 1:
         return name
-    prefix = ''.join(label for bit, label in ((4, 'ctrl-'), (2, 'alt-'), (1, 'shift-')) if modifiers & bit)
+    prefix = ''.join(
+        label for bit, label in ((_SUPER, 'super-'), (4, 'ctrl-'), (2, 'alt-'), (1, 'shift-')) if modifiers & bit
+    )
     name = prefix + name
     return _KEY_ALIASES.get(name, name)
 
@@ -103,7 +108,7 @@ def _modified_key(sequence: str) -> str | None:
 class PromptKeys:
     """Attach prompt-toolkit input and normalize paste, CSI-u, Kitty alternate-key and xterm reports.
 
-    `PromptSurface` scopes xterm's `CSI >4;1m` and Kitty's `CSI >5u` modes.
+    `PromptSurface` scopes xterm's `CSI >4;1m`, Kitty's `CSI >5u`, and SGR mouse reporting.
     No prompt-toolkit application or renderer is started.
     """
 

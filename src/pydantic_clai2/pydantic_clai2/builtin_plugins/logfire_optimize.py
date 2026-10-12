@@ -10,7 +10,7 @@ import difflib
 import json
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal, TypeVar
 
 import httpx
@@ -219,7 +219,7 @@ async def query(
     """Rows from Logfire's query API over the lookback window, and the `org/project` the token reads."""
     params = {
         'sql': sql,
-        'min_timestamp': (datetime.now(timezone.utc) - LOOKBACK).isoformat(),
+        'min_timestamp': (datetime.now(UTC) - LOOKBACK).isoformat(),
         'limit': str(limit),
         'json_rows': 'true',
     }

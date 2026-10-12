@@ -246,7 +246,7 @@ The serializable backends are `memory`, `file`, and `sqlite`. A namespace callab
 | --- | --- |
 | Normal `Agent.run` calls | Supported with automatic injection or on-demand tools. |
 | Temporal and Prefect | Automatic snapshot loading is a journaled capability operation. On replay, the recorded snapshot is reused. `store_resolver` and a callable `namespace` run before that operation, so they must be deterministic and free of backend I/O; a per-tenant resolver that queries a backend is not workflow-safe. |
-| DBOS | Automatic snapshot loading is a DBOS step. Ordinary `FunctionToolset` calls are not DBOS-durable; wrap memory tool operations in application-provided DBOS steps when required. |
+| DBOS | Automatic snapshot loading and each memory tool call are DBOS steps. A recovered or forked workflow reuses their recorded results instead of reading or writing the store again. |
 
 `Memory` carries the stable default `id='memory'`, so durable recovery works without configuration. The memory backend and workflow state backend remain independent: durable execution does not make an in-memory notebook persistent.
 

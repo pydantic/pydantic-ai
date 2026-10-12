@@ -1079,7 +1079,7 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
             sub.run(RUN_TRIGGER, usage_limits=UsageLimits(request_limit=sub_request_limit), usage=sub_usage),
             timeout=SUBAGENT_TIMEOUT_SECS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         # A bare `TimeoutError` stringifies to '' — without an explicit message
         # the model (and the log) would see `sub-agent failed:` with no payload.
         ctx.usage.incr(sub_usage)
@@ -1118,7 +1118,7 @@ async def _run_with_timeout(
                 run(prompt, model, label, claude_code_toolset, mcp_servers, session_id, usage=usage),
                 timeout=budget,
             )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error('run timed out after %.0f min', budget / 60)
         emit_result(
             f'run timed out after {budget // 60}min',

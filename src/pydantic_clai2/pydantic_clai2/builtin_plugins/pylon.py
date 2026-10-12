@@ -240,6 +240,7 @@ class PylonPlugin(Plugin[PylonSettings, DepsT]):
                     if len(args) <= 1
                     else []
                 ),
+                during_turn=True,
             ),
         )
 

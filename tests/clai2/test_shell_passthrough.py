@@ -24,11 +24,11 @@ from pydantic_ai_harness.step_persistence.conversations import SqliteConversatio
 from pydantic_clai2 import chat
 from pydantic_clai2.cli.shell_passthrough import (
     _ShellOutput,  # pyright: ignore[reportPrivateUsage]
-    _taskkill_path,  # pyright: ignore[reportPrivateUsage]
     run_shell_command,
     shell_command,
 )
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime._processes import taskkill_path
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from tests.clai2.test_app_edges import inputs
 
@@ -87,9 +87,9 @@ async def shell_session(
 def test_taskkill_is_resolved_from_system_root(monkeypatch: pytest.MonkeyPatch) -> None:
     """A `taskkill.exe` planted in the working directory must never be the one that runs."""
     monkeypatch.setenv('SystemRoot', r'D:\Win')
-    assert _taskkill_path() == r'D:\Win\System32\taskkill.exe'
+    assert taskkill_path() == r'D:\Win\System32\taskkill.exe'
     monkeypatch.delenv('SystemRoot')
-    assert _taskkill_path() == r'C:\Windows\System32\taskkill.exe'
+    assert taskkill_path() == r'C:\Windows\System32\taskkill.exe'
 
 
 class TestShellPassthrough:
@@ -142,7 +142,7 @@ class TestShellPassthrough:
 
         monkeypatch.setattr(asyncio.get_running_loop(), 'subprocess_shell', delayed_spawn)
         monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough._interrupt', interrupt)
-        monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough._kill_process_tree', kill_process_tree)
+        monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough.kill_process_tree', kill_process_tree)
         output = io.StringIO()
         interrupts = Interrupts()
         command = asyncio.create_task(
@@ -198,6 +198,7 @@ class TestShellPassthrough:
         assert 'Interrupted (' in text
         assert (tmp_path / 'cleanup.txt').read_text() == 'cleaned'
 
+    @pytest.mark.subprocess(reason="needs a real process tree to check Ctrl-C reaches the shell's descendants")
     @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell process-group signalling')
     async def test_ctrl_c_kills_shell_descendants(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Cancelling a shell command must also terminate a background child."""

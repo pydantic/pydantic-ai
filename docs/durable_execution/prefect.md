@@ -327,6 +327,8 @@ Pydantic AI and provider API clients have their own retry logic. When using Pref
 
 This prevents requests from being retried multiple times at different layers. The layers *multiply*: see [Retry multiplication](../retries.md#retry-multiplication) for the arithmetic.
 
+If you don't pass `run_id` or `conversation_id` to [`Agent.run()`][pydantic_ai.agent.Agent.run] in a flow, the defaults are derived from the flow run rather than generated at random, so a flow retry gives each agent run the same IDs as the attempt before it.
+
 ## Caching and Idempotency
 
 Prefect 3.0 provides built-in caching and transactional semantics. Tasks with identical inputs will not re-execute if their results are already cached, making workflows naturally idempotent and resilient to failures.
