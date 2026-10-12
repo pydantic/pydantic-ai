@@ -1,16 +1,17 @@
 """Launch the installed CLI against real repositories without provider requests."""
 
+import asyncio
 import os
 import shutil
 import subprocess
-import sys
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
 
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2.runtime.worktrees import Worktree, open_worktree
+from tests.clai2.cli_runner import CliResult, CliRunner
 
 
 def git(directory: Path, *args: str) -> str:
@@ -19,17 +20,17 @@ def git(directory: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def launch(directory: Path, *args: str, prompt: str = '/exit\n') -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, '-m', 'pydantic_clai2', '--database', 'config.db', '--model', 'test', *args],
-        cwd=directory,
-        input=prompt,
-        text=True,
-        capture_output=True,
-        env=dict(os.environ, CLAI_NO_SPLASH='1'),
-        timeout=30,
-        check=False,
-    )
+@dataclass
+class Launcher:
+    run_cli: CliRunner
+
+    def __call__(self, directory: Path, *args: str, prompt: str = '/exit\n') -> CliResult:
+        return self.run_cli('--database', 'config.db', '--model', 'test', *args, cwd=directory, input=prompt)
+
+
+@pytest.fixture
+def launch(run_cli: CliRunner) -> Launcher:
+    return Launcher(run_cli)
 
 
 @pytest.fixture
@@ -53,7 +54,7 @@ def repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     'args',
     [['--worktree', 'feature'], ['-w', 'feature'], ['--worktree=feature'], ['-wfeature'], ['--worktree'], ['-w']],
 )
-def test_launches_in_new_worktree(repository: Path, args: list[str]) -> None:
+def test_launches_in_new_worktree(repository: Path, launch: Launcher, args: list[str]) -> None:
     original_head = git(repository, 'rev-parse', 'HEAD')
     original_branch = git(repository, 'symbolic-ref', 'HEAD')
     (repository / 'tracked.txt').write_text('uncommitted')
@@ -104,7 +105,7 @@ def test_launches_in_new_worktree(repository: Path, args: list[str]) -> None:
     assert not (repository / '.gitignore').exists()
 
 
-def test_launch_from_linked_worktree(repository: Path) -> None:
+def test_launch_from_linked_worktree(repository: Path, launch: Launcher) -> None:
     linked = repository.parent / 'linked'
     git(repository, 'worktree', 'add', '-b', 'linked', str(linked))
     (linked / 'linked.txt').write_text('linked commit')
@@ -119,7 +120,9 @@ def test_launch_from_linked_worktree(repository: Path) -> None:
 
 
 @pytest.mark.parametrize('existing', [None, b'keep-me', b'keep-me\n/.worktrees/\n'])
-def test_local_exclude_preserves_rules_without_duplicates(repository: Path, existing: bytes | None) -> None:
+def test_local_exclude_preserves_rules_without_duplicates(
+    repository: Path, launch: Launcher, existing: bytes | None
+) -> None:
     exclude = repository / '.git/info/exclude'
     if existing is None:
         exclude.unlink()
@@ -134,7 +137,7 @@ def test_local_exclude_preserves_rules_without_duplicates(repository: Path, exis
     assert git(repository, 'check-ignore', '.worktrees/ignored') == '.worktrees/ignored'
 
 
-def test_unwritable_exclude_is_a_parser_error(repository: Path) -> None:
+def test_unwritable_exclude_is_a_parser_error(repository: Path, launch: Launcher) -> None:
     exclude = repository / '.git/info/exclude'
     exclude.unlink()
     exclude.mkdir()
@@ -145,7 +148,7 @@ def test_unwritable_exclude_is_a_parser_error(repository: Path) -> None:
     assert not (repository / '.worktrees').exists()
 
 
-async def test_session_belongs_to_worktree_and_can_be_resumed(repository: Path) -> None:
+def test_session_belongs_to_worktree_and_can_be_resumed(repository: Path, launch: Launcher) -> None:
     result = launch(
         repository,
         '-w',
@@ -155,7 +158,7 @@ async def test_session_belongs_to_worktree_and_can_be_resumed(repository: Path) 
     assert result.returncode == 0, result.stderr
     workspace = repository / '.worktrees/saved'
     store = SqliteConversationStore(database=repository / 'sessions.db')
-    summaries = await store.listing()
+    summaries = asyncio.run(store.listing())
     assert len(summaries) == 1
     assert summaries[0].workspace == str(workspace)
     resumed = launch(workspace, '--database', str(repository / 'config.db'), '--resume', summaries[0].id)
@@ -163,7 +166,7 @@ async def test_session_belongs_to_worktree_and_can_be_resumed(repository: Path) 
     assert 'Resumed' in resumed.stdout
 
 
-def test_startup_error_keeps_created_worktree(repository: Path) -> None:
+def test_startup_error_keeps_created_worktree(repository: Path, launch: Launcher) -> None:
     result = launch(repository, '-w', 'retained', '--request-limit', '0')
     assert result.returncode == 2
     workspace = repository / '.worktrees/retained'
@@ -172,7 +175,7 @@ def test_startup_error_keeps_created_worktree(repository: Path) -> None:
     assert git(workspace, 'branch', '--show-current') == 'clai-retained'
 
 
-def test_headless_worktree_notice_stays_off_stdout(repository: Path) -> None:
+def test_headless_worktree_notice_stays_off_stdout(repository: Path, launch: Launcher) -> None:
     # The exit code is not asserted: `TestModel` calls every default tool, which the notice does not depend on.
     result = launch(repository, '-w', 'headless', '-p', 'hello', prompt='')
     workspace = repository / '.worktrees/headless'
@@ -181,7 +184,7 @@ def test_headless_worktree_notice_stays_off_stdout(repository: Path) -> None:
     assert 'Worktree' not in result.stdout
 
 
-def test_named_worktree_is_reopened(repository: Path) -> None:
+def test_named_worktree_is_reopened(repository: Path, launch: Launcher) -> None:
     assert launch(repository, '-w', 'feature').returncode == 0
     workspace = repository / '.worktrees/feature'
     (workspace / 'draft.txt').write_text('in progress')
@@ -193,7 +196,7 @@ def test_named_worktree_is_reopened(repository: Path) -> None:
 
 @pytest.mark.parametrize('state', ['outside', 'unborn', 'path', 'missing-git'])
 def test_git_errors_leave_existing_work_untouched(
-    repository: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
+    repository: Path, launch: Launcher, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
 ) -> None:
     directory = repository
     workspace = repository / '.worktrees/feature'
@@ -226,7 +229,7 @@ def test_git_errors_leave_existing_work_untouched(
         assert not workspace.exists()
 
 
-def test_failed_checkout_removes_new_branch_and_allows_retry(repository: Path) -> None:
+def test_failed_checkout_removes_new_branch_and_allows_retry(repository: Path, launch: Launcher) -> None:
     (repository / '.gitattributes').write_text('tracked.txt filter=fail\n')
     git(repository, 'add', '.gitattributes')
     git(repository, 'commit', '-m', 'Configure checkout filter')
@@ -241,7 +244,7 @@ def test_failed_checkout_removes_new_branch_and_allows_retry(repository: Path) -
     assert launch(repository, '-w', 'retry').returncode == 0
 
 
-def test_checkout_hook_failure_preserves_work_and_reports_cleanup_failure(repository: Path) -> None:
+def test_checkout_hook_failure_preserves_work_and_reports_cleanup_failure(repository: Path, launch: Launcher) -> None:
     hook = repository / '.git/hooks/post-checkout'
     hook.write_text('#!/bin/sh\nexit 1\n')
     hook.chmod(0o755)
@@ -254,7 +257,7 @@ def test_checkout_hook_failure_preserves_work_and_reports_cleanup_failure(reposi
     assert git(workspace, 'branch', '--show-current') == 'clai-retained'
 
 
-def test_exclude_write_failure_reports_retained_worktree(repository: Path) -> None:
+def test_exclude_write_failure_reports_retained_worktree(repository: Path, launch: Launcher) -> None:
     hook = repository / '.git/hooks/post-checkout'
     hook.write_text('#!/bin/sh\nexclude=$(git rev-parse --git-path info/exclude)\nrm "$exclude"\nmkdir "$exclude"\n')
     hook.chmod(0o755)
@@ -269,7 +272,7 @@ def test_exclude_write_failure_reports_retained_worktree(repository: Path) -> No
 @pytest.mark.parametrize(
     'name', ['../escape', '/absolute', 'nested/name', 'back\\slash', '..', '-b', 'bad name', 'bad.name']
 )
-def test_invalid_names_are_parser_errors(repository: Path, name: str) -> None:
+def test_invalid_names_are_parser_errors(repository: Path, launch: Launcher, name: str) -> None:
     result = launch(repository, f'--worktree={name}')
     assert result.returncode == 2
     assert 'error: Worktree names' in result.stderr
@@ -278,7 +281,7 @@ def test_invalid_names_are_parser_errors(repository: Path, name: str) -> None:
 
 
 @pytest.mark.parametrize('args', [['--resume'], ['--resume=session'], ['config', 'show'], ['plugins', 'list']])
-def test_worktree_rejects_incompatible_commands(repository: Path, args: list[str]) -> None:
+def test_worktree_rejects_incompatible_commands(repository: Path, launch: Launcher, args: list[str]) -> None:
     result = launch(repository, '--worktree=feature', *args)
     assert result.returncode == 2
     assert 'cannot be combined' in result.stderr

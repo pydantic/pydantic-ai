@@ -549,7 +549,7 @@ toolset = MCPToolset('http://localhost:3001/sse', http_client=http_client)  # (1
 agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
 
-1. When you supply `http_client`, Pydantic AI reuses this client for every request. Anything supported by HTTPX (`verify`, `cert`, custom proxies, timeouts, etc.) therefore applies to all MCP traffic. On FastMCP 3, build the client with legacy `httpx` instead.
+1. When you supply `http_client`, Pydantic AI reuses this client for every request. Anything supported by HTTPX (`verify`, `cert`, custom proxies, timeouts, etc.) therefore applies to all MCP traffic. The toolset never closes the client, so it can be reused across runs and you are responsible for closing it. On FastMCP 3, build the client with legacy `httpx` instead.
 
 ## Client identification
 
