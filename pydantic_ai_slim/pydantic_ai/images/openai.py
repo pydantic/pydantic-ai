@@ -10,7 +10,7 @@ from typing import Literal, assert_never, cast
 from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 from pydantic_ai.models import check_allow_model_requests, download_item
-from pydantic_ai.models._decode_errors import map_decode_errors
+from pydantic_ai.models._decode_errors import check_json_response, map_decode_errors
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -271,7 +271,7 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-        return self._map_response(prompt, response)
+        return self._map_response(prompt, check_json_response(self.model_name, response))
 
     async def _map_input_images(self, images: Sequence[ImageGenerationInput]) -> list[tuple[str, bytes, str]]:
         mapped_images: list[tuple[str, bytes, str]] = []
