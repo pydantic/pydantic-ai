@@ -16,7 +16,7 @@ from pydantic import SecretStr, TypeAdapter
 from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
-from pydantic_clai2 import openrouter
+from pydantic_clai2.models import openrouter
 from pydantic_clai2.openrouter_auth import OpenRouterAuth, authorization_code
 from tests.clai2.menu_script import make_context
 

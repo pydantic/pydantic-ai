@@ -112,7 +112,7 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     Neither is a general security boundary: an unanswered DNS lookup is refused
     but Chromium resolves the name again before it connects, so rebinding is not
     closed, and a proxy-based enforcement mode is tracked in
-    https://github.com/pydantic/pydantic-ai-harness/issues/415. Set
+    https://github.com/pydantic/pydantic-ai/issues/9204. Set
     `allowed_domains` when the agent may act on untrusted input.
 
     Chromium starts lazily on the first browser-tool call and is closed when the

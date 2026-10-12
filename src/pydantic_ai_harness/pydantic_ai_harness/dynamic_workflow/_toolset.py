@@ -14,14 +14,15 @@ import warnings
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NotRequired, Self
 
 from pydantic import Field, JsonValue, TypeAdapter
-from typing_extensions import NotRequired, Self, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
+from pydantic_ai.messages import SystemPromptPart
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai.usage import UsageLimits
@@ -50,6 +51,7 @@ from pydantic_ai_harness.dynamic_workflow._catalog import (
     render_description,
     render_reveal,
     validate_workflow_agent,
+    visible_revealed_agents,
 )
 from pydantic_ai_harness.dynamic_workflow._library import SavedWorkflow, WorkflowLibrary
 from pydantic_ai_harness.dynamic_workflow._prelude import ARGS_NAME, HELPER_NAMES, render_prelude
@@ -257,6 +259,13 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     # extended in place as runtime appends to `agents` are revealed (`_fold_reveals`).
     _by_name: dict[str, WorkflowAgent[AgentDepsT]] = field(init=False, repr=False)
 
+    # Names rendered in the run-start catalog. Later entries require reveal announcements.
+    _baseline_names: frozenset[str] = field(init=False, repr=False)
+
+    # Reveal announcements queued during the current step but not yet present in message history.
+    _in_flight_announcements: set[str] = field(default_factory=set[str], init=False, repr=False)
+    _announcement_step: int | None = field(default=None, init=False, repr=False)
+
     # Tool description, frozen at run start. Rendered from the agents present when the run began
     # and never re-rendered after a reveal, so the description -- and thus the prompt-cache
     # prefix -- never changes mid-run.
@@ -304,9 +313,13 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         `DynamicWorkflow.reveal()` validate entries eagerly, so this fails only when the
         lower-level toolset list was mutated outside those APIs.
         """
-        self._by_name = index_workflow_agents(self.agents)
+        by_name = index_workflow_agents(self.agents)
+        self._by_name = by_name
+        self._baseline_names = frozenset(by_name)
+        self._in_flight_announcements = set[str]()
+        self._announcement_step = None
         self._description = render_description(
-            self._by_name,
+            by_name,
             max_agent_calls=self.max_agent_calls,
             max_concurrent_agents=self.max_concurrent_agents,
             max_items_per_call=self.max_items_per_call,
@@ -348,11 +361,9 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         """Fold sub-agents appended to `agents` since the run started into the name index.
 
         Diffs the live `agents` list against the names already known (`_by_name`, which holds the
-        baseline plus anything revealed so far) and folds each newcomer in -- so `dispatch` resolves
-        it -- enqueuing an announcement for the model. The frozen `_description` is untouched, so the
-        cached prompt prefix is unaffected. Re-seeing an already-known entry (a baseline agent, or
-        one revealed on an earlier step) is a no-op, identified by object identity so it is never
-        mistaken for a name collision.
+        baseline plus anything revealed so far) and folds each newcomer in so `dispatch` resolves
+        it. Revealed entries absent from visible post-compaction history are announced again. The
+        frozen `_description` is untouched, so the cached prompt prefix is unaffected.
 
         A newcomer whose name is missing, invalid, or already taken by a different
         sub-agent is a contract violation and raises `UserError`.
@@ -361,15 +372,28 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         concurrently-running `dispatch` never observes a half-revealed agent -- the same
         await-free-critical-section reasoning that keeps `max_agent_calls` exact under fan-out.
         """
+        if self._announcement_step != ctx.run_step:
+            self._in_flight_announcements.clear()
+            self._announcement_step = ctx.run_step
+        visible_announcements = visible_revealed_agents(ctx.messages, self.tool_name, tuple(self._by_name))
+
         for entry in tuple(self.agents):
             name = entry.resolved_name
             existing = self._by_name.get(name) if name else None
             if existing is entry:
-                continue
-            name = validate_workflow_agent(entry, set(self._by_name))
-            self._by_name[name] = entry
+                assert name is not None
+                if (
+                    name in self._baseline_names
+                    or name in visible_announcements
+                    or name in self._in_flight_announcements
+                ):
+                    continue
+            else:
+                name = validate_workflow_agent(entry, set(self._by_name))
+                self._by_name[name] = entry
+            self._in_flight_announcements.add(name)
             try:
-                ctx.enqueue(render_reveal(name, self._by_name, self.tool_name))
+                ctx.enqueue(SystemPromptPart(content=render_reveal(name, self._by_name, self.tool_name)))
             except UserError as exc:
                 warnings.warn(
                     f'DynamicWorkflow revealed sub-agent {name!r}, but could not enqueue its announcement: '
@@ -492,7 +516,9 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 completed = await run.execute(session, code, frame=frame, args=args)
         except MontyTypingError as e:
             raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(e.display())}') from e
-        except MontySyntaxError as e:  # pragma: no cover -- backstop; the type checker parses first
+        # Backstop: the type checker parses the code first. `lax` because the errors handled below
+        # are still matched against this clause.
+        except MontySyntaxError as e:  # pragma: lax no cover
             raise ModelRetry(f'Syntax error in workflow:\n{capture.prepend_to(e.display())}') from e
         except MontyRuntimeError as e:
             if run.budget_exhausted:

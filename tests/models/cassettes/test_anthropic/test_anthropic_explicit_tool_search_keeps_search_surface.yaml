@@ -1,448 +1,502 @@
+version: 1
 interactions:
 - request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br
-      connection:
-      - keep-alive
-      content-length:
-      - '2027'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
     method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Use tool search to find search_only_tool, call it with query "recorded", then return only its result.
-          type: text
-        role: user
-      model: claude-sonnet-4-6
-      stream: false
-      system:
-      - text: |-
-          The following capabilities are deferred and can be loaded using the `load_capability` tool:
-          - refunds: Refund policy tools.
-        type: text
-      tool_choice:
-        type: auto
-      tools:
-      - description: Load a capability to access its full instructions and tools.
-        input_schema:
-          description: Typed arguments for a `load_capability` tool call.
-          properties:
-            id:
-              description: The id of the capability to load.
-              type: string
-          required:
-          - id
-          type: object
-        name: load_capability
-      - defer_loading: true
-        description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            query:
-              type: string
-          required:
-          - query
-          type: object
-        name: search_only_tool
-      - defer_loading: true
-        description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            order_id:
-              type: string
-          required:
-          - order_id
-          type: object
-        name: lookup_refund_policy
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
     uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '701'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-dfff63200d6b0aea98bf1870002acfd4-083634e75e6a632b-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      content:
-      - text: I'll start by searching for the `search_only_tool` right away!
-        type: text
-      - caller:
-          type: direct
-        id: toolu_012vhSRCUoTpkR8JWcxJkw6M
-        input:
-          queries:
-          - search_only_tool
-        name: search_tools
-        type: tool_use
-      id: msg_011CdTWA4JbUSj8vcxzwTJzA
-      model: claude-sonnet-4-6
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 827
-        output_tokens: 77
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '2483'
+      - "1918"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Use tool search to find search_only_tool, call it with query "recorded", then return only its result.
-          type: text
-        role: user
-      - content:
-        - text: I'll start by searching for the `search_only_tool` right away!
-          type: text
-        - id: toolu_012vhSRCUoTpkR8JWcxJkw6M
-          input:
-            queries:
-            - search_only_tool
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - tool_name: search_only_tool
-            type: tool_reference
-          is_error: false
-          tool_use_id: toolu_012vhSRCUoTpkR8JWcxJkw6M
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-6
-      stream: false
-      system:
-      - text: |-
-          The following capabilities are deferred and can be loaded using the `load_capability` tool:
-          - refunds: Refund policy tools.
-        type: text
-      tool_choice:
-        type: auto
-      tools:
-      - description: Load a capability to access its full instructions and tools.
-        input_schema:
-          description: Typed arguments for a `load_capability` tool call.
-          properties:
-            id:
-              description: The id of the capability to load.
-              type: string
-          required:
-          - id
-          type: object
-        name: load_capability
-      - defer_loading: true
-        description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            query:
-              type: string
-          required:
-          - query
-          type: object
-        name: search_only_tool
-      - defer_loading: true
-        description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            order_id:
-              type: string
-          required:
-          - order_id
-          type: object
-        name: lookup_refund_policy
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '704'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-4b711fb23583b0dfe65984c518a2b608-e7a7c71a0920d132-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
+    body:
+      type: json
       content:
-      - text: Found it! Now I'll call `search_only_tool` with the query `"recorded"`.
-        type: text
-      - caller:
-          type: direct
-        id: toolu_01V5JHSWnGroyx4jvSjndUev
-        input:
-          query: recorded
-        name: search_only_tool
-        type: tool_use
-      id: msg_011CdTWABWvn8PBndKpCA5Rw
-      model: claude-sonnet-4-6
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 977
-        output_tokens: 78
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br
-      connection:
-      - keep-alive
-      content-length:
-      - '2919'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Use tool search to find search_only_tool, call it with query "recorded", then return only its result.
-          type: text
-        role: user
-      - content:
-        - text: I'll start by searching for the `search_only_tool` right away!
-          type: text
-        - id: toolu_012vhSRCUoTpkR8JWcxJkw6M
-          input:
-            queries:
-            - search_only_tool
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - tool_name: search_only_tool
-            type: tool_reference
-          is_error: false
-          tool_use_id: toolu_012vhSRCUoTpkR8JWcxJkw6M
-          type: tool_result
-        role: user
-      - content:
-        - text: Found it! Now I'll call `search_only_tool` with the query `"recorded"`.
-          type: text
-        - id: toolu_01V5JHSWnGroyx4jvSjndUev
-          input:
-            query: recorded
-          name: search_only_tool
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: recorded
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Use tool search to find search_only_tool, call it with query "recorded", then
+              return only its result.
             type: text
-          is_error: false
-          tool_use_id: toolu_01V5JHSWnGroyx4jvSjndUev
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-6
-      stream: false
-      system:
-      - text: |-
-          The following capabilities are deferred and can be loaded using the `load_capability` tool:
-          - refunds: Refund policy tools.
-        type: text
-      tool_choice:
-        type: auto
-      tools:
-      - description: Load a capability to access its full instructions and tools.
-        input_schema:
-          description: Typed arguments for a `load_capability` tool call.
-          properties:
-            id:
-              description: The id of the capability to load.
-              type: string
-          required:
-          - id
-          type: object
-        name: load_capability
-      - defer_loading: true
-        description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            query:
-              type: string
-          required:
-          - query
-          type: object
-        name: search_only_tool
-      - defer_loading: true
-        description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            order_id:
-              type: string
-          required:
-          - order_id
-          type: object
-        name: lookup_refund_policy
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
+        model: claude-sonnet-4-6
+        stream: true
+        system:
+        - type: text
+          text: |-
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
+            - refunds: Refund policy tools.
+        tool_choice:
+          type: auto
+        tools:
+        - name: load_capability
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          input_schema:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
                 type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
-    uri: https://api.anthropic.com/v1/messages?beta=true
+            required:
+            - id
+            type: object
+        - name: search_only_tool
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties:
+              query:
+                type: string
+            required:
+            - query
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '507'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-8e66054c4d6b6e7672fee6bcb831a84b-4340380d537f6ce4-01
+      - 00-736f7d9661479fb0822fec421b3ba2d9-832bd261ab743253-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CfY3nNjvs5CtYX9tn4Qu4","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":857,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":6,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}        }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll search for the tool"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" first"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_016DQZ2tcuGFPXwSLn8AUXgY","name":"search_tools","input":{},"caller":{"type":"direct"}}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"queri"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"es\": [\""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"search_"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"only_to"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ol\"]}"}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1          }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":857,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":68}      }
+
+        event: message_stop
+        data: {"type":"message_stop"               }
+
+  recorded_at: 2026-09-29T16:30:24.262669+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2313"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
       content:
-      - text: 'The result is: **recorded**'
-        type: text
-      id: msg_011CdTWALmYMUHgqkijNtJPj
-      model: claude-sonnet-4-6
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 1068
-        output_tokens: 10
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Use tool search to find search_only_tool, call it with query "recorded", then
+              return only its result.
+            type: text
+        - role: assistant
+          content:
+          - text: I'll search for the tool first!
+            type: text
+          - id: toolu_016DQZ2tcuGFPXwSLn8AUXgY
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - search_only_tool
+        - role: user
+          content:
+          - tool_use_id: toolu_016DQZ2tcuGFPXwSLn8AUXgY
+            type: tool_result
+            content:
+            - tool_name: search_only_tool
+              type: tool_reference
+            is_error: false
+        model: claude-sonnet-4-6
+        stream: true
+        system:
+        - type: text
+          text: |-
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
+            - refunds: Refund policy tools.
+        tool_choice:
+          type: auto
+        tools:
+        - name: load_capability
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          input_schema:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+        - name: search_only_tool
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties:
+              query:
+                type: string
+            required:
+            - query
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-fb3e58634a04cf5d3dca0736ece45c05-408b1bbc566418ac-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CfY3niybSN7QAeXz43Bot","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":998,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}          }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Found"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" it! Now"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" I"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'ll call"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" it"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" with the query \"recorded\""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_011VvyDzEJkG7W5VbLzJjQ9F","name":"search_only_tool","input":{},"caller":{"type":"direct"}}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\": \"rec"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"orded\"}"}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1        }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":998,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":71}             }
+
+        event: message_stop
+        data: {"type":"message_stop"       }
+
+  recorded_at: 2026-09-29T16:30:29.261239+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2701"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Use tool search to find search_only_tool, call it with query "recorded", then
+              return only its result.
+            type: text
+        - role: assistant
+          content:
+          - text: I'll search for the tool first!
+            type: text
+          - id: toolu_016DQZ2tcuGFPXwSLn8AUXgY
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - search_only_tool
+        - role: user
+          content:
+          - tool_use_id: toolu_016DQZ2tcuGFPXwSLn8AUXgY
+            type: tool_result
+            content:
+            - tool_name: search_only_tool
+              type: tool_reference
+            is_error: false
+        - role: assistant
+          content:
+          - text: Found it! Now I'll call it with the query "recorded"!
+            type: text
+          - id: toolu_011VvyDzEJkG7W5VbLzJjQ9F
+            type: tool_use
+            name: search_only_tool
+            input:
+              query: recorded
+        - role: user
+          content:
+          - tool_use_id: toolu_011VvyDzEJkG7W5VbLzJjQ9F
+            type: tool_result
+            content:
+            - text: recorded
+              type: text
+            is_error: false
+        model: claude-sonnet-4-6
+        stream: true
+        system:
+        - type: text
+          text: |-
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
+            - refunds: Refund policy tools.
+        tool_choice:
+          type: auto
+        tools:
+        - name: load_capability
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          input_schema:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+        - name: search_only_tool
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties:
+              query:
+                type: string
+            required:
+            - query
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-558cfe2629a91736eadaa2506c1c58e8-4f4704de8c09792c-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CfY3o6LjUuPbYz4seBKSV","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1082,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global"},"diagnostics":null} }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}      }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The result"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is: **recorded**"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1082,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}   }
+
+        event: message_stop
+        data: {"type":"message_stop"     }
+
+  recorded_at: 2026-09-29T16:30:30.477861+00:00

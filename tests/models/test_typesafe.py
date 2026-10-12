@@ -5,12 +5,12 @@ import pickle
 from collections.abc import Callable, Mapping
 from decimal import Decimal
 from enum import Enum, IntEnum
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, NotRequired, cast
 
 import httpx2
 import pytest
 from pydantic import BaseModel, Field, WithJsonSchema
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -48,6 +48,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters, decision
+from pydantic_ai.models.decision import DecisionRequest, NoulQuestion
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -75,7 +76,7 @@ pytestmark = [
 
 # Opted in, and the cassettes were recorded with the described options in the request, so Jev answered
 # knowing what each verdict means.
-class Verdict(UseEnumMemberDocstrings, str, Enum):
+class Verdict(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """How to handle this command."""
 
     run = 'run'
@@ -93,7 +94,7 @@ class Handling(BaseModel):
     irreversible: bool = Field(description='Would running this destroy data or leak secrets?')
 
 
-class Colour(str, Enum):
+class Colour(str, Enum):  # noqa: UP042
     red = 'red'
     blue = 'blue'
 
@@ -449,7 +450,7 @@ class WithOutOfOrderRubric(BaseModel):
     level: OutOfOrder
 
 
-class OnlyOne(str, Enum):
+class OnlyOne(str, Enum):  # noqa: UP042
     only = 'only'
 
 
@@ -1997,7 +1998,7 @@ class Customer(BaseModel):
 
 
 # Opted in, and the cassette was recorded with the description on the `billing` option.
-class Area(UseEnumMemberDocstrings, str, Enum):
+class Area(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     billing = 'billing'
     """Money already owed, charged or refunded."""
     account = 'account'
@@ -2507,6 +2508,22 @@ async def test_file_in_history_rejected(allow_model_requests: None, typesafe_mod
     agent = Agent(typesafe_model, output_type=bool, instructions='Is this fine?')
     with pytest.raises(UserError, match='Files are not supported'):
         await agent.run('Is it a cat?', message_history=history)
+
+
+async def test_decide_rejects_image_evidence_before_a_request(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
+):
+    with pytest.raises(UserError, match='TypeSafe does not support image input'):
+        await typesafe_model.decide(
+            DecisionRequest(
+                state='Review this image.',
+                questions={'q': NoulQuestion()},
+                images=(BinaryContent(b'image', media_type='image/png'),),
+            ),
+            {},
+        )
+
+    assert request_capture.paths == []
 
 
 async def test_non_text_prompt_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):

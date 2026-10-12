@@ -372,7 +372,8 @@ async def test_gateway_provider_with_google_cloud(allow_model_requests: None, ga
 async def test_gateway_provider_with_anthropic(allow_model_requests: None, gateway_api_key: str):
     provider = gateway_provider('anthropic', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = AnthropicModel('claude-sonnet-4-5', provider=provider)
-    agent = Agent(model)
+    # Pinned below the SDK's non-streaming limit so the request matches the local-gateway recording.
+    agent = Agent(model, model_settings={'max_tokens': 4096})
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')

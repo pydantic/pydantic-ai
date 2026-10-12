@@ -16,9 +16,10 @@ import warnings
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NotRequired
 
 from pydantic import ConfigDict, JsonValue, TypeAdapter, ValidationError, with_config
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness._workspace import workspace_path

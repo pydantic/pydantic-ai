@@ -1,7 +1,7 @@
 import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, contextmanager
-from datetime import timezone
+from datetime import UTC
 from typing import cast
 from unittest.mock import AsyncMock
 
@@ -45,7 +45,7 @@ async def test_model_request():
         ModelResponse(
             parts=[TextPart(content='success (no tool calls)')],
             model_name='test',
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             usage=RequestUsage(input_tokens=51, output_tokens=4),
             provider_name='test',
         )
@@ -65,7 +65,7 @@ async def test_model_request_tool_call():
         ModelResponse(
             parts=[ToolCallPart(tool_name='tool_name', args={}, tool_call_id=IsStr(regex='pyd_ai_.*'))],
             model_name='test',
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             usage=RequestUsage(input_tokens=51, output_tokens=2),
             provider_name='test',
         )
@@ -78,7 +78,7 @@ def test_model_request_sync():
         ModelResponse(
             parts=[TextPart(content='success (no tool calls)')],
             model_name='test',
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             usage=RequestUsage(input_tokens=51, output_tokens=4),
             provider_name='test',
         )

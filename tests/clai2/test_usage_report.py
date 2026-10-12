@@ -23,9 +23,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 from pydantic_clai2 import Session, chat
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.status import Status
-from pydantic_clai2.usage_report import cost_line, format_cost, session_usage, usage_command
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.rendering.status import Status
+from pydantic_clai2.ui.rendering.usage_report import cost_line, format_cost, session_usage, usage_command
 
 PromptT = TypeVar('PromptT')
 
@@ -116,7 +116,7 @@ async def test_unpriced_test_model_and_clear() -> None:
     assert line.startswith('Retained history cost unknown:')
     assert 'over 2 requests' in line
     assert 'No price data for no-such-model' in line
-    session.clear()
+    await session.clear()
     assert cost_line(session_usage(session.messages)) == 'No usage yet.'
 
 

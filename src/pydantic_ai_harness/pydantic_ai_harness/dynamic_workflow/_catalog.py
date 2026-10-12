@@ -10,6 +10,7 @@ from typing import Any, Generic
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.function_signature import FunctionSignature
+from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, post_compaction_window
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai_harness.dynamic_workflow._prelude import PRIVATE_PREFIX, render_helper_stubs
 
@@ -69,6 +70,8 @@ def _render_agent_block(
         conflicting_type_names=conflicting_type_names,
     )
 
+
+_REVEAL_ANNOUNCEMENT_PREFIX = 'A new sub-agent is now available to call from inside the'
 
 _BASE_DESCRIPTION = """\
 Write and run a Python orchestration script in a sandbox to coordinate multiple sub-agents.
@@ -204,8 +207,8 @@ def render_reveal(
 ) -> str:
     """Announcement enqueued when a sub-agent is revealed mid-run.
 
-    Delivered as a conversation message (not folded into the cached tool description), so the
-    prompt-cache prefix stays stable while the model still learns the agent is now callable.
+    Delivered as a system-level conversation message (not folded into the cached tool description),
+    so the prompt-cache prefix stays stable while the model still learns the agent is now callable.
     """
     signatures = {agent_name: agent_signature(agent_name, entry.agent) for agent_name, entry in catalog.items()}
     signature = signatures[name]
@@ -215,7 +218,21 @@ def render_reveal(
         signature, catalog[name].resolved_description, conflicting_type_names=conflicting
     )
     block = '\n\n'.join([*type_blocks, function_block])
-    return f'A new sub-agent is now available to call from inside the `{tool_name}` script:\n\n```python\n{block}\n```'
+    return f'{_REVEAL_ANNOUNCEMENT_PREFIX} `{tool_name}` script:\n\n```python\n{block}\n```'
+
+
+def visible_revealed_agents(messages: Sequence[ModelMessage], tool_name: str, names: Sequence[str]) -> set[str]:
+    """Read authored reveal announcements after the latest compaction boundary."""
+    prefix = f'{_REVEAL_ANNOUNCEMENT_PREFIX} `{tool_name}` script:\n\n```python\n'
+    revealed: set[str] = set()
+    for message in post_compaction_window(messages):
+        if isinstance(message, ModelRequest):
+            for part in message.parts:
+                if isinstance(part, SystemPromptPart) and part.content.startswith(prefix):
+                    # Keep this pattern aligned with the signature rendered by `agent_signature` from
+                    # `_SUB_AGENT_PARAMS_SCHEMA`; it identifies which revealed agents remain visible.
+                    revealed.update(name for name in names if f'\nasync def {name}(*, task: str)' in part.content)
+    return revealed
 
 
 @dataclass(frozen=True)

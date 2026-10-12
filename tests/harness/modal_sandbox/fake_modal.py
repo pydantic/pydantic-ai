@@ -551,7 +551,7 @@ class FakeSandbox:
         if self.shutting_down:
             raise FakeConflictError('Modal Sandbox is shutting down.')
         if stopping:
-            return _FakeProcess(b'', b'', 0, None, False)
+            return _FakeProcess(b'', b'', self._control.stop_exit_code, None, False)
         if self._control.exec_error is not None:
             raise self._control.exec_error
         # The command wrapper runs argv through sh; answer for the actual program.
@@ -608,6 +608,8 @@ class FakeModal:
         self.attach_poll_result: int | None = None
         self.exec_error: Exception | None = None
         self.exec_hangs = False
+        # Exit status of the backend's script that stops a command.
+        self.stop_exit_code = 0
         self.wait_error: Exception | None = None
         self.wait_hangs = False
         self.stdout_hangs = False
