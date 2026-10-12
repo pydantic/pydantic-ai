@@ -1,5 +1,6 @@
 """The live panel: transcript and pinned editor painted as termflow.live frames on the alternate screen."""
 
+import asyncio
 import io
 import math
 import re
@@ -89,6 +90,7 @@ class PromptSurface(io.StringIO):
         """The cells last painted, which a selection copies from."""
         self._transcript_rows = 0
         """How many of the frame's top rows show the transcript, the only ones a selection covers."""
+        self._paint_scheduled = False
 
     def isatty(self) -> bool:
         """Preserve Rich and Termflow terminal detection."""
@@ -188,8 +190,8 @@ class PromptSurface(io.StringIO):
         with self._lock:
             self.view.scroll(rows)
             self.selection.clear()
-            if self._live and not self._holds:
-                self._paint()
+            self._dirty = True
+        self._paint_soon()
 
     def transcript_key(self, key: str, data: str = '') -> str | None:
         """Page, wheel, drag-select, or click a URL for one of `TRANSCRIPT_KEYS`; return the text a drag copied.
@@ -217,8 +219,9 @@ class PromptSurface(io.StringIO):
                     return text
             elif clicked and self._frame is not None and (url := self._url_at(report.cell)):
                 self.open_url(url)
-            elif self._live and not self._holds:
-                self._paint()
+            else:
+                self._dirty = True
+        self._paint_soon()
         return None
 
     def _url_at(self, cell: tuple[int, int]) -> str | None:
@@ -226,6 +229,26 @@ class PromptSurface(io.StringIO):
         # The scrolled-away hint covers the bottom transcript row, so a URL there reads as cut off.
         rows = self._transcript_rows - (self.view.anchor is not None)
         return url_at(self._frame, cell, rows=rows, joins=self.view.joins())
+
+    def _paint_soon(self) -> None:
+        """Paint once the event loop finishes the current callback, or now outside one.
+
+        The input reader handles every pending report in one callback, and a trackpad sends wheel
+        and drag reports in bursts. A frame costs milliseconds, so painting per report stalled input
+        for a burst's worth of frames that were each replaced at once; this paints the last one.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.refresh()
+            return
+        if not self._paint_scheduled:
+            self._paint_scheduled = True
+            loop.call_soon(self._scheduled_paint)
+
+    def _scheduled_paint(self) -> None:
+        self._paint_scheduled = False
+        self.refresh()
 
     @property
     def page(self) -> int:

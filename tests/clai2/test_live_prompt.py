@@ -733,12 +733,14 @@ async def test_page_keys_and_wheel_scroll_the_transcript_without_touching_the_dr
         newest = terminal.lines()[0]
         live.feed('pageup')
         assert live.output.view.anchor is not None
+        await anyio.sleep(0)  # Scrolling paints once the input callback returns.
         assert terminal.lines()[0] != newest
         assert live.buffer.text == 'draft' and live.notice == 'kept notice'
         paged = terminal.lines()[0]
         live.feed('mouse', '\x1b[<0;10;5M')  # A click scrolls nothing.
         assert terminal.lines()[0] == paged
         live.feed('mouse', '\x1b[<68;10;5M')  # Shift+wheel up.
+        await anyio.sleep(0)
         assert terminal.lines()[0] == f'line {int(paged.split()[1]) - WHEEL_ROWS}'
         live.feed('mouse', 'not a mouse report')
         live.feed('pagedown')
