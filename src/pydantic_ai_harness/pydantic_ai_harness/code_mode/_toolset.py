@@ -19,7 +19,7 @@ from pydantic_core import PydanticSerializationError, to_json, to_jsonable_pytho
 from typing_extensions import TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.function_signature import FunctionSignature
@@ -771,9 +771,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     max_retries: int = 3
     """Maximum number of retries for the `run_code` tool (syntax errors count as retries)."""
 
-    native_capabilities: Sequence[type[AbstractCapability[Any]]] = field(default=(), kw_only=True)
-    """Capability classes whose tools stay native, matched against each tool's owning capability."""
-
     # Keyword-only: `os_access`, `mount`, and `dynamic_catalog` shipped as positional parameters,
     # so inserting these into the positional sequence would silently rebind existing callers'
     # arguments (an `OSAccess` passed fourth would land in `max_tool_calls`).
@@ -783,6 +780,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     Budget is reserved before each call is scheduled, so a snippet cannot allocate host tasks
     beyond this many. Calls past the budget are refused at the sandbox call site.
     """
+
+    native_capabilities: Sequence[type[AbstractCapability[Any]]] = field(default=(), kw_only=True)
+    """Capability classes whose tools stay native, matched against each tool's owning capability."""
 
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = field(default=None, kw_only=True)
     """Sandbox execution limits.
@@ -1070,9 +1070,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         return next((run_id for run_id, cap in ctx.capabilities.items() if cap is self.capability), None)
 
     def _from_native_capability(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> bool:
-        """Whether the capability that contributed the tool is an instance of a `native_capabilities` class."""
+        """Whether the tool's capability, or one it wraps (e.g. `PrefixTools`), is a `native_capabilities` instance."""
+        kinds = tuple(self.native_capabilities)
         owner = ctx.capabilities.get(tool_def.capability_id or '')
-        return isinstance(owner, tuple(self.native_capabilities))
+        while owner is not None:
+            if isinstance(owner, kinds):
+                return True
+            owner = owner.wrapped if isinstance(owner, WrapperCapability) else None
+        return False
 
     async def _execute_code(  # noqa: C901
         self,

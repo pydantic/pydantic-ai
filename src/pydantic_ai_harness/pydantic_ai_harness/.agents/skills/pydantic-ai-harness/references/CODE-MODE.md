@@ -186,6 +186,7 @@ CodeMode(
     max_retries: int = 3,
     *,
     max_tool_calls: int = 100,
+    native_capabilities: Sequence[type[AbstractCapability]] = (),  # their tools stay regular tool calls
     os_access: CodeModeOS | None = None,
     mount: CodeModeMount | None = None,
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None,

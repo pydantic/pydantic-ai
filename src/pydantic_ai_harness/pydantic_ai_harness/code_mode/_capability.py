@@ -117,9 +117,9 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     native_capabilities: Sequence[type[AbstractCapability[Any]]] = ()
     """Capability classes whose tools stay regular tool calls rather than being sandboxed.
 
-    A tool matches when the capability that contributed it is an instance of a listed class, so
-    you don't need to know the names of the tools a capability registers. Applies whatever `tools`
-    selects.
+    A tool matches when the capability that contributed it, or a capability that one wraps (as
+    `PrefixTools` does), is an instance of a listed class, so you don't need to know the names of
+    the tools a capability registers. Applies whatever `tools` selects.
     """
 
     max_tool_calls: int = 100

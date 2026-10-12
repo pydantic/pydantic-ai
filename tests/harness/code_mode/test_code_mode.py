@@ -35,7 +35,15 @@ from pydantic_ai import (
     Tool,
     ToolDefinition,
 )
-from pydantic_ai.capabilities import AbstractCapability, Capability, Instrumentation, ToolSearch
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    DynamicCapability,
+    Instrumentation,
+    PrefixTools,
+    ToolSearch,
+    Toolset,
+)
 from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -1921,8 +1929,15 @@ class TestCodeMode:
         assert ('async def run_workflow' in description) is sandboxed
         assert ('run_workflow' in tools) is not sandboxed
 
-    async def test_native_capabilities_keep_a_capabilitys_tools_native(self) -> None:
-        """`native_capabilities` matches a tool by the capability that contributed it, not by its name."""
+    @pytest.mark.parametrize('wrapping', ['direct', 'prefixed', 'dynamic'])
+    async def test_native_capabilities_keep_a_capabilitys_tools_native(
+        self, wrapping: Literal['direct', 'prefixed', 'dynamic']
+    ) -> None:
+        """`native_capabilities` matches a tool by the capability that contributed it, not by its name.
+
+        A capability inside a wrapper, such as `PrefixTools` or a resolved `DynamicCapability`, still
+        matches by its own class.
+        """
         offered: dict[str, str | None] = {}
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1945,14 +1960,21 @@ class TestCodeMode:
             def get_toolset(self) -> FunctionToolset[object]:
                 return FunctionToolset([lookup_user, lookup_order])
 
+        lookups = Lookups()
+        owner: AbstractCapability[object] = lookups
+        if wrapping == 'prefixed':
+            owner = PrefixTools(wrapped=lookups, prefix='db')
+        elif wrapping == 'dynamic':
+            owner = DynamicCapability[object](lambda ctx: lookups)
+
         agent: Agent[object, str] = Agent(
             FunctionModel(model_fn),
-            tools=[search],
-            capabilities=[Lookups(), CodeMode[object](native_capabilities=[Lookups])],
+            capabilities=[Toolset(FunctionToolset([search])), owner, CodeMode[object](native_capabilities=[Lookups])],
         )
         await agent.run('go')
 
-        assert sorted(offered) == ['lookup_order', 'lookup_user', 'run_code']
+        prefix = 'db_' if wrapping == 'prefixed' else ''
+        assert sorted(offered) == [f'{prefix}lookup_order', f'{prefix}lookup_user', 'run_code']
         run_code_description = offered['run_code']
         assert run_code_description is not None
         assert 'async def search' in run_code_description

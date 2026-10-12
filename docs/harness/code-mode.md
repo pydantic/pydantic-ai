@@ -127,13 +127,13 @@ Here `search` and `fetch` are removed from the model-facing tool list and become
 
 ### Keeping tools native
 
-Some tools take a program as their argument. Folding one into `run_code` would make the model write Python that passes a second script as a string literal, so these tools sit beside `run_code`, whatever `tools` selects:
+Some tools take a program as their argument, or belong to a family of tools that does. Folding one into `run_code` would make the model write Python that passes a second script as a string literal, so these tools sit beside `run_code`, whatever `tools` selects:
 
 - every `Shell` tool, so a background command is started, checked, and stopped through the same kind of call
 - `DynamicWorkflow`'s `run_workflow` and `CapabilityCreation`'s `author_capability`
 - the ACP terminal's `run_command`
 
-To keep all of another capability's tools native without knowing their names, list its class in `native_capabilities`. A tool matches when the capability that contributed it is an instance of a listed class:
+To keep all of another capability's tools native without knowing their names, list its class in `native_capabilities`. A tool matches when the capability that contributed it, or a capability that one wraps (as `PrefixTools` does), is an instance of a listed class:
 
 ```python
 from pydantic_ai_harness import CodeMode, FileSystem
@@ -160,10 +160,19 @@ run_script_tool = Tool(run_script, metadata={'code_mode_native': True})
 To override a declaration on a tool you didn't write, set the key with [`SetToolMetadata`](../capabilities/set-tool-metadata.md). This folds `Shell`'s persistent `shell` tool into `run_code`:
 
 ```python
-from pydantic_ai.capabilities import SetToolMetadata
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace, SetToolMetadata
 from pydantic_ai_harness import CodeMode, Shell
 
-capabilities = [Shell(tools=['shell']), SetToolMetadata(tools=['shell'], code_mode_native=False), CodeMode()]
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[
+        LocalWorkspace('.'),
+        Shell(tools=['shell']),
+        SetToolMetadata(tools=['shell'], code_mode_native=False),
+        CodeMode(),
+    ],
+)
 ```
 
 ## Tool Search interaction

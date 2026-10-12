@@ -1583,19 +1583,12 @@ class TestCodeModeInterop:
         assert run_code_description is not None
         assert '_command' not in run_code_description
 
-    def test_command_tools_keep_their_trace_hint(self) -> None:
-        """`code_arg_name` stays on the tools that take a command line, for trace rendering only."""
-        ts = ShellToolset[None](
-            allowed_commands=[],
-            denied_commands=[],
-            denied_operators=[],
-            default_timeout=10,
-            max_output_chars=50_000,
-            persist_cwd=False,
-            allow_interactive=False,
-            tools=SHELL_TOOL_NAMES,
-        )
-        hints = {name: (tool.metadata or {}).get('code_arg_name') for name, tool in ts.tools.items()}
+    def test_every_tool_declares_native_and_command_tools_keep_their_trace_hint(self) -> None:
+        """`code_mode_native` is on every tool; `code_arg_name` only on those taking a command line, for traces."""
+        tools = Shell[None](tools=SHELL_TOOL_NAMES).get_toolset().tools
+        declared = {name: (tool.metadata or {}).get('code_mode_native') for name, tool in tools.items()}
+        hints = {name: (tool.metadata or {}).get('code_arg_name') for name, tool in tools.items()}
+        assert declared == dict.fromkeys(SHELL_TOOL_NAMES, True)
         assert hints == {
             'run_command': 'command',
             'start_command': 'command',

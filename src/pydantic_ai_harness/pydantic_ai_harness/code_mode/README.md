@@ -176,9 +176,10 @@ become callable functions inside `run_code`. Tools without
 
 ### Keeping tools native
 
-Some tools take a program as their argument. Folding one into `run_code` would
-make the model write Python that passes a second script as a string literal, so
-these tools sit beside `run_code`, whatever `tools` selects:
+Some tools take a program as their argument, or belong to a family of tools that
+does. Folding one into `run_code` would make the model write Python that passes a
+second script as a string literal, so these tools sit beside `run_code`, whatever
+`tools` selects:
 
 - every `Shell` tool, so a background command is started, checked, and stopped
   through the same kind of call
@@ -187,7 +188,8 @@ these tools sit beside `run_code`, whatever `tools` selects:
 
 To keep all of another capability's tools native without knowing their names,
 list its class in `native_capabilities`. A tool matches when the capability that
-contributed it is an instance of a listed class:
+contributed it, or a capability that one wraps (as `PrefixTools` does), is an
+instance of a listed class:
 
 ```python
 from pydantic_ai_harness import CodeMode, FileSystem
@@ -221,10 +223,19 @@ To override a declaration on a tool you didn't write, set the key with
 This folds `Shell`'s persistent `shell` tool into `run_code`:
 
 ```python
-from pydantic_ai.capabilities import SetToolMetadata
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace, SetToolMetadata
 from pydantic_ai_harness import CodeMode, Shell
 
-capabilities = [Shell(tools=['shell']), SetToolMetadata(tools=['shell'], code_mode_native=False), CodeMode()]
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[
+        LocalWorkspace('.'),
+        Shell(tools=['shell']),
+        SetToolMetadata(tools=['shell'], code_mode_native=False),
+        CodeMode(),
+    ],
+)
 ```
 
 ## Return values
@@ -738,6 +749,7 @@ CodeMode(
     tools='all',          # 'all', list[str], callable, or metadata dict
     max_retries=3,        # retries on sandbox execution errors
     max_tool_calls=100,   # nested tool calls allowed in one run_code call
+    native_capabilities=(),  # capability classes whose tools stay regular tool calls
     id=None,              # required when defer_loading=True
     description=None,     # one-line catalog entry shown while deferred
     defer_loading=False,
