@@ -653,9 +653,13 @@ class TestBrowserUseToolset:
             return _FakeHistory(result='browsed', success=True)
 
         monkeypatch.setattr(BrowserUseAgent, 'run', record_run)
-        sent: list[object] = []
+        sent: list[str] = []
+
+        def record_capture(event: BaseTelemetryEvent) -> None:
+            sent.append(event.name)
+
         process_telemetry = ProductTelemetry()
-        monkeypatch.setattr(process_telemetry, 'capture', sent.append)
+        monkeypatch.setattr(process_telemetry, 'capture', record_capture)
         monkeypatch.setattr(process_telemetry, 'flush', lambda: sent.append('flush'))
         toolset = BrowserUse[None](browser_use_telemetry=browser_use_telemetry).get_toolset()
 
@@ -663,10 +667,9 @@ class TestBrowserUseToolset:
 
         agent = seen['agent']
         assert isinstance(agent, BrowserUseAgent)
-        event = _TelemetryEvent()
-        agent.telemetry.capture(event)
+        agent.telemetry.capture(_TelemetryEvent())
         agent.telemetry.flush()
-        assert sent == ([event, 'flush'] if browser_use_telemetry else [])
+        assert sent == (['test_event', 'flush'] if browser_use_telemetry else [])
 
     async def test_without_llm_each_run_uses_its_own_model(self, kill_calls: list[BrowserSession]) -> None:
         """`llm=None` follows the host run's model on every call instead of a browser-use default."""
