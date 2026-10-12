@@ -385,6 +385,25 @@ import dependencies, startup code, or the custom agent's construction. `/reload`
 does not rerun the CLI or recursively reload third-party packages. Use
 `/plugins reload NAME` when you only want to reload one plugin.
 
+## Browser chat
+
+```bash
+py-cli clai2 --web
+```
+
+`--web` serves the [stock agent](#the-stock-agent-in-your-own-code) in Pydantic AI's
+[web chat UI](../web.md) instead of the terminal, working in the launch directory with
+the model the terminal would use. Open the link it prints; Ctrl-C stops the server.
+`--port` picks another port, and `--port 0` a free one. Saved, drop-in, and project
+plugins (including MCP servers), `/model settings`, and `chain:` fallback chains do
+not apply, browser chats are not saved sessions, and each run may make up to 50 model
+requests, the web UI's own limit.
+
+The server listens on `127.0.0.1` only. The link carries a random token that signs
+your browser in with a cookie; requests without it are refused, so other users and
+programs on the machine cannot run tools through the server. Do not expose the port
+through a proxy or tunnel.
+
 ## The stock agent in your own code
 
 `open_stock_agent` opens CLAI's stock coding agent without the terminal. Use it with

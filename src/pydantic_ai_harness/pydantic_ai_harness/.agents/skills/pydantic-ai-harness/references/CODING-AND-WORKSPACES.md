@@ -420,7 +420,8 @@ To run CLAI's stock coding agent from code or over ACP, without the terminal:
 `coder`, `repo_context`, and `compaction` built-ins plus your `capabilities`, and ignores the user's
 saved CLAI configuration. `plugin_settings={'coder': {...}}` overrides built-in settings. With a
 capability that requires approval over ACP, pass `{'coder': {'sub_agents': False}}`: a delegated
-task's approval fails the run.
+task's approval fails the run. `clai2 --web` serves that stock agent in core's `to_web()` browser UI
+on `127.0.0.1`, behind the token link it prints.
 
 ## See also
 

@@ -55,6 +55,10 @@ def run(*, splash: Splash | None = None) -> None:
         '-p', '--prompt', metavar='TEXT', help='Run one prompt without interaction and print only the answer'
     )
     parser.add_argument('--request-limit', type=int)
+    parser.add_argument(
+        '--web', action='store_true', help="Chat in the browser instead: serve CLAI's stock agent on 127.0.0.1"
+    )
+    parser.add_argument('--port', type=int, help='With --web, the port to serve on (default: 7932; 0 picks a free one)')
     parser.add_argument('--database', type=Path, help='Settings database location')
     parser.add_argument('command', nargs='?', choices=('config', 'plugins'))
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
@@ -99,6 +103,12 @@ def run(*, splash: Splash | None = None) -> None:
         if agent is not None and agent.model is not None and not model:
             # Keep the agent's own model over saved, project, and default ones; only -m or CLAI_MODEL replaces it.
             settings = settings.model_copy(update={'model': None})
+        if args.web:
+            from pydantic_clai2.cli.web import DEFAULT_PORT, serve_web
+
+            port = DEFAULT_PORT if args.port is None else args.port
+            asyncio.run(serve_web(settings=settings, port=port, workspace=Path.cwd()))
+            return
         if args.prompt is not None:
             from pydantic_clai2.cli.headless import run_headless
 
@@ -242,6 +252,24 @@ def _resume_source(args: argparse.Namespace) -> None:
 
 
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    if args.port is not None and not args.web:
+        parser.error('--port requires --web')
+    if args.port is not None and not 0 <= args.port <= 65535:
+        parser.error('--port must be between 0 and 65535')
+    if args.web:
+        resume_flag = '--resume' if args.resume_from is None else f'--resume-{args.resume_from}'
+        given = {
+            str(args.command): args.command is not None,
+            '--prompt': args.prompt is not None,
+            resume_flag: args.resume is not None,
+            '--session-id': args.session_id is not None,
+            '--fork-session': args.fork_session,
+            '--worktree': args.worktree is not None,
+            '--agent': args.agent is not None,
+            '--request-limit': args.request_limit is not None,
+        }
+        if conflicting := [flag for flag, present in given.items() if present]:
+            parser.error(f'--web cannot be combined with {", ".join(conflicting)}')
     if args.command and (
         args.resume is not None
         or args.worktree is not None

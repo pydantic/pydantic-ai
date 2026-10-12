@@ -3072,3 +3072,5 @@ plugins never load. Each plugin gets `session_start` when the context opens and
 `session_end` when it closes, with reason `error` if the block raised. No turn hooks
 fire, no `/commands` run, and nothing renders: the host runs the agent. See
 [The stock agent in your own code](README.md#the-stock-agent-in-your-own-code).
+`clai2 --web` serves this agent in the browser, so the same holds there: your own
+plugins do not load in [browser chat](README.md#browser-chat).

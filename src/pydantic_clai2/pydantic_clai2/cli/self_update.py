@@ -38,7 +38,7 @@ DISTRIBUTION = 'pydantic-clai2'
 PACKAGES = (
     'pydantic-clai2',
     'pydantic-ai-harness[coder]',
-    'pydantic-ai-slim[anthropic,mcp,openai]',
+    'pydantic-ai-slim[anthropic,mcp,openai,web]',
     'pydantic-graph',
 )
 """Requirements installed together from one commit's sdists; `scripts/build_bleeding.sh` builds the same list."""
