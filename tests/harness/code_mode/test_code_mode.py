@@ -1944,17 +1944,18 @@ class TestCodeMode:
             offered.update({tool.name: tool.description for tool in info.function_tools})
             return ModelResponse(parts=[TextPart('done')])
 
+        # Only the tool surface is inspected, so these bodies never run.
         def search(query: str) -> str:
             """Search the catalog."""
-            return query  # pragma: no cover - only the tool surface is inspected
+            return query  # pragma: no cover
 
         def lookup_user(user_id: str) -> str:
             """Look up a user."""
-            return user_id  # pragma: no cover - only the tool surface is inspected
+            return user_id  # pragma: no cover
 
         def lookup_order(order_id: str) -> str:
             """Look up an order."""
-            return order_id  # pragma: no cover - only the tool surface is inspected
+            return order_id  # pragma: no cover
 
         class Lookups(AbstractCapability[object]):
             def get_toolset(self) -> FunctionToolset[object]:

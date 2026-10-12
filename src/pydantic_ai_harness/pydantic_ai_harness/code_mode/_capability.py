@@ -119,7 +119,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 
     A tool matches when the capability that contributed it, or a capability that one wraps (as
     `PrefixTools` does), is an instance of a listed class, so you don't need to know the names of
-    the tools a capability registers. Applies whatever `tools` selects.
+    the tools a capability registers. Applies whatever `tools` selects. Takes classes, so it can't be
+    set from an agent spec.
     """
 
     max_tool_calls: int = 100
@@ -232,10 +233,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         entries: Sequence[object] = self.native_capabilities
         for entry in entries:
             if not (isinstance(entry, type) and issubclass(entry, AbstractCapability)):
-                raise UserError(
-                    f'`native_capabilities` takes capability classes such as `FileSystem`, not {entry!r}, '
-                    'so it cannot be set from an agent spec.'
-                )
+                raise UserError(f'`native_capabilities` takes capability classes such as `FileSystem`, not {entry!r}.')
 
     def get_ordering(self) -> CapabilityOrdering:
         """CodeMode wraps around ToolSearch so that search_tools stays native."""
