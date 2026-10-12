@@ -13,6 +13,7 @@ from rich.text import Text
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
+from pydantic_clai2.config import ToolCallDisplay
 from pydantic_clai2.ui.rendering import theme
 
 
@@ -129,11 +130,22 @@ class ShellPreview:
 class ToolOutput:
     """Present bounded shell chunks and Termflow-highlighted file diffs."""
 
-    def __init__(self, console: Console, *, shell_lines: int = 20, show_output: bool = False) -> None:
-        """Use the conversation's output stream, not global stdout."""
+    def __init__(
+        self,
+        console: Console,
+        *,
+        shell_lines: int = 20,
+        show_output: bool = False,
+        tool_calls: ToolCallDisplay = 'detailed',
+    ) -> None:
+        """Use the conversation's output stream, not global stdout.
+
+        A `grouped` tool-call style counts shell calls, so it shows no shell header or output.
+        """
         self.console = console
         self.shell_lines = shell_lines
-        self.show_output = show_output
+        self.show_output = show_output and tool_calls == 'detailed'
+        self.tool_calls = tool_calls
         self._shells: dict[str | None, ShellPreview] = {}
         self._headers: set[tuple[str | None, str]] = set()
         self._writes: dict[tuple[str | None, str, str], FileChangeRequestEvent] = {}
@@ -147,6 +159,12 @@ class ToolOutput:
         if len(lines) > 1:
             summary += f' (+{len(lines) - 1} command lines)'
         print_tool_header(self.console, name=name, argument=summary)
+
+    def prints_diff(self, event: AgentStreamEvent) -> bool:
+        """Whether `event` is a file's diff, or a call to a tool that prints one, in every tool-call style."""
+        if isinstance(event, FunctionToolCallEvent):
+            return event.part.tool_name in ('write_file', 'edit_file')
+        return isinstance(event, FileWrittenEvent)
 
     def render_call(self, event: FunctionToolCallEvent) -> bool:
         """Show arguments once, before execution, including for failed calls."""
@@ -261,7 +279,7 @@ class ToolOutput:
         if isinstance(event, CommandStartedEvent):
             self._shells[event.tool_call_id] = ShellPreview()
             key = (event.tool_call_id, 'shell')
-            if key not in self._headers:
+            if key not in self._headers and self.tool_calls == 'detailed':
                 self._header('shell', event.command)
             self._headers.discard(key)
         elif isinstance(event, CommandOutputEvent):

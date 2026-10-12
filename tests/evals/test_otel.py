@@ -17,14 +17,18 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.trace import ProxyTracerProvider
 
+    from pydantic_evals._task_run import CURRENT_TASK_RUN, run_task
     from pydantic_evals.otel._context_in_memory_span_exporter import (
+        _add_context_span_exporter,  # pyright: ignore[reportPrivateUsage]
         _context_in_memory_providers,  # pyright: ignore[reportPrivateUsage]
         _ContextInMemorySpanExporter,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_evals.otel._context_subtree import (
         context_subtree,
     )
+    from pydantic_evals.otel._errors import SpanTreeRecordingError
     from pydantic_evals.otel.span_tree import AttributeValue, SpanNode, SpanQuery, SpanTree
 
 with try_import() as logfire_import_successful:
@@ -1116,8 +1120,6 @@ async def test_context_subtree_custom_tracer_provider_without_add_span_processor
 
 async def test_context_subtree_not_configured(mocker: MockerFixture):
     """A tracer provider that cannot take a span processor yields an error, not a tree."""
-    from opentelemetry.trace import ProxyTracerProvider
-
     mocker.patch(
         'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=ProxyTracerProvider()
     )
@@ -1129,6 +1131,65 @@ async def test_context_subtree_not_configured(mocker: MockerFixture):
         'refer to the documentation at '
         'https://pydantic.dev/docs/ai/evals/evaluators/span-based/.'
     )
+
+
+async def test_run_task_without_span_capture_when_task_raises(mocker: MockerFixture):
+    """`run_task` records no span metrics when a failing task has no span tree to extract them from.
+
+    Without a span-capturing tracer provider `context_subtree()` yields a `SpanTreeRecordingError`
+    rather than a `SpanTree`, so there is nothing to extract and the original error still propagates.
+    """
+    mocker.patch(
+        'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=ProxyTracerProvider()
+    )
+    with pytest.raises(RuntimeError, match='boom'):
+        with run_task() as get_eval_context_kwargs:
+            raise RuntimeError('boom')
+
+    kwargs = get_eval_context_kwargs()  # pyright: ignore[reportPossiblyUnboundVariable]
+    assert isinstance(kwargs['_span_tree'], SpanTreeRecordingError)
+    assert kwargs['metrics'] == {}
+    assert CURRENT_TASK_RUN.get() is None
+
+
+async def test_context_subtree_finalizes_tree_on_exception():
+    """Spans completed before an exception are still added to the yielded SpanTree.
+
+    Regression test for #6927: the tree was only finalized after the inner span
+    context exited normally, so an exception escaping `context_subtree()` left the
+    yielded tree empty even though spans had completed before the failure.
+    """
+    with pytest.raises(RuntimeError, match='boom'):
+        with context_subtree() as tree:
+            with logfire.span('before-error'):
+                pass
+            raise RuntimeError('boom')
+
+    assert isinstance(tree, SpanTree)  # pyright: ignore[reportPossiblyUnboundVariable]
+    assert [node.name for node in tree] == ['before-error']
+
+
+async def test_context_subtree_clears_exporter_on_exception():
+    """The span exporter does not retain spans when an exception escapes the context.
+
+    Regression test for #6927: the exporter context was only cleared after the
+    yield in `_context_subtree_spans`, so failed evaluations leaked their completed
+    spans into the shared in-memory exporter.
+    """
+    exporter = _add_context_span_exporter()
+    assert isinstance(exporter, _ContextInMemorySpanExporter)
+    exporter._finished_spans.clear()  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(RuntimeError, match='boom'):
+        with context_subtree():
+            with logfire.span('before-error'):
+                pass
+            raise RuntimeError('boom')
+
+    # Assert on the mapping, not on `get_finished_spans()`: the flattened view would also be
+    # empty if the context's key survived holding an empty list, which is the unbounded-growth
+    # half of #6927.
+    assert exporter._finished_spans == {}  # pyright: ignore[reportPrivateUsage]
 
 
 class RecordingTracerProvider:

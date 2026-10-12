@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -3018,6 +3018,72 @@ async def test_uploaded_file_input(allow_model_requests: None):
         await agent.run(['hello', UploadedFile(file_id='file-123', provider_name='anthropic')])
 
 
+class _StreamBreakingOff(httpx2.AsyncByteStream):
+    """A response body that sends `first` and then breaks off with `error`."""
+
+    def __init__(self, first: bytes, error: Exception):
+        self.first = first
+        self.error = error
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self.first
+        raise self.error
+
+
+_TEXT_CHUNK = {
+    'id': '1',
+    'object': 'chat.completion.chunk',
+    'created': 0,
+    'model': 'mistral-small-latest',
+    'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': 'Hello'}, 'finish_reason': None}],
+}
+
+
+def _connect_error(request: httpx2.Request) -> httpx2.Response:
+    raise httpx2.ConnectError('connection refused', request=request)
+
+
+def _stream_breaking_off(request: httpx2.Request) -> httpx2.Response:
+    return httpx2.Response(
+        200,
+        headers={'content-type': 'text/event-stream'},
+        stream=_StreamBreakingOff(
+            f'data: {json.dumps(_TEXT_CHUNK)}\n\n'.encode(), httpx2.ReadError('connection reset')
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ('handler', 'stream', 'message', 'cause'),
+    [
+        pytest.param(_connect_error, False, 'connection refused', httpx2.ConnectError, id='connect'),
+        pytest.param(_connect_error, True, 'connection refused', httpx2.ConnectError, id='stream-connect'),
+        pytest.param(_stream_breaking_off, True, 'connection reset', httpx2.ReadError, id='mid-stream'),
+    ],
+)
+async def test_model_transport_error(
+    allow_model_requests: None,
+    handler: Callable[[httpx2.Request], httpx2.Response],
+    stream: bool,
+    message: str,
+    cause: type[Exception],
+) -> None:
+    """`mistralai` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        provider = MistralProvider(api_key='test-key', http_client=http_client, base_url='http://localhost')
+        agent = Agent(MistralModel('mistral-small-latest', provider=provider))
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with agent.run_stream('hello') as result:
+                    await result.get_output()
+            else:
+                await agent.run('hello')
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == message
+    assert isinstance(exc_info.value.__cause__, cause)
+
+
 def test_model_status_error(allow_model_requests: None) -> None:
     response = httpx.Response(500, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, content=b'test error')
     mock_client = MockMistralAI.create_mock(SDKError('test error', raw_response=response))
@@ -3423,6 +3489,45 @@ async def test_text_document_binary_content_mapping(text_document_content: Binar
     assert '-----END FILE' in inlined
     assert text_document_content.media_type in inlined
     assert text_document_content.identifier in inlined
+
+
+async def test_parameterized_media_type_text_file_inlined() -> None:
+    """Test that a parameterized text-like media type is inlined as MistralTextChunk.
+
+    Unit test, not VCR: `BinaryContent.from_data_uri` stores `application/json;charset=utf-8`
+    verbatim, and before the classifier ignored parameters the mapping raised
+    `NotImplementedError` for this content.
+    """
+    json_content = BinaryContent.from_data_uri('data:application/json;charset=utf-8;base64,eyJhIjogMX0=')
+    m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'What is in this document?',
+                        json_content,
+                    ]
+                )
+            ]
+        )
+    ]
+
+    mapped = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    user_msg = mapped[0]
+    assert isinstance(user_msg, UserMessage)
+    assert user_msg.content is not None
+    assert isinstance(user_msg.content, list)
+    assert len(user_msg.content) == 2
+    text_chunks = [chunk for chunk in user_msg.content if isinstance(chunk, MistralTextChunk)]
+    assert len(text_chunks) == 2
+    inlined = text_chunks[1].text
+    assert '-----BEGIN FILE' in inlined
+    assert '{"a": 1}' in inlined
+    assert '-----END FILE' in inlined
+    assert json_content.media_type in inlined
+    assert json_content.identifier in inlined
 
 
 async def test_document_url_force_download() -> None:

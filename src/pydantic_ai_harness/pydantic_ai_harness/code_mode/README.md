@@ -668,7 +668,8 @@ do **not** reach the host. Pass `mode='read-write'` when later calls need to rea
 Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python subset. Key restrictions:
 
 - No third-party imports (allowed stdlib: `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
-  `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`)
+  `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`,
+  `functools`, `dataclasses`, `copy`, `base64`, `binascii`)
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation
   and wait APIs are unavailable
 - No clock or randomness by default (`datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, unseeded `random`) -- they become available when an `os_access` handler implements them (the built-in `OSAccess` does); `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer

@@ -15,8 +15,9 @@ from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEv
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireSettings, LogfireSource
+from pydantic_clai2.builtin_plugins.logfire_mcp import LogfireMCPSettings
 from pydantic_clai2.commands import config_command, plugins_command
-from pydantic_clai2.config import PluginSettings, Settings, features
+from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, Settings, features
 from pydantic_clai2.config.api_keys import KeyReference
 from pydantic_clai2.config.plugin_requirements import apply_requirements, stored_requirements
 from pydantic_clai2.config.settings_store import SettingsStore, StoredAccount
@@ -51,6 +52,7 @@ async def test_logfire_user_tag_settings_survive_older_builds(
         assert loaded is not None
         settings = loaded.plugin.host.settings(LogfireSettings)
         assert (settings.user_tag, settings.account) == ('logfire-account', None)  # No identity to tag with.
+        assert settings.httpx is False
         assert store.plugins() == [previous]  # Loading an old declaration does not rewrite it.
         source = LogfireSource(loaded.plugin.host)
         rows = {row.key: row for row in source.rows()}
@@ -64,12 +66,16 @@ async def test_logfire_user_tag_settings_survive_older_builds(
         )
         assert saved.settings['account'] is None
         requirements = store.plugin_requirements('observability')
-        assert requirements == {'user_tag': ['logfire-user-tag'], 'account': ['logfire-user-tag']}
+        assert requirements == {
+            'user_tag': ['logfire-user-tag'],
+            'account': ['logfire-user-tag'],
+            'httpx': ['logfire-httpx'],
+        }
         old_view = apply_requirements(
             saved.settings, stored_requirements(requirements, saved.settings), defaults={}, supported=frozenset()
         )
         assert old_view.settings == {
-            key: value for key, value in saved.settings.items() if key not in ('user_tag', 'account')
+            key: value for key, value in saved.settings.items() if key not in ('user_tag', 'account', 'httpx')
         }
         monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
         await loader.reload('observability')
@@ -82,6 +88,34 @@ async def test_logfire_user_tag_settings_survive_older_builds(
     finally:
         await loader.close('exit')
     assert recorder.exporters and all(exporter.closed for exporter in recorder.exporters)
+
+
+async def test_httpx_opt_in_is_ignored_by_older_builds(tmp_path: Path, recorder: Recorder) -> None:
+    loader, store = observability_loader(tmp_path)
+    try:
+        await loader.load_all()
+        host = _observability_host(loader)
+        source = LogfireSource(host)
+        row = next(row for row in source.rows() if row.key == 'httpx')
+        source.apply(row, 'true')
+        [saved] = store.plugins()
+        assert saved.settings['httpx'] is True
+        requirements = store.plugin_requirements('observability')
+        assert requirements == {
+            'httpx': ['logfire-httpx'],
+            'user_tag': ['logfire-user-tag'],
+            'account': ['logfire-user-tag'],
+        }
+        old_view = apply_requirements(
+            saved.settings,
+            stored_requirements(requirements, saved.settings),
+            defaults={'httpx': False},
+            supported=frozenset({'logfire-user-tag'}),
+        )
+        assert old_view.settings['httpx'] is False
+        assert store.plugins() == [saved]
+    finally:
+        await loader.close('exit')
 
 
 @pytest.mark.parametrize('ui_events', [None, False, True])
@@ -187,6 +221,10 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert store.load().spinner == 'working'
     # Databases from before `/update` follow stable releases.
     assert store.load().update_channel == 'stable'
+    # Databases from before grouped tool calls keep one line per call.
+    assert store.load().tool_calls == 'detailed'
+    # Databases from before `/system_prompt` add no instructions of the user's own.
+    assert store.load().instructions == ''
     assert store.overrides() == {'model': 'test', 'display.thinking': False}
     assert store.plugins() == [PluginSettings(id='notify', factory='notify', enabled=False, settings={'sound': False})]
     assert store.models() == []
@@ -291,6 +329,7 @@ def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_js
         ('display.spinner', '""'),
         ('display.spinner', '3'),
         ('run.speculative_code_mode', '"yes"'),
+        ('run.instructions', '42'),
         ('accounts.pool', '"off"'),
     ],
 )
@@ -303,6 +342,20 @@ def test_invalid_known_settings_fail_without_data_loss(tmp_path: Path, key: str,
     with pytest.raises(ValidationError):
         store.load()
     assert store.path.read_bytes() == snapshot
+
+
+def test_saved_instructions_survive_a_build_without_them(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / 'config.db'
+    SettingsStore(path).set('run.instructions', 'Line one\nLine two')
+    older = {key: name for key, name in SETTING_FIELDS.items() if key != 'run.instructions'}
+    with monkeypatch.context() as build:
+        build.setattr('pydantic_clai2.config.SETTING_FIELDS', older)
+        build.setattr('pydantic_clai2.config.settings_store.SETTING_FIELDS', older)
+        store = SettingsStore(path)
+        assert store.load() == Settings()
+        store.set('display.thinking', False)
+        store.reset('display.thinking')
+    assert SettingsStore(path).overrides() == {'run.instructions': 'Line one\nLine two'}
 
 
 def test_database_from_before_account_pooling_pools_and_keeps_its_settings(tmp_path: Path) -> None:
@@ -660,3 +713,41 @@ def test_legacy_logfire_commands_edit_the_renamed_plugin(tmp_path: Path) -> None
     assert store.plugins()[0].enabled
     plugins_command(store, ['remove', 'logfire'])
     assert store.plugins() == []
+
+
+@pytest.mark.parametrize(
+    'url',
+    [
+        'https://logfire-eu.pydantic.dev/mcp',
+        'https://logfire.example.com/mcp',
+        'https://logfire.example.com/x/mcp',
+        # Not as the picker writes them, but browser sign-ins are stored under these exact URLs.
+        'https://logfire-eu.pydantic.dev/mcp/',
+        'https://Logfire-EU.pydantic.dev/mcp',
+        'https://logfire.pydantic.dev/mcp',
+    ],
+)
+def test_logfire_mcp_settings_from_older_builds_load_under_the_same_id(tmp_path: Path, url: str) -> None:
+    """The plugin is shown as Logfire, but keeps the `logfire_mcp` id, and every MCP URL older builds saved loads as is.
+
+    The URL is the OAuth resource a browser sign-in is stored under, so normalizing it would sign the user out.
+
+    `logfire` cannot become its id: it is the `observability` plugin's stored id, which older builds still read.
+    """
+    store = SettingsStore(tmp_path / 'config.db')
+    legacy = (
+        '{"id":"logfire_mcp","factory":"pydantic_clai2.builtin_plugins.logfire_mcp","enabled":true,'
+        f'"settings":{{"key":null,"url":"{url}","oauth":true,"read_only":false,"include_instructions":true}}}}'
+    )
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute('INSERT INTO plugins VALUES (?, ?)', ('logfire_mcp', legacy))
+    [saved] = store.plugins()
+    assert saved == PluginSettings.model_validate_json(legacy)
+    settings = PluginHost[None](name='logfire_mcp', console=Console(), settings=saved.settings).settings(
+        LogfireMCPSettings
+    )
+    assert (settings.url, settings.read_only) == (url, False)
+    # `/plugins ... logfire` still means `observability`, as in older builds.
+    plugins_command(store, ['add', 'logfire', 'pydantic_clai2.builtin_plugins.logfire'])
+    plugins_command(store, ['disable', 'logfire'])
+    assert {plugin.id: plugin.enabled for plugin in store.plugins()} == {'logfire_mcp': True, 'observability': False}
