@@ -137,6 +137,7 @@ engine:
       _finished = False
       _partial: dict[int, tuple[str, str]] = {}
       _native_tool_call_ends: set[tuple[int, int]] = set()
+      _pending_native_return: tuple[int, int, dict[str, object]] | None = None
 
 
       def _json_value(value: object) -> object:
@@ -163,9 +164,17 @@ engine:
           )
 
 
+      def _flush_pending_native_return() -> None:
+          global _pending_native_return
+          if _pending_native_return is not None:
+              _, _, data = _pending_native_return
+              _emit('tool.execution_complete', data)
+              _pending_native_return = None
+
+
       class _SessionRecorder:
           def observe(self, ctx: RunContext[object], event: AgentStreamEvent) -> None:
-              global _run_id, _usage, _session_id, _model, _started
+              global _run_id, _usage, _session_id, _model, _started, _pending_native_return
               if ctx.run_id is None:
                   return
               if _run_id is None:
@@ -183,6 +192,16 @@ engine:
                   if ctx.prompt is not None:
                       _emit('user.message', {'content': _json_value(ctx.prompt)})
                   _started = True
+
+              if _pending_native_return is not None:
+                  pending_step, pending_index, _ = _pending_native_return
+                  is_same_native_return = (
+                      isinstance(event, PartStartEvent)
+                      and isinstance(event.part, NativeToolReturnPart)
+                      and (ctx.run_step, event.index) == (pending_step, pending_index)
+                  )
+                  if not is_same_native_return:
+                      _flush_pending_native_return()
 
               if isinstance(event, (FunctionToolCallEvent, OutputToolCallEvent)) or (
                   isinstance(event, PartEndEvent) and isinstance(event.part, NativeToolCallPart)
@@ -250,7 +269,11 @@ engine:
                       data['sourceType'] = 'output_tool'
                   elif native:
                       data['sourceType'] = 'native_tool'
-                  _emit('tool.execution_complete', data)
+                  if native:
+                      # Native returns have no PartEndEvent; same-index starts replace their payload.
+                      _pending_native_return = (ctx.run_step, event.index, data)
+                  else:
+                      _emit('tool.execution_complete', data)
               elif isinstance(event, PartStartEvent):
                   if isinstance(event.part, TextPart):
                       _partial[event.index] = ('assistant.message', event.part.content)
@@ -282,6 +305,7 @@ engine:
               global _finished
               if _finished:
                   return
+              _flush_pending_native_return()
               _finished = True
               if _partial and exit_code != 0:
                   for event_type, content in _partial.values():

@@ -1090,7 +1090,31 @@ async def test_native_tool_part_replacement_is_recorded_once_per_response(
                     args={'query': 'canonical input'},
                 )
             }
-            yield {1: DeltaToolCall(name='continue_run', json_args='{}', tool_call_id='continue-id')}
+            yield {
+                1: NativeToolReturnPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='native-id',
+                    content={'results': ['stale first result']},
+                )
+            }
+            yield {
+                1: NativeToolReturnPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='native-id',
+                    content={'results': ['first final result']},
+                )
+            }
+            yield {
+                1: NativeToolReturnPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='native-id',
+                    content={'results': ['first last result']},
+                )
+            }
+            yield {2: DeltaToolCall(name='continue_run', json_args='{}', tool_call_id='continue-id')}
         else:
             yield {
                 0: NativeToolCallPart(
@@ -1105,7 +1129,23 @@ async def test_native_tool_part_replacement_is_recorded_once_per_response(
                     provider_name='function',
                     tool_name='web_search',
                     tool_call_id='native-id',
-                    content={'results': ['later']},
+                    content={'results': ['stale later result']},
+                )
+            }
+            yield {
+                1: NativeToolReturnPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='native-id',
+                    content={'results': ['later final result']},
+                )
+            }
+            yield {
+                1: NativeToolReturnPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='native-id',
+                    content={'results': ['later last result']},
                 )
             }
             yield 'answer'
@@ -1146,12 +1186,67 @@ async def test_native_tool_part_replacement_is_recorded_once_per_response(
             'toolName': 'web_search',
             'success': True,
             'status': 'success',
-            'output': {'results': ['later']},
+            'output': {'results': ['first last result']},
             'sourceType': 'native_tool',
-        }
+        },
+        {
+            'toolCallId': 'native-id',
+            'toolName': 'web_search',
+            'success': True,
+            'status': 'success',
+            'output': {'results': ['later last result']},
+            'sourceType': 'native_tool',
+        },
     ]
     assert [event.type for event in events].count('tool.execution_start') == 3
     assert '**Tool calls:** 3' in parsed.markdown.split(' · ')
+
+
+async def test_native_tool_return_is_flushed_when_stream_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'))
+    event_output = io.StringIO()
+    monkeypatch.setattr(sys, '__stdout__', event_output)
+    module = import_generated_agent(invocation, monkeypatch)
+    agent: Agent[None, str] = module.agent
+
+    async def broken_stream(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls | dict[int, NativeToolCallPart | NativeToolReturnPart]]:
+        yield {
+            0: NativeToolReturnPart(
+                provider_name='function',
+                tool_name='web_search',
+                tool_call_id='native-id',
+                content={'results': ['observed before failure']},
+            )
+        }
+        raise RuntimeError('provider failed')
+
+    with pytest.raises(RuntimeError, match='provider failed'):
+        async with agent.run_stream_events('search', model=FunctionModel(stream_function=broken_stream)) as events:
+            _ = [type(event).__name__ async for event in events]
+    module._recorder.finish(exit_code=1)
+
+    prefix = f'\x1eGH-AW-SESSION/{invocation.frame_key} '
+    events = [
+        _CanonicalEvent.model_validate_json(line.removeprefix(prefix))
+        for line in event_output.getvalue().split('\n')
+        if line.startswith(prefix)
+    ]
+    parsed = parse_log(tmp_path, invocation.stdout + event_output.getvalue())
+    completions = [event for event in events if event.type == 'tool.execution_complete']
+    assert parsed.log_entries == events
+    assert len(completions) == 1
+    assert completions[0].data == {
+        'toolCallId': 'native-id',
+        'toolName': 'web_search',
+        'success': True,
+        'status': 'success',
+        'output': {'results': ['observed before failure']},
+        'sourceType': 'native_tool',
+    }
+    assert events[-1].type == 'session.result'
+    assert events[-1].data['status'] == 'failure'
 
 
 async def test_tool_event_inputs_preserve_json_scalars_arrays_null_and_malformed_text(
