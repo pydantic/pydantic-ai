@@ -354,13 +354,13 @@ def test_azure_provider_voice_live_only_construction(monkeypatch: pytest.MonkeyP
     provider = AzureProvider(voice_live_endpoint='https://vl.services.ai.azure.com', voice_live_api_key='vl-key')
     assert provider.voice_live_endpoint == 'https://vl.services.ai.azure.com'
     assert provider.voice_live_api_key == 'vl-key'
-    assert provider.voice_live_api_version == '2026-04-10'
+    assert provider.voice_live_api_version == '2026-07-15'
 
     # Environment only, and without `AZURE_VOICELIVE_API_VERSION` — the default applies.
     monkeypatch.setenv('AZURE_VOICELIVE_ENDPOINT', 'https://vl.services.ai.azure.com')
     monkeypatch.setenv('AZURE_VOICELIVE_API_KEY', 'vl-key')
     provider = AzureProvider()
-    assert provider.voice_live_api_version == '2026-04-10'
+    assert provider.voice_live_api_version == '2026-07-15'
 
 
 def test_azure_provider_voice_live_key_is_not_borrowed_by_the_data_plane(monkeypatch: pytest.MonkeyPatch):
@@ -477,7 +477,7 @@ def test_azure_provider_voice_live_falls_back_to_openai_resource(monkeypatch: py
     provider = AzureProvider()
     assert provider.voice_live_endpoint == 'https://ga.openai.azure.com'
     assert provider.voice_live_api_key == 'ga-key'
-    assert provider.voice_live_api_version == '2026-04-10'
+    assert provider.voice_live_api_version == '2026-07-15'
 
 
 def test_azure_provider_for_realtime_normalizes_bare_endpoint(monkeypatch: pytest.MonkeyPatch):

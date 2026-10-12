@@ -14,9 +14,13 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness.planning._store import InMemoryPlanStore, PlanStore
 from pydantic_ai_harness.planning._toolset import (
     SUBTASK_TOOL_NAMES,
+    PlanItemUpdate,
     PlanningToolset,
+    PlanStoreOperations,
     available_tool_names,
     render_plan,
+    resolve_run_store,
+    tool_call_store,
 )
 from pydantic_ai_harness.planning._types import PlanItem
 
@@ -123,8 +127,13 @@ class Planning(AbstractCapability[AgentDepsT]):
 
     _resolved_store: PlanStore | None = field(default=None, init=False, repr=False, compare=False)
 
+    _toolset: PlanningToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
+    """The one `planning` toolset, shared with every per-run copy so durable execution sees the leaf it registered."""
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Planning[AgentDepsT]:
         """Return a clone with this run's store resolved and cached (per-run isolation)."""
+        # Build the toolset first so it belongs to this capability rather than to the clone.
+        self.get_toolset()
         clone = copy(self)
         clone._resolved_store = clone._resolve_store(ctx)
         return clone
@@ -144,8 +153,30 @@ class Planning(AbstractCapability[AgentDepsT]):
         return InMemoryPlanStore()
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
-        """Provide the `planning` toolset over this run's resolved store."""
-        return PlanningToolset[AgentDepsT](self)
+        """Provide the stable `planning` toolset, shared with every per-run copy."""
+        return self._planning_toolset
+
+    @property
+    def _planning_toolset(self) -> PlanningToolset[AgentDepsT]:
+        if self._toolset is None:
+            operations = PlanStoreOperations[AgentDepsT](
+                get_items=self._read_plan,
+                set_items=self._set_items,
+                get_item=self._get_item,
+                add_item=self._add_item,
+                update_item=self._update_item,
+                remove_item=self._remove_item,
+            )
+            self._toolset = PlanningToolset[AgentDepsT](self, operations=operations)
+        return self._toolset
+
+    async def _run_store(self, ctx: RunContext[AgentDepsT]) -> PlanStore:
+        """The run's store: this copy's own when `for_run` resolved it, the running plan tool call's, or the tree's."""
+        if self._resolved_store is not None:
+            return self._resolved_store
+        if (store := tool_call_store()) is not None:
+            return store
+        return await resolve_run_store(ctx, self, self._planning_toolset)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Provide static, cache-stable guidance on using the planning tools.
@@ -189,9 +220,31 @@ class Planning(AbstractCapability[AgentDepsT]):
             messages[-1] = replace(last, parts=[*last.parts, reminder])
         return await handler(request_context)
 
+    # Each plan store call is a durable operation, so recovering a durable run reuses the recorded
+    # result instead of repeating a write, such as appending a step to a persistent store again.
     @durable_operation('read_plan')
     async def _read_plan(self, ctx: RunContext[AgentDepsT]) -> list[PlanItem]:
-        return await self.resolve_store(ctx).get_items()
+        return await (await self._run_store(ctx)).get_items()
+
+    @durable_operation('set_items')
+    async def _set_items(self, ctx: RunContext[AgentDepsT], items: list[PlanItem]) -> None:
+        await (await self._run_store(ctx)).set_items(items)
+
+    @durable_operation('get_item')
+    async def _get_item(self, ctx: RunContext[AgentDepsT], item_id: str) -> PlanItem | None:
+        return await (await self._run_store(ctx)).get_item(item_id)
+
+    @durable_operation('add_item')
+    async def _add_item(self, ctx: RunContext[AgentDepsT], item: PlanItem) -> PlanItem:
+        return await (await self._run_store(ctx)).add_item(item)
+
+    @durable_operation('update_item')
+    async def _update_item(self, ctx: RunContext[AgentDepsT], item_id: str, update: PlanItemUpdate) -> PlanItem | None:
+        return await (await self._run_store(ctx)).update_item(item_id, **update.model_dump(exclude_none=True))
+
+    @durable_operation('remove_item')
+    async def _remove_item(self, ctx: RunContext[AgentDepsT], item_id: str) -> bool:
+        return await (await self._run_store(ctx)).remove_item(item_id)
 
     @classmethod
     def from_spec(

@@ -31,9 +31,8 @@ pip:
 pip install "pydantic-ai-harness[browser-use]"
 ```
 
-The extra needs Python 3.11+ (browser-use's floor; the rest of the harness
-supports 3.10). browser-use talks to Chromium directly over CDP and downloads
-a browser on first run when none is found locally.
+browser-use talks to Chromium directly over CDP and downloads a browser on first
+run when none is found locally.
 
 ## The problem
 

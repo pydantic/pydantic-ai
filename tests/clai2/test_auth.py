@@ -3,19 +3,30 @@
 import asyncio
 import io
 
+import httpx2
 import keyring
 import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
+from termflow.tui import MenuItem
+from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexOAuthFlow
+from pydantic_ai.providers.openai_codex import (
+    CredentialsPersistenceError,
+    OpenAICodexCredentials,
+    OpenAICodexOAuthFlow,
+    OpenAICodexProvider,
+)
 from pydantic_clai2.auth import CodexAuth, CodexCredentials, code_from_paste, login_command, read_line
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
-from pydantic_clai2.config.credential_store import load_codex_credentials
+from pydantic_clai2.config.api_keys import forget_connection
+from pydantic_clai2.config.credential_store import has_credentials, load_codex_credentials
+from pydantic_clai2.plugins import PluginLogin
+from pydantic_clai2.ui.menus.field_menu import Runners
 
 CREDENTIALS = OpenAICodexCredentials(
     access_token='fake-access', refresh_token='fake-refresh', account_id='fake-account'
@@ -61,11 +72,45 @@ async def test_credentials_round_trip() -> None:
     credentials = OpenAICodexCredentials(
         access_token='fake-access', refresh_token='fake-refresh', account_id='fake-account'
     )
-    await source.save(credentials)
+    with pytest.raises(UserError, match='openai-codex was signed out'):
+        await source.save(credentials)  # a refresh never creates a login
+    await source.save_login(credentials)
     assert await source.load() == credentials
+    refreshed = OpenAICodexCredentials(access_token='new', refresh_token='new-refresh', account_id='fake-account')
+    await source.save(refreshed)
+    assert await source.load() == refreshed
+    forget_connection(account='openai-codex')
+    with pytest.raises(UserError, match=r'signed out\. Run /login openai-codex to use it again\.'):
+        await source.save(credentials)
+    assert not has_credentials(account='openai-codex')
 
 
-@pytest.mark.parametrize('command', ['/login', '/login openai-codex'])
+async def test_a_refresh_finishing_after_sign_out_does_not_sign_the_account_back_in() -> None:
+    account = 'openai-codex@work'
+    source = CodexCredentials(account=account)
+    await source.save_login(OpenAICodexCredentials(access_token='old', refresh_token='old-refresh', account_id='acct'))
+    sent: list[str] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request.url.host)
+        if request.url.host == 'auth.openai.com':
+            forget_connection(account=account)  # signed out while the token exchange is in flight
+            return httpx2.Response(
+                200, json={'access_token': 'new', 'refresh_token': 'new-refresh', 'account_id': 'acct'}
+            )
+        return httpx2.Response(401, json={'error': {'message': 'expired'}})
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
+    provider = OpenAICodexProvider(credential_source=source, http_client=client)
+    with pytest.raises(CredentialsPersistenceError):
+        await provider.client.with_options(max_retries=0).get(
+            'https://chatgpt.com/backend-api/wham/usage', cast_to=object
+        )
+    assert sent == ['chatgpt.com', 'auth.openai.com']
+    assert not has_credentials(account=account), 'the refreshed tokens were not saved back'
+
+
+@pytest.mark.parametrize('command', ['/login codex', '/login openai-codex'])
 async def test_login_uses_core_flow(monkeypatch: pytest.MonkeyPatch, command: str) -> None:
     async def exchange(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
         assert self.redirect_uri == 'http://localhost:1455/auth/callback'
@@ -83,6 +128,53 @@ async def test_login_uses_core_flow(monkeypatch: pytest.MonkeyPatch, command: st
     assert 'fake-refresh' not in output.getvalue()
     assert 'code_challenge=' in output.getvalue().replace('\n', '')
     assert 'over SSH' in output.getvalue()
+
+
+async def test_login_dispatches_copilot_by_short_and_provider_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def copilot(*, console: Console, account: str) -> str:
+        return f'Copilot connected as {account}.'
+
+    monkeypatch.setattr('pydantic_clai2.models.github_copilot.login', copilot)
+    auth = CodexAuth(Console(file=io.StringIO()), read_line=never_pasted)
+    assert await login_command(['copilot'], codex=auth) == 'Copilot connected as github-copilot.'
+    assert await login_command(['github-copilot'], codex=auth) == 'Copilot connected as github-copilot.'
+    assert await login_command(['copilot@work'], codex=auth) == 'Copilot connected as github-copilot@work.'
+
+
+async def test_login_runs_a_plugin_sign_in_and_lists_it_in_usage() -> None:
+    async def claude() -> str:
+        return 'Signed in to Claude Code.'
+
+    auth = CodexAuth(Console(file=io.StringIO()), read_line=never_pasted)
+    plugins = {'claude': PluginLogin(name='claude', handler=claude)}
+    assert await login_command(['claude'], codex=auth, plugins=plugins) == 'Signed in to Claude Code.'
+    with pytest.raises(ValueError, match=r'^Usage: /login \[openai-codex\|github-copilot\|claude\]\[@PROFILE\]$'):
+        await login_command(['grok'], codex=auth, plugins=plugins)
+    with pytest.raises(ValueError, match=r'^Usage: /login \[openai-codex\|github-copilot\]\[@PROFILE\]$'):
+        await login_command(['codex', 'extra'], codex=auth)
+
+
+async def test_bare_login_asks_which_sign_in() -> None:
+    async def claude() -> str:
+        return 'Signed in to Claude Code.'
+
+    offered: list[object] = []
+
+    def pick(value: object) -> Runners:
+        def run_list(menu: Menu) -> MenuResult:
+            assert menu.highlighted is not None
+            offered.append(menu.highlighted.value)
+            return MenuResult(cancelled=True) if value is None else MenuResult(item=MenuItem('picked', value=value))
+
+        return Runners(run_list=run_list)
+
+    auth = CodexAuth(Console(file=io.StringIO()), read_line=never_pasted)
+    plugins = {'claude-code': PluginLogin(name='claude-code', handler=claude)}
+    picked = await login_command([], codex=auth, plugins=plugins, runners=pick('claude-code'))
+    assert picked == 'Signed in to Claude Code.'
+    assert offered == ['openai-codex']
+    assert await login_command([], codex=auth, plugins=plugins, runners=pick(None)) == ''
+    assert await login_command([], codex=auth, plugins=plugins, runners=pick(42)) == ''
 
 
 async def test_failed_login_does_not_save(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -203,7 +295,7 @@ async def test_auth_failures(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(keyring, 'set_password', discard)
     with pytest.raises(UserError, match='did not retain'):
-        await source.save(OpenAICodexCredentials(access_token='test', refresh_token='test', account_id='test'))
+        await source.save_login(OpenAICodexCredentials(access_token='test', refresh_token='test', account_id='test'))
     monkeypatch.setattr(keyring, 'set_password', original_set)
     keyring.set_password('pydantic-clai2', 'openai-codex', 'not json')
     with pytest.raises(UserError, match='invalid'):

@@ -1779,6 +1779,51 @@ def test_tool_raises_call_deferred():
     )
 
 
+def test_test_model_same_name_calls_get_distinct_ids_and_both_run():
+    executed: list[tuple[int, int]] = []
+
+    def add(left: int, right: int) -> int:
+        executed.append((left, right))
+        return left + right
+
+    agent = Agent(TestModel(call_tools=['add', 'add'], custom_output_text='done'))
+    agent.tool_plain(add)
+
+    result = agent.run_sync('hello')
+
+    assert result.output == 'done'
+    assert len(executed) == 2
+    tool_call_parts = [
+        p for m in result.all_messages() for p in m.parts if isinstance(p, ToolCallPart) and p.tool_name == 'add'
+    ]
+    assert [p.tool_call_id for p in tool_call_parts] == ['pyd_ai_tool_call_id__add', 'pyd_ai_tool_call_id__add__2']
+    tool_return_ids = [p.tool_call_id for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    assert sorted(tool_return_ids) == ['pyd_ai_tool_call_id__add', 'pyd_ai_tool_call_id__add__2']
+
+    # A single call to the same tool keeps the documented `pyd_ai_tool_call_id__{name}` id format.
+    single_agent = Agent(TestModel(call_tools=['add'], custom_output_text='done'))
+    single_agent.tool_plain(add)
+    single_result = single_agent.run_sync('hello')
+    single_parts = [
+        p for m in single_result.all_messages() for p in m.parts if isinstance(p, ToolCallPart) and p.tool_name == 'add'
+    ]
+    assert [p.tool_call_id for p in single_parts] == ['pyd_ai_tool_call_id__add']
+
+    # A tool whose own name ends in `__<n>` doesn't collide with a repeated call's suffixed id.
+    def add__2(left: int, right: int) -> int:
+        return left + right
+
+    suffix_agent = Agent(TestModel(call_tools=['add', 'add', 'add__2'], custom_output_text='done'))
+    suffix_agent.tool_plain(add)
+    suffix_agent.tool_plain(add__2)
+    suffix_result = suffix_agent.run_sync('hello')
+    assert [p.tool_call_id for m in suffix_result.all_messages() for p in m.parts if isinstance(p, ToolCallPart)] == [
+        'pyd_ai_tool_call_id__add',
+        'pyd_ai_tool_call_id__add__2',
+        'pyd_ai_tool_call_id__add__2__2',
+    ]
+
+
 def test_tool_raises_approval_required():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -4977,8 +5022,9 @@ def test_return_schema_tool_return_generic():
 
 def test_return_schema_self_bound_method():
     """Self return type on a bound method resolves to the owning class."""
+    from typing import Self
+
     from pydantic import BaseModel
-    from typing_extensions import Self
 
     class Weather(BaseModel):
         temperature: float
@@ -4995,9 +5041,7 @@ def test_return_schema_self_bound_method():
 
 def test_return_schema_self_unbound():
     """Self return type on a non-bound function falls back to unconstrained schema."""
-    from typing import Any
-
-    from typing_extensions import Self
+    from typing import Any, Self
 
     from pydantic_ai._function_schema import extract_return_schema_type
 
@@ -5282,14 +5326,14 @@ def test_tool_return_part_serializes_with_serialization_alias():
     assert set(serialized_obj) == set(return_schema.get('properties', {}))
 
 
-class DescribedEnum(UseEnumMemberDocstrings, str, Enum):
+class DescribedEnum(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """A base for enums built by the functional API, which takes one mix-in type and no extra bases."""
 
 
 def test_enum_member_docstrings_describe_options():
     """A docstring under an enum member becomes that option's description, as `anyOf` of `const`s."""
 
-    class Priority(UseEnumMemberDocstrings, str, Enum):
+    class Priority(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
         """How urgent the ticket is."""
 
         low = 'low'
@@ -5335,7 +5379,7 @@ def test_enum_member_docstrings_describe_options():
     )
 
 
-class Urgency(UseEnumMemberDocstrings, str, Enum):
+class Urgency(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """How urgent the ticket is."""
 
     low = 'low'
@@ -5344,7 +5388,7 @@ class Urgency(UseEnumMemberDocstrings, str, Enum):
     """Needs attention today."""
 
 
-class UnopinionatedUrgency(str, Enum):
+class UnopinionatedUrgency(str, Enum):  # noqa: UP042
     """How urgent the ticket is."""
 
     low = 'low'
@@ -5396,7 +5440,7 @@ def test_an_enum_that_does_not_mix_it_in_is_described_exactly_as_pydantic_descri
     )
 
 
-class Level(UseEnumMemberDocstrings, str, Enum):
+class Level(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     low = 'low'
     """Can wait a week."""
     high = 'high'
@@ -5437,7 +5481,7 @@ def test_a_none_member_keeps_the_enum_in_its_plain_form():
     assert seen[0]['$defs']['Settled'] == snapshot({'enum': ['yes', None], 'title': 'Settled'})
 
 
-class Aliased(UseEnumMemberDocstrings, str, Enum):
+class Aliased(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """How urgent the ticket is."""
 
     high = 'high'

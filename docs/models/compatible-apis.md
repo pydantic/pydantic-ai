@@ -460,7 +460,8 @@ The model name is only normalized for the profile lookup; the name sent to the g
 ### Detect incomplete streamed responses
 
 Some OpenAI-compatible APIs can close a Chat Completions stream cleanly without a terminal
-`finish_reason`, making a partial response look complete. If your provider guarantees that complete
+`finish_reason`, making a partial response look complete: like a non-streamed response without a finish
+reason, it gets a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `'stop'`. If your provider guarantees that complete
 streams include a finish reason, set
 [`openai_chat_streaming_requires_finish_reason=True`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_streaming_requires_finish_reason]
 in the model profile. Pydantic AI will then raise [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]

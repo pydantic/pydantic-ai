@@ -6,11 +6,11 @@ import os
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Self
 
 import anyio
 import anyio.to_thread
 import httpx
-from typing_extensions import Self
 
 _EDGE_PORT = 4566
 _HEALTH_PATH = '/_localstack/health'

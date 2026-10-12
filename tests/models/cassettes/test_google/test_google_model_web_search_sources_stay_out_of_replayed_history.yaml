@@ -1,0 +1,574 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "265"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Who won the most recent FIFA World Cup? Answer in one sentence.
+          role: user
+        tools:
+        - googleSearch: {}
+        toolConfig:
+          includeServerSideToolInvocations: true
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=4219
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - thoughtSignature: >-
+                EoIJCv8ICAIS+ggBaRR9E8BHBG8JVRJy+K2P8vTjFR6IbWyRwackplz48KIJxoBNVsYwdWb1Wu+qMkhdP0uJkMe7pLr2t1bQeWBHkwTMHdAsgXlrlB0AsKgISBRT3rBMEOF6t3c5qdDR0tH93hPASYilVmS4/Crw62v+mzAGNM7QvJWQm7z84BJApPPlyBh4d3TgjY3K/fepDYA8RS78jxkW+ooL4wobLJNPlC06uLbpeP68iY2RN51vc7wsJO0i+pj1ODAuSf4ZNGKdpRta29lrExjYqc1rImTEmJKh7KPsbp85UhZzpWjLsGob9js01/eJ++r/7xrkMPz+ds7viV0n4a3di099ib1XetFgpy6hbCcZZM4Ixc6eDZEXS7L4ChzOJjE/UVWnzQW6GLB547MFHS93RQbb42FlgCogJ06hwo67msOn9M5vxWS+Ld7QC197P3HwntOXjvHV71NeKBzO207hfb0TqRCgeWCgThPduR4CalV89jyUxWBE176B5XSzdjUMG/NvGZOzVbxBRmvYo7IPLTYVIig5T1xbZo+Jd2B7o0gZI+cn/YiXVOK8WKoDTkEmip0ahVueTi1w6BAyg61y72ADXgRyP7PFQsTd/LHG+dsOnrRn2W0Rx/x4BGTNsSEPRuR61zlgVjFSKO1S4Bl0wiR7ZvEm1/0pSK2TSaMVjFzel5teEsjwNAIrA9p/PCpmF3xjZoHGW/mcSevVCnAK9v7wX5dAGJsFVsuA0g0Pu47eRdIbqZJmvuSVRUzrPUZSywFCg53r47rFyfDXfBztY6+QSfYcvGpPrsgBefqsTZirj/qkTiMvyTvylqg56wehddPeI11k+v/dAeHWG9Swwl/7Wt6RBffmP8TKdnblNt055ZFrwzF+QkzHbBrdNMHasI03n8/oRi5JQONNMCvELJmbsCyENxzL4wSJzd6kai4G3bFSJ4UK3R21/dSTHPZ/qZbFNtQi7CDkDkc7kzRPhKQdlatefchS+ttLp1RtHWUk0IZiosPqt+CdmCOSm70GGr7l5UpJgCN5+j2y2ChhUHyTRUk0sJ5qjePZNu0+vGESnVXv70kAalreI2unp+x3AOIUak6xilI7IdKXxz5raMYufsanfnAP5atLibgSwV4tLic5J3TD2y6JzA/T7KcRnqs1PGhYxm9k7SF02Q/9XmgVv8EWNxnd0ypACLALmGXbMIw/m+H1dHo2X/o/dd+pLfmYGclfqHT9sDV/4149pNIjkS7NNPUeIbkjmO0gzJxnpOp143d/Tb/b7OKmXDLdSL6h02TLzDIsQEbBypWmHS7BPXkm4EJnSf3TG6YIcmRUTtlWHRa7CWYwaJmxMdTxLm5cM3LiLKogGZluUkH1Kn8Pw4ZMgsQ27QspKO8rv80ktt2qWPf9OhRC9WVR+e2XEf6TWaqvLt8nLYHz49RHEVGj23mioQo+I+dB7cSgrf9ltSp+ZPK+2fAxtTnT9dh7e5lfHwF0fW/X7wSptmKE1NRFD56Sssbvbz1c/swZNhUsxkJnf9oeIXdO+7QaOZM=
+              toolCall:
+                toolType: GOOGLE_SEARCH_WEB
+                args:
+                  queries:
+                  - 2026 FIFA World Cup winner
+                id: call_461390
+            - thoughtSignature: >-
+                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
+              toolResponse:
+                toolType: GOOGLE_SEARCH_WEB
+                response:
+                  search_suggestions: |-
+                    <style>
+                    .container {
+                      align-items: center;
+                      border-radius: 8px;
+                      display: flex;
+                      font-family: Google Sans, Roboto, sans-serif;
+                      font-size: 14px;
+                      line-height: 20px;
+                      padding: 8px 12px;
+                    }
+                    .chip {
+                      display: inline-block;
+                      border: solid 1px;
+                      border-radius: 16px;
+                      min-width: 14px;
+                      padding: 5px 16px;
+                      text-align: center;
+                      user-select: none;
+                      margin: 0 8px;
+                      -webkit-tap-highlight-color: transparent;
+                    }
+                    .carousel {
+                      overflow: auto;
+                      scrollbar-width: none;
+                      white-space: nowrap;
+                      margin-right: -12px;
+                    }
+                    .headline {
+                      display: flex;
+                      margin-right: 4px;
+                    }
+                    .gradient-container {
+                      position: relative;
+                    }
+                    .gradient {
+                      position: absolute;
+                      transform: translate(3px, -9px);
+                      height: 36px;
+                      width: 9px;
+                    }
+                    @media (prefers-color-scheme: light) {
+                      .container {
+                        background-color: #fafafa;
+                        box-shadow: 0 0 0 1px #0000000f;
+                      }
+                      .headline-label {
+                        color: #1f1f1f;
+                      }
+                      .chip {
+                        background-color: #ffffff;
+                        border-color: #d2d2d2;
+                        color: #5e5e5e;
+                        text-decoration: none;
+                      }
+                      .chip:hover {
+                        background-color: #f2f2f2;
+                      }
+                      .chip:focus {
+                        background-color: #f2f2f2;
+                      }
+                      .chip:active {
+                        background-color: #d8d8d8;
+                        border-color: #b6b6b6;
+                      }
+                      .logo-dark {
+                        display: none;
+                      }
+                      .gradient {
+                        background: linear-gradient(90deg, #fafafa 15%, #fafafa00 100%);
+                      }
+                    }
+                    @media (prefers-color-scheme: dark) {
+                      .container {
+                        background-color: #1f1f1f;
+                        box-shadow: 0 0 0 1px #ffffff26;
+                      }
+                      .headline-label {
+                        color: #fff;
+                      }
+                      .chip {
+                        background-color: #2c2c2c;
+                        border-color: #3c4043;
+                        color: #fff;
+                        text-decoration: none;
+                      }
+                      .chip:hover {
+                        background-color: #353536;
+                      }
+                      .chip:focus {
+                        background-color: #353536;
+                      }
+                      .chip:active {
+                        background-color: #464849;
+                        border-color: #53575b;
+                      }
+                      .logo-light {
+                        display: none;
+                      }
+                      .gradient {
+                        background: linear-gradient(90deg, #1f1f1f 15%, #1f1f1f00 100%);
+                      }
+                    }
+                    </style>
+                    <div class="container">
+                      <div class="headline">
+                        <svg class="logo-light" width="18" height="18" viewBox="9 9 35 35" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path fill-rule="evenodd" clip-rule="evenodd" d="M42.8622 27.0064C42.8622 25.7839 42.7525 24.6084 42.5487 23.4799H26.3109V30.1568H35.5897C35.1821 32.3041 33.9596 34.1222 32.1258 35.3448V39.6864H37.7213C40.9814 36.677 42.8622 32.2571 42.8622 27.0064V27.0064Z" fill="#4285F4"/>
+                          <path fill-rule="evenodd" clip-rule="evenodd" d="M26.3109 43.8555C30.9659 43.8555 34.8687 42.3195 37.7213 39.6863L32.1258 35.3447C30.5898 36.3792 28.6306 37.0061 26.3109 37.0061C21.8282 37.0061 18.0195 33.9811 16.6559 29.906H10.9194V34.3573C13.7563 39.9841 19.5712 43.8555 26.3109 43.8555V43.8555Z" fill="#34A853"/>
+                          <path fill-rule="evenodd" clip-rule="evenodd" d="M16.6559 29.8904C16.3111 28.8559 16.1074 27.7588 16.1074 26.6146C16.1074 25.4704 16.3111 24.3733 16.6559 23.3388V18.8875H10.9194C9.74388 21.2072 9.06992 23.8247 9.06992 26.6146C9.06992 29.4045 9.74388 32.022 10.9194 34.3417L15.3864 30.8621L16.6559 29.8904V29.8904Z" fill="#FBBC05"/>
+                          <path fill-rule="evenodd" clip-rule="evenodd" d="M26.3109 16.2386C28.85 16.2386 31.107 17.1164 32.9095 18.8091L37.8466 13.8719C34.853 11.082 30.9659 9.3736 26.3109 9.3736C19.5712 9.3736 13.7563 13.245 10.9194 18.8875L16.6559 23.3388C18.0195 19.2636 21.8282 16.2386 26.3109 16.2386V16.2386Z" fill="#EA4335"/>
+                        </svg>
+                        <svg class="logo-dark" width="18" height="18" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+                          <circle cx="24" cy="23" fill="#FFF" r="22"/>
+                          <path d="M33.76 34.26c2.75-2.56 4.49-6.37 4.49-11.26 0-.89-.08-1.84-.29-3H24.01v5.99h8.03c-.4 2.02-1.5 3.56-3.07 4.56v.75l3.91 2.97h.88z" fill="#4285F4"/>
+                          <path d="M15.58 25.77A8.845 8.845 0 0 0 24 31.86c1.92 0 3.62-.46 4.97-1.31l4.79 3.71C31.14 36.7 27.65 38 24 38c-5.93 0-11.01-3.4-13.45-8.36l.17-1.01 4.06-2.85h.8z" fill="#34A853"/>
+                          <path d="M15.59 20.21a8.864 8.864 0 0 0 0 5.58l-5.03 3.86c-.98-2-1.53-4.25-1.53-6.64 0-2.39.55-4.64 1.53-6.64l1-.22 3.81 2.98.22 1.08z" fill="#FBBC05"/>
+                          <path d="M24 14.14c2.11 0 4.02.75 5.52 1.98l4.36-4.36C31.22 9.43 27.81 8 24 8c-5.93 0-11.01 3.4-13.45 8.36l5.03 3.85A8.86 8.86 0 0 1 24 14.14z" fill="#EA4335"/>
+                        </svg>
+                        <div class="gradient-container"><div class="gradient"></div></div>
+                      </div>
+                      <div class="carousel">
+                    <a class="chip" href="https://www.google.com/search?q=2026+FIFA+World+Cup+winner&client=app-vertex-grounding&safesearch=active">2026 FIFA World Cup winner</a>
+                      </div>
+                    </div>
+                id: call_461390
+            - text: >-
+                Spain won the most recent FIFA World Cup in 2026, defeating Argentina 1-0 in
+                the final.
+              thoughtSignature: >-
+                EoMDCoADAWkUfRNNZxC6lGbApRLt2GC8mIzXTRadJjhs+XlKKfVmpnXcK178J0SUtlha5vw+M6n0RHqiVErYLciBF0+gk/5fsD6H6HgprvO6W8Yn4/9Yo9oOutkzLvC+CtG1vW3T2ofm3HNl+Y8U+m4fj97GZmTONYSORU1O0uzdKYFW2K+wkv907pyduPrc/xgDc+G/21fwncHBa6JTrXpd0Q7bmKOXIsT0hmWiGCv5ybOM9V1NYNgerzUjpFfDETRP/ZVXgrkGsUFuWWAx4ei0I2jF8FHVsMXvS7U1+e46rInPcGna6YiPqp/rmeEImn5KZKzRr656WjC9AGqJUvvepk/YVFR4MY1di2YEed+FWdkLXIwJdBfUCzrHRyDn4Z+dnhPPj7RIiPTJwsQSUn21OBpR/xSsHclx6Nk3LzYBNidhf4fiZHHbPaPxRLreVbl3uJxQ9kpJF3QGYfJiZujeebxmOcpgM2VUQ6li4+WQzBOE6j8uvG8vLQ5psB6rBX20C84k
+            role: model
+          finishReason: STOP
+          index: 0
+          groundingMetadata:
+            searchEntryPoint:
+              renderedContent: |-
+                <style>
+                .container {
+                  align-items: center;
+                  border-radius: 8px;
+                  display: flex;
+                  font-family: Google Sans, Roboto, sans-serif;
+                  font-size: 14px;
+                  line-height: 20px;
+                  padding: 8px 12px;
+                }
+                .chip {
+                  display: inline-block;
+                  border: solid 1px;
+                  border-radius: 16px;
+                  min-width: 14px;
+                  padding: 5px 16px;
+                  text-align: center;
+                  user-select: none;
+                  margin: 0 8px;
+                  -webkit-tap-highlight-color: transparent;
+                }
+                .carousel {
+                  overflow: auto;
+                  scrollbar-width: none;
+                  white-space: nowrap;
+                  margin-right: -12px;
+                }
+                .headline {
+                  display: flex;
+                  margin-right: 4px;
+                }
+                .gradient-container {
+                  position: relative;
+                }
+                .gradient {
+                  position: absolute;
+                  transform: translate(3px, -9px);
+                  height: 36px;
+                  width: 9px;
+                }
+                @media (prefers-color-scheme: light) {
+                  .container {
+                    background-color: #fafafa;
+                    box-shadow: 0 0 0 1px #0000000f;
+                  }
+                  .headline-label {
+                    color: #1f1f1f;
+                  }
+                  .chip {
+                    background-color: #ffffff;
+                    border-color: #d2d2d2;
+                    color: #5e5e5e;
+                    text-decoration: none;
+                  }
+                  .chip:hover {
+                    background-color: #f2f2f2;
+                  }
+                  .chip:focus {
+                    background-color: #f2f2f2;
+                  }
+                  .chip:active {
+                    background-color: #d8d8d8;
+                    border-color: #b6b6b6;
+                  }
+                  .logo-dark {
+                    display: none;
+                  }
+                  .gradient {
+                    background: linear-gradient(90deg, #fafafa 15%, #fafafa00 100%);
+                  }
+                }
+                @media (prefers-color-scheme: dark) {
+                  .container {
+                    background-color: #1f1f1f;
+                    box-shadow: 0 0 0 1px #ffffff26;
+                  }
+                  .headline-label {
+                    color: #fff;
+                  }
+                  .chip {
+                    background-color: #2c2c2c;
+                    border-color: #3c4043;
+                    color: #fff;
+                    text-decoration: none;
+                  }
+                  .chip:hover {
+                    background-color: #353536;
+                  }
+                  .chip:focus {
+                    background-color: #353536;
+                  }
+                  .chip:active {
+                    background-color: #464849;
+                    border-color: #53575b;
+                  }
+                  .logo-light {
+                    display: none;
+                  }
+                  .gradient {
+                    background: linear-gradient(90deg, #1f1f1f 15%, #1f1f1f00 100%);
+                  }
+                }
+                </style>
+                <div class="container">
+                  <div class="headline">
+                    <svg class="logo-light" width="18" height="18" viewBox="9 9 35 35" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path fill-rule="evenodd" clip-rule="evenodd" d="M42.8622 27.0064C42.8622 25.7839 42.7525 24.6084 42.5487 23.4799H26.3109V30.1568H35.5897C35.1821 32.3041 33.9596 34.1222 32.1258 35.3448V39.6864H37.7213C40.9814 36.677 42.8622 32.2571 42.8622 27.0064V27.0064Z" fill="#4285F4"/>
+                      <path fill-rule="evenodd" clip-rule="evenodd" d="M26.3109 43.8555C30.9659 43.8555 34.8687 42.3195 37.7213 39.6863L32.1258 35.3447C30.5898 36.3792 28.6306 37.0061 26.3109 37.0061C21.8282 37.0061 18.0195 33.9811 16.6559 29.906H10.9194V34.3573C13.7563 39.9841 19.5712 43.8555 26.3109 43.8555V43.8555Z" fill="#34A853"/>
+                      <path fill-rule="evenodd" clip-rule="evenodd" d="M16.6559 29.8904C16.3111 28.8559 16.1074 27.7588 16.1074 26.6146C16.1074 25.4704 16.3111 24.3733 16.6559 23.3388V18.8875H10.9194C9.74388 21.2072 9.06992 23.8247 9.06992 26.6146C9.06992 29.4045 9.74388 32.022 10.9194 34.3417L15.3864 30.8621L16.6559 29.8904V29.8904Z" fill="#FBBC05"/>
+                      <path fill-rule="evenodd" clip-rule="evenodd" d="M26.3109 16.2386C28.85 16.2386 31.107 17.1164 32.9095 18.8091L37.8466 13.8719C34.853 11.082 30.9659 9.3736 26.3109 9.3736C19.5712 9.3736 13.7563 13.245 10.9194 18.8875L16.6559 23.3388C18.0195 19.2636 21.8282 16.2386 26.3109 16.2386V16.2386Z" fill="#EA4335"/>
+                    </svg>
+                    <svg class="logo-dark" width="18" height="18" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="24" cy="23" fill="#FFF" r="22"/>
+                      <path d="M33.76 34.26c2.75-2.56 4.49-6.37 4.49-11.26 0-.89-.08-1.84-.29-3H24.01v5.99h8.03c-.4 2.02-1.5 3.56-3.07 4.56v.75l3.91 2.97h.88z" fill="#4285F4"/>
+                      <path d="M15.58 25.77A8.845 8.845 0 0 0 24 31.86c1.92 0 3.62-.46 4.97-1.31l4.79 3.71C31.14 36.7 27.65 38 24 38c-5.93 0-11.01-3.4-13.45-8.36l.17-1.01 4.06-2.85h.8z" fill="#34A853"/>
+                      <path d="M15.59 20.21a8.864 8.864 0 0 0 0 5.58l-5.03 3.86c-.98-2-1.53-4.25-1.53-6.64 0-2.39.55-4.64 1.53-6.64l1-.22 3.81 2.98.22 1.08z" fill="#FBBC05"/>
+                      <path d="M24 14.14c2.11 0 4.02.75 5.52 1.98l4.36-4.36C31.22 9.43 27.81 8 24 8c-5.93 0-11.01 3.4-13.45 8.36l5.03 3.85A8.86 8.86 0 0 1 24 14.14z" fill="#EA4335"/>
+                    </svg>
+                    <div class="gradient-container"><div class="gradient"></div></div>
+                  </div>
+                  <div class="carousel">
+                <a class="chip" href="https://www.google.com/search?q=2026+FIFA+World+Cup+winner&client=app-vertex-grounding&safesearch=active">2026 FIFA World Cup winner</a>
+                  </div>
+                </div>
+            groundingChunks:
+            - web:
+                uri: >-
+                  https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEMbk8QbJonPMnT_uWEA6q0Re1yKhP8dloRXiLsSxL5Qo_c4uF9veKB-rwlq26xw6WQpmgVNl2N9drzLsNGtiLfvTkN1UVqszmDpg-6meVeecQ7XTk_H7DYCfQq-hEwaaj5SbFomTQ_5buWBrUu4UeKTleZpDpcV9WFTTN0ftLJjQxt-JmVy_-qZ8iXAA==
+                title: fifa.com
+            groundingSupports:
+            - segment:
+                endIndex: 88
+                text: >-
+                  Spain won the most recent FIFA World Cup in 2026, defeating Argentina 1-0 in
+                  the final
+              groundingChunkIndices:
+              - 0
+            webSearchQueries:
+            - 2026 FIFA World Cup winner
+        usageMetadata:
+          promptTokenCount: 312
+          candidatesTokenCount: 31
+          totalTokenCount: 724
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 312
+          thoughtsTokenCount: 381
+          serviceTier: standard
+        modelVersion: gemini-3.8-flash
+        responseId: su--aoj9BsHmz7IPvuHdiQE
+  recorded_at: 2026-10-01T23:41:42.269141+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "16970"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Who won the most recent FIFA World Cup? Answer in one sentence.
+          role: user
+        - parts:
+          - thoughtSignature: >-
+              EoIJCv8ICAIS-ggBaRR9E8BHBG8JVRJy-K2P8vTjFR6IbWyRwackplz48KIJxoBNVsYwdWb1Wu-qMkhdP0uJkMe7pLr2t1bQeWBHkwTMHdAsgXlrlB0AsKgISBRT3rBMEOF6t3c5qdDR0tH93hPASYilVmS4_Crw62v-mzAGNM7QvJWQm7z84BJApPPlyBh4d3TgjY3K_fepDYA8RS78jxkW-ooL4wobLJNPlC06uLbpeP68iY2RN51vc7wsJO0i-pj1ODAuSf4ZNGKdpRta29lrExjYqc1rImTEmJKh7KPsbp85UhZzpWjLsGob9js01_eJ--r_7xrkMPz-ds7viV0n4a3di099ib1XetFgpy6hbCcZZM4Ixc6eDZEXS7L4ChzOJjE_UVWnzQW6GLB547MFHS93RQbb42FlgCogJ06hwo67msOn9M5vxWS-Ld7QC197P3HwntOXjvHV71NeKBzO207hfb0TqRCgeWCgThPduR4CalV89jyUxWBE176B5XSzdjUMG_NvGZOzVbxBRmvYo7IPLTYVIig5T1xbZo-Jd2B7o0gZI-cn_YiXVOK8WKoDTkEmip0ahVueTi1w6BAyg61y72ADXgRyP7PFQsTd_LHG-dsOnrRn2W0Rx_x4BGTNsSEPRuR61zlgVjFSKO1S4Bl0wiR7ZvEm1_0pSK2TSaMVjFzel5teEsjwNAIrA9p_PCpmF3xjZoHGW_mcSevVCnAK9v7wX5dAGJsFVsuA0g0Pu47eRdIbqZJmvuSVRUzrPUZSywFCg53r47rFyfDXfBztY6-QSfYcvGpPrsgBefqsTZirj_qkTiMvyTvylqg56wehddPeI11k-v_dAeHWG9Swwl_7Wt6RBffmP8TKdnblNt055ZFrwzF-QkzHbBrdNMHasI03n8_oRi5JQONNMCvELJmbsCyENxzL4wSJzd6kai4G3bFSJ4UK3R21_dSTHPZ_qZbFNtQi7CDkDkc7kzRPhKQdlatefchS-ttLp1RtHWUk0IZiosPqt-CdmCOSm70GGr7l5UpJgCN5-j2y2ChhUHyTRUk0sJ5qjePZNu0-vGESnVXv70kAalreI2unp-x3AOIUak6xilI7IdKXxz5raMYufsanfnAP5atLibgSwV4tLic5J3TD2y6JzA_T7KcRnqs1PGhYxm9k7SF02Q_9XmgVv8EWNxnd0ypACLALmGXbMIw_m-H1dHo2X_o_dd-pLfmYGclfqHT9sDV_4149pNIjkS7NNPUeIbkjmO0gzJxnpOp143d_Tb_b7OKmXDLdSL6h02TLzDIsQEbBypWmHS7BPXkm4EJnSf3TG6YIcmRUTtlWHRa7CWYwaJmxMdTxLm5cM3LiLKogGZluUkH1Kn8Pw4ZMgsQ27QspKO8rv80ktt2qWPf9OhRC9WVR-e2XEf6TWaqvLt8nLYHz49RHEVGj23mioQo-I-dB7cSgrf9ltSp-ZPK-2fAxtTnT9dh7e5lfHwF0fW_X7wSptmKE1NRFD56Sssbvbz1c_swZNhUsxkJnf9oeIXdO-7QaOZM=
+            toolCall:
+              id: call_461390
+              tool_type: GOOGLE_SEARCH_WEB
+              args:
+                queries:
+                - 2026 FIFA World Cup winner
+          - thoughtSignature: >-
+              Epg3CpU3CAISkDcBaRR9E-qr3sbnp5pnJ3liD8uHZtL8wTKs1LDEC5ApooWdBxkxRHlQQ7DD_zLXNhfVQyUbmVjSK9KEleAxCW0rPGN7Ld-mnlUMB-oMNFAzdO6weM7jqHMxhcxzKPr3KT1UJ0DESCKWRnXPQoXZSz_Wm5TnOM-VOiTaaDYhxcrk2bhtPycF3bdZHED3_CEHEUXUZ0PYZKoJVUoeyQ3W8oyDH6p5ZN6s_zNZb5N4HTeQ55gmBjZi7KBBwIKWol4xCxA8yyhj_hnMgujyrSGlg2s68CEUdLtywF5skKwx5U_iTOlz1NuJO5iRhoLJSjRqMQh4Za4MbtHA6j7hDt299Phu74qoXEi3_bw35ubIQwrrehPEGWqvbHDpZ63JwSa6aS0NrwUaFBWPNC2ShQrH04QGQyI71w4xidIqEkFpS1y_1iPg4KUhDV6BbmAn3H3cPctKX0v2MTlHO0z_1wSRVj7n4qxIxVwF_o22gX68NIGXaWm1xsxqgl606ZY63jiYFMo22dk2g2tu-yPxWOTWOTHByekjXvLhexS45s7R-p0e70XkLi-pilqQDa8o6i4GsU4-stHDE4d5OIlCK5H6DpJf0XsPVl_7vmij4j4bifGWXlH32JCi8XFZr4IxLkOmlssp3p4Eagb17PRR6UAlmC5cdM81pi9IzHCHiDp7Ues4uzaG-PMFr2dWLRYVpUBDPFZ-SFkZBeoDTwnFP1HrzCZqe-X1Xur1OlWZtDyFR6KOzWdnD_fX1hoqleQxbwREUIMzqKr4YPlgxP7MdJYq1sF-tz9rXM0bXf1nC7lUh8Ykc3rg86-2N1sdx1exWNyOZNB_LT-iHjFLBwjcwmjoCW7YxFwsWUopw79N-MOVAguCPRfcFTz98e35NpBZ7fxQ8ma7XBPTj8tFNRjtp2_rfaigvf8WaxonZeChSCDkz0R2bVhE91HkNH9FG_imFRwGJEroaBcDDWGSQgt4LRy4L3QtH_QDYh9aNXUhjnwAHnnqv7afy0BKnvqu2-x6zTXkxPV2WRmnQm0MItdpDPWLTtIO7_TcncooVMfx7_NpSHhXJ4GmJhGnqrK8yeIp4gADiMWnk7xo0N-Etj_0FX_1YIkrKpWQHQPLkFmynMLiCNXW9QwfAUE-kX-n1mppmfKzJB6HaSgvXEFbhb9UUuXcs1QENWDt_XmPiJfhEOItd05P41jwiw4YsxGMKsCkypQaq0Tzdf-sOqzYY_HdDec6ERQvZdxqVGb8hUU-akMICnUxWpGhnTiucEtWidx3H_cg3XQA1SxY8kD204hOQZ4HHN_H8b3GPfAbxW1mOabep-eOvNwSIk9w2B9eSljPuUpzuBKzkMBb79HJ-Yyx0vSnOxdSo-DLZwaOCHtisQmYWMFkkX_DhWzGIKjjXuoQ5iqZ-y5LT-Rc1yqWqRInyVYqlCLIItO6XNsSrvjkQRjzCiydvW1kBY9OpcxegzuAb4wyM6n2JdCq9a-ujuc9mGMmjzLC5AHjqk6JOJXKri3uEYDJWlwCoH_QklLikLTn2eu8Xpp1fK3faFdmZpjrvvSw8O7CX_QaPEUAQ-EXgntWMQvEvzybTrrpWyZt9xRWFvhRmrxfbF21pdA1T7NCatKBbe97raqvij3BGicIyU1l7XqecJ7MAqKZAfiTbsJ9mfASLxQJh6bw3k8q5_aQu8rnE1U3egIDdXz1Jgc106nQIfTfZIVzSG5okDjk1d5UjP-jdvWm3tDNpr-MR0o_dbkuUdeV3WWjpAj2tyvM2OP7SU6wf5jJAW0qpfPypCu_wY6d8cjhlURl2NwVlTOPsjI1nVC_h_K-qQZ_5TcT2qf4-hB58iaGiy5BmM1lcyxjuM6M69aarRmyOGF3vbQZeSDRLSb_18Q-EScRw9w3qNUrMfrQmn21WZtM8KtWVw_nyj8WUFnoSg1I6ybWRObk6L4bbscLSspWbmP_U3FUDYIujccuGMrbBOFgro2O_Vg5cCwGoIogcvddXuuldj5mhpnDrLCX8Tho3j7PLxff4Q3MWNr7VL06xFcg8medjTy5aQDojecamaLJtRxXM03XVqKa-rpsKSX1I_Uob84QGHPAp4CjmsG1-Cyh2QJ-Ai4azzGfVdKhDYYuo9efm2pooJJu4JZmz6Sp_a1gM09j2ucbw5rVQEUTaeHmI9ORaFVCOyDrCuc5eammmYy3sk5RD86nHJgj2K7xQ4wcZmkUjn_wx-11Q8DGUaLZINHrfN3sO2drtDJp1vHbRm4N02BOeQqxtULn5WBGkVOqJit9uqOkjggvre09cnqMj9n5A4j0DY9R4OEzLChb8X0andI_J61EifwG05V2pRuiZixiv8f70ANVj11U2py585m7C7NdR9I7V5gG062bb1ZHUC_UHX4wxHwlGTrm0uXwTqsHFZe8ElKkcg5kO1NtA1tVypgeQtaUMlwQ6kMWkOT3Sam6UpSvW0XUe4eGc_m2aOAfuGMnhwvdpmuS7O-7dYOHR53mGA8bMefC7RRIZ5oeVJ9aNCdJifQAG50kLcgZo_3SgQghC03yO8M_Wx1tSUavXCRlmXZW5IZPeeZQWj1Tj7hvsqfJy44nIVYdFyA5YHnUJDntsjEenXZz7tuIdMzLb0KwUBIbR1ALDcJBCEiYCx3o0NB48SJ9OATVHREEu331ats5LQIqeqQgOxpZwkWKi89E3DtrKwW6BSAo93agTJJboGlERf9LW-X0i5xMyFD4dHo6lJ0aQSXeCPVY2QsIJZjOhImFiKsEYbY1I9ZbwsWHJEN0FuB20Sxk8ADWFWi0ZjSm8XtVblNwUk-12IZt76XQdobDo7wZauEidUA8JvAHRf73WAxh2FBqvavQFkCHdQpXQDVwWucd5Q_oqH024Q0AjQ2b09qdGdR3U7ushLCwUnsUP4lP2BzvQRkxnCWI5nWoSgO8bLDpppb8lPLKVwWFDFE3u21r9tJUzhECpq3je5lnubpJ49d_CFKC41oaEF06gjY9DmJ6tok5kYtp_RbVBMyO57qgKTnavDlgS1rCxpuLzpjFYZv-sEIutvJIAjB8xyPPiHl2LVMUAKdhv-UcCbd8oZMTNN5cnjs5JuQMEecMbOClVxB_KeP0iUWAct_0Kf_yyuy55_RMCpwtOfTMvTpraVHYG89HBJ7tw-IZaP2rXZk3laWCGLNVVEq1VLYtL7krLFqyqagFidOELxnEG2Gkrt-LGViyQqHxa1XzRr1lw-LhLDMyjqPLUbZsHcYCUuFhglPIyI4ydbIF2g0Ly6a1CUNWKKSqp7GQgaIAO00lq20pPIQCCukMWFR9Javjyve88_Alw6pbwl-ldyuxvjL-7a4gnlO_-bfaFV_q_lZi1PqGspztgvf8jqwON0TdYl_ery97pHXkuQBURLcpSa2k8UxKd39sRKX0TYCl8tzOHrjPu65ZlTLhqbKD8bE2qjvRDY4e3HqD26h39qSJVjRPTl7aXRavszo9g4buiUAAsyjXykA-rLD8k7skDVZjFUXyD9r-x9bNgIBIjutldZaK_hKAe7Uawa7PVQqkElbYb76C9YrjDcn03O1JPq9jRTMhtowmg9tTr5wEWkJT6KSZJ-yci-8JLTcGTqnRIJt1RInCOTJkEXI4YfA5OMDuxg6tcPtlD1JMPc5694n39faA6xHBJCuEC3I8VgVIZuVeiU8MJiMSswrdzI35ZptrjQG_SXfUAu3fbSzIB0J6ZT9AXL_07pBBitvUHa5QRlOJbBOal2WQ2UxBHS-yMh4I62WtWDG8OWLwWsCKbzPvxDAAs8Ncxvc99FjeJQCawrgGMqiDDLshi0YJmCW0HwSWta_NkC7optRsWgqf0g68hcer4qlqdQ9y4GKrMl8Sjtd5CA4P-hDaTByuYgoRs3WBeiC9qXhHAixKn_ndewYrYMdXjppbukA8OWraXPUgQ4tyBZKa1hsLMXcEDO3LtIIlD3TDUFa-WVGP7z2PgT_Q9bENvJYqSIQZIMqh4CTWAuns7V_PDnaWD9RcZ_tnw-lLWVWKzvH73omxbPUW26WA0Ix5LhqCAHd_ebY2AHonlWNtY4XdJLzNSe2iCfdDla-I49TuM3FZh14640Pan3AZzeDeGghR6ERUVDIbkpJeS_Ta3Nj8jglvonOgte1ZPuV2WQUvsTz_WLszo1m4_ngUJVP6JoFp7zHO9-R7sopeW_Uy3ccP-ZVfPOLZmB_T2tYRwBdLALSesUH9DJchNNslVLD8WYUYV_m_p2ZIho8n4iqF3WYynV_17OBE8YxTbrdnqngnZBUO6NPm32-6oisudxDhHuxY_1SEMfJAiyPnj4IF0QC3iZssOR3pgO2ByQF4XP6viNUdneCnCzyYVoesN3nWmsAAsdlO4zhOqnCq7cLTCI97R0h3mXPrWOErJxTmn-yec_3SmA9D6nhaBDFPG0Xg9VgI1H9Xol2Y_XTz9DuXNw_pmg3UmYp3gDmqxrJ-W5uIOu0wMahgNvxUVyRmbOCXu1ApEgvl-5EuQ6KUf0Uda-MVHcIryMGY7q9VyOwN4oQLxlL-7LrzwEvCJK4RjQV2Sz07IHoGJJmTOt0fLs1pyEpajU-PA106qXi7_TpunMcsVuTb-usZyc0u8cRDe00Z__RTHm59FWlAOAT7mwTjGIJCZBIMqbBD4CLVjIjjQ-5NR1k_LpcUeCc-bSrjib5YBahX2vAiUFi9ZcN-Pi3Vy5wunodrlmwFPybdnVCylTdcT1XVmHfHKKzzQQEdzFKpYeI6mqKz_eVtaGdCck8S_6X6VPpuZ3dGJObs3wyzII9VMjpLQDGR9llLvImLNgNY2pJhT8tnWnfDnmGfRVMUdHPgzjV-znXCKEp3JNlFLd7NPf-3IZuytUhndMuCP72ryEup93BTkovASYZ2i4e_p1kQ7NwaslXLX57ukZ9nNQ05FXmgzYLM6DgyGn_AjcvwvNNyTgBP88EVwBGeldUpumtYdis98tollKGJp6TRxMIXj2vt4aqhWElbAcuJKZUiRiSoOknaYLxvl22FEYvmMbF1voHtJ8jkk9s2dT8qmCgk_zdHUokihjki3z1L6K8iukYhQWbum0k_kAmwfQxYPASD56Pot-uOxm76qQL-46VGvmiX-HbnwueLJprvys8CrPnowoYPI3HXhm3e3sEU6q-_SR5-FlvAi88PmjB71j3LT-Fs5FhwtujHsXwYgWv-wY2fCgsxtuVxb8d7nJN2thV4nt4NSdG5UCKbR7fjVFcNlIME_SITGDokXbxyCVfF4yz96o8jukk_C-awOpLoWrxrR2N1dxb-BeZSQUK-oDvj8SzdRh6QOIm3lrFuC6YH8yQ493RiKWfrVD5jwNBMCF1rlRHkytLSc1eJQY-3ojMUBg2DbB__WzqfJbx1XXmZr655Vpfgccid431M0RGmsqZkt_plW6wLCCkODKlxkL0AOjjBZcK6Cgy-HLD2pPbQkYZCBq48UXYSi5XUZY-xpl127Tu68A2ce1bI5FN6GTRsCGrkGucbvrkY3d4q41xu9aA1D8kvvjNrB0b3NxaUewZM_vnVu0Ano-LTBnmKmJiUChZNHdhUA794Qa-DLdJFL8nH4_F9rmjP2fQjGRlNL4zh2dy6v5lFTaj18dkOO0gr2dIwqJZpLcCSl3WfnMv2457mJS2qw9pYF5xvbkV0JT5V-swaqdHNxpTVqXDucYKqSoSJcd9rKFfm0uZc1b54hq_617IMWA4oXDFf_9z2B9Q2vaLLSyR7W8G68pd0dj1EtcpwNQMiE_ctlXROlgSso_Mm7MSeoYKFseFeesCAQR_N479Q4KPCN5FAqVxQowSAPNLeG_Ak8zCiLugmUZ-KtR071bjaWePojE6X-Nnp93rlcd2ifGOEedMt4xMOeUsns4MKelyoqSHstCgiOBsKavlmltLZPQmVQDT5kM2xmZCw2Vr0dpGb7nNEGM5dkHElWfJnZC3_JOCa0olJwtzkrc2JqOyxGo-LF8jd-dLqFNDTifPzJtkBYsYDgvDSnp2IJaKS5fFCFd_VWNBWoTaVoIoL_9sp1u5zGzUy0TSouJMWUz1BgtpC-juus1JzEqEW4ASQwEYD6U8eN5ZGUfeTZ9kwnUJI4Sa_fa6iR86K-PIiuTq-wKM9R2p9Y4VXmRF8I_-EnEJPlAeje7fOWwHuAj9hfYaMgq74WIadphHWgTh7j94xWA4i3UZ_c-7mz8mahJ90IymjlIwt8y3E5HcplTSq5KZBIEwJkiL5777QHoaFxQHdnAGe3zliiBj1Ywm8wsNGIeS42inUuZUE5bXO__kdFEyZfQ5yz9qSVpChu8860jIN4VS8n-CNBYPayLMZBFbbdd1KZbRWWIqeK6hwIandF7UeiWWEXP-a9SLfqtlbtqlx0QOgxqutOhvH7dnwLGlwVWbv3heWdqWJdxrcBWrNQAMMLW0ngfuVh8KF0TfLZjb6zcbPxEoaaulXv0Q9UhYngT8SFcvbD6pojRJW52qJCPhnYFyjWjEqI_ZbRXh3KFga13H133f9jSo4AkiyhSZA9nOTyi3B9xZXEiu-EDIWMVyTYW8qn2hJU4tVqjd2B_laNmkSfVkewmN14XDNOsDfFwf259upnM9HxvB7oJlQuyDGy2EJDZJxsYy65jCQXTf4rs17OIeQ46U3jlMIjBFcjjiopM5Rl7InYAHQOVDr4u7CHILxPgcwVyah12weFJhlmQ3rdXruryfo6TUfGirHzLymREReku6SF1NfL8cAh-Ro7dBuwGD9eAe9vO25Yg5k2WO8PXOcn619J-ftoJ9-7Us6jbvACjb_ModVtC0KDTrXVL4mS8UwvPVccOItMpltSK637UNi5iyPXnO-A1VFdFkm9PfggJk4ypxQmtT5ILotLY92Ps1fy54BlBCozpxkYjc46XxCU_mYWHvwamquHkzvVjgCsQwgpZ0B9zLnUaNSB7-5V6UPftGt92lzAPuqtVcItvixd7Vpnu8sFpJl3pEo6j4hEAzGE2x2j9KM2Jopta8UIylgucwosrb9MsWginSuXadfuRL-1FolSFYHZe703pYsLmSbCrSgj-IWyiqGUY5XzVqE_dfLJDC39jEMYIQYCyrO0kW-2xENX7YsqL7_hpZrxyHg0p1WxUAqWnChNMSymaC4JZApQD9wm6mGBBy-rrxHcEAfjBKsfokF1yR77IWudujTroeL27QgwW2S2z7zTUOyGJB6REwK6Z7inKKB4HknFyXjte3J1jfLbkXYwp0n-MZPkMAohHlZvKww74NEMYOwuqbqgVwD472vyRtInZ3XTJxn3dPc05YeIJiNP_MHrVbRn7_DnPmGQWRflGs2k3IWG-BIM5ECHiziIcedO7nXrEgONyGC46ZbS3y5wo0-0omahsHuayUaeMmD00EA7Dt7XlHSalOPaWdiWbstCAXbYcVgJPMrO2TuwHFvPt66PvI5citK6Lg2ofoC1ZTqc9iBeQN7RtHexBlSGioBM1Ux2z7KQdrXCf-tFGZX2vWlCIJ2RdJmXoUo-5i2y8cENCR-niwNRPnXR4GNR2SjIA3ZKXP3InfHqhBSA8Pjsp127TpXEoECT_tvNOGbo6NyXLUQ8IsD78ipW6LGiHKCzD9AC5y9KcuNa10Ksp7F4hEWfwPruyQbPg0536jjr6_xQQMAw_OiRY11X-pG4PUyrjqhI7csVwUbNrp5KO4aollR607SFCN62LSCjyJnPOspQg2PwvQj2fKx6KuUN2SvlWQur8nholauP6a2N02LmA6sQBGxjlHO4_R-jOApe-lFhRp_RSmUlba2ohDbpNWI91pb2t9_b7g5GARnbVMIeQwgnpHLNEZG7CWgF6UXTssyIPqiQDwgk9UV5tEbjfdgAwdhDa464tNQ12m82A6GV9VqfFdRTsp15zoOiJSE6fPNkHKK8ARsb2yV_kSU62vnVH8vCPr-Zw4kCbCgUlHGbficIBrnnHS1DBEMuYB4dFCccda9_PabACXr9hONhxZjPfS8-aRKyYsXueM6JN2GTG5xAsX8scX_IMKy9oUnVacrVl2qp-2StdyifgO-SY_tAcCBuwxZ4d8_pl4sWIH3j3Rh-UHux1iMYmH7Eq3ODoLSYWFHlCPRC6OSioJGRFB1fYNkWCGH1k2dMHuzhvpp_Fke6mlhHTgbQrZXn8rXMRH62FtCBC8Q8_ZL7MmSaWn2I8vHPdjuiZJSYn4OuckWEEi6E6KwVbUx235V5WIGyXTACGCzEHn-Owtj10EyRB7B8j_ePE5nVDH6dvytxvuCwwHUr1jEP34_CLMEPby8MkVDn4x9XUgsKySwu9BNoRc-llXuu_rgKbSe9YXYIAHLnSqIUIGAeu9QFwFgZTBNCc1QdyR4PbCBAakfUZjTBY8Ik1gfqDcm9bC-joUzrM1Oz2aIGWeFIcGx4HiGC8e2sRtbNHL3Vea-cZ5dqowpFBzijKTICN3QEre0UIMk2E6pfVXBJb3S5RbHPK3Y0-RJV20VGj1VzcOwDeYh9qxbG78rRKiEAdVStWrhLi1dUCL4NsOmmOoTmAfMxJ9OQfZhwCrNO-jSykNuHZIN8oaseJj2aBW0MITWVhZqBH0WYzSIjWCV-LAderbx6b5Wi5_DNtPblF2zR4PJZmdHHmnZ1afPvDyy9wJQDu_hp29VXuDGTIN4XZ20r7HcbfFD7GOLUcmb1YGP4zlhHaWQO1aHO3-eSF8IQ89GKHASN5MhhLxgZ343ydiXqf-o7IDigGWo_uSre5tydvaxzM7Qa6FR_Q29SznID3Z_vjWaNSsrqgZ2qTg8_dqr6jw8Nfx6hn2kJMSdiHa1EXghVVY-TM5axd2U4aNVCWLcw45AHRhLPLYQPMvYHOlg53_Eu7o0mJQy3JmOM61a5zPZ1heg_gLucNhX3j_NbVbxcq0z7YgzIU5sOLPA8Urz62Mu_4Dz5wrX7lq7ymalVaUGWsokjtkB5z2iJ6HXTwBTr8IReXxfplARIW0m6x-v33A91KTOMuvtaeTtALFLLM6PovbwVpcipneYJ2LoppXFK30aVZATkkMS9pM1WLZsaD9q6joaGw5sp_Jx_gcpuDEjwS85-_1wnNhHjGKonUXUPaqOkPiSHFGo588AfV3p2T-Cov-nNZY4M3YMGV53gbNoC-98nhsgVWcJrdlnlcrhVNoaRRI0GPSyml8JBeGnykKU7DHcuerZZ2aSSHncYyHI5KFM_H_R640btdZ-wf8aUfECVw6vQ67kK9WiQb47YBdg-IRkxnc7wSgOrHwtzK4q_DKk5kztO-IMuIPvFBQ9D6etsEGhCPPSwR-AmgNmpHvo7t2vLHwSweq-_xcrku-dpJPG0jkkGJb0m3tv8HWf58FTtc45Mtl9iJUqdwIniCXBOsNErSWRmyVRZML4QALRq9_0dpVEYlJp2ZAG4YAYz_q1cLBblmW1Geta1ZpF9maHw2E=
+            toolResponse:
+              id: call_461390
+              tool_type: GOOGLE_SEARCH_WEB
+              response:
+                search_suggestions: |-
+                  <style>
+                  .container {
+                    align-items: center;
+                    border-radius: 8px;
+                    display: flex;
+                    font-family: Google Sans, Roboto, sans-serif;
+                    font-size: 14px;
+                    line-height: 20px;
+                    padding: 8px 12px;
+                  }
+                  .chip {
+                    display: inline-block;
+                    border: solid 1px;
+                    border-radius: 16px;
+                    min-width: 14px;
+                    padding: 5px 16px;
+                    text-align: center;
+                    user-select: none;
+                    margin: 0 8px;
+                    -webkit-tap-highlight-color: transparent;
+                  }
+                  .carousel {
+                    overflow: auto;
+                    scrollbar-width: none;
+                    white-space: nowrap;
+                    margin-right: -12px;
+                  }
+                  .headline {
+                    display: flex;
+                    margin-right: 4px;
+                  }
+                  .gradient-container {
+                    position: relative;
+                  }
+                  .gradient {
+                    position: absolute;
+                    transform: translate(3px, -9px);
+                    height: 36px;
+                    width: 9px;
+                  }
+                  @media (prefers-color-scheme: light) {
+                    .container {
+                      background-color: #fafafa;
+                      box-shadow: 0 0 0 1px #0000000f;
+                    }
+                    .headline-label {
+                      color: #1f1f1f;
+                    }
+                    .chip {
+                      background-color: #ffffff;
+                      border-color: #d2d2d2;
+                      color: #5e5e5e;
+                      text-decoration: none;
+                    }
+                    .chip:hover {
+                      background-color: #f2f2f2;
+                    }
+                    .chip:focus {
+                      background-color: #f2f2f2;
+                    }
+                    .chip:active {
+                      background-color: #d8d8d8;
+                      border-color: #b6b6b6;
+                    }
+                    .logo-dark {
+                      display: none;
+                    }
+                    .gradient {
+                      background: linear-gradient(90deg, #fafafa 15%, #fafafa00 100%);
+                    }
+                  }
+                  @media (prefers-color-scheme: dark) {
+                    .container {
+                      background-color: #1f1f1f;
+                      box-shadow: 0 0 0 1px #ffffff26;
+                    }
+                    .headline-label {
+                      color: #fff;
+                    }
+                    .chip {
+                      background-color: #2c2c2c;
+                      border-color: #3c4043;
+                      color: #fff;
+                      text-decoration: none;
+                    }
+                    .chip:hover {
+                      background-color: #353536;
+                    }
+                    .chip:focus {
+                      background-color: #353536;
+                    }
+                    .chip:active {
+                      background-color: #464849;
+                      border-color: #53575b;
+                    }
+                    .logo-light {
+                      display: none;
+                    }
+                    .gradient {
+                      background: linear-gradient(90deg, #1f1f1f 15%, #1f1f1f00 100%);
+                    }
+                  }
+                  </style>
+                  <div class="container">
+                    <div class="headline">
+                      <svg class="logo-light" width="18" height="18" viewBox="9 9 35 35" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path fill-rule="evenodd" clip-rule="evenodd" d="M42.8622 27.0064C42.8622 25.7839 42.7525 24.6084 42.5487 23.4799H26.3109V30.1568H35.5897C35.1821 32.3041 33.9596 34.1222 32.1258 35.3448V39.6864H37.7213C40.9814 36.677 42.8622 32.2571 42.8622 27.0064V27.0064Z" fill="#4285F4"/>
+                        <path fill-rule="evenodd" clip-rule="evenodd" d="M26.3109 43.8555C30.9659 43.8555 34.8687 42.3195 37.7213 39.6863L32.1258 35.3447C30.5898 36.3792 28.6306 37.0061 26.3109 37.0061C21.8282 37.0061 18.0195 33.9811 16.6559 29.906H10.9194V34.3573C13.7563 39.9841 19.5712 43.8555 26.3109 43.8555V43.8555Z" fill="#34A853"/>
+                        <path fill-rule="evenodd" clip-rule="evenodd" d="M16.6559 29.8904C16.3111 28.8559 16.1074 27.7588 16.1074 26.6146C16.1074 25.4704 16.3111 24.3733 16.6559 23.3388V18.8875H10.9194C9.74388 21.2072 9.06992 23.8247 9.06992 26.6146C9.06992 29.4045 9.74388 32.022 10.9194 34.3417L15.3864 30.8621L16.6559 29.8904V29.8904Z" fill="#FBBC05"/>
+                        <path fill-rule="evenodd" clip-rule="evenodd" d="M26.3109 16.2386C28.85 16.2386 31.107 17.1164 32.9095 18.8091L37.8466 13.8719C34.853 11.082 30.9659 9.3736 26.3109 9.3736C19.5712 9.3736 13.7563 13.245 10.9194 18.8875L16.6559 23.3388C18.0195 19.2636 21.8282 16.2386 26.3109 16.2386V16.2386Z" fill="#EA4335"/>
+                      </svg>
+                      <svg class="logo-dark" width="18" height="18" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="24" cy="23" fill="#FFF" r="22"/>
+                        <path d="M33.76 34.26c2.75-2.56 4.49-6.37 4.49-11.26 0-.89-.08-1.84-.29-3H24.01v5.99h8.03c-.4 2.02-1.5 3.56-3.07 4.56v.75l3.91 2.97h.88z" fill="#4285F4"/>
+                        <path d="M15.58 25.77A8.845 8.845 0 0 0 24 31.86c1.92 0 3.62-.46 4.97-1.31l4.79 3.71C31.14 36.7 27.65 38 24 38c-5.93 0-11.01-3.4-13.45-8.36l.17-1.01 4.06-2.85h.8z" fill="#34A853"/>
+                        <path d="M15.59 20.21a8.864 8.864 0 0 0 0 5.58l-5.03 3.86c-.98-2-1.53-4.25-1.53-6.64 0-2.39.55-4.64 1.53-6.64l1-.22 3.81 2.98.22 1.08z" fill="#FBBC05"/>
+                        <path d="M24 14.14c2.11 0 4.02.75 5.52 1.98l4.36-4.36C31.22 9.43 27.81 8 24 8c-5.93 0-11.01 3.4-13.45 8.36l5.03 3.85A8.86 8.86 0 0 1 24 14.14z" fill="#EA4335"/>
+                      </svg>
+                      <div class="gradient-container"><div class="gradient"></div></div>
+                    </div>
+                    <div class="carousel">
+                  <a class="chip" href="https://www.google.com/search?q=2026+FIFA+World+Cup+winner&client=app-vertex-grounding&safesearch=active">2026 FIFA World Cup winner</a>
+                    </div>
+                  </div>
+          - text: >-
+              Spain won the most recent FIFA World Cup in 2026, defeating Argentina 1-0 in
+              the final.
+            thoughtSignature: >-
+              EoMDCoADAWkUfRNNZxC6lGbApRLt2GC8mIzXTRadJjhs-XlKKfVmpnXcK178J0SUtlha5vw-M6n0RHqiVErYLciBF0-gk_5fsD6H6HgprvO6W8Yn4_9Yo9oOutkzLvC-CtG1vW3T2ofm3HNl-Y8U-m4fj97GZmTONYSORU1O0uzdKYFW2K-wkv907pyduPrc_xgDc-G_21fwncHBa6JTrXpd0Q7bmKOXIsT0hmWiGCv5ybOM9V1NYNgerzUjpFfDETRP_ZVXgrkGsUFuWWAx4ei0I2jF8FHVsMXvS7U1-e46rInPcGna6YiPqp_rmeEImn5KZKzRr656WjC9AGqJUvvepk_YVFR4MY1di2YEed-FWdkLXIwJdBfUCzrHRyDn4Z-dnhPPj7RIiPTJwsQSUn21OBpR_xSsHclx6Nk3LzYBNidhf4fiZHHbPaPxRLreVbl3uJxQ9kpJF3QGYfJiZujeebxmOcpgM2VUQ6li4-WQzBOE6j8uvG8vLQ5psB6rBX20C84k
+          role: model
+        - parts:
+          - text: And who was the runner-up? One sentence.
+          role: user
+        tools:
+        - googleSearch: {}
+        toolConfig:
+          includeServerSideToolInvocations: true
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1873
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: Argentina was the runner-up.
+              thoughtSignature: >-
+                EvgJCvUJAWkUfRMmgUPDVw9tX7yyG9VViz6vnuBH8Dlef4zUcaDmlP74kVSzrDSUhC8iMcw2RmnBJ+XzhbOxW22pXFmtcuXwB1vpfQGqUmM4qCwqEocvKQzpBfsJmuvGHxtuAxvUfN2lv4cA0SLS6RsPQdGO6TktxN3eD6JvD3+X6WkmSxbF+6FzyzQv66cnOmHHg+76DMgwN6n1M95SqwNshX92WlNiC2nVmpihTQwBEVLrGFZv0s3A+0vnejCe3smgV69DKONAp53FG673pZqFOF4ho0814MaBVPCELQyxTnM2D97A+fRIbRRWJduihPTBsHSpjs4qlMIIWqiMklz0RM7Dpho8zySAomt/DHTU0SHXsF4VgujGOdtUa4a2N0g5HTedCgi0E6aGb97NxodtFJPu/LS2BEASVM55kdRUw0SMXIEzuCV+6M2h3UYYDdhJoZvg+Zm7XMjIBjxEZJU+7gXXeruHx9uklbq0gSDCQ7RMpelQjIzfrvV3vDpFaCFjhHZJeZQuqV0UxjeXf/thAvM3YeKPwGimZPuzBxwPABmlBK7Nqzgzy86OLNlyRRgy1puREqGxEBq6ATZbIfoOdbUdsPrOdzLt42RYAhd1LV8cF52bFUoNHkUzmkXk9JERe8+abFyW7JduOYir92UrLzyNKackQXbwOpEITkaxQrCCJlkH9RMqBMVYSItblVZi66ZiwFcu8CqIDTGqjxkqtTCJnpMK1xU2JqnDGU4h6vuyZdxuh8IkBpNl3mk7rKD2pl/a4L6r1quPrNBpQ8Uhc1MwQrgc+55t5ZtFk8w83p9TECf5BesOxvNvBjdo5nsI4ssw1Hprjs/Ol+fugfQBvNQV4K8co4e4dm1Ghp5yjGuaUn2PMb/xZadhY1AAiZv6aeuTOi8BCoOu0Lw+hfcSH5d8cmPdFS0aG6Ag6+zSzVTN/M4YiT2k2vUS4Ugrm7OeREYHf07bG731JNKQFHfYFq+DAJD5LPbrBVRxoZFqsEwMb49hc1/DLZEPAIgNaq7B22JiAYf+626u5TtPRmt9P1+hbpO18E7h8QC2imQrU5m472BoU2AkT50alIGfDHi/ziifRH+llrgiHHc2Xr+QgYhjfiTuqMaAZmERVSqhromUjfElLcmVV6KD/EUz6ZgDtLGfSGbJq/RMBr2wuOHFRRRjleTOa4fv0UEMDRZctqQnbLqXTJTIyPPBGwiXuYzEFpkOS3gIUW6VWeEc1ajJkyp7OczMY2cJlV7yA8xcsYEUTlEC6tsd+GPmln0ccTJHWVxkcl9m7PTWJnhkmemcPCCjK2KaUg8WFmmFMUXKYOZMYtLOyxmhYZkpcohzdVBntc7+lqMDbMyV3//jyRL9bQzvytneh2lcqhZfaKBjZV+gRvKgRp+Oae1/k43jtvWvrPLwcgu6qoZXG2xqvPAUnXZGIp94vUGIaKfLcetyCXq6w5Mowyj0ksQUW5dF+opHK+zVdl9CL7nObu45Ih/LeY9tlgmzd06Mlk4MlP6x1kdgDw0M0ssvtvWuHI7y956I5LwP+7Gca10XsRJEcw94U+BFRcBc5UJELUyn7FO6fCMxfdndrT1j1FZ17DUZIYvKMTP35M+zFURQvn5VeH3d16TLcwXYCCbUlZLzQiJ5pJvkzx5UHhBnQlQug5IBOHDoXuscDEe8VeO1rA0ftxr5FayI1bG8vRWk
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 137
+          candidatesTokenCount: 7
+          totalTokenCount: 450
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 137
+          thoughtsTokenCount: 306
+          serviceTier: standard
+        modelVersion: gemini-3.8-flash
+        responseId: tu--aqiUFpDrz7IP1rGIsQM
+  recorded_at: 2026-10-01T23:41:44.162864+00:00

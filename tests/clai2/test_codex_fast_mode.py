@@ -1,18 +1,26 @@
 """Codex speed choices retain the existing service-tier storage and request contract."""
 
 import json
+from io import StringIO
 from pathlib import Path
 
 import httpx2 as httpx
 import pytest
 from pydantic import JsonValue, TypeAdapter
+from rich.console import Console
 from termflow.tui import MenuItem
+from termflow.tui.completion import CompleteEvent, Document
 from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
 from pydantic_ai.models import override_allow_model_requests
 from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
+from pydantic_clai2._app import create_shell
+from pydantic_clai2.config import Settings
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command
 from tests.clai2.menu_script import Script, make_context, pick
@@ -69,13 +77,29 @@ async def test_model_settings_flow_saves_speed_without_selecting_model(tmp_path:
 
 
 @pytest.mark.parametrize('tier', ['priority', 'default'])
-async def test_saved_speed_reaches_codex_request(tmp_path: Path, tier: str) -> None:
+@pytest.mark.parametrize('via_command', [False, True])
+async def test_saved_speed_reaches_codex_request(tmp_path: Path, tier: str, via_command: bool) -> None:
     context, _ = make_context(tmp_path)
     name = 'openai-codex:gpt-6-astra'
-    source = ModelSettingsSource(context.store, name)
-    row = FieldMenu(source).row_for('service_tier')
-    assert row is not None
-    source.apply(row, tier)
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=StringIO()),
+        settings=Settings(model=name),
+        store=context.store,
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    if via_command:
+        await shell.commands.execute_async('/fast on' if tier == 'priority' else '/fast off')
+    else:
+        source = ModelSettingsSource(context.store, name)
+        row = FieldMenu(source).row_for('service_tier')
+        assert row is not None
+        source.apply(row, tier)
     bodies: list[dict[str, JsonValue]] = []
     adapter = TypeAdapter(dict[str, JsonValue])
 
@@ -128,3 +152,78 @@ async def test_saved_speed_reaches_codex_request(tmp_path: Path, tier: str) -> N
     assert bodies[0]['stream'] is True and bodies[0]['store'] is False
     reasoning = bodies[0]['reasoning']
     assert isinstance(reasoning, dict) and reasoning['effort'] == 'medium'
+
+
+@pytest.mark.parametrize('model', ['openai-codex:gpt-6-astra', 'openai-codex:xyz', 'openai:gpt-6-astra', 'test', None])
+async def test_fast_command_tracks_active_model(tmp_path: Path, model: str | None) -> None:
+    """Exercise the shell registry without credentials or model requests."""
+    store = SettingsStore(tmp_path / 'config.db')
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=StringIO()),
+        settings=Settings(model=model),
+        store=store,
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    available = model is not None and model.startswith('openai-codex:')
+    assert ('/fast:' in await shell.commands.execute_async('/help')) is available
+    assert ('fast' in [c.text for c in shell.commands.get_completions(Document('/fa'), CompleteEvent())]) is available
+    assert [c.text for c in shell.commands.get_completions(Document('/fast '), CompleteEvent())] == (
+        ['on', 'off'] if available else []
+    )
+    assert list(shell.commands.get_completions(Document('/fast on '), CompleteEvent())) == []
+    assert not shell.commands.runs_during_turn('/fast')
+    if not available:
+        with pytest.raises(ValueError, match='Unknown command /fast'):
+            await shell.commands.execute_async('/fast')
+    for command in ('/set model openai-codex:xyz', '/model add openai-codex:xyz', '/model openai-codex:xyz'):
+        await shell.commands.execute_async(command)
+        assert '/fast:' in await shell.commands.execute_async('/help')
+        assert 'Fast mode on' in await shell.commands.execute_async('/fast on')
+        await shell.commands.execute_async('/set model test')
+        assert '/fast:' not in await shell.commands.execute_async('/help')
+        with pytest.raises(ValueError, match='Unknown command /fast'):
+            await shell.commands.execute_async('/fast off')
+
+
+async def test_fast_toggle_preserves_other_preferences(tmp_path: Path) -> None:
+    model = 'openai-codex:xyz'
+    saved: dict[str, JsonValue] = {'openai_reasoning_effort': 'high', 'future_setting': {'value': 1}}
+    store = SettingsStore(tmp_path / 'config.db')
+    store.save_model_settings(model, saved)
+    shell = create_shell(
+        Agent(TestModel(model_name=model)),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=StringIO()),
+        settings=Settings(model=None),
+        store=store,
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    for command, tier in [
+        ('/fast', 'priority'),
+        ('/fast', 'default'),
+        ('/fast off', 'default'),
+        ('/fast on', 'priority'),
+    ]:
+        result = await shell.commands.execute_async(command)
+        assert f'service_tier={tier}' in result
+        assert ('more ChatGPT credits' in result) is (tier == 'priority')
+        assert SettingsStore(store.path).model_settings(model) == {**saved, 'service_tier': tier}
+        assert (shell.context.model_settings(model) or {}).get('service_tier') == tier
+    for command in ('/fast yes', '/fast on off'):
+        with pytest.raises(ValueError, match='Usage: /fast'):
+            await shell.commands.execute_async(command)
+        assert store.model_settings(model) == {**saved, 'service_tier': 'priority'}
+    store.save_model_settings(model, {**saved, 'custom_params': {'service_tier': 'flex'}})
+    with pytest.raises(ValueError, match='Custom service_tier overrides fast mode'):
+        await shell.commands.execute_async('/fast')
+    assert store.model_settings(model) == {**saved, 'custom_params': {'service_tier': 'flex'}}
