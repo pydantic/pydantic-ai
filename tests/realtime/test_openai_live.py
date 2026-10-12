@@ -2318,7 +2318,7 @@ async def test_backend_missing_usage_survives_realtime_session(
         assert availability_warnings == []
     else:
         assert len(availability_warnings) == 1
-        assert all('1 response(s) omitted usage information' in str(item.message) for item in availability_warnings)
+        assert all('Some responses omitted usage information' in str(item.message) for item in availability_warnings)
     assert session.usage.requests == 1
     assert session.usage.unmeasured_requests == int(not reported_zero)
     assert session.usage.input_tokens == 0
@@ -2365,7 +2365,7 @@ async def test_failed_handoff_without_usage_is_unmeasured_in_realtime_session(
     availability_warnings = [item for item in caught if issubclass(item.category, UsageLimitUnavailableWarning)]
     if warning_expected:
         assert len(availability_warnings) == 1
-        assert all('1 response(s) omitted usage information' in str(item.message) for item in availability_warnings)
+        assert all('Some responses omitted usage information' in str(item.message) for item in availability_warnings)
     else:
         assert availability_warnings == []
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]

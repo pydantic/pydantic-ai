@@ -20,7 +20,14 @@ from pydantic_ai import Agent, UsageLimitUnavailableWarning
 from pydantic_ai._genai_prices import best_effort_price
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.direct import model_request, model_request_stream
-from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+)
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -231,6 +238,27 @@ def test_unavailable_usage_warning_requires_token_or_cost_limit() -> None:
         warnings.simplefilter('error', UsageLimitUnavailableWarning)
         for limits in limits_without_token_or_cost:
             limits.check_tokens(usage)
+
+
+async def test_usage_unavailable_warning_is_shown_once_per_run() -> None:
+    """Every response omits usage, but the default warning filter shows the warning once, not after every response."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        part = ToolCallPart('step') if len(messages) < 7 else TextPart('done')
+        return ModelResponse(parts=[part], usage=RequestUsage(unmeasured_requests=1))
+
+    agent = Agent(FunctionModel(respond))
+
+    @agent.tool_plain
+    def step() -> str:
+        return 'ok'
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('default', UsageLimitUnavailableWarning)
+        result = await agent.run('hello', usage_limits=UsageLimits(request_limit=10, total_tokens_limit=1000))
+
+    assert [item.category for item in caught] == [UsageLimitUnavailableWarning]
+    assert result.usage == snapshot(RunUsage(requests=4, tool_calls=3, unmeasured_requests=4))
 
 
 @pytest.mark.parametrize(
@@ -596,7 +624,7 @@ def openai_model(completion: chat.ChatCompletion | list[chat.ChatCompletion] | A
 )
 async def test_limits_warn_when_response_omits_usage(allow_model_requests: None, usage_limits: UsageLimits) -> None:
     """The model is priceable, but omitted usage must leave the cost unknown rather than priced as zero."""
-    with pytest.warns(UsageLimitUnavailableWarning, match=r'response\(s\) omitted usage information'):
+    with pytest.warns(UsageLimitUnavailableWarning, match='Some responses omitted usage information'):
         result = await Agent(openai_model(openai_completion())).run('hello', usage_limits=usage_limits)
 
     assert result.usage == snapshot(RunUsage(requests=1, unmeasured_requests=1))
@@ -637,7 +665,7 @@ async def test_mixed_known_and_missing_usage_keeps_known_totals(
     def get_value() -> str:
         return 'value'
 
-    with pytest.warns(UsageLimitUnavailableWarning, match=r'response\(s\) omitted usage information') as caught:
+    with pytest.warns(UsageLimitUnavailableWarning, match='Some responses omitted usage information') as caught:
         result = await agent.run('hello', usage_limits=UsageLimits(total_tokens_limit=300))
 
     assert len(caught) == expected_warnings
@@ -676,7 +704,7 @@ async def test_usage_unavailable_warning_can_be_promoted_to_error(allow_model_re
     agent = Agent[None, str](openai_model(openai_completion()), capabilities=[capability], deps_type=type(None))
     with warnings.catch_warnings():
         warnings.simplefilter('error', UsageLimitUnavailableWarning)
-        with pytest.raises(UsageLimitUnavailableWarning, match=r'response\(s\) omitted usage information'):
+        with pytest.raises(UsageLimitUnavailableWarning, match='Some responses omitted usage information'):
             await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=100))
 
     assert capability.recovery_called is False
@@ -798,7 +826,7 @@ async def test_fallback_counts_rejected_usage_alongside_omitted_usage(
     )
     limits = UsageLimits(cost_limit=Decimal('1'), input_tokens_limit=token_limit)
 
-    with pytest.warns(UsageLimitUnavailableWarning, match=r'response\(s\) omitted usage information') as caught:
+    with pytest.warns(UsageLimitUnavailableWarning, match='Some responses omitted usage information') as caught:
         result = await Agent(model).run('hello', usage_limits=limits)
 
     assert len(caught) == 1
@@ -852,11 +880,10 @@ async def test_fallback_counts_each_omitted_rejection(
     model = FallbackModel(rejected[0], *rejected[1:], selected_model(), fallback_on=reject_text)
     limits = UsageLimits(cost_limit=Decimal('1'), input_tokens_limit=200)
 
-    with pytest.warns(UsageLimitUnavailableWarning, match=r'response\(s\) omitted usage information') as caught:
+    with pytest.warns(UsageLimitUnavailableWarning, match='Some responses omitted usage information') as caught:
         result = await Agent(model).run('hello', usage_limits=limits)
 
     assert len(caught) == 1
-    assert f'{rejected_count} response(s) omitted usage information' in str(caught[0].message)
     assert result.output == 'accepted'
     assert result.usage == expected_usage + RunUsage(unmeasured_requests=rejected_count)
 

@@ -5268,7 +5268,7 @@ async def test_openai_responses_web_search_without_token_usage_warns_with_token_
     )
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(c)))
 
-    with pytest.warns(UsageLimitUnavailableWarning, match='response\\(s\\) omitted usage information'):
+    with pytest.warns(UsageLimitUnavailableWarning, match='Some responses omitted usage information'):
         result = await Agent(model).run('What is pydantic?', usage_limits=UsageLimits(input_tokens_limit=100))
 
     assert result.usage == snapshot(
@@ -5352,7 +5352,7 @@ async def test_openai_responses_web_search_usage_stream_in_progress_snapshot(
             )
         )
     else:
-        with pytest.warns(UsageLimitUnavailableWarning, match='response\\(s\\) omitted usage information'):
+        with pytest.warns(UsageLimitUnavailableWarning, match='Some responses omitted usage information'):
             with pytest.raises(UsageLimitExceeded):
                 async with agent.run_stream(
                     'What is pydantic?', usage_limits=UsageLimits(cost_limit=cost_limit)

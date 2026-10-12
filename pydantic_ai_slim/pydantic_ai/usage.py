@@ -647,13 +647,14 @@ class UsageLimits:
 
     def _warn_if_usage_unavailable(self, usage: RunUsage) -> None:
         if usage.unmeasured_requests and (self.has_token_limits() or self.cost_limit is not None):
+            # A fixed message, so the default warning filter shows it once rather than after every later response.
             warnings.warn(
                 UsageLimitUnavailableWarning(
-                    f'{usage.unmeasured_requests} response(s) omitted usage information, so the known token and cost '
-                    'totals are lower bounds and configured limits cannot be fully enforced. Check the provider or '
-                    'server usage reporting, or promote `UsageLimitUnavailableWarning` to an error.'
-                ),
-                stacklevel=3,
+                    'Some responses omitted usage information, so the known token and cost totals are lower bounds '
+                    'and configured limits cannot be fully enforced. `RunUsage.unmeasured_requests` counts them. '
+                    'Check the provider or server usage reporting, or promote `UsageLimitUnavailableWarning` to an '
+                    'error.'
+                )
             )
 
     def check_before_tool_call(self, projected_usage: RunUsage) -> None:
