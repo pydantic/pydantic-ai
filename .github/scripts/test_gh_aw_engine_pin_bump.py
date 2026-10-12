@@ -48,9 +48,11 @@ def _run_bump(
     guard_run = next(
         step['run']
         for step in job['steps']
-        if step.get('name') == 'Check whether the release moved past the definition'
+        if step.get('name') == 'Check whether the release moved past the definition' and 'run' in step
     )
-    bump_run = next(step['run'] for step in job['steps'] if step.get('name') == 'Open the pin bump pull request')
+    bump_run = next(
+        step['run'] for step in job['steps'] if step.get('name') == 'Open the pin bump pull request' and 'run' in step
+    )
     snapshot = snapshot_version or pinned
     definition = tmp_path / DEFINITION.rsplit('/', maxsplit=1)[-1]
     definition.write_text(
@@ -89,7 +91,7 @@ if [[ "${1:-}" == -w0 ]]; then
   fi
 elif [[ "${1:-}" == -d ]]; then
   shift
-  "$BASE64_REAL" -D "$@"
+  "$BASE64_REAL" -d "$@"
 else
   "$BASE64_REAL" "$@"
 fi
