@@ -101,6 +101,7 @@ FOLLOW_UP_OUTPUTS: dict[bool, str] = {
 }
 
 
+@pytest.mark.vcr
 @pytest.mark.parametrize('stream', [False, True])
 async def test_xai_native_tool_result_replayed_paired(
     allow_model_requests: None, xai_provider: XaiProvider, stream: bool
