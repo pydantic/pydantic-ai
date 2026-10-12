@@ -43,9 +43,11 @@ CURATED = {
     'posthog',
     'grain',
     'linear',
+    'computer_use',
 }
 OPT_IN = {
     'herdr',
+    'computer_use',
     'day_ai',
     'github',
     'google_workspace',

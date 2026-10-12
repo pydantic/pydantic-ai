@@ -93,6 +93,15 @@ either; logging handlers that a plugin configures still receive them.
 `/login` offers both Codex and GitHub Copilot without loading their integrations for
 completion. Copilot requests use your saved login through the lazy provider resolver.
 
+## Computer use
+
+`/plugins enable computer_use` lets the model see and control your screen,
+mouse, and keyboard, asking before every action in an inline picker. It starts
+disabled and needs the `computer-use` extra
+(`uv tool install 'pydantic-clai2[computer-use]'`). See
+[the plugin guide](PLUGINS.md#computer-use) for approvals, platform setup, and
+what screenshots reach telemetry and saved sessions.
+
 ## Herdr integration
 
 Enable `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane to report

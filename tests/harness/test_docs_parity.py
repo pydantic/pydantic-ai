@@ -139,6 +139,7 @@ _CAPABILITY_PAGE_META = {
     'absurd.md': ('absurd', 'Absurd Durability'),
     'background-tools.md': ('background_tools', 'Background Tools'),
     'code-mode.md': ('code_mode', 'Code Mode'),
+    'computer-use.md': ('computer_use', 'Computer Use'),
     'coder.md': ('coder', 'Coder'),
     'skills.md': ('skills', 'Skills'),
     'filesystem.md': ('filesystem', 'FileSystem'),

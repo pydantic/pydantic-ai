@@ -53,6 +53,8 @@ dependencies = [
 # Providers whose SDK CLAI does not install by default. `/model` names the extra when it is missing.
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 typesafe = ["pydantic-ai-slim[typesafe]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+# The built-in `computer_use` plugin, which ships disabled.
+computer-use = ["pydantic-ai-harness[computer-use]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 
 [project.urls]
 Homepage = "https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2"

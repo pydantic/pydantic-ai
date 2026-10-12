@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         TieredCompaction,
         WarnNearLimits,
     )
+    from .computer_use import ComputerUse
     from .conversation_search import ConversationSearch
     from .day_ai import DayAI
     from .dynamic_workflow import DynamicWorkflow
@@ -84,6 +85,7 @@ __all__ = [
     'ClearToolResults',
     'CodeMode',
     'Coder',
+    'ComputerUse',
     'ConversationSearch',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
     'DayAI',
@@ -160,6 +162,7 @@ _CAPABILITY_EXPORTS = {
     'ClearToolResults': 'compaction',
     'CodeMode': 'code_mode',
     'Coder': 'coder',
+    'ComputerUse': 'computer_use',
     'ConversationSearch': 'conversation_search',
     'DayAI': 'day_ai',
     'DeduplicateFileReads': 'compaction',
