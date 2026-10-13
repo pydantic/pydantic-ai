@@ -103,7 +103,7 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
     from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
 
     reviewer = ApprovalReviewer(
-        'anthropic:claude-haiku-4-5',
+        'anthropic:claude-haiku-5-5',
         question='Could this destroy data, spend money, or leak secrets?',
     )
     agent = Agent(

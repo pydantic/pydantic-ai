@@ -54,7 +54,7 @@ uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_
 
 The bundled `coder_agent` is the example above without a model.
 
-Every model works: swap the string for [any provider's](../models/overview.md). Need more? Add capabilities to the list; here's the same coder on `gpt-5.6-sol`, with web search and cross-session memory:
+Every model works: swap the string for [any provider's](../models/overview.md). Need more? Add capabilities to the list; here's the same coder on `gpt-6.1-sol`, with web search and cross-session memory:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[openai]"
@@ -67,7 +67,7 @@ from pydantic_ai_harness import Coder, Memory
 from pydantic_ai_harness.memory import FileStore
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    'openai:gpt-6.1-sol',
     capabilities=[
         LocalWorkspace('.'),
         Coder(),

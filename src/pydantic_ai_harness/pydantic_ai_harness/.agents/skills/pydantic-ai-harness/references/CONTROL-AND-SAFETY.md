@@ -216,7 +216,7 @@ def log_detection(ctx: RunContext[None], call: ToolCallPart, verdict: DefenseRes
 
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
+    'anthropic:claude-sonnet-5-5',
     capabilities=[
         PromptInjectionDefender(
             block_high_risk=True,
@@ -252,10 +252,10 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import ToolCallJudge
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
+    'anthropic:claude-sonnet-5-5',
     capabilities=[
         ToolCallJudge(
-            'anthropic:claude-haiku-4-5',
+            'anthropic:claude-haiku-5-5',
             question='Would this call destroy data, spend money, or expose secrets?',
             tools=['delete_file', 'run_shell'],
         )
@@ -296,11 +296,11 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness import ApprovalReviewer
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
+    'anthropic:claude-sonnet-5-5',
     output_type=[str, DeferredToolRequests],
     capabilities=[
         ApprovalReviewer(
-            'anthropic:claude-haiku-4-5',
+            'anthropic:claude-haiku-5-5',
             question='Could this call destroy data, spend money, or expose secrets?',
             tools=['run_shell'],
         )

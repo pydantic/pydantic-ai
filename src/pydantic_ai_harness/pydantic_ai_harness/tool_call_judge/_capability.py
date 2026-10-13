@@ -96,7 +96,7 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
     from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
     judge = ToolCallJudge(
-        'anthropic:claude-haiku-4-5',
+        'anthropic:claude-haiku-5-5',
         tools=['run_shell', 'delete_file'],
         question='Would running this destroy data, spend money, or leak secrets?',
     )

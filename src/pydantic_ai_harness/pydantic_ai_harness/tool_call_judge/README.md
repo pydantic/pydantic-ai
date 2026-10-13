@@ -41,7 +41,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 judge = ToolCallJudge(
-    'anthropic:claude-haiku-4-5',
+    'anthropic:claude-haiku-5-5',
     tools=['delete_file'],
     question='Would running this destroy data, spend money, or leak secrets?',
 )
@@ -95,7 +95,7 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 judge = ToolCallJudge(
-    'anthropic:claude-haiku-4-5',
+    'anthropic:claude-haiku-5-5',
     tools=['delete_file'],
     question='Would this destroy data?',
     on_uncertain='ask',
@@ -138,7 +138,7 @@ The cost of that default is real: a question like "is this deletion something th
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 judge = ToolCallJudge(
-    'anthropic:claude-haiku-4-5',
+    'anthropic:claude-haiku-5-5',
     tools=['delete_file'],
     question='Does this deletion go beyond what the user asked for?',
     include_conversation=True,
@@ -167,13 +167,13 @@ agent = Agent(
     output_type=[str, DeferredToolRequests],
     capabilities=[
         ToolCallJudge(
-            'anthropic:claude-haiku-4-5',
+            'anthropic:claude-haiku-5-5',
             tools={'risk': 'high'},
             question='Is there any chance this is destructive or irreversible?',
             on_uncertain='ask',
         ),
         ToolCallJudge(
-            'anthropic:claude-haiku-4-5',
+            'anthropic:claude-haiku-5-5',
             tools='all',
             question='Is this call clearly outside what the user asked for?',
             on_uncertain='allow',
@@ -206,7 +206,7 @@ A durable operation is addressed by the capability's `id`, and `ToolCallJudge` h
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 judge = ToolCallJudge(
-    'anthropic:claude-haiku-4-5',
+    'anthropic:claude-haiku-5-5',
     id='refund-judge',
     tools=['issue_refund'],
     question='Would this refund more than the original charge?',
@@ -240,7 +240,7 @@ from pydantic_ai_harness.tool_call_judge import ToolCallJudge, ToolCallVerdict
 
 verdicts: list[ToolCallVerdict] = []
 judge = ToolCallJudge(
-    'anthropic:claude-haiku-4-5',
+    'anthropic:claude-haiku-5-5',
     tools=['delete_file'],
     question='Would this destroy data?',
     on_verdict=verdicts.append,

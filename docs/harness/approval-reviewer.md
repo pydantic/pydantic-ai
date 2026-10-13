@@ -36,7 +36,7 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
 
 reviewer = ApprovalReviewer(
-    'anthropic:claude-haiku-4-5',
+    'anthropic:claude-haiku-5-5',
     tools=['run_shell'],
     question='Could this command delete or overwrite data, reach the network, or expose secrets?',
 )
@@ -111,7 +111,7 @@ def ask_in_terminal(ctx: RunContext[None], requests: DeferredToolRequests) -> De
 agent = Agent(
     'anthropic:claude-fable-5',
     capabilities=[
-        ApprovalReviewer('anthropic:claude-haiku-4-5', question='Could this destroy data or leak secrets?'),
+        ApprovalReviewer('anthropic:claude-haiku-5-5', question='Could this destroy data or leak secrets?'),
         HandleDeferredToolCalls(handler=ask_in_terminal),
     ],
 )
@@ -153,12 +153,12 @@ agent = Agent(
     output_type=[str, DeferredToolRequests],
     capabilities=[
         ApprovalReviewer(
-            'anthropic:claude-haiku-4-5',
+            'anthropic:claude-haiku-5-5',
             tools=['run_shell'],
             question='Could this command delete or overwrite data, reach the network, or expose secrets?',
         ),
         ApprovalReviewer(
-            'anthropic:claude-haiku-4-5',
+            'anthropic:claude-haiku-5-5',
             tools=['write_file'],
             question='Does this write outside the project directory or touch configuration or credentials?',
         ),
@@ -184,7 +184,7 @@ A durable operation is addressed by the capability's `id`, and `ApprovalReviewer
 from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
 
 reviewer = ApprovalReviewer(
-    'anthropic:claude-haiku-4-5',
+    'anthropic:claude-haiku-5-5',
     id='shell-reviewer',
     tools=['run_shell'],
     question='Could this command delete or overwrite data, reach the network, or expose secrets?',
@@ -216,7 +216,7 @@ from pydantic_ai_harness.approval_reviewer import ApprovalReview, ApprovalReview
 
 reviews: list[ApprovalReview] = []
 reviewer = ApprovalReviewer(
-    'anthropic:claude-haiku-4-5',
+    'anthropic:claude-haiku-5-5',
     question='Could this destroy data or leak secrets?',
     on_review=reviews.append,
 )
