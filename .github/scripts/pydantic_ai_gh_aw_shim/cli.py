@@ -51,7 +51,7 @@ from typing import Any, TypeAlias, cast
 import httpx2
 import logfire
 from anthropic import AsyncAnthropic
-from mcp.shared.exceptions import McpError
+from fastmcp.exceptions import McpError  # pyright: ignore[reportPrivateImportUsage]
 from pydantic import TypeAdapter, ValidationError
 from tenacity import RetryCallState, stop_after_delay, wait_random_exponential
 from tenacity.asyncio.retry import retry_if_result
