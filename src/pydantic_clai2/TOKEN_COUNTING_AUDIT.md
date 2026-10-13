@@ -25,7 +25,7 @@ already includes cache reads and writes; no CLAI sum adds them again.
 | Subagent status row | `tasks.py`: child's last `usage.total_tokens`, child model window | Same as the main row |
 | `herdr` pane: `tokens`, `context` | `session_usage(...).total.total_tokens`; gauge fraction | Tokens processed; context fraction |
 | `/resume` browser `N tok` | harness `ConversationStore`: sum of `total_tokens` | Tokens processed |
-| Automatic compaction (0.85), `coder` `ClearToolResults` (0.7), `WarnNearLimits` (0.9) | `estimate_context_tokens` | Trigger for each |
+| Automatic compaction (0.85), `coder` `ClearToolResults` (0.7) | `estimate_context_tokens` | Trigger for each |
 | `protected_tokens` tail, reclaim, `/compact` "tokens saved" | `estimate_token_count` (heuristic only) | Estimate |
 | Imported Claude Code and Codex sessions | per-request usage (`input + cache read + cache write`; Codex `last_token_usage`) | Set once per response, never summed |
 | Session naming | naming run's `total_tokens` | Naming cost only |

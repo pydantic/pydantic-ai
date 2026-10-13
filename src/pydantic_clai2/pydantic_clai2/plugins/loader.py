@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib
+import logging
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -54,6 +55,8 @@ from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.spinners import Spinner
 from pydantic_clai2.ui.rendering.status import Status, StatusSegment
+
+_LOGGER = logging.getLogger(__name__)
 
 # Local settings databases from before the package move, or from before plugins were declared as
 # `Plugin` classes, can still name the old factories.
@@ -413,10 +416,11 @@ class PluginLoader(Generic[DepsT]):
                     if not _module_absent(entry, exc.error):
                         failures.append(PluginLoadFailed(plugin=entry.name, error=exc.error))
                         self._console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
-                # `load` refreshed the entries, so read the notice from the current one.
+                # Settings another build saved are expected in a shared database, not a problem to
+                # announce on every start: `/plugins` shows the notice. `load` refreshed the entries.
                 ignored = self._entries[entry.name].ignored
                 if ignored is not None:
-                    self._console.print(ignored, style=theme.color(theme.WARNING), markup=False)
+                    _LOGGER.debug('%s', ignored)
         # Observers can load after a failing plugin, so report only once startup loading finishes.
         for failure in failures:
             await self.fire(failure)

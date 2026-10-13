@@ -395,6 +395,14 @@ def _error_status_code(error: APIStatusError) -> int:
     return error.status_code
 
 
+def _reported_error_body(body: object | None) -> object | None:
+    """The object in an error body that reports the failure.
+
+    The direct API wraps it in an `error` object; Bedrock returns it at the top level.
+    """
+    return body.get('error', body) if _utils.is_str_dict(body) else None
+
+
 def _is_expired_container_error(error: APIStatusError) -> bool:
     """Whether Anthropic rejected a request because the container it reuses has expired.
 
@@ -403,11 +411,10 @@ def _is_expired_container_error(error: APIStatusError) -> bool:
     status_code = _error_status_code(error)
     if status_code == 500:
         return True
-    body = error.body
+    error_body = _reported_error_body(error.body)
     return (
         status_code == 404
-        and _utils.is_str_dict(body)
-        and _utils.is_str_dict(error_body := body.get('error'))
+        and _utils.is_str_dict(error_body)
         and str(error_body.get('message', '')).startswith('Container not found')
     )
 
@@ -811,10 +818,9 @@ def _is_stale_thinking_block_error(
         return False
     if not _can_add_drop_block(thinking):
         return False
-    body: object | None = error.body
+    reported = _reported_error_body(error.body)
     return (
-        _utils.is_str_dict(body)
-        and _utils.is_str_dict(reported := body.get('error'))
+        _utils.is_str_dict(reported)
         and isinstance(message := reported.get('message'), str)
         and _STALE_THINKING_BLOCK_MARKER in message
     )
