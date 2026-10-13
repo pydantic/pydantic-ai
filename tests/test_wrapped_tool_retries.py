@@ -105,7 +105,8 @@ CASES = [
 async def test_prepare_sees_retry_under_wrapper(case: Case):
     """A `prepare` that hides its tool after a failure sees the failure under any name-changing wrapper.
 
-    The `prefixed` and `nested_prefixes` cases are the reproduction in https://github.com/pydantic/pydantic-ai/issues/9741.
+    The `prefixed` and `nested_prefixes` cases are the reproduction in
+    https://github.com/pydantic/pydantic-ai/issues/9741.
     """
     seen: list[int] = []
     wrapped = case.wrap(failing_toolset(seen))

@@ -632,7 +632,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             # `retries` is keyed by the name the model calls the tool by, computed here from the
             # layers `PrefixedToolset` and `RenamedToolset` pushed. That name is wrong when the tool's
             # own `prepare` renames it, or when a wrapper that renames tools without pushing a layer
-            # is combined with a built-in one. If it then names an unrelated tool, that count is read.
+            # is combined with a built-in one. If it then names an unrelated tool, `prepare` reads
+            # that tool's count.
             run_context = replace(
                 ctx,
                 tool_name=original_name,

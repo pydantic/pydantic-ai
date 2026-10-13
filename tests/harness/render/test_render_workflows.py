@@ -220,8 +220,10 @@ async def test_dynamic_tool_discovery_and_call_run_as_render_child_tasks() -> No
 async def test_prefixed_dynamic_tool_child_tasks_see_its_retry_count() -> None:
     """A dynamic toolset's child tasks list it under the prefix the run listed it under.
 
-    See https://github.com/pydantic/pydantic-ai/issues/9741. `ctx.retries` is keyed by the name the model calls the tool by, so a `prepare` that runs in a
-    child task only sees `demo_fail`'s failure if the prefix crossed the task boundary with it.
+    `ctx.retries` is keyed by the name the model calls the tool by, so a `prepare` that runs in a child task only
+    sees `demo_fail`'s failure if the prefix crossed the task boundary with it.
+
+    See https://github.com/pydantic/pydantic-ai/issues/9741.
     """
 
     def failing_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:

@@ -4022,9 +4022,10 @@ async def test_prefect_durability_identical_capability_operations_execute_twice_
 async def test_prefect_dynamic_toolset_under_two_prefixes_replays_each_listing() -> None:
     """One dynamic toolset listed under two prefixes keeps a discovery result per prefix.
 
-    See https://github.com/pydantic/pydantic-ai/issues/9741. `a_fail` fails once and its `prepare` hides it, while `b_fail` keeps its own count and stays
-    listed. The flow retry replays the cached discovery results, and must not serve the listing
-    made under one prefix to the other.
+    `a_fail` fails once and its `prepare` hides it, while `b_fail` keeps its own count and stays listed. The flow
+    retry replays the cached discovery results, and must not serve the listing made under one prefix to the other.
+
+    See https://github.com/pydantic/pydantic-ai/issues/9741.
     """
 
     def failing_toolset(ctx: RunContext[object]) -> FunctionToolset[object]:

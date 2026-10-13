@@ -462,10 +462,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     attaches the path it was listed under to its validate and call units, which list the toolset
     again. The built-in sites that hand the context to user code strip it first (see
     `without_tool_name_path`): a tool's `prepare`, `.prepared()` and `.filtered()` callbacks,
-    `DynamicToolset` factories, and durable tool validators and bodies. That keeps a context handed
-    to an unrelated toolset from attributing its counts to the wrong names; a custom toolset's own
-    `get_tools` under a wrapper still receives it. Excluded from equality because it is listing
-    bookkeeping, not run state.
+    `DynamicToolset` factories, durable tool validators and bodies, and a dynamic toolset's
+    instructions during durable discovery. That keeps a context handed to an unrelated toolset from
+    attributing its counts to the wrong names; a custom toolset's own `get_tools` under a wrapper
+    still receives it. Excluded from equality because it is listing bookkeeping, not run state.
     """
 
     @property

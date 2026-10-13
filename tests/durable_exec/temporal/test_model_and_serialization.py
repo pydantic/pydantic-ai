@@ -1092,9 +1092,11 @@ def test_temporal_run_context_serialization_is_exhaustive():
 async def test_temporal_run_context_carries_tool_name_path():
     """A toolset listed in an activity under a wrapper reads its tool's count by the wrapper's names.
 
-    See https://github.com/pydantic/pydantic-ai/issues/9741. The path crosses as JSON and comes back in the shape the toolsets read. A payload without it,
-    from a worker that predates it or a custom `serialize_run_context` that omits it, still loads and
-    lists the tool by the name its toolset holds it under, as before the path existed.
+    The path crosses as JSON and comes back in the shape the toolsets read. A payload without it, from a worker that
+    predates it or a custom `serialize_run_context` that omits it, still loads and lists the tool by the name its
+    toolset holds it under, as before the path existed.
+
+    See https://github.com/pydantic/pydantic-ai/issues/9741.
     """
     seen: list[int] = []
     toolset = FunctionToolset[None]()
