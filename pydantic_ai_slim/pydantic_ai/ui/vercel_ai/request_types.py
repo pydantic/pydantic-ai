@@ -406,7 +406,7 @@ class UIMessage(CamelBaseModel):
     role: Literal['system', 'user', 'assistant']
     """The role of the message."""
 
-    metadata: Any | None = Field(default=None, exclude_if=lambda value: value is None)
+    metadata: Any | None = None
     """The metadata of the message."""
 
     parts: list[UIMessagePart]
@@ -417,6 +417,16 @@ class UIMessage(CamelBaseModel):
     User messages can have text parts and file parts.
     Assistant messages can have text, reasoning, tool invocation, and file parts.
     """
+
+    # The AI SDK types `metadata` as optional, so unset metadata is omitted rather than sent as `null`.
+    # An explicit `null` is kept: an app's `metadataSchema` may be nullable rather than optional.
+    # No return annotation: one would replace the message's serialization JSON schema with a bare `object`.
+    @model_serializer(mode='wrap')
+    def _omit_unset_metadata(self, handler: SerializerFunctionWrapHandler):
+        data = handler(self)
+        if self.metadata is None and 'metadata' not in self.model_fields_set:
+            data.pop('metadata', None)
+        return data
 
 
 class SubmitMessage(CamelBaseModel, extra='allow'):

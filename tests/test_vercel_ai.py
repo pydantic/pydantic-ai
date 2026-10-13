@@ -5071,15 +5071,17 @@ async def test_adapter_dump_messages_omits_unset_optional_fields(tiny_image: Bin
     assert noop_return.content is None
 
 
-def test_client_approval_without_reason_serializes_without_null():
-    """A client-sent approval without a reason, stored and sent back, must not gain `reason: null`.
+def test_client_message_serializes_as_sent():
+    """A client-sent message, stored and sent back, keeps its explicit `metadata: null` and gains no `reason: null`.
 
-    Not a `dump_messages` test: the adapter always sets `reason` on the approvals it builds.
+    Not a `dump_messages` test: the adapter always sets `reason` on the approvals it builds, and never sets `null`
+    metadata. An app's `metadataSchema` may be nullable, so the client's `null` must round-trip.
     """
     message = UIMessage.model_validate(
         {
             'id': 'msg_1',
             'role': 'assistant',
+            'metadata': None,
             'parts': [
                 {
                     'type': 'tool-delete_file',
@@ -5095,6 +5097,7 @@ def test_client_approval_without_reason_serializes_without_null():
         {
             'id': 'msg_1',
             'role': 'assistant',
+            'metadata': None,
             'parts': [
                 {
                     'type': 'tool-delete_file',
