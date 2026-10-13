@@ -752,18 +752,6 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                             self.is_strict_compatible = False
 
         if schema_type == 'array':
-            # Fixed-length Pydantic tuples use `prefixItems` without `items`, which OpenAI rejects as missing `items`.
-            # Variadic tuples use typed `items`; this guard conservatively rejects any schema with `prefixItems`.
-            # See https://github.com/pydantic/pydantic-ai/issues/7315
-            if schema.get('prefixItems'):
-                if self.strict is True:
-                    raise UserError(
-                        'Pydantic AI cannot use this tuple schema with `prefixItems` in OpenAI strict mode. '
-                        'Use a homogeneous list type, or set `strict=False`.'
-                    )
-                elif self.strict is None:
-                    self.is_strict_compatible = False
-
             # OpenAI strict mode requires an array to describe its elements' type via `items`. A bare
             # `list` produces an empty `items: {}`, `list[Any]` a boolean `items: true`, and a schema
             # may omit `items` entirely; none of these give the element a type, so they're rejected by

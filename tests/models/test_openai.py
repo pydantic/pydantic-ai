@@ -9,7 +9,6 @@ import sys
 import textwrap
 import warnings
 from collections.abc import Callable
-from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -6620,6 +6619,10 @@ _PREFIX_ITEMS_SCHEMAS = [
         id='no-length-bounds',
     ),
     pytest.param(
+        {'type': 'array', 'prefixItems': [{'type': 'integer'}], 'minItems': 1, 'maxItems': 1},
+        id='single-item-tuple',
+    ),
+    pytest.param(
         {'type': 'array', 'prefixItems': [{'type': 'integer'}], 'items': {'type': 'string'}},
         id='typed-items-alongside',
     ),
@@ -6627,33 +6630,19 @@ _PREFIX_ITEMS_SCHEMAS = [
 
 
 @pytest.mark.parametrize('array_schema', _PREFIX_ITEMS_SCHEMAS)
-def test_transformer_prefix_items_not_strict_compatible(array_schema: dict[str, Any]):
-    """The transformer conservatively treats `prefixItems` as incompatible; fixed-length Pydantic tuples
-    use it without `items`, which OpenAI rejects as missing `items`.
-    See https://github.com/pydantic/pydantic-ai/issues/7315"""
+@pytest.mark.parametrize('strict', [None, True], ids=['inferred', 'explicit-true'])
+def test_transformer_preserves_prefix_items_for_shared_profiles(array_schema: dict[str, Any], strict: bool | None):
+    """The shared transformer leaves tuple schemas unchanged for profiles that do not add tuple handling."""
     schema: dict[str, Any] = {
         'type': 'object',
         'properties': {'value': array_schema},
         'required': ['value'],
     }
-    expected_prefix_items = deepcopy(array_schema['prefixItems'])
-    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=strict)
     result = transformer.walk()
 
-    assert result['properties']['value']['prefixItems'] == expected_prefix_items
-    assert transformer.is_strict_compatible is False
-
-
-@pytest.mark.parametrize('array_schema', _PREFIX_ITEMS_SCHEMAS)
-def test_transformer_prefix_items_explicit_strict_raises(array_schema: dict[str, Any]):
-    """Explicit `strict=True` raises a clear error instead of letting OpenAI reject with a 400."""
-    schema: dict[str, Any] = {
-        'type': 'object',
-        'properties': {'value': array_schema},
-        'required': ['value'],
-    }
-    with pytest.raises(UserError, match='cannot use this tuple schema with `prefixItems` in OpenAI strict mode'):
-        OpenAIJsonSchemaTransformer(schema, strict=True).walk()
+    assert result['properties']['value'] == array_schema
+    assert transformer.is_strict_compatible is True
 
 
 def test_transformer_prefix_items_untouched_when_not_strict():
@@ -6662,11 +6651,13 @@ def test_transformer_prefix_items_untouched_when_not_strict():
     class Model(BaseModel):
         pair: tuple[int, str]
         bbox: tuple[int, int]
+        value: tuple[int]
 
     result = OpenAIJsonSchemaTransformer(Model.model_json_schema(), strict=False).walk()
 
     assert result['properties']['pair']['prefixItems'] == [{'type': 'integer'}, {'type': 'string'}]
     assert result['properties']['bbox']['prefixItems'] == [{'type': 'integer'}, {'type': 'integer'}]
+    assert result['properties']['value']['prefixItems'] == [{'type': 'integer'}]
 
 
 def chunk_with_usage(

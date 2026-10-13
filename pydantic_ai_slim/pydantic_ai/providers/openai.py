@@ -6,8 +6,10 @@ from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import (
+    _TOP_LEVEL_DEFINITION_REF,  # pyright: ignore[reportPrivateUsage]
     OpenAIJsonSchemaTransformer,
     OpenAIModelProfile,
     openai_model_profile,
@@ -32,7 +34,23 @@ from ._openai_compatible import (
 )
 
 
-class _OpenAIJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
+class _OpenAIGuardedJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        schema = super().transform(schema)
+        if schema.get('type') == 'array' and schema.get('prefixItems'):
+            # `prefixItems` alone does not satisfy OpenAI's typed-items requirement; keep unnormalized tuple schemas
+            # conservative.
+            if self.strict is True:
+                raise UserError(
+                    'Pydantic AI cannot use this tuple schema with `prefixItems` in OpenAI strict mode. '
+                    'Use a homogeneous list type, or set `strict=False`.'
+                )
+            elif self.strict is None:
+                self.is_strict_compatible = False
+        return schema
+
+
+class _OpenAIJsonSchemaTransformer(_OpenAIGuardedJsonSchemaTransformer):
     _strict_supports_length_constraints = True
 
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
@@ -47,8 +65,8 @@ class _OpenAIJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
         if self._normalized_single_item_tuple and self._has_non_definition_ref:
             # This walk has no path context, so a non-definition ref might target a changed `items` or removed
             # `prefixItems` node. Wait until the full walk to catch refs before or after the array, then rerun the
-            # shared transformer on the original schema to preserve its reference behavior.
-            transformer = OpenAIJsonSchemaTransformer(self.schema, strict=self.strict)
+            # guarded transformer on the original schema to preserve its reference behavior.
+            transformer = _OpenAIGuardedJsonSchemaTransformer(self.schema, strict=self.strict)
             result = transformer.walk()
             self.is_strict_compatible = transformer.is_strict_compatible
         return result
@@ -73,16 +91,12 @@ class _OpenAIJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
             self._has_non_definition_ref = True
 
         schema_ref = schema.get('$ref')
-        if isinstance(schema_ref, str) and schema_ref not in ('#', self.root_ref):
-            ref_parts = schema_ref.split('/')
-            is_top_level_definition_ref = (
-                len(ref_parts) == 3
-                and ref_parts[0] == '#'
-                and ref_parts[1] in ('$defs', 'definitions')
-                and bool(ref_parts[2])
-            )
-            if not is_top_level_definition_ref:
-                self._has_non_definition_ref = True
+        if (
+            isinstance(schema_ref, str)
+            and schema_ref not in ('#', self.root_ref)
+            and not _TOP_LEVEL_DEFINITION_REF.fullmatch(schema_ref)
+        ):
+            self._has_non_definition_ref = True
 
         return super().transform(schema)
 

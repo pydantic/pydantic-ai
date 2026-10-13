@@ -495,15 +495,12 @@ def test_openai_provider_scopes_single_item_tuple_normalization(case: ProfileCas
         }
         if strict is None:
             assert transformer.is_strict_compatible
-    elif strict is True:
-        with pytest.raises(UserError, match='cannot use this tuple schema with `prefixItems` in OpenAI strict mode'):
-            transformer.walk()
     else:
         result = transformer.walk()
         values_schema = result['properties']['values']
         assert values_schema == array_schema
-        if strict is None:
-            assert not transformer.is_strict_compatible
+        if strict is not False:
+            assert transformer.is_strict_compatible
 
 
 @pytest.mark.parametrize('strict', [None, True], ids=['inferred', 'explicit-true'])
