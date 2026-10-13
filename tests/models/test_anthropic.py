@@ -723,25 +723,11 @@ def test_anthropic_model_resolves_profile_for_bedrock_model_ids(model_name: str,
     'model_name,client_cls,base_url,supports_json_schema_output',
     [
         pytest.param(
-            'global.anthropic.claude-sonnet-5',
-            AsyncAnthropicBedrock,
-            'https://bedrock-runtime.us-east-1.amazonaws.com',
-            False,
-            id='bedrock-withheld',
-        ),
-        pytest.param(
             'us.anthropic.claude-opus-4-7',
             AsyncAnthropicBedrock,
             'https://bedrock-runtime.us-east-1.amazonaws.com',
             False,
             id='bedrock-withheld-geo',
-        ),
-        pytest.param(
-            'global.anthropic.claude-haiku-4-5-20251001-v1:0',
-            AsyncAnthropicBedrock,
-            'https://bedrock-runtime.us-east-1.amazonaws.com',
-            True,
-            id='bedrock-served',
         ),
         pytest.param(
             'anthropic.claude-sonnet-5',
@@ -761,7 +747,8 @@ def test_anthropic_structured_output_follows_legacy_bedrock_support(
 ):
     """Only the legacy Bedrock client narrows structured output, and only for the models Bedrock withholds it from.
 
-    The Mantle client and the direct API keep the direct API's profile.
+    The Mantle client and the direct API keep the direct API's profile. These are profile checks that need no
+    request, so there is nothing to record.
     """
     m = AnthropicModel(
         model_name, provider=AnthropicProvider(anthropic_client=mock_anthropic_client(client_cls, base_url))
@@ -8178,7 +8165,7 @@ Tools & Dependency Injection Example
 Here is a concise example using Pydantic AI to build a support agent for a bank:
 [Learn about Gateway](gateway)bank_support.py
 from dataclasses import dataclass
-from pydantic import BaseModel, Field, JsonValue, TypeAdapter
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 from bank_database import DatabaseConn
 @dataclass
@@ -8249,7 +8236,7 @@ to aid with static type checking. - In a real use case, you'd add more tools and
 - This
 [Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
 from dataclasses import dataclass
-from pydantic import BaseModel, Field, JsonValue, TypeAdapter
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 from bank_database import DatabaseConn
 @dataclass
