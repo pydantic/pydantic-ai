@@ -2382,7 +2382,7 @@ Other errors CLAI shows you and recovers from are sent the same way: a failed tu
 fails unexpectedly (for example, `/update` hitting a GitHub rate limit), and a plugin
 handler that fails. Usage errors, such as a mistyped command, are not sent. An error
 inside the agent run is already on the run's span, so it is not sent twice. With
-`include_content` off, these records and load failures keep only the exception's type.
+`include_content` off, the default, these records and load failures keep only the exception's type.
 
 This plugin was previously named `logfire`. Existing enabled/disabled choices,
 settings, and saved token references carry over without reconfiguration. Existing
@@ -2434,26 +2434,32 @@ is only queried with this choice; a missing email leaves the tag out), and
 Everything CLAI records itself (session roots, UI records, and plugin load
 failures) uses the `clai2` instrumentation scope.
 
-Prompts, responses, tool arguments/results, and binary image attachments are
-included by default, including retained history used by later turns. This can
-send source code, file contents, and screenshots to the configured telemetry
-destination. Review that destination before supplying
-credentials. Keep tokens out of plugin settings, which are saved as plaintext.
+Prompts, responses, tool arguments/results, and binary content such as image
+attachments are left out by default, so a Logfire token, even one set up for
+another project, only receives timing, token usage, model and tool names, and the
+type of each error. To record them, set **Message content** (`include_content`)
+and **Binary content** (`include_binary_content`) to included in
+`/plugins configure observability`. They then cover retained history used by later
+turns too, which can send source code, file contents, and screenshots to the
+configured telemetry destination, so review that destination first. Settings saved
+before these options defaulted to off, and that never set them, now leave content
+out as well; turn them on again to keep it. Keep tokens out of plugin settings,
+which are saved as plaintext.
 
 ```text
 /plugins configure observability
 /plugins disable observability
 /plugins enable observability
 /plugins reload observability
-/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": true, "include_binary_content": true}'
 ```
 
 `/plugins configure observability`, or `c` on `observability` in `/plugins`, opens
 its settings menu. Each option below is a row there; each edit saves at once and
 applies from the next run. The last command replaces the built-in configuration
 instead. Its options are
-`service_name` (default `pydantic-clai2`), `include_content` (default `true`),
-`include_binary_content` (default `true`), `httpx` (default `false`), and `send_to_logfire` (either
+`service_name` (default `pydantic-clai2`), `include_content` (default `false`),
+`include_binary_content` (default `false`), `httpx` (default `false`), and `send_to_logfire` (either
 `"if-token-present"` or `false`). The plugin explicitly sets the latter, rather
 than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Content flags control
 Pydantic AI's prompt/result and standard binary-content capture, not all metadata;
@@ -2520,9 +2526,8 @@ UI events are recorded by default. If you previously turned them off, set
 
 using the key name the setup menu printed (Esc closes the menu that `/plugins add`
 opens). Run the setup menu again to go back to your personal project. Agent spans
-still include content by default; add `"include_content": false,
-"include_binary_content": false` if you'd rather share only UX telemetry and
-timing with the team.
+leave content out by default, so the team gets UX telemetry and timing; turn on
+**Message content** only if you mean to share your prompts and results with it.
 
 The plugin owns an isolated Logfire instance. Disable, reload, or exit flushes
 and shuts down that instance without shutting down application-global providers.

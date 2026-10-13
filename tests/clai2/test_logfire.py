@@ -137,10 +137,38 @@ def operation(span: ReadableSpan) -> object:
     return (span.attributes or {}).get('gen_ai.operation.name')
 
 
-async def test_default_content_images_tools_and_usage_are_traced(recorder: Recorder, tmp_path: Path) -> None:
+async def test_default_traces_leave_content_out_even_with_an_ambient_token(
+    recorder: Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `LOGFIRE_TOKEN` set up for another project gets timing and usage, but no prompts, results, or files."""
+    monkeypatch.setenv('LOGFIRE_TOKEN', 'write-token-for-another-project')
+    plugin = load_logfire(make_host())
+    agent = Agent(TestModel(custom_output_text='The image shows a button'), deps_type=type(None))
+
+    @agent.tool_plain
+    def inspect_button() -> str:
+        return 'button details'
+
+    image = BinaryContent(data=b'example image bytes', media_type='image/png')
+    try:
+        await agent.run(['describe the screenshot', image], capabilities=plugin.capabilities)
+    finally:
+        await close(plugin)
+    spans = recorder.spans()
+    assert [operation(span) for span in spans].count('execute_tool') == 1
+    serialized = json.dumps([dict(span.attributes or {}) for span in spans])
+    assert 'gen_ai.usage.input_tokens' in serialized
+    assert 'describe the screenshot' not in serialized
+    assert 'The image shows a button' not in serialized
+    assert 'button details' not in serialized
+    assert base64.b64encode(image.data).decode() not in serialized
+    assert recorder.options[0]['send_to_logfire'] == 'if-token-present'
+
+
+async def test_included_content_images_tools_and_usage_are_traced(recorder: Recorder, tmp_path: Path) -> None:
     tracer, meter = trace.get_tracer_provider(), metrics.get_meter_provider()
     propagator = propagate.get_global_textmap()
-    host = make_host()
+    host = make_host(include_content=True, include_binary_content=True)
     plugin = load_logfire(host)
     assert not HTTPXClientInstrumentor().is_instrumented_by_opentelemetry
     assert not HTTPX2ClientInstrumentor().is_instrumented_by_opentelemetry
@@ -832,7 +860,7 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             pick('variables_key'),
             MenuResult(cancelled=True),
         ],
-        choices=[pick('false'), pick('false'), pick('false'), pick('git-email'), pick('true'), pick('false')],
+        choices=[pick('false'), pick('true'), pick('true'), pick('git-email'), pick('true'), pick('false')],
         texts=[typed('my-clai'), typed('LOGFIRE_API_KEY_TEAM')],
     )
     save_key(name='LOGFIRE_API_KEY_TEAM', value='lf-read-variables-key')
@@ -849,8 +877,8 @@ async def test_menu_saves_every_option_and_reloads_with_them(
         assert declaration.settings == {
             'service_name': 'my-clai',
             'send_to_logfire': False,
-            'include_content': False,
-            'include_binary_content': False,
+            'include_content': True,
+            'include_binary_content': True,
             'user_tag': 'git-email',
             'account': None,
             'token': None,
@@ -888,9 +916,10 @@ async def test_closing_the_menu_unchanged_keeps_the_running_plugin(
 
 
 def test_menu_validates_resets_and_notes_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    source = LogfireSource(make_host(service_name='custom', include_content=False))
+    source = LogfireSource(make_host(service_name='custom'))
     rows = {row.key: row for row in source.rows()}
     assert source.title == 'Observability (Logfire)'
+    assert rows['include_content'].default == rows['include_binary_content'].default == 'false'
     assert rows[PROJECT].note == 'no LOGFIRE_TOKEN or credentials file'
     assert rows['httpx'].default == 'false'
     assert source.current(rows['httpx']) == 'false'
