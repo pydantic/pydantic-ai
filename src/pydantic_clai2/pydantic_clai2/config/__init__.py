@@ -57,7 +57,10 @@ class Settings(BaseModel):
             '/system_prompt edits them.'
         ),
     )
-    session_namer: bool = Field(default=True, description='Name saved sessions in the background using a model.')
+    session_namer: bool = Field(
+        default=False,
+        description='Name saved sessions in the background with an extra model request. Off keeps first-prompt titles.',
+    )
     session_namer_model: str | None = Field(
         default=None, description='Naming model override; null uses the current model.'
     )
