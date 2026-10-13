@@ -21,12 +21,12 @@ from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent
+from pydantic_ai._context_size import context_input_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models import Model
-from pydantic_ai.models._continuation import context_input_tokens
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2 import warm_imports

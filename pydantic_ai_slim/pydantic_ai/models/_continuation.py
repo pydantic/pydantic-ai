@@ -14,10 +14,6 @@ glue for stitching those segments back into a single response/stream:
 - [`_ContinuationStreamedResponse`][pydantic_ai.models._continuation._ContinuationStreamedResponse]
   drives the streamed loop, presenting every segment as one continuous stream.
 
-A provider SDK can also continue a response itself, across several requests inside one model request
-(google-genai long decode). [`context_input_tokens`][pydantic_ai.models._continuation.context_input_tokens]
-reads the context size of such a response, which its summed usage overstates.
-
 This module is deliberately decoupled from `_agent_graph`: it imports only from
 `models`, `messages`, `usage`, `exceptions`, and the stdlib. Pluggable timing is
 injected as `sleep_func` so the loop stays free of `now_utc()`/RNG and replays
@@ -39,6 +35,7 @@ from .. import _utils
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior
 from ..messages import (
+    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     FinalResultEvent,
     ModelMessage,
     ModelResponse,
@@ -57,8 +54,6 @@ __all__ = [
     'MAX_GENERATION_CONTINUATIONS',
     'MergeMode',
     'cancel_suspended_job',
-    'context_input_tokens',
-    'mark_initial_input_tokens',
     'merge_mode',
     'merge_responses',
     'observe_continuation_segments',
@@ -73,11 +68,7 @@ __all__ = [
 # from a same-`provider_response_id` background poll. The `FallbackModel` side must use these exact
 # keys. The marker is transient: `merge_responses` honors it as a replace, then pops it so it can't
 # persist into history and wrongly force a later legitimate `pause_turn` continuation to replace.
-_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 _REPLACE_PREVIOUS_RESPONSE_KEY = 'replace_previous_response'
-# Stamped by `mark_initial_input_tokens` and read by `context_input_tokens`. Unlike the replace marker, it
-# persists into history, where context-size estimates read it back.
-_INITIAL_INPUT_TOKENS_KEY = 'initial_input_tokens'
 
 MAX_GENERATION_CONTINUATIONS = 10
 """Maximum number of *fresh-generation* continuation segments for a single model turn.
@@ -228,31 +219,6 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
     if stripped is not merged.metadata:
         merged = replace(merged, metadata=stripped)
     return merged
-
-
-def mark_initial_input_tokens(response: ModelResponse | StreamedResponse, input_tokens: int) -> None:
-    """Record the input tokens of the first of the requests a provider SDK merged `response` from.
-
-    google-genai continues a long decode in further requests, each sending the output so far back as input, and
-    sums their usage. That sum is what the requests cost, but overstates the context the model was given. Read
-    the marker back with [`context_input_tokens`][pydantic_ai.models._continuation.context_input_tokens].
-    """
-    metadata = response.metadata or {}
-    metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})[_INITIAL_INPUT_TOKENS_KEY] = input_tokens
-    response.metadata = metadata
-
-
-def context_input_tokens(response: ModelResponse) -> int:
-    """The input tokens of `response` as a measure of context size, for context-window checks rather than cost.
-
-    That is `usage.input_tokens`, except for a response a provider SDK merged from several requests (see
-    [`mark_initial_input_tokens`][pydantic_ai.models._continuation.mark_initial_input_tokens]), where it is the
-    input tokens of the first request.
-    """
-    namespace = (response.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-    if _utils.is_str_dict(namespace) and isinstance(input_tokens := namespace.get(_INITIAL_INPUT_TOKENS_KEY), int):
-        return input_tokens
-    return response.usage.input_tokens
 
 
 async def cancel_suspended_job(model: Model, response: ModelResponse) -> None:

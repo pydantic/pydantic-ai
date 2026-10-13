@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 import httpx2
 
 from .. import UnexpectedModelBehavior, _utils, usage
+from .._context_size import mark_initial_input_tokens
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
@@ -75,7 +76,6 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._continuation import mark_initial_input_tokens
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
 from ._tool_choice import resolve_tool_choice
 from ._transport_errors import transport_error_message

@@ -19,9 +19,9 @@ from pydantic_ai import (
     TextPartDelta,
     _utils,
 )
+from pydantic_ai._context_size import context_input_tokens
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import FunctionToolCallEvent, ModelResponse
-from pydantic_ai.models._continuation import context_input_tokens
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.subagents import (

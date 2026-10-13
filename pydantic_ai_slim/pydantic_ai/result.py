@@ -13,6 +13,7 @@ import anyio
 from pydantic import ValidationError
 
 from . import _utils, exceptions, messages as _messages, models
+from ._context_size import context_input_tokens
 from ._genai_prices import best_effort_price
 from ._output import (
     OutputDataT_inv,
@@ -26,7 +27,6 @@ from ._output import (
 from ._run_context import AgentDepsT, RunContext, dispatch_event_stream, recorded_workspace_ref
 from ._sync_stream import SyncStreamBridge
 from .messages import AgentStreamEvent, ModelResponseStreamEvent
-from .models._continuation import context_input_tokens
 from .output import (
     OutputDataT,
     ToolOutput,

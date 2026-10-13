@@ -58,6 +58,7 @@ from . import (
     usage as _usage,
 )
 from ._cancel import RunCancellation
+from ._context_size import context_input_tokens
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
     parse_loaded_capabilities,
@@ -89,7 +90,6 @@ from .models._continuation import (
     MergeMode,
     _ContinuationStreamedResponse,
     cancel_suspended_job,
-    context_input_tokens,
     merge_mode,
     merge_responses,
     report_continuation_segment,

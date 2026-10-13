@@ -12,6 +12,7 @@ from dataclasses import dataclass, replace
 from json import dumps
 from typing import TYPE_CHECKING, Protocol, Self, assert_never, runtime_checkable
 
+from pydantic_ai._context_size import context_input_tokens
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -34,7 +35,6 @@ from pydantic_ai.messages import (
     is_multi_modal_content,
 )
 from pydantic_ai.models import AbstractModel, Model
-from pydantic_ai.models._continuation import context_input_tokens
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
