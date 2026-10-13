@@ -160,6 +160,8 @@ Run this final metadata check after CI, comments, and any selected `douwebot` re
      labels follow.
 
    Apply only verified corrections. When the current title, body, or labels break the rule an unverified correction
-   describes, write your own correction and verify it the same way. Committed changes restart the post-push loop;
-   GitHub metadata-only changes do not.
+   describes, write your own correction and verify it the same way. Merge the verified corrections into one edit.
+   Check that the merged edit breaks no rule the current title, body, and labels follow. When it does, add the
+   smallest change that restores that rule. Committed changes restart the post-push loop; GitHub metadata-only
+   changes do not.
 6. Hand the PR back after you apply the verified corrections.
