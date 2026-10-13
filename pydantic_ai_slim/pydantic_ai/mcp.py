@@ -1357,11 +1357,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for mcp_tool in mcp_tools:
             # MCP Apps (SEP-1865) servers keep a tool from the model by leaving `"model"` out of `_meta.ui.visibility`.
-            match mcp_tool.meta:
-                case {'ui': {'visibility': visibility}} if isinstance(visibility, list) and 'model' not in visibility:
-                    continue
-                case _:
-                    pass
+            if not _visible_to(mcp_tool, 'model'):
+                continue
             # `execution` is the SEP-1686 task-support field; FastMCP 4 (SDK v2) leaves it unset.
             task_support = mcp_optional_field(mcp_tool.execution, 'task_support', str) if mcp_tool.execution else None
             input_schema = mcp_validated_field(mcp_tool, 'input_schema', _JSON_SCHEMA_ADAPTER)
@@ -1768,7 +1765,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                         arguments := rest.get('arguments', {})
                     ):
                         tool = next((t for t in await self.list_tools() if t.name == name), None)
-                        if tool is None or not _app_can_call(tool):
+                        if tool is None or not _visible_to(tool, 'app'):
                             raise MCPError(
                                 message=f'Tool {name!r} is not available to apps', code=mcp_types.INVALID_PARAMS
                             )
@@ -1986,11 +1983,11 @@ def _app_resource_uri(tool_def: ToolDefinition) -> str | None:
             return None
 
 
-def _app_can_call(tool: mcp_types.Tool) -> bool:
-    """Whether an MCP Apps view may call a tool: `_meta.ui.visibility` includes `"app"`, or is omitted."""
+def _visible_to(tool: mcp_types.Tool, audience: Literal['model', 'app']) -> bool:
+    """Whether an MCP Apps `_meta.ui.visibility` lets the model or the app see a tool; omitted means both."""
     match tool.meta:
         case {'ui': {'visibility': visibility}} if isinstance(visibility, list):
-            return 'app' in visibility
+            return audience in visibility
         case _:
             return True
 
