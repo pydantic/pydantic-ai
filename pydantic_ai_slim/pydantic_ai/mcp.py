@@ -883,10 +883,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     include_app_data: bool
     """Whether to keep what a UI needs to render an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) for a tool call.
 
-    Defaults to `False`. When `True`, a call to a tool whose `_meta.ui.resourceUri` names a UI resource
-    returns a [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose `metadata` holds an
+    Defaults to `False`. When `True`, an agent's call to a tool whose `_meta.ui.resourceUri` names a UI
+    resource returns a [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose `metadata` holds an
     [`MCPAppToolResult`][pydantic_ai.mcp.MCPAppToolResult] under the `'mcp_app'` key. The model sees the
-    same content either way.
+    same content either way, and [`direct_call_tool`][pydantic_ai.mcp.MCPToolset.direct_call_tool] is unchanged.
     """
 
     process_tool_call: ProcessToolCallback | None
