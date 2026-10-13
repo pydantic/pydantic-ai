@@ -32,7 +32,7 @@ class MCPAppToolResult(TypedDict):
     [`MCPToolset.read_resource_contents`][pydantic_ai.mcp.MCPToolset.read_resource_contents]."""
 
     tool_input: dict[str, Any]
-    """The arguments the tool was called with."""
+    """The arguments the model called the tool with."""
 
     result: dict[str, Any]
     """The full MCP `CallToolResult` in wire format, including `structuredContent` and `_meta`."""

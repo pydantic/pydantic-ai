@@ -883,10 +883,11 @@ class TestMCPToolsetIntegration:
         assert returns == expected
 
     @pytest.mark.parametrize(
-        ('redirect_to', 'expected'),
+        ('hook_kind', 'expected_return', 'expected_app'),
         [
             pytest.param(
-                None,
+                'passthrough',
+                {'city': 'a', 'temp_c': 14},
                 {
                     'resource_uri': 'ui://weather/forecast',
                     'tool_input': {'city': 'a'},
@@ -899,27 +900,41 @@ class TestMCPToolsetIntegration:
                 },
                 id='passthrough',
             ),
-            pytest.param('plain', None, id='other-tool'),
+            pytest.param('rewrite', {'temp_c': 14}, None, id='rewritten-result'),
+            pytest.param('other-tool', 'a', None, id='other-tool'),
         ],
     )
     async def test_include_app_data_with_process_tool_call(
-        self, run_context: RunContext, redirect_to: str | None, expected: dict[str, Any] | None
+        self,
+        run_context: RunContext,
+        hook_kind: Literal['passthrough', 'rewrite', 'other-tool'],
+        expected_return: ToolResult,
+        expected_app: dict[str, Any] | None,
     ):
-        """A `process_tool_call` hook still gets plain results; the app data describes only a call to the app tool itself."""
+        """App data is kept only when a `process_tool_call` hook returns the app tool's own result unchanged.
+
+        A hook that rewrites the result decides what leaves the toolset, so the raw result is not forwarded.
+        """
 
         async def hook(ctx: RunContext[Any], call_tool: CallToolFunc, name: str, args: dict[str, Any]) -> ToolResult:
-            return await call_tool(redirect_to or name, args, metadata={'request': 'tag'})
+            if hook_kind == 'other-tool':
+                return await call_tool('plain', args)
+            result = await call_tool(name, args, metadata={'request': 'tag'})
+            if hook_kind == 'rewrite':
+                assert isinstance(result, dict)
+                return {'temp_c': result['temp_c']}
+            return result
 
         toolset = MCPToolset(self._mcp_apps_server(), include_app_data=True, process_tool_call=hook)
         async with toolset:
             tools = await toolset.get_tools(run_context)
             returned = await toolset.call_tool('get_forecast', {'city': 'a'}, run_context, tools['get_forecast'])
-        if expected is None:
-            assert returned == 'a'
+        if expected_app is None:
+            assert returned == expected_return
         else:
             assert isinstance(returned, ToolReturn)
-            assert returned.return_value == {'city': 'a', 'temp_c': 14}
-            assert returned.metadata == {'mcp_app': expected}
+            assert returned.return_value == expected_return
+            assert returned.metadata == {'mcp_app': expected_app}
 
     async def test_read_resource_contents_keeps_mime_type_and_meta(self):
         """`read_resource_contents` keeps what `read_resource` drops: an MCP App UI resource's MIME type and `_meta.ui`."""

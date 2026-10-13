@@ -1572,27 +1572,30 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # Same call path as above, but keep the raw result of the last call to this tool: mapping it
         # for the model drops `structuredContent` (when text mirrors it) and `_meta`, which the app needs.
         tool_name = name
-        app_calls: list[tuple[dict[str, Any], CallToolResult]] = []
+        app_calls: list[tuple[CallToolResult, ToolResult]] = []
 
         async def call_tool_func(
             name: str, args: dict[str, Any], *, metadata: dict[str, Any] | None = None
         ) -> ToolResult:
             result = await self._call_tool_checked(name, args, metadata=metadata, use_task=use_task)
+            mapped = _map_mcp_call_tool_result(result)
             if name == tool_name:
-                app_calls.append((args, result))
-            return _map_mcp_call_tool_result(result)
+                app_calls.append((result, mapped))
+            return mapped
 
         if self.process_tool_call is not None:
             return_value = await self.process_tool_call(ctx, call_tool_func, name, tool_args)
         else:
             return_value = await call_tool_func(name, tool_args)
 
-        if not app_calls:
+        # The app gets the result only when the model got it unchanged: a `process_tool_call` hook that
+        # rewrites the result decides what leaves the toolset, so the raw result is not forwarded.
+        if not app_calls or return_value != app_calls[-1][1]:
             return return_value
-        call_args, result = app_calls[-1]
+        result, _ = app_calls[-1]
         app = MCPAppToolResult(
             resource_uri=resource_uri,
-            tool_input=call_args,
+            tool_input=tool_args,
             result=_call_tool_result_to_wire(result),
             toolset_id=self.id,
         )
