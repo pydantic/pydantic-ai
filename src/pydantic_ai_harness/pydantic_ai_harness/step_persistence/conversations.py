@@ -28,21 +28,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai_harness.media import SqliteMediaStore, externalize_media, restore_media
-from pydantic_ai_harness.step_persistence._messages import message_refs
-
-# `snapshots.messages` values that reference `snapshot_messages`; inline message lists start with `[`.
-_REFERENCING_SNAPSHOTS = "SELECT messages FROM snapshots WHERE messages LIKE '{%'"
-
-
-def _snapshot_refs(rows: Sequence[tuple[str]]) -> set[str]:
-    """Collect the message references in `snapshots.messages` values, skipping rows that do not parse."""
-    refs: set[str] = set()
-    for (messages,) in rows:
-        try:
-            refs.update(message_refs(json.loads(messages)) or ())
-        except ValueError:
-            continue
-    return refs
 
 
 class ConversationConflict(ValueError):
@@ -344,8 +329,12 @@ class SqliteConversationStore:
                 if 'snapshot_messages' in tables:
                     # Checkpoints share messages (a fork copies history), and pruning leaves the ones
                     # only older checkpoints held, so delete every message no remaining one references.
-                    referenced = _snapshot_refs(conn.execute(_REFERENCING_SNAPSHOTS).fetchall())
-                    orphaned = [
-                        (d,) for (d,) in conn.execute('SELECT sha256 FROM snapshot_messages') if d not in referenced
-                    ]
-                    conn.executemany('DELETE FROM snapshot_messages WHERE sha256=?', orphaned)
+                    # Inline message lists start with `[`, and a damaged row is skipped. One statement
+                    # keeps the write lock short for other sessions sharing the database.
+                    conn.execute(
+                        'WITH referencing AS MATERIALIZED ('
+                        "SELECT messages FROM snapshots WHERE messages LIKE '{%' AND json_valid(messages)) "
+                        'DELETE FROM snapshot_messages WHERE sha256 NOT IN ('
+                        "SELECT ref.value FROM referencing, json_each(referencing.messages, '$.message_refs') AS ref "
+                        "WHERE ref.type = 'text')"
+                    )

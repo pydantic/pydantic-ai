@@ -25,7 +25,7 @@ Agentic Workflow.
 
 ## StepPersistence
 
-Records an append-only event log, full-history snapshots at settled tool-cycle boundaries, and a ledger
+Records an append-only event log, snapshots of the message history at settled tool-cycle boundaries, and a ledger
 of tool calls (`started`/`completed`/`failed`). It stores message history only: it does not restore
 capability state, graph-node state, or in-flight streams, and it does not replay anything by itself.
 You continue a run by passing a snapshot's messages to `Agent.run(message_history=...)`.

@@ -37,11 +37,16 @@ _MESSAGE_REFS_ADAPTER: TypeAdapter[MessageRefs] = TypeAdapter(MessageRefs)
 
 
 def split_messages(messages_json: object) -> tuple[MessageRefs, dict[str, str]]:
-    """Return a snapshot's references and the canonical JSON text of each distinct message."""
+    """Return a snapshot's references and the JSON text of each distinct message.
+
+    Keys keep their order rather than being sorted: a restored message must match the
+    original, tool-call arguments included. Serializing a message always yields the
+    same order, so an identical message still hashes the same.
+    """
     refs: list[str] = []
     texts: dict[str, str] = {}
     for message in _OBJECT_LIST_ADAPTER.validate_python(messages_json):
-        text = json.dumps(message, sort_keys=True, separators=(',', ':'))
+        text = json.dumps(message, separators=(',', ':'))
         digest = hashlib.sha256(text.encode()).hexdigest()
         refs.append(digest)
         texts[digest] = text

@@ -391,7 +391,7 @@ Bounded retention discards older per-step snapshots, including pre-compaction on
 
 ## Storing each message once
 
-Each snapshot holds the run's whole history, and a run that continues a conversation starts from the history before it, so consecutive snapshots repeat almost all of their messages. The file, SQLite, Mongo, and Postgres stores store each message once, keyed by the SHA-256 of its JSON, and save a snapshot as the ordered list of those keys, `{"message_refs": [...]}`. Message content is then stored once per distinct message, and each snapshot adds about 67 bytes per message it references rather than a copy of the message. A message that appears twice in a history is stored once and referenced twice. `latest_snapshot` and `list_snapshots` rebuild the full history.
+Each snapshot holds the run's whole history, and a run that continues a conversation starts from the history before it, so consecutive snapshots repeat almost all of their messages. The file, SQLite, Mongo, and Postgres stores store each message once, keyed by the SHA-256 of its JSON, and save a snapshot as the ordered list of those keys, `{"message_refs": [...]}`. Message content is then stored once per distinct message, and each snapshot adds about 68 bytes per message it references rather than a copy of the message. A message that appears twice in a history is stored once and referenced twice. `latest_snapshot` and `list_snapshots` rebuild the full history.
 
 | Store | Where each message is stored |
 | --- | --- |
@@ -400,13 +400,13 @@ Each snapshot holds the run's whole history, and a run that continues a conversa
 | `MongoStepStore` | the `snapshot_messages` collection |
 | `PostgresStepStore` | the `{table}_messages` table |
 
-Messages are hashed after [media externalization](#persisting-media), so a stored message holds media URIs, not the payloads. A snapshot's new messages are written after its idempotency key is checked, so a retry with an already-recorded key stores none. `SqliteStepStore` (with `database=`) and `PostgresStepStore` commit the messages and the snapshot row in one transaction; with `connection=`, `SqliteStepStore` leaves transaction control to the caller. `FileStepStore` and `MongoStepStore` write the messages before the snapshot, so a failed save, or a keyed save that loses a race with a duplicate, can leave messages that no snapshot references.
+Messages are hashed after [media externalization](#persisting-media), so a stored message holds media URIs, not the payloads. A snapshot's new messages are written after its idempotency key is checked, so a retry with an already-recorded key stores none. `SqliteStepStore` (with `database=`) and `PostgresStepStore` commit the messages and the snapshot row in one transaction; with `connection=`, `SqliteStepStore` leaves transaction control to the caller. `FileStepStore` and `MongoStepStore` write the messages before the snapshot, so a failed save, or a `MongoStepStore` keyed save that loses a race with a duplicate, can leave messages that no snapshot references.
 
 Snapshots that earlier releases saved with their history inline still load, so an existing store needs no migration: new snapshots reference stored messages and older ones keep their size. Releases from before this change cannot read the new snapshots, so upgrade every process that reads a store before a newer one writes to it. An older release's `latest_snapshot` raises on such a snapshot, and its `list_snapshots` skips it.
 
 `deduplicate_messages=False` on any of the four stores keeps writing the whole history into each snapshot, for a deployment that still has older readers. It is deprecated and emits a `HarnessDeprecationWarning`, and full-history writes will be removed in a future release.
 
-Pruning a snapshot frees its list of keys but not its stored messages, since later snapshots and other runs can reference them. A message that only pruned snapshots referenced, such as one compaction removed from the history, stays stored. `SqliteConversationStore.delete` deletes those too (see [Conversation heads and background names](#conversation-heads-and-background-names)).
+Pruning a snapshot frees its list of keys but not its stored messages, since later snapshots and other runs can reference them. A message that only pruned snapshots referenced, such as one compaction removed from the history, stays stored. `SqliteConversationStore.delete` deletes those in its own SQLite database (see [Conversation heads and background names](#conversation-heads-and-background-names)).
 
 ## Persisting media
 

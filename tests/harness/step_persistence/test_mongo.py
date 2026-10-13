@@ -25,6 +25,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -524,6 +525,17 @@ class TestMongoStepStoreMessageStorage:
             snapshot = await store.latest_snapshot(run_id=f'r{turn}')
             assert snapshot is not None
             assert snapshot.messages == history
+
+    async def test_restored_tool_arguments_keep_their_key_order(self) -> None:
+        store = MongoStepStore(client=_mock_client(), database='t', media_store=None)
+        call = ModelResponse(parts=[ToolCallPart('lookup', {'b': 1, 'a': 2}, tool_call_id='t1')])
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=[call]))
+
+        snapshot = await store.latest_snapshot(run_id='r1')
+        assert snapshot is not None
+        [part] = snapshot.messages[0].parts
+        assert isinstance(part, ToolCallPart) and isinstance(part.args, dict)
+        assert list(part.args) == ['b', 'a']
 
     async def test_list_reads_shared_messages_once(self) -> None:
         store = MongoStepStore(client=_mock_client(), database='t', media_store=None)

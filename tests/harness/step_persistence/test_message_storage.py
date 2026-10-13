@@ -12,11 +12,20 @@ from collections.abc import Iterator
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    BinaryContent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.step_persistence import (
@@ -25,6 +34,7 @@ from pydantic_ai_harness.step_persistence import (
     PostgresStepStore,
     SqliteStepStore,
     StepPersistence,
+    continue_run,
 )
 from tests.harness._postgres_sqlite import SqlitePool
 
@@ -47,25 +57,26 @@ def _store(
     *,
     deduplicate_messages: bool = True,
     max_snapshots_per_run: int | None = None,
+    media_store: Literal['auto'] | None = None,
 ) -> _Store:
     if kind == 'file':
         return FileStepStore(
             tmp_path / 'runs',
-            media_store=None,
+            media_store=media_store,
             max_snapshots_per_run=max_snapshots_per_run,
             deduplicate_messages=deduplicate_messages,
         )
     if kind == 'sqlite':
         return SqliteStepStore(
             database=tmp_path / 'runs.db',
-            media_store=None,
+            media_store=media_store,
             max_snapshots_per_run=max_snapshots_per_run,
             deduplicate_messages=deduplicate_messages,
         )
     return PostgresStepStore(
         pool,
         table='steps',
-        media_store=None,
+        media_store=media_store,
         max_snapshots_per_run=max_snapshots_per_run,
         deduplicate_messages=deduplicate_messages,
     )
@@ -144,6 +155,34 @@ class TestMessageStorage:
 
         assert len(await _stored_messages(kind, tmp_path, pool)) == 3
         assert [s.messages for s in await store.list_snapshots(run_id='r1')] == [history, history]
+
+    @pytest.mark.parametrize('kind', KINDS)
+    async def test_restored_tool_arguments_keep_their_key_order(
+        self, kind: str, tmp_path: Path, pool: SqlitePool
+    ) -> None:
+        store = _store(kind, tmp_path, pool)
+        call = ModelResponse(parts=[ToolCallPart('lookup', {'b': 1, 'a': 2}, tool_call_id='t1')])
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=[call]))
+
+        snapshot = await store.latest_snapshot(run_id='r1')
+        assert snapshot is not None
+        [part] = snapshot.messages[0].parts
+        assert isinstance(part, ToolCallPart) and isinstance(part.args, dict)
+        assert list(part.args) == ['b', 'a']
+
+    @pytest.mark.parametrize('kind', KINDS)
+    async def test_a_resumed_history_is_not_stored_again(self, kind: str, tmp_path: Path, pool: SqlitePool) -> None:
+        """Messages restored from the store, media included, hash to the keys they were saved under."""
+        store = _store(kind, tmp_path, pool, media_store='auto')
+        agent: Agent[None, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store)])
+        image = BinaryContent(data=b'\xab' * 70_000, media_type='image/png')
+
+        history: list[ModelMessage] = []
+        for turn in range(3):
+            await agent.run([f'question {turn}', image], message_history=history)
+            history = await continue_run(store, run_id=(await store.list_runs())[-1].run_id)
+
+        assert len(await _stored_messages(kind, tmp_path, pool)) == len(history)
 
     @pytest.mark.parametrize('kind', KINDS)
     async def test_reads_snapshots_with_inline_messages(self, kind: str, tmp_path: Path, pool: SqlitePool) -> None:

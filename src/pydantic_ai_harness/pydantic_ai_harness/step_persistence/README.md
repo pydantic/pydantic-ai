@@ -564,7 +564,7 @@ conversation starts from the history before it, so consecutive snapshots repeat
 almost all of their messages. The file, SQLite, Mongo, and Postgres stores store
 each message once, keyed by the SHA-256 of its JSON, and save a snapshot as the
 ordered list of those keys, `{"message_refs": [...]}`. Message content is then
-stored once per distinct message, and each snapshot adds about 67 bytes per
+stored once per distinct message, and each snapshot adds about 68 bytes per
 message it references rather than a copy of the message. A message that appears
 twice in a history is stored once and referenced twice. `latest_snapshot` and `list_snapshots` rebuild the full
 history.
@@ -583,8 +583,8 @@ key stores none. `SqliteStepStore` (with `database=`) and `PostgresStepStore`
 commit the messages and the snapshot row in one transaction; with `connection=`,
 `SqliteStepStore` leaves transaction control to the caller. `FileStepStore` and
 `MongoStepStore` write the messages before the snapshot, so a failed save, or a
-keyed save that loses a race with a duplicate, can leave messages that no
-snapshot references.
+`MongoStepStore` keyed save that loses a race with a duplicate, can leave
+messages that no snapshot references.
 
 Snapshots that earlier releases saved with their history inline still load, so
 an existing store needs no migration: new snapshots reference stored messages
@@ -601,7 +601,8 @@ be removed in a future release.
 Pruning a snapshot frees its list of keys but not its stored messages, since
 later snapshots and other runs can reference them. A message that only pruned
 snapshots referenced, such as one compaction removed from the history, stays
-stored. `SqliteConversationStore.delete` deletes those too (see
+stored. `SqliteConversationStore.delete` deletes those in its own SQLite
+database (see
 [Conversation heads and background names](#conversation-heads-and-background-names)).
 
 ## Persisting media
