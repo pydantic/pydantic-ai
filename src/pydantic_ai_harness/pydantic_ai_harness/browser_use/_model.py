@@ -13,8 +13,11 @@ from collections.abc import Sequence
 from typing import TypeAlias, TypeVar, overload
 
 from pydantic import BaseModel
+from typing_extensions import TypeIs
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation, WrapperCapability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -27,7 +30,8 @@ from pydantic_ai.messages import (
     UserContent,
     UserPromptPart,
 )
-from pydantic_ai.models import KnownModelName, Model, infer_model
+from pydantic_ai.models import AbstractModel, KnownModelName, Model, infer_model
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage
 
 try:
@@ -186,6 +190,37 @@ class PydanticAIChatModel(BaseChatModel):
             return ChatInvokeCompletion(completion=text_result.output, usage=_map_usage(text_result.usage))
         result = await self._agent.run(None, output_type=output_format, message_history=history)
         return ChatInvokeCompletion(completion=result.output, usage=_map_usage(result.usage))
+
+
+def _is_request_response_model(model: AbstractModel) -> TypeIs[Model]:
+    """Narrow a run's model without losing its provider client type."""
+    return isinstance(model, Model)
+
+
+class RunChatModel(PydanticAIChatModel):
+    """Adapt the host run's model and instrumentation for a capability without an `llm`."""
+
+    def __init__(self, ctx: RunContext[AgentDepsT]) -> None:
+        model = ctx.model
+        if not _is_request_response_model(model):
+            raise UserError(
+                "BrowserUse without an `llm` runs the browser agent on the host run's model, but "
+                f'{model.model_id!r} is not a request-response model. Pass `llm` to BrowserUse.'
+            )
+        super().__init__(model)
+        # Without a host `Instrumentation`, stay uninstrumented rather than fall back to global defaults.
+        self._agent.instrument = False
+
+        def select(capability: AbstractCapability[AgentDepsT]) -> None:
+            # The last `Instrumentation` in application order instruments the host run; a resolved
+            # capability function's one is visited inside its wrapper.
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if isinstance(capability, Instrumentation):
+                self._agent.instrument = capability.settings
+
+        if ctx.root_capability is not None:
+            ctx.root_capability.apply(select)
 
 
 def resolve_chat_model(llm: BaseChatModel | Model | KnownModelName | str | None) -> BaseChatModel | None:

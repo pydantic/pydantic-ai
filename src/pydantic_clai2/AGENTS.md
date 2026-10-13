@@ -31,7 +31,7 @@ needs. `get_capabilities` for tools, instructions, and agent-run hooks (a `Hooks
 capability, or `@on_event` on your own capability); `get_commands` for
 `/commands`; `render` for custom output; `get_status_segments`, `get_spinners`,
 and `get_model_providers`; `configure` for a settings menu; `on_session_start`,
-`on_session_end`, `on_turn_start`, `on_turn_end`, and `on_plugin_load_failed` for CLAI's own moments. The
+`on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, and `on_plugin_load_failed` for CLAI's own moments. The
 settings model is the class's type parameter (`Plugin[Settings]`), validated into
 `self.settings`. `self.host` is a `PluginHost`, the plugin's runtime context
 (console, conversation, `session_id`, status, full screen, saved settings); it
@@ -54,6 +54,10 @@ they agree in the same PR.
   `event.cancel()`). Nothing collects a list of return values.
 - **Fail closed, one way.** A raising handler on a decidable moment cancels the
   action and reports the error. No per-registration "fail open" flag.
+- **Sign in only when the user asks.** Loading waits for every plugin and a run
+  waits for its tools, so neither may open a browser or wait on a sign-in. Use
+  `plugins/sign_in.py`: a `SignInMethod` (`mcp.OAuthSignIn` for MCP OAuth),
+  `sign_in_now` from a menu or `/NAME login`, and no tools while signed out.
 - **CLAI moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a
   plugin method.
@@ -63,10 +67,13 @@ they agree in the same PR.
   returned the thing from a `get_*` method or it did not; `has_configure` and
   `has_render` compare against the base-class default.
 - **Only shell-owned moments.** `on_session_start`, `on_session_end`,
-  `on_turn_start`, `on_turn_end`, `on_plugin_load_failed`. Startup load failures
-  happen before an agent run, so core's `before_run` cannot observe them. The
-  loader reports them after trying every enabled plugin so observability can
-  receive failures that preceded its own load. Additional moments need the same
+  `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_plugin_load_failed`.
+  Startup load failures happen before an agent run, so core's `before_run` cannot
+  observe them. The loader reports them after trying every enabled plugin so
+  observability can receive failures that preceded its own load. Which conversation
+  the shell holds, and its title, change between runs (`/new`, `/resume`, background
+  naming); core only sees a `conversation_id` per run. `Session._publish` is the one
+  place `ConversationChanged` is fired from. Additional moments need the same
   justification: say which core hook you checked and why it does not fit.
 
 ## Loading and unloading
@@ -149,7 +156,9 @@ Compaction registers harness `FallbackCompaction` directly with `max_fraction`
 and `context_window` for both strategies. Harness owns the trigger; do not add
 threshold math or an orchestrator in CLAI. Register the usage gauge after the
 chain so yellow means the compacted request still exceeds the threshold.
-`/compact` drives the same chain regardless of threshold. Only `ModelAPIError`,
+`/compact` drives the same chain regardless of threshold, keeps the result only
+when harness `estimate_message_tokens` (provider-reported usage) says it shrank,
+and passes `runtime/agent_instrumentation.tracer()` so it is traced. Only `ModelAPIError`,
 `FallbackExceptionGroup`, and `UsageLimitExceeded` select truncation after a
 summary failure; other exceptions propagate. Its `configure` is a `FieldMenu`
 over `CompactionSettings`; the loader's reload builds the new chain. The status
@@ -317,7 +326,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `models/model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
 | `models/custom_params.py` | dotted custom-parameter validation and expansion, independent of menus |
 | `ui/menus/custom_params.py` | the editor for custom model parameters |
-| `builtin_plugins/logfire.py` | the default-enabled `observability` plugin, configuring Logfire locally over core `Instrumentation`; `token` picks a `/keys` write token, `ui_events` subscribes it to UI telemetry; `configure` is a `FieldMenu` whose project row runs `logfire_setup` |
+| `builtin_plugins/logfire.py` | the default-enabled `observability` plugin, configuring Logfire locally over core `Instrumentation` and pointing `Agent.instrument_all` at it while loaded (restored on unload); `token` picks a `/keys` write token, `ui_events` subscribes it to UI telemetry; `configure` is a `FieldMenu` whose project row runs `logfire_setup` |
 | `builtin_plugins/logfire_session.py` | the `observability` plugin's `CLAI session` roots: `SessionTracing` and the `git_email` lookup for `user_tag: git-email` |
 | `builtin_plugins/logfire_setup.py` | the `observability` plugin's setup menu: which Logfire, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), account email from `/v1/account/me`, project pick, write token saved in `/keys` |
 | `builtin_plugins/logfire_destination.py` | "which Logfire", shared by `observability` setup and `logfire_mcp`: regions from harness, a host, UI URL, or MCP URL parsed to one origin, the picker, and the last pick remembered for the other plugin |
@@ -338,6 +347,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/prompt/prompt_keys.py` | prompt-toolkit input attachment and paste, CSI-u, Kitty alternate-key and xterm report normalization, including Super (Cmd) for `super-z`; `PromptSurface` enables and releases xterm `CSI >4;1m` and Kitty `CSI >5u`; no prompt-toolkit renderer |
 | `ui/prompt/prompt_selection.py` | SGR mouse report decoding and the left-button drag selection over the transcript's painted cells: highlight and text |
 | `ui/prompt/text_clipboard.py` | copying text out: the local clipboard command on one background worker where the newest copy wins, or OSC 52 over SSH or without one |
+| `ui/browser.py` | `open_browser`: every sign-in or link opens through it; a `$BROWSER` or `xdg-open` command runs with its output discarded so it cannot print over the display |
 | `config/__init__.py` | `Settings`, `PluginSettings` |
 | `config/theme_names.py` | theme choices shared by settings validation and the picker |
 | `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/`, including saved models and removal of their overrides |
@@ -346,13 +356,16 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `runtime/capability_guard.py` | `PluginGuard`: a plugin capability's run setup `UserError` becomes `CapabilitySetupError`; that turn fails, later turns leave the capability out |
 | `config/project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings` |
 | `builtin_plugins/repo_context.py` | the built-in `repo_context` plugin over harness `RepoContext` |
-| `builtin_plugins/coder.py` | the built-in `coder` plugin over harness `Coder`: validated settings, named agent folders (`.agents`/`.claude`/`.codex`, project then home), and its settings menu (file access, sub-agents, agent folders) |
+| `builtin_plugins/coder.py` | the built-in `coder` plugin over harness `Coder`: validated settings, named agent folders (`.agents`/`.claude`/`.codex`, project then home), and its settings menu (file access, sub-agents), which hands **Agent folders** to `coder_folders.py` |
+| `builtin_plugins/coder_folders.py` | the Coder agent-folder list (add, edit, remove, validation, duplicate detection) and its local directory browser, reading and saving through `CoderSource` |
 | `builtin_plugins/slack.py` | the opt-in built-in `slack` plugin over harness `Slack`; its settings menu picks a `/keys` user token or a browser sign-in, resolved each turn |
 | `slack_app.py` | Slack browser sign-in: the CLAI Slack app manifest (PKCE, MCP access, token rotation), scopes, and `PKCESignIn` for a Client ID |
 | `plugins/keys.py` | `choose_key`, `browser_sign_in`, and `on_loop`: a plugin settings menu's credential rows, Esc-cancellable |
+| `plugins/sign_in.py` | the shared sign-in API: `SignInMethod`, the Esc-cancellable waiting screen (`sign_in_now`), `/NAME login\|logout\|status`, the signed-out notice, `SignInRequired` |
 | `pkce.py` | `PKCESignIn`: browser sign-in for a registered public OAuth client (PKCE, no secret), with tokens in the credential store and locked refresh; built on core's `OAuthFlow` |
-| `runtime/speculation.py` | the `run.speculative_code_mode` switch, `Ctrl+X Ctrl+S` toggle, session counters and pinned row |
-| `runtime/speculative_mode.py` | harness `CodeMode` wiring (native writes, read-only speculation allowlist, guidance), imported only while on |
+| `runtime/agent_instrumentation.py` | reads core's process-wide `Agent.instrument_all` setting (core has no getter) and its tracer; `claim`/`release` hand it between live `observability` instances, outside the plugin module so `/plugins reload` keeps the claims |
+| `runtime/speculation.py` | the `run.code_mode` (on by default; tests default it off in `conftest.py`) and `run.speculative_code_mode` switches, `Ctrl+X Ctrl+S` toggle, session counters and pinned row |
+| `runtime/speculative_mode.py` | harness `CodeMode` wiring (eager execution, native writes, read-only speculation allowlist, guidance for each), imported only when a run binds it |
 | `runtime/eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |
 | `runtime/sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
 | `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()`, `roles()` |
@@ -362,7 +375,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/rendering/spinner_frames.py` | frame data for the Code Puppy cli-spinners pack |
 | `ui/menus/spinner_picker.py` | `/spinner`: animated picker, by-name selection with speed, `init` |
 
-The other built-in plugin implementations (`notifications`, `github`, `pylon`, `google_workspace`, `day_ai`, `ordinal`, `notion`, `logfire_mcp` (shown as Logfire; its id cannot become `logfire`, the `observability` plugin's stored id), `posthog`, `grain`, and `linear`) also live in `builtin_plugins/`. The loader redirects old factory paths in saved declarations to this package.
+The other built-in plugin implementations (`notifications`, `herdr`, `aoe`, `github`, `pylon`, `google_workspace`, `day_ai`, `ordinal`, `notion`, `logfire_mcp` (shown as Logfire; its id cannot become `logfire`, the `observability` plugin's stored id), `posthog`, `grain`, and `linear`) also live in `builtin_plugins/`. The loader redirects old factory paths in saved declarations to this package.
 
 Keep files concise - we don't need any 10,000 line files. Single responsibility.
 
@@ -445,6 +458,8 @@ the input cursor is a painted reverse-video cell. Keep terminal mutations in
 `PromptSurface`, and detach the key reader before a menu owns the screen.
 The prompt-toolkit decoder preserves paste, modified keys, and SGR mouse reports.
 PageUp/PageDown and wheel input scroll the transcript, not the draft.
+Wheel and drag reports arrive in bursts, so they paint once after the input
+callback (`PromptSurface._paint_soon`), never once per report.
 Mouse reporting stops most terminals from selecting text, so a left-button drag
 selects painted cells in `PromptSurface` and its release copies them through
 `text_clipboard.copy_text`. Do not drop the drag modes (`?1002h`) or copy-out breaks.
