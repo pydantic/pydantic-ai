@@ -1224,7 +1224,9 @@ def _get_usage_checking_stream_response(
         async def _usage_checking_iterator():
             async for item in events:
                 limits.check_tokens(get_usage())
-                limits.check_per_request_input_tokens(get_request_input_tokens())
+                # `get_request_input_tokens` builds a response snapshot, so only pay for it when the limit is set.
+                if limits.per_request_input_tokens_limit is not None:
+                    limits.check_per_request_input_tokens(get_request_input_tokens())
                 yield item
 
         return _usage_checking_iterator()

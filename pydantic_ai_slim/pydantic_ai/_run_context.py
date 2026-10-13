@@ -18,7 +18,7 @@ from typing_extensions import TypeVar, deprecated
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
-from ._context_size import context_input_tokens
+from ._context_size import context_tokens
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
@@ -162,7 +162,7 @@ def context_window_fraction(messages: Sequence[_messages.ModelMessage], context_
         return None
     for message in reversed(messages):
         if isinstance(message, _messages.ModelResponse):
-            tokens = context_input_tokens(message) + message.usage.output_tokens
+            tokens = context_tokens(message)
             return tokens / context_window if tokens else None
     return None
 

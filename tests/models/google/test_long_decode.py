@@ -5,8 +5,9 @@ continuation token while `max_tokens` has budget left. google-genai (`automatic_
 sends the same request again with the token, inside one `generate_content` or `generate_content_stream` call, and
 merges the requests' responses into one with summed usage.
 
-The requests and responses are scripted on an `httpx2.MockTransport` in the shapes the live API returns, as no
-recording reaches the cap yet: it takes more than 32K output tokens in one response.
+`test_recorded_long_decode` records a live long decode, unary and streamed. The other tests script the requests on
+an `httpx2.MockTransport` in the recorded shapes, for what a live request can't be made to produce on demand: a request
+that fails or drops, a cap reached without a token, a third request, and exact usage per request.
 """
 
 from __future__ import annotations as _annotations
@@ -14,7 +15,7 @@ from __future__ import annotations as _annotations
 import base64
 import json
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 
 import httpx2
@@ -38,7 +39,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..._inline_snapshot import snapshot
-from ...conftest import IsDatetime, IsStr, try_import
+from ...conftest import IsDatetime, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.google import GoogleModel
@@ -108,14 +109,15 @@ async def _run(
     *,
     model_settings: ModelSettings | None = None,
     usage_limits: UsageLimits | None = None,
+    prompt: str = 'Count.',
 ) -> tuple[str, ModelResponse]:
-    """Run `agent` on a prompt, streamed or not, returning its output and its last response."""
+    """Run `agent` on `prompt`, streamed or not, returning its output and its last response."""
     if stream:
-        async with agent.run_stream('Count.', model_settings=model_settings, usage_limits=usage_limits) as result:
+        async with agent.run_stream(prompt, model_settings=model_settings, usage_limits=usage_limits) as result:
             output = await result.get_output()
         response = result.all_messages()[-1]
     else:
-        run_result = await agent.run('Count.', model_settings=model_settings, usage_limits=usage_limits)
+        run_result = await agent.run(prompt, model_settings=model_settings, usage_limits=usage_limits)
         output = run_result.output
         response = run_result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
@@ -614,3 +616,111 @@ async def test_stream_drop_that_would_repeat_output_raises(allow_model_requests:
             )
         ]
     )
+
+
+@dataclass(frozen=True)
+class _RecordedCase:
+    id: str
+    stream: bool
+    lines: int
+    expected: ModelResponse
+
+
+# 7,500 lines reach the 32K unary cap once, and 14,000 the 64K streamed one, at Argon's lowest thinking level.
+_RECORDED_CASES = [
+    _RecordedCase(
+        id='unary',
+        stream=False,
+        lines=7_500,
+        expected=snapshot(
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(
+                    details={'text_prompt_tokens': 32986, 'text_candidates_tokens': 36396},
+                    input_tokens=32986,
+                    input_text_tokens=32986,
+                    output_text_tokens=36396,
+                    output_tokens=36396,
+                ),
+                model_name='gemini-4-argon',
+                timestamp=IsDatetime(),
+                provider_name='google',
+                provider_url='https://generativelanguage.googleapis.com/',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='Y5DOauOoK-O7qtsP89GUkQc',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'initial_input_tokens': 109}},
+            )
+        ),
+    ),
+    _RecordedCase(
+        id='stream',
+        stream=True,
+        lines=14_000,
+        expected=snapshot(
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(
+                    details={'text_prompt_tokens': 65756, 'text_candidates_tokens': 72897},
+                    input_tokens=65756,
+                    input_text_tokens=65756,
+                    output_text_tokens=72897,
+                    output_tokens=72897,
+                ),
+                model_name='gemini-4-argon',
+                timestamp=IsDatetime(),
+                provider_name='google',
+                provider_url='https://generativelanguage.googleapis.com/',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='45LOaoDJFZrQz7IP8LeaqQw',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'initial_input_tokens': 110}},
+            )
+        ),
+    ),
+]
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in _RECORDED_CASES])
+async def test_recorded_long_decode(
+    case: _RecordedCase, allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """A live long decode reaches the per-request cap once, and google-genai continues it in a second request.
+
+    The second request is the first plus the token. The response has one part per request, the first carrying its
+    signature, summed usage, and the first request's input tokens.
+    """
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=20 * 60))
+    model_settings: ModelSettings = {'max_tokens': 100_000, 'thinking': 'low'}
+    agent = Agent(
+        GoogleModel(_MODEL_NAME, provider=provider),
+        instructions=(
+            'Very long outputs are supported and expected here: they are continued automatically across requests. '
+            'Never refuse, shorten or summarize because of length. Follow the requested format exactly.'
+        ),
+        model_settings=model_settings,
+    )
+
+    output, response = await _run(
+        agent,
+        case.stream,
+        prompt=(
+            f'Print the integers from 1 to {case.lines} in ascending order, one per line. '
+            'Output only the numbers: no code, no commentary, no ellipses, no markdown, no skipped numbers.'
+        ),
+    )
+
+    assert output.split() == [str(number) for number in range(1, case.lines + 1)]
+    first, second = request_capture.bodies()
+    assert second.pop('continuationToken')
+    assert second == first
+    assert [(part.part_kind, sorted(part.provider_details or {})) for part in response.parts] == [
+        ('text', ['thought_signature']),
+        ('text', []),
+    ]
+    assert replace(response, parts=[]) == case.expected

@@ -19,7 +19,7 @@ from .messages import (
 if TYPE_CHECKING:
     from .models import StreamedResponse
 
-__all__ = ('context_input_tokens', 'mark_initial_input_tokens')
+__all__ = ('context_input_tokens', 'context_tokens', 'mark_initial_input_tokens')
 
 # Unlike the continuation replace marker in `models/_continuation.py`, this one persists into history, where
 # context-size estimates read it back.
@@ -43,3 +43,8 @@ def context_input_tokens(response: ModelResponse) -> int:
     if _utils.is_str_dict(namespace) and isinstance(input_tokens := namespace.get(_INITIAL_INPUT_TOKENS_KEY), int):
         return input_tokens
     return response.usage.input_tokens
+
+
+def context_tokens(response: ModelResponse) -> int:
+    """The context `response` leaves behind: its input tokens, as `context_input_tokens` reads them, plus its output."""
+    return context_input_tokens(response) + response.usage.output_tokens

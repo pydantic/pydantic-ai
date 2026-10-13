@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 from json import dumps
 from typing import TYPE_CHECKING, Protocol, Self, assert_never, runtime_checkable
 
-from pydantic_ai._context_size import context_input_tokens
+from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -296,7 +296,7 @@ def estimate_context_tokens(
     """
     if anchor := _latest_usage_anchor(messages):
         index, message = anchor
-        anchored = context_input_tokens(message) + message.usage.output_tokens
+        anchored = context_tokens(message)
         segments = [
             *_collect_message_text(messages[index + 1 :]),
             *_revealed_tool_schema_text(messages[index + 1 :], model_request_parameters),

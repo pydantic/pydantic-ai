@@ -16,7 +16,7 @@ from uuid import uuid4
 from anyio import get_cancelled_exc_class, move_on_after
 
 from pydantic_ai import Agent, AgentModelSettings, AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
-from pydantic_ai._context_size import context_input_tokens
+from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -753,7 +753,7 @@ class Session(Generic[DepsT, OutputT]):
                 if self.on_context_usage is not None:
                     for message in reversed(ctx.messages):
                         if isinstance(message, ModelResponse) and message.usage.input_tokens:
-                            self.on_context_usage(context_input_tokens(message) + message.usage.output_tokens)
+                            self.on_context_usage(context_tokens(message))
                             break
                 if self.on_stream_event is not None:
                     await self.on_stream_event(event)
