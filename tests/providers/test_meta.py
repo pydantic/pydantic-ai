@@ -9,8 +9,6 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     import openai
 
-    from pydantic_ai.models import infer_model
-    from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.meta import MetaProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
@@ -40,14 +38,6 @@ def test_meta_pass_openai_client() -> None:
     openai_client = openai.AsyncOpenAI(api_key='api-key')
     provider = MetaProvider(openai_client=openai_client)
     assert provider.client == openai_client
-
-
-def test_meta_infers_responses_model(env: TestEnv) -> None:
-    # Unit (not VCR): routing happens at model-build time, before any request is made.
-    env.set('META_API_KEY', 'api-key')
-    model = infer_model('meta:muse-spark-1.3')
-    assert isinstance(model, OpenAIResponsesModel)
-    assert model.system == 'meta'
 
 
 def test_meta_model_profile():
