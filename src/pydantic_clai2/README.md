@@ -541,6 +541,38 @@ Trusted third-party plugins must not read input or print directly to stdout;
 CLAI cannot enforce that contract on arbitrary Python code. Plugin load failures
 abort headless runs. Background session naming is not started.
 
+## Browser chat
+
+```bash
+clai2 --web
+clai2 --web -m anthropic:claude-sonnet-4-6 --port 8765
+```
+
+`--web` serves a chat in your browser instead of the terminal, using Pydantic AI's
+[web chat UI](https://pydantic.dev/docs/ai/guides/web/). It prints a link such as
+`http://127.0.0.1:7932/?token=...`; open it to start chatting. Ctrl-C stops the server.
+`--port` picks another port, and `--port 0` a free one.
+
+The agent is [the stock agent](#the-stock-agent-in-your-own-code): the `coder`,
+`repo_context`, and `compaction` built-ins, working in the launch directory with your
+user permissions. The model is chosen as in the terminal (`-m`, `CLAI_MODEL`, project,
+then saved settings), and the UI's model picker offers just that one. Nothing else you
+saved for `clai2` applies: no saved, drop-in, or project plugins (so no MCP servers),
+no `/model settings`, and no `chain:` fallback chains. Browser chats are not saved
+sessions, so `/resume` does not list them. Each run may make up to 50 model requests,
+the web UI's own limit, so `--request-limit` and `run.request_limit` do not apply.
+`--web` cannot be combined with `-p`, `--resume`, `--session-id`, `--fork-session`,
+`--worktree`, `--agent`, `--request-limit`, `config`, or `plugins`.
+
+The server listens on `127.0.0.1` only. The link's token signs your browser in: opening
+it sets a cookie, and any request without that cookie is refused, so other users and
+programs on the machine cannot run tools through the server. Pydantic AI's web UI also
+refuses requests from other websites. Browsers send a cookie to every port on a host,
+so a web page served from another port on `127.0.0.1` receives it too: while the server
+runs, open only local web pages you trust in that browser. Do not expose the port
+through a proxy or tunnel.
+The page loads the chat UI from a CDN, so the browser needs internet access.
+
 ## The stock agent in your own code
 
 `open_stock_agent` opens CLAI's stock coding agent without the terminal. Use it with

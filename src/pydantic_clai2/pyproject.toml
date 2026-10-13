@@ -27,8 +27,8 @@ dependencies = [
     # Speculative execution runs CodeMode's Monty sandbox. Pinned directly rather than via
     # `pydantic-ai-harness[code-mode]`, which also pulls a web-search client CLAI does not use.
     "pydantic-monty>=1.0.0,<2",
-    # Built-in MCP client: https://github.com/pydantic/pydantic-ai/issues/9267.
-    "pydantic-ai-slim[anthropic,mcp,openai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
+    # Built-in MCP client and `clai2 --web` (core's `to_web()` UI under uvicorn): https://github.com/pydantic/pydantic-ai/issues/9267.
+    "pydantic-ai-slim[anthropic,mcp,openai,web]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
     # FastMCP's browser sign-in (`/mcp` OAuth and the day_ai, notion, ordinal, posthog, pylon, and grain
     # plugins) runs a uvicorn callback server with `ws="websockets-sansio"`, which imports `websockets`
     # on start. `fastmcp-slim[client]` does not declare it, so without this the sign-in fails.
