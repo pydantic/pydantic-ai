@@ -630,9 +630,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             if max_retries is None:
                 max_retries = ctx.max_retries
             # `retries` is keyed by the name the model calls the tool by, computed here from the
-            # wrappers that pushed a layer. When the real name differs, the computed one can be an
-            # unrelated tool's, whose count is then read: the tool's own `prepare` renamed it, or a
-            # user wrapper that pushes no layer renamed it inside a built-in one.
+            # layers `PrefixedToolset` and `RenamedToolset` pushed. That name is wrong when the tool's
+            # own `prepare` renames it, or when a wrapper that renames tools without pushing a layer
+            # is combined with a built-in one. If it then names an unrelated tool, that count is read.
             run_context = replace(
                 ctx,
                 tool_name=original_name,

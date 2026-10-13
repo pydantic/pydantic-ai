@@ -1978,7 +1978,7 @@ async def test_tool_outliving_configured_heartbeat_timeout_survives(client: Clie
     assert output == snapshot('slow tool finished')
 
 
-# --- Retry counts under name-changing wrappers (#9741) ---
+# --- Retry counts under name-changing wrappers, see https://github.com/pydantic/pydantic-ai/issues/9741 ---
 # `ctx.retries` is keyed by the name the model calls a tool by. A static toolset's `prepare` runs in
 # the workflow, a dynamic toolset's in its discovery, validation and call activities: all of them
 # have to read the count of the name the wrappers give the tool.

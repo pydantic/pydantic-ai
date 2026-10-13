@@ -906,7 +906,8 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         cache_key = self.id or ''
         if self._mcp_toolset.cache_tools and (cached := ctx._mcp_tool_defs_cache.get(cache_key)) is not None:  # pyright: ignore[reportPrivateUsage]
             return {name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in cached.items()}
-        tool_defs = await self._get_tools_operation(self._ctx_for_unit(ctx))
+        # Listing an MCP server reads no retry counts, so its discovery unit gets no name path.
+        tool_defs = await self._get_tools_operation(self._ctx_for_unit(without_tool_name_path(ctx)))
         if self._mcp_toolset.cache_tools:
             ctx._mcp_tool_defs_cache[cache_key] = tool_defs  # pyright: ignore[reportPrivateUsage]
         return {name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in tool_defs.items()}

@@ -458,10 +458,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     its own name, so it applies this path (see `exposed_tool_name`) to find the count its tool's
     `prepare` reads as `retry`.
 
-    Only `get_tools` carries it, and only down to the leaf: it is stripped before user code that
-    runs while tools are listed (see `without_tool_name_path`), so a context such code hands to an
-    unrelated toolset can't attribute that toolset's counts to the wrong names. Excluded from
-    equality because it is listing bookkeeping, not run state.
+    `PrefixedToolset.get_tools` and `RenamedToolset.get_tools` push it, and `DurableDynamicToolset`
+    attaches the path it was listed under to its validate and call units, which list the toolset
+    again. The built-in sites that hand the context to user code strip it first (see
+    `without_tool_name_path`): a tool's `prepare`, `.prepared()` and `.filtered()` callbacks,
+    `DynamicToolset` factories, and durable tool validators and bodies. That keeps a context handed
+    to an unrelated toolset from attributing its counts to the wrong names; a custom toolset's own
+    `get_tools` under a wrapper still receives it. Excluded from equality because it is listing
+    bookkeeping, not run state.
     """
 
     @property
@@ -977,7 +981,7 @@ def without_tool_name_path(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT
     return dataclasses.replace(ctx, _tool_name_path=()) if ctx._tool_name_path else ctx  # pyright: ignore[reportPrivateUsage]
 
 
-def exposed_tool_name(ctx: RunContext[Any], name: str) -> str:
+def exposed_tool_name(ctx: RunContext[AgentDepsT], name: str) -> str:
     """The name the model calls a tool by, given the name the listing toolset holds it under.
 
     Applies the context's tool name path innermost layer first, the way `PrefixedToolset` and

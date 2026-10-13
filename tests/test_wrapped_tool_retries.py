@@ -105,7 +105,7 @@ CASES = [
 async def test_prepare_sees_retry_under_wrapper(case: Case):
     """A `prepare` that hides its tool after a failure sees the failure under any name-changing wrapper.
 
-    The `prefixed` and `nested_prefixes` cases are the reproduction in #9741.
+    The `prefixed` and `nested_prefixes` cases are the reproduction in https://github.com/pydantic/pydantic-ai/issues/9741.
     """
     seen: list[int] = []
     wrapped = case.wrap(failing_toolset(seen))
@@ -375,11 +375,13 @@ async def test_self_renaming_wrapped_tool_reads_count_of_tool_named_like_its_ori
     )
 
 
-async def test_renaming_wrapper_that_pushes_no_layer_reads_count_of_tool_named_like_inner_key():
+@pytest.mark.parametrize('position', ['inside_built_in', 'outside_built_in'])
+async def test_renaming_wrapper_that_pushes_no_layer_reads_count_of_tool_named_by_built_in_layers(position: str):
     """Documented limit: only the built-in wrappers tell the leaf how they rename its tools.
 
-    A `PrefixedToolset` subclass whose `get_tools` doesn't call `super()` exposes `fail` as `o_i_fail`,
-    but the leaf only learns of the outer `o` prefix and reads the count of `o_fail`, an unrelated
+    A `PrefixedToolset` subclass whose `get_tools` doesn't call `super()` renames without pushing a
+    layer. Combined with a built-in `.prefixed()`, the tool is exposed as `o_i_fail`, but the leaf
+    only learns of the built-in prefix and reads the count of `o_fail` or `i_fail`: an unrelated
     tool that keeps failing.
     """
 
@@ -403,14 +405,19 @@ async def test_renaming_wrapper_that_pushes_no_layer_reads_count_of_tool_named_l
     async def fail(ctx: RunContext[object]) -> str:
         return 'inner ok'  # pragma: no cover
 
+    if position == 'inside_built_in':
+        wrapped, colliding = OwnPrefixed(inner, prefix='i').prefixed('o'), 'o_fail'
+    else:
+        wrapped, colliding = OwnPrefixed(inner.prefixed('i'), prefix='o'), 'i_fail'
     outside = FunctionToolset[object]()
 
-    @outside.tool(name='o_fail', retries=5)
+    @outside.tool(name=colliding, retries=5)
     async def outside_fail(ctx: RunContext[object]) -> str:
         raise ModelRetry('Outside failure.')
 
-    model, visible = scripted([['o_fail'], ['o_fail']])
+    model, visible = scripted([[colliding], [colliding]])
 
-    await Agent(model, toolsets=[outside, OwnPrefixed(inner, prefix='i').prefixed('o')]).run('Call o_fail.')
+    await Agent(model, toolsets=[outside, wrapped]).run('Call the outside tool.')
 
-    assert (seen, visible) == snapshot(([0, 1, 2], [['o_fail', 'o_i_fail'], ['o_fail'], ['o_fail']]))
+    assert seen == [0, 1, 2]
+    assert visible == [sorted([colliding, 'o_i_fail']), [colliding], [colliding]]
