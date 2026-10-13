@@ -489,7 +489,7 @@ The [AG-UI](../ui/ag-ui.md#mcp-apps) and [Vercel AI](../ui/vercel-ai.md#mcp-apps
 
 The page can't reach the server itself, so it sends requests such as calling a tool to your frontend, which forwards them to an endpoint of yours. Pass the JSON-RPC `method` and `params` to [`handle_app_request`][pydantic_ai.mcp.MCPToolset.handle_app_request] and return its result to the page as is. It supports `tools/call` and `resources/read`, and only calls tools on this server whose `_meta.ui.visibility` includes `"app"`. Tool results come back in full, including `isError` results. Other failures raise [`MCPError`][pydantic_ai.mcp.MCPError], whose `code`, `message` and `data` you send back to the page as the JSON-RPC error. These calls don't go through [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call]. Keep the toolset entered (`async with weather:`) while pages are open, so each request doesn't reconnect. Check that the request comes from the user who owns the conversation, as you would for any other endpoint.
 
-```python {title="mcp_apps.py" test="skip"}
+```python {title="mcp_apps.py"}
 from typing import Any
 
 from pydantic_ai import Agent
@@ -513,7 +513,7 @@ async def app_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
 
 Some servers only offer app tools to clients that say they support MCP Apps, through the `io.modelcontextprotocol/ui` client extension. `MCPToolset` doesn't send it by default. With FastMCP 4, pass a client that does:
 
-```python {title="mcp_apps_extension.py" test="skip" lint="skip"}
+```python {title="mcp_apps_extension.py" test="skip" typecheck="skip - FastMCP 4 API; the docs environment has FastMCP 3"}
 from fastmcp import Client
 from mcp.client import advertise
 

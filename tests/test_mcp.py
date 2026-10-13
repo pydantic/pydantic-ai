@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import importlib
 import json
 import re
 import subprocess
@@ -1069,6 +1070,24 @@ class TestMCPToolsetIntegration:
         with pytest.raises(MCPError) as exc_info:
             await toolset.handle_app_request(method, params)
         assert str(exc_info.value) == expected_error
+
+    @pytest.mark.skipif(not MCP_SDK_V2, reason='FastMCP 3 clients have no client extensions')
+    async def test_client_extension_announces_mcp_apps_support(self):
+        """The documented FastMCP 4 client extension tells servers the client supports MCP Apps; a plain one doesn't."""
+        # Only the MCP SDK v2 that FastMCP 4 uses has `advertise`, and CI type-checks against FastMCP 3.
+        mcp_client: Any = importlib.import_module('mcp.client')
+
+        server: FastMCP[None] = FastMCP('apps_server')
+
+        @server.tool
+        def supports_mcp_apps(ctx: Context) -> bool:
+            return ctx.client_supports_extension('io.modelcontextprotocol/ui')
+
+        ui = mcp_client.advertise('io.modelcontextprotocol/ui', {'mimeTypes': ['text/html;profile=mcp-app']})
+        announced = MCPToolset(Client(server, extensions=[ui]))
+        async with MCPToolset(server) as plain, announced:
+            assert await plain.direct_call_tool('supports_mcp_apps', {}) is False
+            assert await announced.direct_call_tool('supports_mcp_apps', {}) is True
 
     async def test_tool_annotations_keep_the_wire_spelling(
         self, fastmcp_server: FastMCP[None], run_context: RunContext
