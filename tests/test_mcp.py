@@ -901,19 +901,21 @@ class TestMCPToolsetIntegration:
                 id='passthrough',
             ),
             pytest.param('rewrite', {'temp_c': 14}, None, id='rewritten-result'),
+            pytest.param('rewrite-in-place', {'temp_c': 14}, None, id='result-rewritten-in-place'),
             pytest.param('other-tool', 'a', None, id='other-tool'),
         ],
     )
     async def test_app_data_with_process_tool_call(
         self,
         run_context: RunContext,
-        hook_kind: Literal['passthrough', 'rewrite', 'other-tool'],
+        hook_kind: Literal['passthrough', 'rewrite', 'rewrite-in-place', 'other-tool'],
         expected_return: ToolResult,
         expected_app: dict[str, Any] | None,
     ):
         """App data is kept only when a `process_tool_call` hook returns the app tool's own result unchanged.
 
-        A hook that rewrites the result decides what leaves the toolset, so the raw result is not forwarded.
+        A hook that rewrites the result, including by editing the returned value in place, decides what leaves
+        the toolset, so the raw result is not forwarded.
         """
 
         async def hook(ctx: RunContext[Any], call_tool: CallToolFunc, name: str, args: dict[str, Any]) -> ToolResult:
@@ -923,6 +925,9 @@ class TestMCPToolsetIntegration:
             if hook_kind == 'rewrite':
                 assert isinstance(result, dict)
                 return {'temp_c': result['temp_c']}
+            if hook_kind == 'rewrite-in-place':
+                assert isinstance(result, dict)
+                del result['city']
             return result
 
         toolset = MCPToolset(self._mcp_apps_server(), process_tool_call=hook)

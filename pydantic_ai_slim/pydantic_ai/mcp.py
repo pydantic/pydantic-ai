@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import functools
 import os
 import re
@@ -1567,7 +1568,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             result = await self._call_tool_checked(name, args, metadata=metadata, use_task=use_task)
             mapped = _map_mcp_call_tool_result(result)
             if name == tool_name:
-                app_calls.append((result, mapped))
+                # A copy, so a hook that edits the returned value in place still reads as a rewrite.
+                app_calls.append((result, copy.deepcopy(mapped)))
             return mapped
 
         if self.process_tool_call is not None:
