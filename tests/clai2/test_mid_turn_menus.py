@@ -18,7 +18,7 @@ from rich.text import Text
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
@@ -29,10 +29,10 @@ from pydantic_clai2.builtin_plugins.grain import GrainPlugin
 from pydantic_clai2.builtin_plugins.pylon import PylonPlugin
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands
-from pydantic_clai2.config import Settings
+from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost, load_plugin
+from pydantic_clai2.plugins import Plugin, PluginHost, load_plugin
 from pydantic_clai2.plugins.loader import TURN_NOTICE
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
@@ -383,6 +383,64 @@ async def test_live_command_keeps_the_editor_working_and_cancellable(
             await done.wait()
     text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
     assert text.index('finished quickly') < text.index('Command cancelled.') < text.index('Goodbye.')
+
+
+class _SubmitThenWait(Plugin):
+    def get_commands(self) -> Sequence[Command]:
+        async def submit(args: list[str]) -> str:
+            self.host.submit_prompt('run me')
+            await anyio.sleep_forever()
+            raise AssertionError('unreachable')  # pragma: no cover
+
+        return (Command(name='submit', description='Submit, then wait', handler=submit, live=True),)
+
+
+async def test_cancelling_a_command_discards_the_prompt_it_submitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A prompt from `host.submit_prompt` runs only once its command returns, so Esc on the command drops it."""
+    working, stopped, done = (anyio.Event() for _ in range(3))
+
+    class Surface(PromptSurface):
+        def paint(self, rows: tuple[str, ...]) -> None:
+            busy = any(Text.from_ansi(row).plain.startswith(' Working ') for row in rows)
+            if busy:
+                working.set()
+            elif working.is_set():
+                stopped.set()
+            super().paint(rows)
+
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
+    requests: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        requests.append(messages)
+        return ModelResponse(parts=[TextPart('ran')])
+
+    output = io.StringIO()
+
+    async def run() -> None:
+        await chat(
+            Agent(FunctionModel(respond), deps_type=type(None)),
+            deps=None,
+            console=Console(file=output, force_terminal=True, width=80, height=24),
+            store=SettingsStore(tmp_path / 'config.db'),
+            builtin_plugins=(PluginSettings(id='submitter', factory=f'{__name__}:{_SubmitThenWait.__qualname__}'),),
+        )
+        done.set()
+
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            pipe.send_text('/submit\r')
+            await working.wait()
+            pipe.send_text('\x1b')
+            await stopped.wait()
+            pipe.send_text('/exit\r')
+            await done.wait()
+    assert requests == []
+    text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
+    assert text.index('Command cancelled.') < text.index('Goodbye.')
 
 
 async def test_overlay_commands_take_the_screen_without_waiting_for_themselves() -> None:
