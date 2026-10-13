@@ -31,7 +31,7 @@ from pydantic_clai2.builtin_plugins import logfire as logfire_plugin
 from pydantic_clai2.builtin_plugins.logfire import CREDENTIALS_FILE, PROJECT, LogfirePlugin, LogfireSource
 from pydantic_clai2.builtin_plugins.logfire_destination import logfire_dir
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.config import Settings
+from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.api_keys import save_key
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, TurnEnd, load_plugin
@@ -56,6 +56,7 @@ class Recorder:
         self.instances: list[logfire.Logfire] = []
         self.options: list[dict[str, object]] = []
         self.tokens: list[str | None] = []
+        self.api_keys: list[str | None] = []
 
     def configure(
         self,
@@ -68,10 +69,12 @@ class Recorder:
         config_dir: Path,
         data_dir: Path,
         token: str | None,
+        api_key: str | None,
         scrubbing: logfire.ScrubbingOptions | None,
         advanced: logfire.AdvancedOptions | None,
     ) -> logfire.Logfire:
         self.tokens.append(token)
+        self.api_keys.append(api_key)
         self.options.append(
             {
                 'local': local,
@@ -737,6 +740,59 @@ async def test_token_from_keys_chooses_the_project(
     assert ('CLAI2_LOGFIRE_TOKEN is not in /keys' in output.getvalue()) == (not saved and send is not False)
 
 
+@pytest.mark.parametrize('saved', [True, False])
+async def test_variables_key_from_keys_reaches_the_sdk(recorder: Recorder, saved: bool) -> None:
+    """The chosen `/keys` entry is the API key managed variables are read with; a missing one is reported."""
+    if saved:
+        save_key(name='LOGFIRE_API_KEY_TEAM', value='lf-read-variables-key')
+    host = make_host(variables_key={'name': 'LOGFIRE_API_KEY_TEAM'})
+    await close(load_logfire(host))
+    assert recorder.api_keys == ['lf-read-variables-key' if saved else None]
+    output = host.console.file
+    assert isinstance(output, io.StringIO)
+    assert ('managed variables with LOGFIRE_API_KEY_TEAM' in output.getvalue()) == (not saved)
+
+
+async def test_no_variables_key_leaves_the_sdk_default(recorder: Recorder) -> None:
+    await close(load_logfire(make_host()))
+    assert recorder.api_keys == [None]
+
+
+async def test_variables_key_is_kept_apart_from_another_builds_settings(
+    tmp_path: Path, recorder: Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Settings a fleet-control build saved, `api_key` among them, neither block nor replace `variables_key`.
+
+    This build ignores them and writes them back unchanged when it saves, so the key it saves must not share
+    a name with one of them, or the other build's value would be written over it.
+    """
+    loader, store = observability_loader(tmp_path)
+    leftovers: dict[str, JsonValue] = {'api_key': {'name': 'FLEET_KEY'}, 'agent_control': True}
+    store.save_plugin(
+        PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire', settings=leftovers),
+        requires={key: frozenset({'fleet-control'}) for key in leftovers},
+    )
+    scripted = Script(lists=[pick('variables_key'), MenuResult(cancelled=True)], choices=[], texts=[typed('MY_KEY')])
+    monkeypatch.setattr(logfire_plugin, 'RUNNERS', scripted.runners)
+    save_key(name='MY_KEY', value='lf-read-variables-key')
+    try:
+        await loader.load_all()
+        assert await loader.command(['configure', 'observability']) == 'Saved Variables API key.'
+        [declaration] = store.plugins()
+        assert declaration.settings['variables_key'] == {'name': 'MY_KEY'}
+        assert {key: declaration.settings[key] for key in leftovers} == leftovers
+        requirements = store.plugin_requirements('observability')
+        assert isinstance(requirements, dict)
+        assert {key: requirements[key] for key in (*leftovers, 'variables_key')} == {
+            'api_key': ['fleet-control'],
+            'agent_control': ['fleet-control'],
+            'variables_key': ['logfire-variables-key'],
+        }
+        assert recorder.api_keys == [None, 'lf-read-variables-key']
+    finally:
+        await loader.close('exit')
+
+
 @pytest.mark.parametrize('base_url', ['logfire.example.com/', 'https://logfire.example.com/mcp'])
 async def test_self_hosted_base_url_reaches_the_sdk(recorder: Recorder, base_url: str) -> None:
     await close(load_logfire(make_host(base_url=base_url)))
@@ -773,11 +829,13 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             pick('user_tag'),
             pick('httpx'),
             pick('ui_events'),
+            pick('variables_key'),
             MenuResult(cancelled=True),
         ],
         choices=[pick('false'), pick('false'), pick('false'), pick('git-email'), pick('true'), pick('false')],
-        texts=[typed('my-clai')],
+        texts=[typed('my-clai'), typed('LOGFIRE_API_KEY_TEAM')],
     )
+    save_key(name='LOGFIRE_API_KEY_TEAM', value='lf-read-variables-key')
     monkeypatch.setattr(logfire_plugin, 'RUNNERS', scripted.runners)
     loader, store = observability_loader(tmp_path)
     try:
@@ -785,7 +843,7 @@ async def test_menu_saves_every_option_and_reloads_with_them(
         assert loader.configurable('observability')
         assert await loader.command(['configure', 'observability']) == (
             'Saved Send to Logfire.\nSaved Service name.\nSaved Message content.\nSaved Binary content.\n'
-            'Saved User tag.\nSaved HTTP requests.\nSaved UI events.'
+            'Saved User tag.\nSaved HTTP requests.\nSaved UI events.\nSaved Variables API key.'
         )
         [declaration] = store.plugins()
         assert declaration.settings == {
@@ -799,8 +857,16 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             'base_url': None,
             'httpx': True,
             'ui_events': False,
+            'variables_key': {'name': 'LOGFIRE_API_KEY_TEAM'},
+        }
+        assert store.plugin_requirements('observability') == {
+            'user_tag': ['logfire-user-tag'],
+            'account': ['logfire-user-tag'],
+            'httpx': ['logfire-httpx'],
+            'variables_key': ['logfire-variables-key'],
         }
         assert [options['service_name'] for options in recorder.options] == ['pydantic-clai2', 'my-clai']
+        assert recorder.api_keys == [None, 'lf-read-variables-key']
         assert recorder.options[-1]['send_to_logfire'] is False
         assert recorder.exporters[0].closed
     finally:
@@ -844,6 +910,17 @@ def test_menu_validates_resets_and_notes_credentials(monkeypatch: pytest.MonkeyP
     assert source.reset(rows['service_name']) == 'Reset Service name.'
     assert source.current(rows['service_name']) == 'pydantic-clai2'
     assert source.current(rows['include_content']) == 'false'
+    variables_key = rows['variables_key']
+    assert source.current(variables_key) == 'LOGFIRE_API_KEY, if set'
+    assert variables_key.note == ''
+    assert source.problem(variables_key, 'lf-pasted-secret') is not None
+    assert source.apply(variables_key, 'LOGFIRE_API_KEY_TEAM') == 'Saved Variables API key.'
+    assert source.current(variables_key) == 'LOGFIRE_API_KEY_TEAM'
+    assert {row.key: row.note for row in source.rows()}['variables_key'] == 'missing from /keys'
+    save_key(name='LOGFIRE_API_KEY_TEAM', value='lf-read-variables-key')
+    assert {row.key: row.note for row in source.rows()}['variables_key'] == ''
+    assert source.reset(variables_key) == 'Reset Variables API key.'
+    assert source.current(variables_key) == 'LOGFIRE_API_KEY, if set'
     directory = logfire_dir()
     directory.mkdir(parents=True)
     (directory / CREDENTIALS_FILE).write_text('{}')
