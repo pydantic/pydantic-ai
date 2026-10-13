@@ -204,14 +204,6 @@ class BatchQueueWorkflow:
 
     @enqueue.validator
     def _validate_enqueue(self, request: EnqueueRequest) -> None:
-        if request.policy != self._state.policy:
-            raise ApplicationError(
-                f'Workers disagree on the batch policy of queue {workflow.info().workflow_id!r}: it runs with '
-                f'{self._state.policy}, this request came with {request.policy}. Deploy one `BatchSettings` per '
-                'agent and model; a changed policy takes effect once the queue has drained.',
-                type='BatchPolicyConflict',
-                non_retryable=True,
-            )
         item = self._state.items.get(request.consumer.item_id)
         if item is not None:
             if item.state == 'canceled':
@@ -221,6 +213,14 @@ class BatchQueueWorkflow:
                     non_retryable=True,
                 )
             return
+        if request.policy != self._state.policy:
+            raise ApplicationError(
+                f'Workers disagree on the batch policy of queue {workflow.info().workflow_id!r}: it runs with '
+                f'{self._state.policy}, this request came with {request.policy}. Deploy one `BatchSettings` per '
+                'agent and model; a changed policy takes effect once the queue has drained.',
+                type='BatchPolicyConflict',
+                non_retryable=True,
+            )
         candidate = replace(
             self._state,
             items={

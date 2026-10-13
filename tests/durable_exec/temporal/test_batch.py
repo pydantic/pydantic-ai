@@ -889,7 +889,9 @@ async def test_duplicate_enqueue_and_late_result_delivery_are_idempotent(
     assert len(enqueue) == 2
     request = next(arg for _, arg in enqueue if json.loads(arg['request']['body'])['prompt'] == 'idempotent-first')
     manager = client.get_workflow_handle(enqueue[0][0])
-    await manager.execute_update('enqueue', request)  # pyright: ignore[reportUnknownMemberType]
+    accepted_at = await manager.execute_update('enqueue', request)  # pyright: ignore[reportUnknownMemberType]
+    request['policy']['max_requests'] -= 1
+    assert await manager.execute_update('enqueue', request) == accepted_at  # pyright: ignore[reportUnknownMemberType]
     await first.cancel()
     with temporal_env.auto_time_skipping_disabled():
         with pytest.raises(WorkflowFailureError):
