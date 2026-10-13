@@ -148,20 +148,17 @@ Run this final metadata check after CI, comments, and any selected `douwebot` re
    against written rules.
 2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, title, body, labels, and complete catalog.
 3. Ask it to check only the title, body, and labels against this skill and the root `AGENTS.md`.
-4. Require either `current` or exact corrections: replacement title/body and label additions/removals.
+4. Require either `current` or exact corrections: title or body text changes and label additions/removals.
    - Require each correction to cite the rule it enforces.
    - Require each correction to quote the title, body text, or label that breaks the rule. When the rule requires a
      missing element, require the correction to name that element instead.
-5. Verify each correction before you apply it. A correction is verified when all four hold:
-   - The cited rule says what the correction claims.
-   - The current title, body, or labels break that rule.
-   - The correction changes only the quoted text, or adds only the named missing element.
-   - Applying the correction breaks no rule in this skill or the root `AGENTS.md` that the current title, body, and
-     labels follow.
+5. Verify each correction. Keep a correction only when the cited rule says what the correction claims and the current
+   title, body, or labels break that rule.
+6. Edit the title, body, and labels once. Use the kept corrections, and write your own changes where they fall short.
+   The edit is done when all three hold:
+   - The edited title, body, and labels follow every rule a kept correction cites.
+   - The edited title, body, and labels break no rule that the current ones follow.
+   - The edit changes nothing the first two conditions do not require.
 
-   Apply only verified corrections. When the current title, body, or labels break the rule an unverified correction
-   describes, write your own correction and verify it the same way. Merge the verified corrections into one edit.
-   Check that the merged edit breaks no rule the current title, body, and labels follow. When it does, add the
-   smallest change that restores that rule. Committed changes restart the post-push loop; GitHub metadata-only
-   changes do not.
-6. Hand the PR back after you apply the verified corrections.
+   Committed changes restart the post-push loop; GitHub metadata-only changes do not.
+7. Hand the PR back after the edit.
