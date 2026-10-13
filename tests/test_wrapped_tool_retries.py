@@ -414,12 +414,12 @@ async def test_self_renaming_wrapped_tool_reads_count_of_tool_named_like_its_ori
 async def test_renaming_wrapper_that_pushes_no_layer_reads_count_of_tool_named_by_built_in_layers(case: str):
     """Documented limit: only the built-in wrappers tell the leaf how they rename its tools.
 
-    A user wrapper that renames tools outside the built-in wrappers, whether or not it calls
-    `super().get_tools()`, leaves the leaf reading the count of the name the built-in wrappers
-    alone would give: here `o_fail` or `i_fail`, an unrelated tool that keeps failing. A
-    `PrefixedToolset` subclass that skips `super()` exposes the tool as `o_i_fail` next to a
-    built-in `.prefixed()` on either side; a `WrapperToolset` that calls `super()` and then adds a
-    suffix exposes it as `o_fail_v2`.
+    A wrapper other than `PrefixedToolset` and `RenamedToolset` that renames tools, nested inside
+    or around them, whether or not it calls `super().get_tools()`, leaves the leaf reading the
+    count of the name the built-in wrappers alone would give: here `o_fail` or `i_fail`, an
+    unrelated tool that keeps failing. A `PrefixedToolset` subclass that skips `super()` exposes
+    the tool as `o_i_fail` next to a built-in `.prefixed()` on either side; a `WrapperToolset` that
+    calls `super()` and then adds a suffix exposes it as `o_fail_v2`.
     """
 
     class OwnPrefixed(PrefixedToolset[object]):
