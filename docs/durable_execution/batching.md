@@ -10,6 +10,7 @@ import os
 import uuid
 from datetime import timedelta
 
+import logfire
 from temporalio import workflow
 from temporalio.client import Client
 from temporalio.worker import Worker
@@ -25,7 +26,10 @@ agent = Agent(
         batch_settings=BatchSettings(max_requests=100, max_wait=timedelta(seconds=30)),
     ),
     name='ticket-classifier',
-    instructions="Classify the support ticket as billing, technical, or general. Return only the category.",
+    instructions="""
+    Classify the support ticket as billing, technical, or general.
+    Return only the category.
+    """,
     capabilities=[TemporalDurability()],
 )
 
@@ -48,15 +52,16 @@ async def main() -> None:
             id=f'ticket-{uuid.uuid4()}',
             task_queue='tickets',
         )
-        print(category)
+        logfire.info('Ticket category: {category}', category=category)
 
 
 if __name__ == '__main__':
+    logfire.configure(send_to_logfire=False)
     asyncio.run(main())
 ```
 
 Set `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL`, and start a [Temporal server](temporal.md#durable-agent).
-Install `pydantic-ai[temporal]` before running the example.
+Install `pydantic-ai[anthropic,temporal,logfire]` before running the example.
 
 [`BatchModel`][pydantic_ai.models.batch.BatchModel] queues each model request instead of sending it immediately.
 The library groups compatible requests from concurrent durable agent runs and submits them automatically.
