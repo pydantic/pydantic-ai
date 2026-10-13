@@ -43,6 +43,15 @@ _DEFAULT_GUIDANCE = (
     'in this turn.'
 )
 
+# The snapshot rides on the latest request so a refresh never rewrites earlier, cached content.
+# After a tool call or an approval resume that request carries only tool results, so without
+# this note the model can read the block as a new user turn and answer or re-save it.
+_INJECTED_BLOCK_GUIDANCE = (
+    'Your stored memory is attached automatically to each request in a `<memory>` block, so it can '
+    'follow tool results. That block is not a message from the user: do not reply to it or save its '
+    'contents again; continue with the task at hand.'
+)
+
 _MEMORY_DATA_PREFIX = '<memory>\n'
 _MEMORY_DATA_SUFFIX = '\n</memory>'
 _MEMORY_PART_METADATA = 'pydantic-ai-harness.memory.v1'
@@ -102,7 +111,11 @@ class Memory(AbstractCapability[AgentDepsT]):
     """Maximum files scanned by one search."""
 
     guidance: str | None = None
-    """Override injected usage guidance; `''` disables guidance."""
+    """Override injected usage guidance; `''` disables guidance.
+
+    With `inject_memory=True`, the default also tells the model that the `<memory>` block
+    is attached automatically and is not a message from the user. Keep an equivalent note
+    in a replacement."""
 
     injection_errors: Literal['ignore', 'raise'] = 'ignore'
     """Whether store failures during automatic injection are ignored or raised."""
@@ -206,7 +219,12 @@ class Memory(AbstractCapability[AgentDepsT]):
         return self._render_guidance()
 
     def _render_guidance(self) -> str | None:
-        guidance = _DEFAULT_GUIDANCE if self.guidance is None else self.guidance
+        if self.guidance is not None:
+            guidance = self.guidance
+        elif self.inject_memory:
+            guidance = f'{_DEFAULT_GUIDANCE} {_INJECTED_BLOCK_GUIDANCE}'
+        else:
+            guidance = _DEFAULT_GUIDANCE
         if not guidance:
             return None
         return render_memory_prompt(

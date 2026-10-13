@@ -1067,6 +1067,40 @@ class TestInjection:
             assert contexts[0].endswith('\n</memory>')
             assert stored in contexts[0]
 
+    async def test_block_after_tool_results_is_framed_as_not_from_the_user(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- likes tea')
+        captured: list[tuple[str, ModelRequest]] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            latest = messages[-1]
+            assert isinstance(latest, ModelRequest)
+            captured.append((_latest_instructions(messages), latest))
+            if len(captured) == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        def lookup() -> str:
+            return 'found'
+
+        agent = Agent(FunctionModel(model), capabilities=[Memory(store=store)])
+        agent.tool_plain(lookup)
+        await agent.run('what do I like?')
+
+        assert len(captured) == 2
+        instructions, tool_request = captured[1]
+        # The block stays on the tail request, beside the tool result, so earlier content is cache-stable.
+        assert any(isinstance(part, ToolReturnPart) for part in tool_request.parts)
+        assert '- likes tea' in _latest_memory_context([tool_request])
+        assert 'what do I like?' not in _user_text([tool_request])
+        assert '`<memory>` block, so it can follow tool results' in instructions
+        assert 'not a message from the user' in instructions
+
+    def test_block_framing_is_only_added_to_default_guidance_when_injecting(self) -> None:
+        assert 'not a message from the user' in str(Memory[None]().get_instructions())
+        assert 'not a message from the user' not in str(Memory[None](inject_memory=False).get_instructions())
+        assert Memory[None](guidance='Keep memory factual.').get_instructions() == 'Keep memory factual.'
+
     async def test_continued_and_serialized_history_refreshes_request_only_memory_context(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- version one')

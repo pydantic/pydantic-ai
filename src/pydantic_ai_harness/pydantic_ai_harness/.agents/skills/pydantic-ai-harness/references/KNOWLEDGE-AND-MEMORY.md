@@ -122,6 +122,9 @@ I/O.
   for an indexed backend.
 - Other options: `agent_name='main'` (storage segment, never shown to the model), `heading=''`
   (labels the guidance and injected block), `guidance=None` (replace the default usage text).
+- The `<memory>` block is appended to the latest request, so after a tool call it sits next to tool
+  results. The default guidance tells the model it is not a user message; keep that note in a custom
+  `guidance`.
 
 ### Several memories on one agent
 

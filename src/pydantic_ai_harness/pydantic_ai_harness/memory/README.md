@@ -58,6 +58,8 @@ memory = Memory(
 
 Only the current request retains the injected user-role part, so copies do not accumulate in message history. A part saved to history by an earlier release is removed on the next request. Each model request receives the latest bounded snapshot, including after `write_memory` or an external update changes `MEMORY.md`.
 
+The block is appended to the latest request, after anything else it carries, so a refreshed snapshot never changes earlier request content that a provider may have cached. After a tool call, or when a run resumes after a deferred tool approval, that request holds only tool results, so the default guidance tells the model that the block is attached automatically and is not a message from the user. If you replace `guidance`, keep an equivalent note.
+
 When combining it with compaction, list compaction before `Memory`; otherwise a later persistent rewrite replaces the request-only memory block.
 
 Set `inject_memory=False` for cache-stable prompts. The tools remain available, and the model can fetch memory only when it needs it:
