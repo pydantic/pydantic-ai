@@ -552,9 +552,9 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 if idx < cutoff and first_user_msg not in preserved:
                     extra = [first_user_msg]
 
-        if all(_adds_nothing_to_summarize(message, extra) for message in to_summarize):
-            # Re-summarizing only an earlier summary would cost a model call without shrinking the
-            # history, as when a large message keeps the retained suffix above the trigger.
+        if self.keep_tokens and all(_adds_nothing_to_summarize(message, extra) for message in to_summarize):
+            # A large message can keep the retained token floor and the summary above the trigger;
+            # re-summarizing only the earlier summary would then cost a model call on every request.
             return messages
 
         previous_summary = _extract_previous_summary(messages) if self.incremental else None

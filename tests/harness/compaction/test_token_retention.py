@@ -570,18 +570,13 @@ class TestSummarizingCompactionTokenRetention:
         assert result[-1] is newer[-1]
         assert all(message is not history[1] for message in result)
 
-    @pytest.mark.parametrize('keep_tokens', [None, 40])
-    async def test_prefix_of_only_the_preserved_first_user_turn_is_not_summarized(
-        self, keep_tokens: int | None
-    ) -> None:
+    async def test_prefix_of_only_the_preserved_first_user_turn_is_not_summarized(self) -> None:
         # The first user turn is kept verbatim alongside any summary, so summarizing it alone
         # would cost a model call and make the history longer.
         history: list[ModelMessage] = [ModelRequest.user_text_prompt('o' * 50), response('x' * 60)]
         snapshot = ModelMessagesTypeAdapter.dump_json(history)
         usage = RunUsage()
-        strategy: SummarizingCompaction[None] = SummarizingCompaction(
-            max_messages=1, keep_messages=1, keep_tokens=keep_tokens, tokenizer=len
-        )
+        strategy: SummarizingCompaction[None] = SummarizingCompaction(max_messages=1, keep_tokens=40, tokenizer=len)
 
         result = await compact_now(strategy, history, model=TestModel(), usage=usage)
 

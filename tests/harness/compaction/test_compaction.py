@@ -3470,12 +3470,7 @@ class TestSummarizingReceipts:
 
     async def test_marker_before_system_prompt_does_not_drop_the_system_prompt(self):
         comp = SummarizingCompaction(
-            model='test:m',
-            max_messages=3,
-            keep_messages=1,
-            receipts=True,
-            bridge_prefix=False,
-            preserve_first_user_message=False,
+            model='test:m', max_messages=3, keep_messages=1, receipts=True, bridge_prefix=False
         )
         receipt_source = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True)
         seeded = await receipt_source.compact([_user('a'), _assistant('b'), _user('c'), _assistant('d')], _make_ctx())

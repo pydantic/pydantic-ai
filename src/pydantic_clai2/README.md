@@ -1586,8 +1586,8 @@ to the current model unless `summarization_model` selects another.
 
 The chain runs automatically before requests above `threshold` (85% of the context
 window by default). `/compact` runs the same chain between turns regardless of that
-threshold, but it protects at most half the conversation, so it always has older
-messages to summarise. Add free text to say what the summary must keep, for example
+threshold, but it caps the protected tokens at half the conversation, so it usually has older
+messages to summarise; the protected tail can exceed that cap by the whole message that crosses it. Add free text to say what the summary must keep, for example
 `/compact don't lose the "auth" decisions`. The focus is passed to the summariser
 as written, including quotes, backslashes, and line breaks; no shell escaping is needed.
 You get one line with the message counts before and after and the tokens saved out
