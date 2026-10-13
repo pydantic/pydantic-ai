@@ -22,7 +22,7 @@ MCP_APPS_UI_TYPE: Final = 'mcp-apps'
 class MCPAppToolResult(TypedDict):
     """What a UI needs to render an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) for one tool call.
 
-    [`MCPToolset`][pydantic_ai.mcp.MCPToolset] produces this when `include_app_data=True`, under the `'mcp_app'`
+    [`MCPToolset`][pydantic_ai.mcp.MCPToolset] attaches this to calls to tools that name a UI resource, under the `'mcp_app'`
     key of [`ToolReturnPart.metadata`][pydantic_ai.messages.ToolReturnPart.metadata], and the UI adapters forward
     it to the frontend. It is never sent to the model.
     """

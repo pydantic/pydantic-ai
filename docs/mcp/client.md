@@ -481,9 +481,9 @@ _(This example is complete, it can be run "as is")_
 
 ## MCP Apps
 
-[MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) let a server ship an interactive UI with a tool: the tool's `_meta.ui.resourceUri` names a `ui://` resource holding an HTML page, and the host application shows that page with the tool's input and result. Pydantic AI doesn't render anything, but it can carry what your frontend needs to.
+[MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) let a server ship an interactive UI with a tool: the tool's `_meta.ui.resourceUri` names a `ui://` resource holding an HTML page, and the host application shows that page with the tool's input and result. Pydantic AI doesn't render anything, but it carries what your frontend needs to.
 
-Pass `include_app_data=True` to keep that data. When the agent calls a tool that names a UI resource, the call then returns a [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose `metadata` holds an [`MCPAppToolResult`][pydantic_ai.mcp.MCPAppToolResult] under the `'mcp_app'` key, with the resource URI, the tool input, and the full MCP result including `structuredContent` and `_meta`. The model sees the same content as without it.
+When the agent calls a tool that names a UI resource, the call returns a [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose `metadata` holds an [`MCPAppToolResult`][pydantic_ai.mcp.MCPAppToolResult] under the `'mcp_app'` key, with the resource URI, the tool input, and the full MCP result including `structuredContent` and `_meta`. The model never sees this metadata.
 
 The [AG-UI](../ui/ag-ui.md#mcp-apps) and [Vercel AI](../ui/vercel-ai.md#mcp-apps) adapters forward this data to the frontend. Your application is the host: it fetches the page with [`read_resource_contents`][pydantic_ai.mcp.MCPToolset.read_resource_contents], whose `_meta.ui` holds the Content Security Policy and permissions the server asks for, renders it in a sandboxed iframe, and passes the tool input and result in. Requests the page makes back to the server, such as calling a tool, also go through your application.
 
@@ -493,7 +493,7 @@ from typing import Any
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
-weather = MCPToolset('http://localhost:8000/mcp', id='weather', include_app_data=True)
+weather = MCPToolset('http://localhost:8000/mcp', id='weather')
 agent = Agent('openai:gpt-5.2', toolsets=[weather])
 
 
