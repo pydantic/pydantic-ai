@@ -979,6 +979,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           inline into the JSON `ToolMessage.content` and rehydrated on reload through the `ToolReturnContent`
           union. The same serialization is used for both history (`dump_messages`) and the live
           event stream (`ToolCallResultEvent.content`), so files survive either round-trip.
+        - An MCP Apps record in `ToolReturnPart.metadata` is dumped as an `mcp-apps` activity message
+          after the tool result, which `load_messages` ignores, so the record is not restored.
         - Part ordering within a `ModelResponse` may change when text follows tool calls.
 
         Args:
