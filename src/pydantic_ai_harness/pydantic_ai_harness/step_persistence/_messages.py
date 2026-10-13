@@ -40,8 +40,8 @@ def split_messages(messages_json: object) -> tuple[MessageRefs, dict[str, str]]:
     """Return a snapshot's references and the JSON text of each distinct message.
 
     Keys keep their order rather than being sorted: a restored message must match the
-    original, tool-call arguments included. Serializing a message always yields the
-    same order, so an identical message still hashes the same.
+    original, tool-call arguments included. Re-serializing a restored message reproduces
+    its original key order, so it hashes to the key it was stored under.
     """
     refs: list[str] = []
     texts: dict[str, str] = {}

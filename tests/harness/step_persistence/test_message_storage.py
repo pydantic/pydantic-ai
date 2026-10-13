@@ -179,8 +179,8 @@ class TestMessageStorage:
 
         history: list[ModelMessage] = []
         for turn in range(3):
-            await agent.run([f'question {turn}', image], message_history=history)
-            history = await continue_run(store, run_id=(await store.list_runs())[-1].run_id)
+            result = await agent.run([f'question {turn}', image], message_history=history)
+            history = await continue_run(store, run_id=result.run_id)
 
         assert len(await _stored_messages(kind, tmp_path, pool)) == len(history)
 
@@ -237,13 +237,13 @@ class TestMessageStorage:
         agent: Agent[None, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store)])
 
         history: list[ModelMessage] = []
+        run_id = ''
         for turn in range(3):
             result = await agent.run(f'question {turn}', message_history=history)
-            history = result.all_messages()
+            history, run_id = result.all_messages(), result.run_id
 
-        runs = await store.list_runs()
-        assert len(runs) == 3
-        snapshot = await store.latest_snapshot(run_id=runs[-1].run_id)
+        assert len(await store.list_runs()) == 3
+        snapshot = await store.latest_snapshot(run_id=run_id)
         assert snapshot is not None
         assert snapshot.messages == history
         # Each run's snapshots repeat the earlier turns; each message is stored once.

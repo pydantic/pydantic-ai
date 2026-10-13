@@ -518,7 +518,7 @@ Each step writes a new snapshot of the run's history keyed by an incrementing
 snapshot count equals the number of settled tool-call steps, so a long single
 run pays a growing storage cost. The messages themselves are stored once (see
 [Storing each message once](#storing-each-message-once)), so what each further
-snapshot adds is its list of message keys.
+snapshot adds is its list of message keys plus any messages not already stored.
 
 All five stores -- `InMemoryStepStore`, `FileStepStore`, `SqliteStepStore`,
 `MongoStepStore`, and `PostgresStepStore` -- accept an opt-in
@@ -566,8 +566,8 @@ each message once, keyed by the SHA-256 of its JSON, and save a snapshot as the
 ordered list of those keys, `{"message_refs": [...]}`. Message content is then
 stored once per distinct message, and each snapshot adds about 68 bytes per
 message it references rather than a copy of the message. A message that appears
-twice in a history is stored once and referenced twice. `latest_snapshot` and `list_snapshots` rebuild the full
-history.
+twice in a history is stored once and referenced twice. `latest_snapshot` and
+`list_snapshots` rebuild the full history.
 
 | Store | Where each message is stored |
 | --- | --- |
@@ -588,9 +588,9 @@ messages that no snapshot references.
 
 Snapshots that earlier releases saved with their history inline still load, so
 an existing store needs no migration: new snapshots reference stored messages
-and older ones keep their size. Releases from before this change cannot read the
-new snapshots, so upgrade every process that reads a store before a newer one
-writes to it. An older release's `latest_snapshot` raises on such a snapshot,
+and older ones keep their size. Harness releases before the one that stores each
+message once cannot read the new snapshots, so upgrade every process that reads a
+store before a newer one writes to it. An older release's `latest_snapshot` raises on such a snapshot,
 and its `list_snapshots` skips it.
 
 `deduplicate_messages=False` on any of the four stores keeps writing the whole
@@ -861,9 +861,10 @@ change the activity timestamp. `delete(source=...)` removes the conversation and
 associated run records from the same SQLite database atomically, along with every
 stored message that no remaining snapshot references, retaining shared media and
 messages. A `SqliteStepStore` sharing the database should use `database=`, which
-commits a snapshot's messages with its row. It is not secure erasure. A local live PID marks an unfinished conversation
-as busy; this is not a distributed lease and the database must not be shared
-between hosts. PID reuse is conservatively treated as busy.
+commits a snapshot's messages with its row. It is not secure erasure. A local
+live PID marks an unfinished conversation as busy; this is not a distributed
+lease and the database must not be shared between hosts. PID reuse is
+conservatively treated as busy.
 
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.

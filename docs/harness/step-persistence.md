@@ -369,7 +369,7 @@ Call `build_persistence` during application startup and close the returned pool 
 
 ## Bounding snapshot growth
 
-Each step writes a new snapshot of the run's history keyed by an incrementing `seq`, and nothing is pruned by default. Within one long `Agent.run` the snapshot count equals the number of settled tool-call steps, so a long single run pays a growing storage cost. The messages themselves are stored once (see [Storing each message once](#storing-each-message-once)), so what each further snapshot adds is its list of message keys.
+Each step writes a new snapshot of the run's history keyed by an incrementing `seq`, and nothing is pruned by default. Within one long `Agent.run` the snapshot count equals the number of settled tool-call steps, so a long single run pays a growing storage cost. The messages themselves are stored once (see [Storing each message once](#storing-each-message-once)), so what each further snapshot adds is its list of message keys plus any messages not already stored.
 
 All five stores -- `InMemoryStepStore`, `FileStepStore`, `SqliteStepStore`, `MongoStepStore`, and `PostgresStepStore` -- accept an opt-in `max_snapshots_per_run: int | None` (default `None`, unbounded -- byte-for-byte the prior behavior). When set to `N >= 1`, each `save_snapshot` prunes the run down to a retain set:
 
@@ -402,7 +402,7 @@ Each snapshot holds the run's whole history, and a run that continues a conversa
 
 Messages are hashed after [media externalization](#persisting-media), so a stored message holds media URIs, not the payloads. A snapshot's new messages are written after its idempotency key is checked, so a retry with an already-recorded key stores none. `SqliteStepStore` (with `database=`) and `PostgresStepStore` commit the messages and the snapshot row in one transaction; with `connection=`, `SqliteStepStore` leaves transaction control to the caller. `FileStepStore` and `MongoStepStore` write the messages before the snapshot, so a failed save, or a `MongoStepStore` keyed save that loses a race with a duplicate, can leave messages that no snapshot references.
 
-Snapshots that earlier releases saved with their history inline still load, so an existing store needs no migration: new snapshots reference stored messages and older ones keep their size. Releases from before this change cannot read the new snapshots, so upgrade every process that reads a store before a newer one writes to it. An older release's `latest_snapshot` raises on such a snapshot, and its `list_snapshots` skips it.
+Snapshots that earlier releases saved with their history inline still load, so an existing store needs no migration: new snapshots reference stored messages and older ones keep their size. Harness releases before the one that stores each message once cannot read the new snapshots, so upgrade every process that reads a store before a newer one writes to it. An older release's `latest_snapshot` raises on such a snapshot, and its `list_snapshots` skips it.
 
 `deduplicate_messages=False` on any of the four stores keeps writing the whole history into each snapshot, for a deployment that still has older readers. It is deprecated and emits a `HarnessDeprecationWarning`, and full-history writes will be removed in a future release.
 
@@ -574,9 +574,10 @@ change the activity timestamp. `delete(source=...)` removes the conversation and
 associated run records from the same SQLite database atomically, along with every
 stored message that no remaining snapshot references, retaining shared media and
 messages. A `SqliteStepStore` sharing the database should use `database=`, which
-commits a snapshot's messages with its row. It is not secure erasure. A local live PID marks an unfinished conversation
-as busy; this is not a distributed lease and the database must not be shared
-between hosts. PID reuse is conservatively treated as busy.
+commits a snapshot's messages with its row. It is not secure erasure. A local
+live PID marks an unfinished conversation as busy; this is not a distributed
+lease and the database must not be shared between hosts. PID reuse is
+conservatively treated as busy.
 
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.
