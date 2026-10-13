@@ -487,6 +487,10 @@ same saved conversation IDs. A root is exported only when it ends, at exit, so a
 `CLAI session opened` log under it carries its `agent_session_id` and email
 from the start. With `--resume`, the root opens before the conversation is
 chosen, so it is logged again with the saved ID once startup selects it.
+Logfire rejects spans that started more than a day before they arrive, so a
+root is also ended once it has been open for `ROOT_LIFETIME` (12 hours) in
+`pydantic_clai2.builtin_plugins.logfire_session`. The next record opens a new
+root with the same `agent_session_id`; a run under way stays in the old trace.
 
 `user_tag` (default `logfire-account`) tags each session root, and only the
 root and its `CLAI session opened` log, with your email, as a Logfire tag and
@@ -2264,7 +2268,8 @@ The contract:
   declaration, in their own table. Your settings JSON never holds them.
 - **A build that lacks a feature, or does not know its name, ignores that one
   setting.** It uses the built-in declaration's value, or your model's default,
-  keeps your other settings, and prints one line per plugin:
+  and keeps your other settings. It says so in the plugin's `/plugins` row and in
+  the result of `/plugins enable` or `reload`, not at startup:
   `coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.`
   Reading never rewrites the database, and saving from that build keeps the
   ignored value and its tag. A tag goes away only when its value changes.

@@ -2220,8 +2220,9 @@ plugin list. Use `/plugins list` to print it. Plugins are trusted code running a
 
 Every CLAI on your machine shares one settings database, so another worktree or
 branch may have saved a plugin setting this one cannot run. When a saved setting
-names a feature this build lacks, CLAI skips just that setting, uses the default,
-and tells you once at startup:
+names a feature this build lacks, CLAI skips just that setting and uses the default.
+Startup stays quiet about it; the plugin's row in `/plugins`, and `/plugins enable`
+or `reload` for that plugin, show what was skipped:
 
 ```text
 coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.
@@ -2329,6 +2330,10 @@ exported when it ends, which a root does at exit, so each root also gets a
 `CLAI session opened` log right away, carrying the same `agent_session_id` and
 email: query that to find a session that is still running. With `--resume`, the
 log is repeated with the saved ID as soon as startup picks the conversation.
+Logfire rejects a span that started more than a day before it arrives, so a
+root still open after 12 hours is ended then, and the next record opens a new
+root, and trace, with the same `agent_session_id`. A run under way keeps its
+place in the ended root's trace.
 
 Each session root is tagged with your email, as a Logfire tag and the
 `user.email` attribute; of its children, only the `CLAI session opened` log
