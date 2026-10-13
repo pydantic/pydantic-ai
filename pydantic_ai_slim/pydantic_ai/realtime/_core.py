@@ -68,7 +68,7 @@ from ._lifecycle import (
     UserTurnStarted,
 )
 from ._retained_audio import RetainedAudioBudget
-from ._utils import accumulate_transcript, pcm_to_wav, user_transcript_update
+from ._utils import accumulate_transcript, fold_part_transcript, pcm_to_wav, user_transcript_update
 from .codec import (
     AudioDelta,
     ConversationCreated,
@@ -551,11 +551,7 @@ class SessionCore:
         if part is None or event.output_text != isinstance(part, TextPart):
             return False
         index = next(index for index, existing in enumerate(response.parts) if existing is part)
-        if isinstance(part, TextPart):
-            part = replace(part, content=accumulate_transcript(part.content, event.text)[0])
-        else:
-            part = replace(part, transcript=accumulate_transcript(part.transcript or '', event.text)[0] or None)
-        response.parts[index] = response.closed_parts[event.item_id] = part
+        response.parts[index] = response.closed_parts[event.item_id] = fold_part_transcript(part, event.text)[0]
         return True
 
     def _with_item_details(

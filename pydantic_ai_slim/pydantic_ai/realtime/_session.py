@@ -104,7 +104,13 @@ from ._instrumentation import (
 )
 from ._lifecycle import LIFECYCLE_EVENT_TYPES
 from ._retained_audio import RetainedAudioBudget
-from ._utils import accumulate_transcript, pcm_to_wav, seed_pcm_audio, user_transcript_update
+from ._utils import (
+    accumulate_transcript,
+    fold_part_transcript,
+    pcm_to_wav,
+    seed_pcm_audio,
+    user_transcript_update,
+)
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -2620,16 +2626,14 @@ class RealtimeSession:
             return None
         index, part = ended
         if isinstance(part, TextPart):
-            transcript, appended = accumulate_transcript(part.content, text)
+            updated, appended = fold_part_transcript(part, text)
             restarted: SpeechPart | TextPart = part
-            updated: SpeechPart | TextPart = replace(part, content=transcript)
             delta: SpeechPartDelta | TextPartDelta = TextPartDelta(content_delta=appended)
         else:
-            transcript, appended = accumulate_transcript(part.transcript or '', text)
+            updated, appended = fold_part_transcript(part, text)
             # Retained audio appears at the part's end, not at its start.
             restarted = replace(part, audio=None)
-            updated = replace(part, transcript=transcript or None)
-            delta = SpeechPartDelta(speaker='assistant', transcript_delta=appended, transcript=transcript)
+            delta = SpeechPartDelta(speaker='assistant', transcript_delta=appended, transcript=updated.transcript or '')
         position = next(position for position, existing in enumerate(self._response_parts) if existing is part)
         self._response_parts[position] = updated
         self._ended_assistant_parts[item_id] = (index, updated)

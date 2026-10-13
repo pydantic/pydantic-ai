@@ -6554,6 +6554,39 @@ async def test_unconsumed_session_queue_keeps_a_restarted_part_whole(monkeypatch
         ]
 
 
+async def test_late_transcript_yields_its_turn_again_in_stream_transcripts() -> None:
+    """A model turn whose transcript grows after it ended is yielded again, with the transcript so far.
+
+    `delta=True` carries the turn's `index`, so a caption UI replaces that turn rather than adding one.
+    """
+    events: list[RealtimeCodecEvent] = [
+        OutputTranscript('Hello', is_final=False, item_id='a'),
+        OutputTranscript('Bonjour.', is_final=False, item_id='b'),
+        OutputTranscript(' world.', is_final=False, item_id='a'),
+        ResponseDone(),
+    ]
+
+    async with RealtimeSession(FakeRealtimeConnection(events)) as session:
+        transcripts, updates = await asyncio.gather(
+            aiter_to_list(session.stream_transcripts()), aiter_to_list(session.stream_transcripts(delta=True))
+        )
+
+    assert transcripts == snapshot(
+        [
+            SpeechPart(speaker='assistant', transcript='Hello'),
+            SpeechPart(speaker='assistant', transcript='Hello world.'),
+            SpeechPart(speaker='assistant', transcript='Bonjour.'),
+        ]
+    )
+    assert updates == snapshot(
+        [
+            TranscriptUpdate(index=0, speaker='assistant', delta='Hello', transcript='Hello'),
+            TranscriptUpdate(index=1, speaker='assistant', delta='Bonjour.', transcript='Bonjour.'),
+            TranscriptUpdate(index=0, speaker='assistant', delta=' world.', transcript='Hello world.'),
+        ]
+    )
+
+
 async def test_parked_exception_survives_a_trimmed_queue() -> None:
     """A failure parked after heavy trimming is still delivered when the session closes."""
     events: list[RealtimeCodecEvent] = []

@@ -5602,12 +5602,12 @@ def _item_done(item_id: str, output_index: int, phase: str, transcript: str, *, 
 
 
 def _two_item_response(
-    *steps: tuple[Literal['delta', 'audio', 'done'], str, str], text: bool = False
+    *steps: tuple[Literal['delta', 'text', 'audio', 'done'], str, str], text: bool = False
 ) -> list[dict[str, Any]]:
     """A response with items `a` (`commentary`) and `b` (`final_answer`), each added before its first step.
 
-    Each step is a transcript delta, a base64 audio delta, or the frames that finish the item, with its final
-    transcript.
+    Each step is a transcript delta in the response's output modality, an output-text delta whatever the modality,
+    a base64 audio delta, or the frames that finish the item, with its final transcript.
     """
     items = {'a': (0, 'commentary'), 'b': (1, 'final_answer')}
     frames: list[dict[str, Any]] = [
@@ -5640,7 +5640,9 @@ def _two_item_response(
         elif kind == 'audio':
             frames.append({'type': 'response.output_audio.delta', **common, 'content_index': 0, 'delta': payload})
         else:
-            delta_type = 'response.output_text.delta' if text else 'response.output_audio_transcript.delta'
+            delta_type = (
+                'response.output_text.delta' if text or kind == 'text' else 'response.output_audio_transcript.delta'
+            )
             frames.append({'type': delta_type, **common, 'delta': payload})
     frames.append({'type': 'response.done', 'response': {'id': 'resp_1', 'status': 'completed', 'output': []}})
     return frames
@@ -5802,6 +5804,41 @@ LATE_TRANSCRIPT_CASES = [
         ),
     ),
     LateTranscriptCase(
+        # Text output for an item whose part is speech isn't the same part's text, so it opens a part of its own.
+        id='late-delta-other-modality',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello'),
+            ('delta', 'b', 'Bonjour.'),
+            ('text', 'a', ' world.'),
+            ('done', 'a', 'Hello world.'),
+            ('done', 'b', 'Bonjour.'),
+        ),
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+                ('TextPart', ' world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello'),
+                ('end', 0, 'Hello'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('end', 1, 'Bonjour.'),
+                ('start', 2, ''),
+                ('delta', 2, ' world.'),
+                ('end', 2, ' world.'),
+                ('start', 3, ''),
+                ('delta', 3, 'Hello world.'),
+                ('end', 3, 'Hello world.'),
+            ]
+        ),
+    ),
+    LateTranscriptCase(
         id='late-delta-text-output',
         frames=_two_item_response(
             ('delta', 'a', 'Hello'),
@@ -5839,11 +5876,12 @@ async def test_late_transcript_keeps_one_part_per_output_item(case: LateTranscri
     """A transcript that arrives for an item after a later item's content keeps that item to one part.
 
     Both in history and in the event stream: a late transcript that adds nothing streams nothing, and one that
-    adds text streams the item's part again under the index it ended with. Scripted frames rather than a
+    adds text streams the item's part again under the index it ended with. A late transcript of the other
+    modality than the item's part opens a part of its own, as it did before. Scripted frames rather than a
     recording: the provider's event order can't be produced on demand.
     """
     ws = _QueuedWebSocket()
-    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]  # a scripted socket stands in for the websocket
     session = RealtimeSession(
         connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
     )
@@ -5896,7 +5934,7 @@ async def test_late_transcript_restarts_a_speech_part_without_its_audio() -> Non
     frames rather than a recording: the provider's event order can't be produced on demand.
     """
     ws = _QueuedWebSocket()
-    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]  # a scripted socket stands in for the websocket
     session = RealtimeSession(
         connection,
         model=FakeRealtimeModel(connection, system='openai'),
@@ -5948,7 +5986,7 @@ async def test_transcript_after_its_response_ended_changes_nothing_recorded() ->
     Scripted frames rather than a recording: the provider's event order can't be produced on demand.
     """
     ws = _QueuedWebSocket()
-    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]  # a scripted socket stands in for the websocket
     session = RealtimeSession(
         connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
     )
@@ -5978,7 +6016,7 @@ async def test_evicted_output_audio_is_released() -> None:
     over scripted frames sized to the budget rather than a recording.
     """
     ws = _QueuedWebSocket()
-    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]  # a scripted socket stands in for the websocket
     session = RealtimeSession(
         connection,
         model=FakeRealtimeModel(connection, system='openai'),
