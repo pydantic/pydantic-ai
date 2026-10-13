@@ -1156,14 +1156,18 @@ class BoundedWaitWorkflow:
 
 
 async def test_exhausting_wait_rounds_cancels_the_pending_batch(
-    client: Client, monkeypatch: pytest.MonkeyPatch
+    client: Client, temporal_env: WorkflowEnvironment, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     provider.hold = True
     monkeypatch.setattr('pydantic_ai.durable_exec._base.MAX_BACKGROUND_POLLS', 1)
     queue = 'batch-bounded-wait-queue'
     async with Worker(client, task_queue=queue, workflows=[BoundedWaitWorkflow], plugins=[AgentPlugin(deadline_agent)]):
-        with pytest.raises(WorkflowFailureError) as exc_info:
-            await client.execute_workflow(BoundedWaitWorkflow.run, id=f'bounded-wait-{uuid.uuid4()}', task_queue=queue)
+        # Older test servers can corrupt cancellation updates during automatic time skipping.
+        with temporal_env.auto_time_skipping_disabled(), pytest.raises(WorkflowFailureError) as exc_info:
+            await asyncio.wait_for(
+                client.execute_workflow(BoundedWaitWorkflow.run, id=f'bounded-wait-{uuid.uuid4()}', task_queue=queue),
+                READINESS_WAIT_TIMEOUT,
+            )
         assert any('maximum number of durable wait rounds' in str(error) for error in failure_causes(exc_info.value))
         await asyncio.wait_for(provider.cancelled_job.wait(), READINESS_WAIT_TIMEOUT)
         assert provider.canceled == provider.batch_ids('bounded-wait')
