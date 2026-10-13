@@ -407,14 +407,14 @@ Load only the most relevant reference first. Read additional references only if 
 
 | I want to... | Reference |
 |---|---|
-| Create/configure agents, choose output types, use deps, define specs, or pick run methods | [Agents Core](./references/AGENTS-CORE.md) |
+| Create/configure agents, choose output types, use deps, define specs, reuse an OpenAI Responses WebSocket, or pick run methods | [Agents Core](./references/AGENTS-CORE.md) |
 | Bundle reusable behavior or intercept lifecycle events | [Capabilities and Hooks](./references/CAPABILITIES-AND-HOOKS.md) |
 | Decide what should load eagerly vs on demand, apply progressive disclosure, defer capability loading, or explain `load_capability` | [Capabilities on Demand](./references/ON-DEMAND-CAPABILITIES.md) |
 | Add function tools, toolsets, MCP servers, or explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
 | Attach a workspace, expose workspace-backed tools, or manage workspace lifecycle and durable references | [Workspaces](./references/WORKSPACES.md) |
 | Use provider-native web search, web fetch, or code execution | [Native Tools](./references/NATIVE-TOOLS.md) |
 | Use advanced tool features such as approval, retries, failed tool results, `ToolReturn`, validators, timeouts, or tool search | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
-| Work with multimodal input, message history, OpenAI Responses WebSockets, run correlation, or context trimming | [Input and History](./references/INPUT-AND-HISTORY.md) |
+| Work with multimodal input, message history, `run_id` / `conversation_id`, or context trimming | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Test or debug agent behavior | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 | Set up observability with Logfire, or reach every model with one Gateway key | [Set Up Observability and Model Access](#set-up-observability-and-model-access), then [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md#debug-and-validate-agent-behavior) |
 | Coordinate multiple agents or build graph workflows | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md#coordinate-multiple-agents) |
@@ -464,14 +464,14 @@ Load exactly one of these unless the task clearly spans multiple families:
 
 | Task family | Reference |
 |---|---|
-| Core agent setup, output, deps, specs, models, run methods | [Agents Core](./references/AGENTS-CORE.md) |
+| Core agent setup, output, deps, specs, models, OpenAI Responses WebSockets, run methods | [Agents Core](./references/AGENTS-CORE.md) |
 | Capabilities, hooks, and reusable behavior | [Capabilities and Hooks](./references/CAPABILITIES-AND-HOOKS.md) |
 | Progressive disclosure, deferred capabilities, capabilities on demand, and `load_capability` semantics | [Capabilities on Demand](./references/ON-DEMAND-CAPABILITIES.md) |
 | Function tools, toolsets, MCP, explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
 | Workspaces, workspace-backed tools, lifecycle ownership, and durable references | [Workspaces](./references/WORKSPACES.md) |
 | Provider-native tools | [Native Tools](./references/NATIVE-TOOLS.md) |
 | Approval, retries, failed tool results, validators, timeouts, rich tool returns, tool search, and tool-level deferred loading | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
-| Multimodal input, message history, OpenAI Responses WebSockets, run correlation, history processors | [Input and History](./references/INPUT-AND-HISTORY.md) |
+| Multimodal input, message history, `run_id` / `conversation_id`, history processors | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Testing, request inspection, and Logfire debugging | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 | Multi-agent patterns, graphs, direct API, A2A, durable execution, embeddings, image generation, evals, third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
 

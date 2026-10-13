@@ -128,7 +128,7 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 You can also pass messages from previous runs to continue a conversation or provide context, as described in [Messages and Chat History](message-history.md).
 
-Use [`async with agent.connect():`][pydantic_ai.agent.AbstractAgent.connect] to reuse a model connection across runs. This is supported by [OpenAI Responses WebSocket mode](models/openai.md#websocket-mode). Runs without `model=` use the connection; a run's `model=` argument is honored as usual. It owns the provider client of a temporary model created for the connection; existing model instances and agent tools keep their lifetimes. Exiting restores the agent's previous model selection.
+Some models can keep a persistent connection open across runs with [`agent.connect()`][pydantic_ai.agent.AbstractAgent.connect]; see [OpenAI Responses WebSocket mode](models/openai.md#websocket-mode).
 
 ### Streaming Events and Final Output
 

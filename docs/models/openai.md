@@ -271,7 +271,7 @@ The features below are specific to the Responses API and only available on [`Ope
 
 Use [`agent.connect()`][pydantic_ai.agent.AbstractAgent.connect] to reuse one WebSocket across model requests. This can reduce transport overhead in runs with repeated tool calls. Install the optional WebSocket dependency with `pip install 'pydantic-ai-slim[openai,realtime]'` and use an asyncio event loop.
 
-The agent uses the connection for runs inside the context, including when its model was configured with a shorthand. Tools, structured output, capabilities, and streaming use the same agent execution path as HTTP:
+Runs inside the context that don't pass `model=` use the connection, and a run's `model=` argument is honored as usual. Tools, structured output, capabilities, and streaming work as they do over HTTP. Set [`openai_previous_response_id='auto'`](#referencing-earlier-responses) so each request, including a tool result within a run, sends only new input:
 
 ```python {title="openai_websocket.py" test="skip"}
 from pydantic_ai import Agent
@@ -297,15 +297,25 @@ async def main():
         print(second.output)
 ```
 
-[`openai_previous_response_id='auto'`](#referencing-earlier-responses) makes each continuation send only new input items, including tool results within a single run. Without that setting, the connected model sends the full mapped message history on each request. Keep passing the conversation or message history between runs in either case.
+Without that setting, each request sends the full message history. Keep passing the conversation or message history between runs either way.
 
-Runs in the context that don't pass `model=` use the connection; a run's `model=` argument is honored as usual.
+A connection supports **one active response at a time**. Concurrent tasks can each open their own `agent.connect()` context on the same agent. A completed response leaves the socket open. Cancelling a request, leaving a stream before it completes, or losing the transport closes the socket, and further requests in that context raise an error.
 
-Each connection owns one ordered response stream and supports **one active response at a time**. Concurrent tasks can open separate `agent.connect()` contexts on the same agent. Finishing a response leaves the socket open; cancelling a request, leaving a stream before completion, or losing the transport closes it. Further requests in that context raise an error. `Agent.connect()` owns the provider client of a temporary model created for the connection; existing model instances and agent tools retain their lifetimes. Exiting restores the agent's previous model selection, so an ordinary Responses agent uses HTTP again. Opening or closing an `Agent` context inside `connect()` does not close the socket.
+A connection doesn't reconnect, retry an interrupted generation, or switch to HTTP. To recover, open a new connection and resume with the full `message_history`. On the recovery run, pass `model_settings=OpenAIResponsesModelSettings(openai_previous_response_id=None)` to clear an inherited `'auto'` value, so the full history is sent without a previous response ID. With `openai_store=False` or Zero Data Retention, `previous_response_id` works only on the same socket, through OpenAI's connection-local cache. See [OpenAI's WebSocket guide](https://developers.openai.com/api/docs/guides/websocket-mode/) for connection and retention limits.
 
-For direct model use, [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] yields an independent connected model. Pass that model to an `Agent` or a run's `model` argument. The source model continues to use HTTP, and the connected model cannot be used after its connection context exits. The [Codex subscription model](openai-codex.md#limitations) does not support this connection API.
+!!! note "Configuration and limits"
+    - The handshake uses headers from the model's default `extra_headers`, `model.connect(extra_headers=...)`, or `AsyncOpenAI(default_headers=...)`. Headers in agent or run `model_settings` don't configure it and must match the connection's headers.
+    - Headers and transport options set only on a custom HTTP client aren't inherited by the WebSocket.
+    - The model's default `timeout` bounds the handshake, and each request's `timeout` bounds its send and receive. Otherwise, the SDK client's timeouts apply.
+    - `model.connect(websocket_connection_options=...)` accepts the OpenAI SDK's typed socket options, such as `max_size`.
+    - Authentication must be supported by the OpenAI SDK's WebSocket transport; otherwise `connect()` raises [`UserError`][pydantic_ai.exceptions.UserError] with the SDK error as its cause. For Bedrock Mantle, see [its authentication limits](bedrock.md#bedrock-mantle).
+    - Background responses aren't supported, and an open connection can't be persisted across durable execution steps. Token counting and standalone compaction keep using HTTP.
 
-To use a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], connect its concrete Responses models first, then build the fallback from the yielded models. Other models can remain ordinary HTTP fallbacks:
+#### Connect a model directly
+
+[`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] yields an independent connected model. Pass it to an `Agent` or a run's `model` argument. The source model keeps using HTTP, and the connected model can't make requests after its context exits. The [Codex subscription model](openai-codex.md#limitations) doesn't support connections.
+
+To use a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], connect its Responses models first, then build the fallback from the yielded models. Other models can remain ordinary HTTP fallbacks. Keep the `AsyncExitStack` open for every run that may use the connected models:
 
 ```python {title="openai_websocket_fallback.py" test="skip"}
 from contextlib import AsyncExitStack
@@ -328,16 +338,6 @@ async def main():
         result = await agent.run('Explain the result briefly.')
         print(result.output)
 ```
-
-The connection context owns each socket. Keep the `AsyncExitStack` open for every run that may use the connected models.
-
-The model does not reconnect, retry an interrupted generation, or switch generation to HTTP automatically. Open a new connection to recover, and resume with the full `message_history`. On the recovery run, pass `model_settings=OpenAIResponsesModelSettings(openai_previous_response_id=None)` to clear an inherited `'auto'` value from model or agent settings; this sends the full history without a previous response ID. OpenAI's connection-local cache allows `previous_response_id` with `openai_store=False` or Zero Data Retention on the same socket. See [OpenAI's WebSocket guide](https://developers.openai.com/api/docs/guides/websocket-mode/) for connection and retention limits.
-
-Set handshake headers through the model's default `extra_headers`, `model.connect(extra_headers=...)`, or `AsyncOpenAI(default_headers=...)`. When opening `agent.connect()`, the handshake uses the model and SDK defaults; headers passed through agent or run `model_settings` do not configure it. Per-request headers must match the connection's headers. Headers and transport options configured only on a custom HTTP client are not inherited by the WebSocket connection. The model's default `timeout` controls the handshake; each request's `timeout` controls its send and receive operations. Otherwise, the SDK client's timeouts apply. The model's `connect(websocket_connection_options=...)` accepts the OpenAI SDK's typed socket options, such as `max_size`.
-
-WebSocket authentication must be supported by the OpenAI SDK transport. Unsupported authentication raises [`UserError`][pydantic_ai.exceptions.UserError] with the SDK error as its cause; HTTP requests keep their existing authentication. For Bedrock Mantle, see [its authentication limits](bedrock.md#bedrock-mantle).
-
-OpenAI supports named lanes for parallel work, but this connection API does not implement shared-socket parallelism or native mid-turn steering. Those features require response-event routing and independent cancellation and cache recovery for each lane. Use separate connection contexts for parallel runs. Background responses and persistence of a socket across durable execution steps are also outside this API. Token counting and standalone compaction continue to use their HTTP endpoints. The source model remains available for HTTP requests.
 
 #### Warm up a response without generating output
 
@@ -370,9 +370,7 @@ async def main():
         print(result.output)
 ```
 
-The warmup input is sent directly to the model and is not added to Pydantic AI message history. Keep its content and response ID with the application state that owns the continuation. Do not use `Agent.run()` for warmup: it treats the empty warmup response as invalid output and can exhaust output retries.
-
-Direct model connections leave the source model's HTTP client with its existing owner; manage that source model or provider separately when token counting or standalone compaction is needed. An agent connection owns the provider client of a temporary model created for the connection. Existing model instances and agent tools retain their lifetimes.
+The warmup input isn't added to Pydantic AI message history, so keep its content and response ID with the application state that owns the continuation. Don't warm up through `Agent.run()`: it treats the empty warmup response as invalid output and can exhaust output retries.
 
 ### Reasoning mode
 
