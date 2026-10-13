@@ -1,6 +1,5 @@
 import os
 from collections.abc import Iterator
-from functools import partial
 from typing import Any, Literal, get_args
 
 import httpx
@@ -23,7 +22,9 @@ with try_import() as imports_successful:
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import DEPRECATED_OPENAI_MODELS, OpenAIModelName
+    from pydantic_ai.models.openai_decisions import OpenAIDecisionsModelName
     from pydantic_ai.models.snowflake import SnowflakeModelName
+    from pydantic_ai.models.typesafe import TypeSafeModelName
     from pydantic_ai.models.xai import XaiModelName
     from pydantic_ai.models.zai import ZaiModelName
     from pydantic_ai.providers.deepseek import DeepSeekModelName
@@ -33,10 +34,12 @@ if not imports_successful():  # pragma: lax no cover
     # Define placeholders so the module can be loaded for test collection
     AnthropicModelName = BedrockModelName = BedrockMantleModelName = CohereModelName = GoogleModelName = None
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
+    OpenAIDecisionsModelName = None
     DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     CrusoeModelName = None
     DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = SnowflakeModelName = None
+    TypeSafeModelName = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -44,24 +47,12 @@ pytestmark = [
 ]
 
 
-def modify_response(response: dict[str, Any], filter_headers: list[str]) -> dict[str, Any]:  # pragma: lax no cover
-    for header in response['headers'].copy():
-        assert isinstance(header, str)
-        if header.lower() in filter_headers:
-            del response['headers'][header]
-    return response
-
-
 @pytest.fixture(scope='module')
-def vcr_config():  # pragma: lax no cover
+def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:  # pragma: lax no cover
+    """Re-record the provider model lists whenever a developer with the keys runs the module."""
     if os.getenv('CI') or not os.getenv('CEREBRAS_API_KEY'):
-        return {'record_mode': 'none'}
-
-    return {
-        'record_mode': 'rewrite',
-        'filter_headers': ['accept-encoding'],
-        'before_record_response': partial(modify_response, filter_headers=['cache-control', 'connection']),
-    }
+        return vcr_config
+    return {**vcr_config, 'record_mode': 'rewrite'}
 
 
 _PROVIDER_TO_MODEL_NAMES = {
@@ -80,7 +71,9 @@ _PROVIDER_TO_MODEL_NAMES = {
     'moonshotai': MoonshotAIModelName,
     'openai': OpenAIModelName,
     'openai-chat': OpenAIModelName,
+    'openai-decisions': OpenAIDecisionsModelName,
     'snowflake': SnowflakeModelName,
+    'typesafe': TypeSafeModelName,
     'zai': ZaiModelName,
 }
 
@@ -117,6 +110,11 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:anthropic.claude-3-opus-20240229-v1:0',
         'gateway/bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
         'gateway/bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
+        # Gateway returns HTTP 400 for the bare Haiku 5.5 id and the au./jp./us. profiles.
+        'gateway/bedrock:anthropic.claude-haiku-5-5',
+        'gateway/bedrock:au.anthropic.claude-haiku-5-5',
+        'gateway/bedrock:jp.anthropic.claude-haiku-5-5',
+        'gateway/bedrock:us.anthropic.claude-haiku-5-5',
         'gateway/bedrock:anthropic.claude-instant-v1',
         'gateway/bedrock:anthropic.claude-opus-4-20250514-v1:0',
         'gateway/bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
@@ -128,6 +126,10 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:cohere.command-r-plus-v1:0',
         'gateway/bedrock:cohere.command-r-v1:0',
         'gateway/bedrock:cohere.command-text-v14',
+        # Gateway rejects the geographic GPT-5.6 IDs with "The provided model identifier is invalid."
+        # The global IDs succeed through the same route.
+        'gateway/bedrock:in.openai.gpt-5.6-luna',
+        'gateway/bedrock:in.openai.gpt-5.6-terra',
         'gateway/bedrock:meta.llama3-1-405b-instruct-v1:0',
         'gateway/bedrock:meta.llama3-1-70b-instruct-v1:0',
         'gateway/bedrock:meta.llama3-1-8b-instruct-v1:0',
@@ -160,6 +162,9 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:us.meta.llama3-2-3b-instruct-v1:0',
         'gateway/bedrock:us.meta.llama3-2-90b-instruct-v1:0',
         'gateway/bedrock:us.meta.llama3-3-70b-instruct-v1:0',
+        'gateway/bedrock:us.openai.gpt-5.6-luna',
+        'gateway/bedrock:us.openai.gpt-5.6-sol',
+        'gateway/bedrock:us.openai.gpt-5.6-terra',
         'gateway/google-cloud:gemini-2.0-flash',
         'gateway/google-cloud:gemini-2.0-flash-lite',
         'gateway/google-cloud:gemini-2.5-flash-preview-09-2025',

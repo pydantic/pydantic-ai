@@ -18,6 +18,12 @@ from pydantic_ai.profiles.openai import (
 )
 from pydantic_ai.providers import missing_api_key_error
 
+from ._github_copilot_oauth import (
+    GitHubCopilotCredentials as GitHubCopilotCredentials,
+    GitHubCopilotDeviceAuthorization as GitHubCopilotDeviceAuthorization,
+    GitHubCopilotOAuthFlow as GitHubCopilotOAuthFlow,
+)
+
 try:
     from openai import AsyncOpenAI
 except ImportError as _import_error:

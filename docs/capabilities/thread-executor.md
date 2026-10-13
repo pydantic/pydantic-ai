@@ -1,3 +1,7 @@
+---
+description: "Run sync tools and callbacks on your own thread pool with the Pydantic AI UseThreadExecutor capability, so long-running servers do not accumulate threads."
+---
+
 # Thread Executor
 
 The [`UseThreadExecutor`][pydantic_ai.capabilities.UseThreadExecutor] [capability](overview.md) provides a custom [`Executor`][concurrent.futures.Executor] for running sync tool functions and other sync callbacks in threads. This is useful in long-running servers (e.g. FastAPI) where the default ephemeral threads from [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync] can accumulate under sustained load:

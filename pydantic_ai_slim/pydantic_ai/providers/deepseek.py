@@ -69,11 +69,11 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
                 # thinking off, so for it the restriction is unconditional; the v4 models can, so
                 # theirs is evaluated per request. `startswith` covers future deepseek-v4-* SKUs
                 # without listing each one.
-                openai_supports_tool_choice_required=model_name != 'deepseek-reasoner',
-                openai_supports_forced_tool_choice_with_thinking=not is_v4,
+                supports_forced_tool_choice=model_name != 'deepseek-reasoner',
+                supports_forced_tool_choice_with_thinking=not is_v4,
                 # Thinking is on by default on DeepSeek V4 models and `deepseek-reasoner`; every other
                 # model name (including `deepseek-chat`) is treated as thinking-off by default.
-                openai_reasoning_enabled_by_default=thinks_by_default,
+                thinking_enabled_by_default=thinks_by_default,
                 # DeepSeek's Responses endpoint honors `text.format` of type `json_schema`, while its
                 # Chat Completions endpoint rejects it with `This response_format type is unavailable now`.
                 openai_responses_supports_json_schema_output=True,

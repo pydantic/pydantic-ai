@@ -1,3 +1,8 @@
+---
+title: Embeddings
+description: "Generate text embeddings with Pydantic AI using OpenAI, Google, Cohere, VoyageAI, Bedrock or local Sentence Transformers, for semantic search and RAG."
+---
+
 # Embeddings
 
 Embeddings are vector representations of text that capture semantic meaning. They're essential for building:
@@ -152,7 +157,7 @@ Use [Pydantic Evals](evals.md) to track retrieval quality across a dataset of re
 
 ### OpenAI
 
-[`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] works with OpenAI's embeddings API and any [OpenAI-compatible provider](models/openai.md#openai-compatible-models).
+[`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] works with OpenAI's embeddings API and any [OpenAI-compatible provider](models/overview.md#openai-compatible-providers).
 
 #### Install
 
@@ -212,7 +217,7 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 #### OpenAI-Compatible Providers {#openai-compatible}
 
-Since [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] uses the same provider system as [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], you can use it with any [OpenAI-compatible provider](models/openai.md#openai-compatible-models):
+Since [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] uses the same provider system as [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], you can use it with any [OpenAI-compatible provider](models/overview.md#openai-compatible-providers):
 
 ```python {title="openai_compatible_embeddings.py"}
 # Using Azure OpenAI
@@ -257,7 +262,7 @@ embedder = Embedder('vllm:intfloat/e5-mistral-7b-instruct')
 
 The `vllm:` shorthand uses `VLLM_BASE_URL` and, for authenticated servers, `VLLM_API_KEY`. The server must be running an [embedding model supported by vLLM](https://docs.vllm.ai/en/stable/serving/online_serving/openai_compatible_server/#embeddings-api).
 
-See [OpenAI-compatible Models](models/openai.md#openai-compatible-models) for the full list of supported providers.
+See the [provider directory](models/overview.md#provider-directory) for setup guides, and check that your provider serves the embedding model you want to use.
 
 ### Google
 
@@ -317,7 +322,7 @@ model = GoogleEmbeddingModel(
 embedder = Embedder(model)
 ```
 
-See the [Google provider documentation](models/google.md#google-cloud-enterprise) for more details on Google Cloud authentication options, including application default credentials, service accounts, and API keys.
+See the [Google Cloud documentation](models/google-cloud.md#authentication) for more details on Google Cloud authentication options, including application default credentials, service accounts, and API keys.
 
 #### Dimension Control
 
@@ -650,7 +655,10 @@ Set [`bedrock_inference_profile`][pydantic_ai.embeddings.bedrock.BedrockEmbeddin
 
 ```python {title="bedrock_inference_profile.py"}
 from pydantic_ai import Embedder
-from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
+from pydantic_ai.embeddings.bedrock import (
+    BedrockEmbeddingModel,
+    BedrockEmbeddingSettings,
+)
 from pydantic_ai.providers.bedrock import BedrockProvider
 
 provider = BedrockProvider(region_name='us-east-1')
@@ -658,9 +666,9 @@ provider = BedrockProvider(region_name='us-east-1')
 model = BedrockEmbeddingModel(
     'amazon.titan-embed-text-v2:0',
     provider=provider,
-    settings={
-        'bedrock_inference_profile': 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-embed-profile',
-    },
+    settings=BedrockEmbeddingSettings(
+        bedrock_inference_profile='arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-embed-profile',
+    ),
 )
 embedder = Embedder(model)
 ```
@@ -895,7 +903,7 @@ async def rerank(query: str, candidates: list[str], top_k: int = 3) -> list[str]
     ranked = await asyncio.to_thread(
         reranker.rank, query, candidates, top_k=top_k, return_documents=True
     )
-    return [item['text'] for item in ranked]
+    return [str(item['text']) for item in ranked]
 ```
 
 Call `rerank()` on the candidates returned by your vector search (for example, in the `retrieve` tool of the [RAG example](examples/rag.md)) before handing the results to the LLM.

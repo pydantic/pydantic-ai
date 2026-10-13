@@ -20,7 +20,7 @@ with try_import() as imports_successful:
         _post_token_request,  # pyright: ignore[reportPrivateUsage]
     )
 
-pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), reason='openai/logfire not installed')]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='openai/logfire not installed')]
 
 
 async def test_oauth_http_capture_redacts_credentials(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch):

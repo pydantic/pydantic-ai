@@ -1,4 +1,8 @@
-# Troubleshooting
+---
+description: "Fix common Pydantic AI realtime voice problems: no audio, a model that never replies or answers twice, echo cutoffs, stalled tools, lost reconnects."
+---
+
+# Realtime troubleshooting
 
 Below are suggestions on how to fix some common problems with realtime sessions, each linking to
 the page that covers the underlying behavior. For issues not listed here or addressed in the
@@ -30,7 +34,9 @@ layer and stop local playback on real [barge-in](turns.md#barge-in).
 ## The greeting never plays, or the model replies twice when the visitor speaks
 
 Speaker echo or microphone transients probably cancelled the greeting while the audio path opened.
-Keep the microphone closed until the greeting has played; see [Speaking first](turns.md#speaking-first).
+Mute microphone capture until the greeting has played, while continuing to send digital silence so
+server VAD can close any open speech segment; see [Muting the microphone](turns.md#muting-the-microphone)
+and [Speaking first](turns.md#speaking-first).
 To confirm the cause, iterate the event stream and look for a
 [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] on the
 first response and any
@@ -54,3 +60,9 @@ Set the `reconnect` setting to a [`ReconnectPolicy`][pydantic_ai.realtime.Reconn
 session resumption is enabled automatically alongside it. Recovery uses the latest in-memory server
 handle after the drop. See [Gemini session resumption](gemini.md#session-resumption) and
 [provider session limits](lifecycle.md#provider-session-limits).
+
+## Azure Voice Live fails with "Only Azure voice is supported"
+
+Cascade models such as `gpt-5` and `gpt-4.1` speak only through Azure text-to-speech voices, so
+they reject `openai_voice`. Choose their voice with `azure_voice_live_voice` instead. See
+[Voice Live voices](azure.md#voices).

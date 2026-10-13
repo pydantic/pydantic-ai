@@ -1,3 +1,7 @@
+---
+description: "Load Pydantic AI capabilities on demand like Agent Skills: the model sees a one-line catalog entry and pulls in instructions and tools only when needed."
+---
+
 # On-Demand Capabilities
 
 A capability is a bundle of instructions and/or tools, optionally with settings and hooks. A multi-workflow agent normally sends every workflow's instructions and tool schemas on every turn, and applies every workflow's settings and hooks for the whole run — even though most requests need just one workflow. That cost grows with each workflow you add: more input tokens, and worse tool selection once the visible tool set passes the ~30–50-tool mark where models start picking the wrong one (the same pressure behind [tool search](../tools-advanced.md#tool-search)).
@@ -42,7 +46,7 @@ The model does not receive the refund instructions or the `refund_status` tool d
 2. **Load.** Pydantic AI returns the capability's instructions — *"Always confirm the order ID before issuing a refund."* — as the tool result and exposes the `refund_status` definition on the next request.
 3. **Request 2.** The model now sees those instructions in history and `refund_status` in its tool list. It calls `refund_status(order_id='ABC-123')` and answers the user from the result.
 
-Already-loaded capabilities stay loaded for the rest of the run — the model never needs to re-open one.
+Already-loaded capabilities stay loaded for the rest of the run — the model never needs to re-open one. A `load_capability` tool call for a capability that is already active, or one that an earlier call in the same response already loads, is answered with a retry prompt instead of a second copy of its instructions.
 
 Searching cannot reveal a capability-owned tool: it stays hidden until its capability loads. In runs that also have searchable deferred tools, the catalog explicitly steers the model to load the capability rather than search for its tools; in capability-only runs — where no search surface exists — the catalog omits any mention of searching.
 
@@ -176,7 +180,7 @@ refunds = Capability(
 
 
 @refunds.tool
-def refund_status(ctx: RunContext[None], order_id: str) -> str:
+def refund_status(ctx: RunContext, order_id: str) -> str:
     """Look up the refund status for an order."""
     return f'Order {order_id}: refund issued on 2026-05-01.'
 ```
@@ -236,9 +240,9 @@ from pydantic_ai.capabilities import AbstractCapability
 
 
 @dataclass
-class AccountSecurityWorkflow(AbstractCapability[None]):
-    id: str = 'account-security'
-    description: str = 'Use when the next action may be destructive.'
+class AccountSecurityWorkflow(AbstractCapability):
+    id: str | None = 'account-security'
+    description: str | None = 'Use when the next action may be destructive.'
     defer_loading: bool = True
 
     def get_instructions(self) -> str:
@@ -326,8 +330,8 @@ def revoke_sessions(ctx: RunContext[Store], account_id: str) -> str:
 
 @dataclass
 class AccountSecurity(AbstractCapability[Store]):
-    id: str = 'account-security'
-    description: str = 'Use for suspicious logins, account takeover, or session revocation.'
+    id: str | None = 'account-security'
+    description: str | None = 'Use for suspicious logins, account takeover, or session revocation.'
     defer_loading: bool = True
 
     def get_instructions(self) -> str:
@@ -367,7 +371,7 @@ from pydantic_ai.capabilities import AbstractCapability, Capability
 
 
 @dataclass
-class RunbookRequired(AbstractCapability[None]):
+class RunbookRequired(AbstractCapability):
     """Bounces a tool call back until the matching runbook has been loaded."""
 
     requirements: dict[str, str] = field(default_factory=dict)
@@ -439,7 +443,7 @@ from pydantic_ai.capabilities import Capability
 
 
 def load_skill(path: Path) -> Capability:
-    _, frontmatter, body = path.read_text().split('---', 2)
+    _, frontmatter, body = path.read_text(encoding='utf-8').split('---', 2)
     meta = yaml.safe_load(frontmatter)
     return Capability(
         id=meta['id'],

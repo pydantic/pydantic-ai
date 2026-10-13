@@ -22,7 +22,6 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
 
-@pytest.mark.anyio
 async def test_zai_provider():
     provider = ZaiProvider(api_key='api-key')
     assert provider.name == 'zai'
@@ -43,6 +42,12 @@ async def test_zai_provider():
     assert second_http_client.is_closed
 
 
+def test_zai_provider_custom_base_url() -> None:
+    provider = ZaiProvider(api_key='api-key', base_url='https://api.z.ai/api/coding/paas/v4')
+    assert provider.base_url == 'https://api.z.ai/api/coding/paas/v4'
+    assert str(provider.client.base_url) == 'https://api.z.ai/api/coding/paas/v4/'
+
+
 def test_zai_provider_need_api_key(env: TestEnv) -> None:
     env.remove('ZAI_API_KEY')
     with pytest.raises(
@@ -59,6 +64,18 @@ def test_zai_provider_pass_openai_client() -> None:
     openai_client = AsyncOpenAI(api_key='api-key')
     provider = ZaiProvider(openai_client=openai_client)
     assert provider.client == openai_client
+
+
+def test_zai_provider_openai_client_base_url() -> None:
+    openai_client = AsyncOpenAI(api_key='api-key', base_url='https://api.z.ai/api/coding/paas/v4/')
+    provider = ZaiProvider(openai_client=openai_client)
+    assert provider.base_url == 'https://api.z.ai/api/coding/paas/v4/'
+
+
+def test_zai_provider_openai_client_and_base_url_are_exclusive() -> None:
+    openai_client = AsyncOpenAI(api_key='api-key')
+    with pytest.raises(UserError, match='Cannot provide both `openai_client` and `base_url`'):
+        ZaiProvider(openai_client=openai_client, base_url='https://api.z.ai/api/coding/paas/v4')  # type: ignore[call-overload]
 
 
 def test_zai_provider_model_profile(mocker: MockerFixture):

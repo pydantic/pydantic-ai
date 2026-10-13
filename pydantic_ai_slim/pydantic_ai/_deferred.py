@@ -13,6 +13,7 @@ module only depends on `messages`, `exceptions`, and `_utils`, so
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Mapping
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
@@ -44,7 +45,7 @@ class DeferredToolRequests:
     def build_results(
         self,
         *,
-        approvals: dict[str, bool | DeferredToolApprovalResult] | None = None,
+        approvals: Mapping[str, bool | DeferredToolApprovalResult] | None = None,
         calls: dict[str, DeferredToolCallResult | Any] | None = None,
         metadata: dict[str, dict[str, Any]] | None = None,
         approve_all: bool = False,

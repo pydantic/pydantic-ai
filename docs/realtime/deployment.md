@@ -1,3 +1,7 @@
+---
+description: "Connect browsers and phone calls to a Pydantic AI realtime voice agent via WebRTC, a WebSocket relay or a Twilio bridge, with keys and tools on your server."
+---
+
 # Connecting a frontend
 
 Keep provider keys, tools, and business logic on the server; connect user devices to your backend,
@@ -69,11 +73,16 @@ short-lived credential for client-led negotiation. Either way the browser is a p
 session and can send provider-native control events, so authorize every server-side tool against
 trusted [`deps`](../dependencies.md), not session instructions supplied to the model.
 
+To continue an earlier conversation, create the `AgentRealtime` per call inside the offer handler,
+`realtime = agent.realtime(model, message_history=...)`, and answer the offer and open the sideband from
+that same object. GPT-Live takes the history when the offer starts the call, and a sideband opened with
+other history refuses to attach; the other providers seed it when the sideband attaches.
+
 !!! warning "The browser can read seeded history"
-    Seeding a sideband session with [`message_history`](history.md) sends those prior turns into the
+    Seeding a WebRTC call with [`message_history`](history.md) sends those prior turns into the
     **shared** provider conversation that the browser is a peer on, so a call participant can read
     them — including confidential tool results — over the data channel (Azure's `webrtcfilter=on`
-    still forwards conversation-item events). Only seed a sideband with history that is safe for the
+    still forwards conversation-item events). Only seed a call with history that is safe for the
     browser to see; keep confidential context in [`deps`](../dependencies.md) and tool logic instead.
 
 A sideband does not own the audio transport: its `send_audio()`, `commit_audio()`, `clear_audio()`,
@@ -85,6 +94,13 @@ indicators — [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] c
 outbound WebRTC audio buffer so [barge-in](turns.md#barge-in) stops playback. A
 dropped sideband follows the same [reconnect](lifecycle.md#reconnecting) rules, with one wrinkle
 covered there: a clean close is treated as the browser hanging up.
+
+Closing a sideband session, or leaving its `async with` block, only detaches your server: the
+browser's call stays up, and billed, until the browser hangs up. To end the call from the server,
+call [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] instead (it works from a
+[tool](tools.md#ending-the-session-from-a-tool) too), or
+[`hang_up(answer.session)`][pydantic_ai.agent.AgentRealtime.hang_up] on `agent.realtime(model)` when
+no sideband is attached. OpenAI supports this for both gpt-realtime and GPT-Live; Azure OpenAI doesn't yet.
 
 The [realtime WebRTC example](../examples/realtime-webrtc.md) demonstrates the full FastAPI and
 browser flow. Provider-specific setup (Azure's Microsoft Entra ID and `webrtcfilter`) lives on the
@@ -137,6 +153,14 @@ whole call, so when the browser disconnects, `receive_bytes()` raises, the `fina
 and leaving the `async with` block hangs up the provider session. Driving the input from a bare
 `asyncio.create_task` instead would swallow that error and leave the billed session open with nobody
 listening.
+
+`handle_barge_in=True` is a no-op for this relay: `played_audio_bytes` counts a chunk as played when
+the relay forwards it, before the browser has actually played it, so the session sees no unplayed
+audio to flush. The relay must obtain the browser's real playback position, call
+[`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt] with that count, and
+tell the browser to stop playback and clear its own buffer: the session can only drop what it has
+not forwarded yet. Passing `played_ms=` records the provider-side cutoff but never flushes audio
+queued by the session or buffered in the browser.
 
 ## SIP/telephony bridge
 

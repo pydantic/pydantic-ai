@@ -2,7 +2,7 @@
 
 LiveKit Agents is a voice-agent framework built on LiveKit's WebRTC transport: rooms, SIP telephony, turn detection, noise cancellation, mid-call handoffs, and plugins for STT, LLM and TTS vendors, with a cascaded pipeline as the default. Pydantic AI's [realtime support](../realtime/overview.md) is a speech-to-speech agent loop on four providers behind one API, and it is the same typed [`Agent`][pydantic_ai.Agent] that runs as text, in a [web chat](../web.md) or behind your API: the call uses the same tools, dependencies and [capabilities](../realtime/capabilities.md), becomes ordinary message history you can [hand to a text agent](../realtime/history.md#handing-off-to-a-text-agent) for structured output, and is traced end to end in [Logfire](https://pydantic.dev/logfire). You bring the transport; with LiveKit, the transport is the product.
 
-Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/ai/harness/) for capabilities and complete agents, [Pydantic Evals](../evals.md), [Pydantic Graph](../graph.md), [Pydantic Logfire](https://pydantic.dev/logfire) for observability, and [Pydantic](https://pydantic.dev/docs/validation/latest/get-started/) itself for validation. The tables below cover the whole of it.
+Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/ai/harness/) for capabilities and complete agents, [Pydantic Evals](../evals.md) for evaluation, [Pydantic Graph](../graph.md) for graph-based workflows, [Pydantic Logfire](https://pydantic.dev/logfire) for observability, and [Pydantic](https://pydantic.dev/docs/validation/latest/get-started/) itself for validation. The tables below cover the whole of it.
 
 ## Framework
 
@@ -14,8 +14,8 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Extensibility | Pipeline nodes (`stt_node`, `llm_node`, …) | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
-| Durable execution | No | [5+ integrations](../durable_execution/overview.md) |
-| Interfaces | WebRTC rooms, telephony, text sessions | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental) |
+| Durable execution | No | [Seven integrations](../durable_execution/overview.md) |
+| Interfaces | WebRTC rooms, telephony, text sessions | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | Speech-to-speech and cascaded STT + LLM + TTS | [Speech-to-speech](../realtime/overview.md), four providers |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
 | Image generation | No | [Image Generation](../image-generation.md) |

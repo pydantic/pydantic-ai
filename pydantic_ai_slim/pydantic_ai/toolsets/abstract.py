@@ -3,10 +3,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, Self
 
 from pydantic_core import SchemaValidator
-from typing_extensions import Self
 
 from .._instructions import normalize_toolset_instruction_parts
 from .._run_context import AgentDepsT, RunContext
@@ -266,6 +265,27 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
             tool: The tool definition returned by [`get_tools`][pydantic_ai.toolsets.AbstractToolset.get_tools] that was called.
         """
         raise NotImplementedError()
+
+    async def get_tool_for_tool_def(
+        self, tool_def: ToolDefinition, ctx: RunContext[AgentDepsT]
+    ) -> ToolsetTool[AgentDepsT]:
+        """Return the tool to call for a tool definition this toolset already produced.
+
+        Used by [durable execution](../durable_execution/overview.md) to rebuild the tool inside a
+        durable unit from the definition a discovery unit already recorded, instead of listing the
+        toolset's tools a second time. The default lists them, which is always correct; a toolset
+        that can build the tool from the definition alone — like
+        [`MCPToolset`][pydantic_ai.mcp.MCPToolset], whose listing is a network round trip — should
+        override this to skip the listing.
+
+        Args:
+            tool_def: The tool definition to build the tool from.
+            ctx: The run context.
+
+        Raises:
+            KeyError: If this toolset holds no tool under that name.
+        """
+        return (await self.get_tools(ctx))[tool_def.name]
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         """Run a visitor function on all "leaf" toolsets (i.e. those that implement their own tool listing and calling)."""

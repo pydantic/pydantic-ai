@@ -1,8 +1,14 @@
-# Image Generation
+---
+title: ImageGeneration Capability
+description: "Let a Pydantic AI agent generate images when it decides to, via the provider's native image tool or a fallback image model or image-capable subagent."
+---
+
+# ImageGeneration Capability
 
 The [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] [capability](overview.md) lets an agent decide when to
 generate an image. It prefers the conversational model provider's native image-generation tool and can fall back to a
-dedicated image model through the [direct image-generation API](../image-generation.md).
+dedicated image model through the direct image-generation API, whose end-to-end walkthrough is
+[Image Generation](../image-generation.md).
 
 ```python {title="image_generation_capability.py"}
 from pydantic_ai import Agent, ImageGenerator
@@ -43,7 +49,7 @@ tool and is unprefixed (`image_model='gpt-image-2'`), while `fallback_image_mode
 its provider:
 
 ```python {title="image_generation_routing.py"}
-from pydantic_ai import ImageGenerator
+from pydantic_ai import BinaryImage, ImageGenerator
 from pydantic_ai.capabilities import ImageGeneration
 from pydantic_ai.images.openai import OpenAIImageGenerationSettings
 
@@ -65,7 +71,7 @@ ImageGeneration(native=False, local=generator, dimensions=(1280, 720))
 
 
 # A custom callable or Tool of your own also goes on `local`
-def my_image_tool(prompt: str) -> bytes: ...
+def my_image_tool(prompt: str) -> BinaryImage: ...
 
 
 ImageGeneration(local=my_image_tool)
@@ -75,7 +81,16 @@ The portable `dimensions` and `aspect_ratio` capability settings override defaul
 Only the direct generator can apply `dimensions`, and only it can apply the aspect ratios the native tool does not
 share, so pass `native=False` when you need either to be guaranteed: with the default `native=True` a model that
 generates images natively takes the native path, which has no equivalent for them, and the request warns that the
-settings went unapplied. Native-tool-only settings such as
+settings went unapplied. Under a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], each of its models takes
+the path its own profile selects, and each one whose path drops a setting, such as `quality` on the direct generator or
+`dimensions` on the native tool, gets a warning naming it, also in a workflow run with
+[`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A provider's native tool ignores a
+setting it has no field for without a warning; see the provider support tables under
+[Image Generation Tool](../native-tools.md#image-generation-tool). Under a
+[`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] whose current model is a `FallbackModel`, or
+under a model of your own that routes requests without a profile of its own, no warning is given, since nothing
+public says which model a request reaches.
+Native-tool-only settings such as
 `quality` and `output_format` do not apply to a direct fallback; configure their
 provider-prefixed equivalents on the generator. `action='edit'` and `image_model` do not apply either: the direct
 fallback raises [`UserError`][pydantic_ai.exceptions.UserError] for `action='edit'`, because the `generate_image` tool
@@ -122,6 +137,55 @@ See [Instrumentation](../image-generation.md#instrumentation) for what those spa
 !!! warning "Durable execution with Temporal"
     Generated images have to cross Temporal's activity boundary, where the payload size limit leaves roughly 1.5MB for raw image bytes. A larger image fails with a `UserError` — naming the tool when it came from a local implementation (a `local=` [`ImageGenerator`][pydantic_ai.images.ImageGenerator], a `fallback_image_model`, the subagent fallback, or your own `local=` callable or toolset), or naming the model when the native tool put it on the response. See [Large Payloads](../durable_execution/temporal.md#large-payloads) for the options.
 
+## Getting the Generated Image
+
+The image is in the run's message history, not necessarily in its final response. An agent usually answers in text
+after generating an image, so [`result.response.images`][pydantic_ai.messages.ModelResponse.images] is empty unless
+that last response carries it. Where the image lands depends on the path that produced it:
+
+- The native tool puts it on the model response that generated it, in
+  [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images].
+- A direct generator or the `fallback_subagent_model` subagent returns it from the `generate_image` tool call, so it
+  is in that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], among its
+  [`files`][pydantic_ai.messages.BaseToolReturnPart.files]. A `local` tool of your own is found under its own tool
+  name; return a [`BinaryImage`][pydantic_ai.messages.BinaryImage] so the image lands among its `files`, since raw `bytes` reach the model as base64
+  text.
+
+Collecting both covers whichever path each request took:
+
+```python {title="image_generation_retrieval.py"}
+from pydantic_ai import Agent, BinaryImage
+from pydantic_ai.capabilities import ImageGeneration
+from pydantic_ai.messages import ModelResponse, ToolReturnPart
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[ImageGeneration(fallback_image_model='openai:gpt-image-2')],
+)
+result = agent.run_sync('Generate an illustration of a cafe, then write alt text for it.')
+
+images: list[BinaryImage] = []
+for message in result.all_messages():
+    if isinstance(message, ModelResponse):
+        images.extend(message.images)
+    else:
+        for part in message.parts:
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'generate_image':
+                images.extend(file for file in part.files if isinstance(file, BinaryImage))
+
+print(result.output)
+#> A cozy corner cafe with warm light spilling onto the sidewalk.
+print(len(images))
+#> 1
+```
+
+To make the image the run's output instead, set `output_type=BinaryImage` (see [Image Output](../output.md#image-output)).
+That setting is checked against the agent's model, not against the fallback: a model that doesn't generate images
+itself raises [`UserError`][pydantic_ai.exceptions.UserError] even when a fallback is configured to generate them, so
+collect the image from the history on those models. On a model that does, it enables that model's own native image
+generation even beside `native=False`, so the output image comes from the model rather than from the generator you
+configured.
+
 ## Fallback Options
 
 Two built-in mechanisms cover a model that does not generate images natively:
@@ -134,7 +198,9 @@ Two built-in mechanisms cover a model that does not generate images natively:
   additional agent whose native [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] produces the
   image. Reach for it when you want that model's native tool semantics and the settings the native tool carries.
 
-A `local=` callable, `Tool`, or toolset of your own replaces both with an implementation you write. The three fields are
+A `local=` callable, `Tool`, or toolset of your own replaces both with an implementation you write. The capability
+passes it none of its image settings, so with `native=False`, where it is the only implementation, setting any of them
+warns at construction. The three fields are
 alternatives: stating more than one raises [`UserError`][pydantic_ai.exceptions.UserError].
 
 !!! note "`fallback_model` is deprecated"

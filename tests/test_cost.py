@@ -14,14 +14,18 @@ that behavior:
 from __future__ import annotations
 
 import warnings
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
+from genai_prices.data_snapshot import DataSnapshot, get_snapshot, set_custom_snapshot
+from genai_prices.types import ClauseEquals, ModelInfo, ModelPrice, Provider
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, CostCalculationFailedWarning
 from pydantic_ai._genai_prices import best_effort_price, lookup_context_window
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -39,7 +43,6 @@ with try_import() as openai_imports_successful:
 
     from .models.mock_openai import MockOpenAI
 
-pytestmark = pytest.mark.anyio
 
 requires_openai = pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 
@@ -81,6 +84,61 @@ def _chunks() -> list[chat.ChatCompletionChunk]:
         _chunk(ChoiceDelta(content='ld')),
         _chunk(ChoiceDelta(), usage=_USAGE),
     ]
+
+
+@pytest.mark.parametrize(
+    ('provider_name', 'expected_provider_id', 'expected_price'),
+    [
+        ('openai-decisions', 'openai-decisions', Decimal('0.0001')),
+        ('alternate', 'openai', Decimal('0.001')),
+    ],
+)
+async def test_cost_uses_endpoint_specific_provider(
+    provider_name: str, expected_provider_id: str, expected_price: Decimal
+) -> None:
+    """OpenAI Decisions shares OpenAI's URL, so its provider ID must select its distinct prices."""
+    base_snapshot = get_snapshot()
+    openai_provider = next(provider for provider in base_snapshot.providers if provider.id == 'openai')
+    openai_model = ModelInfo(
+        id='gpt-6-luna',
+        match=ClauseEquals(equals='gpt-6-luna'),
+        prices=ModelPrice(input_mtok=Decimal('1'), output_mtok=Decimal('0')),
+    )
+    decisions_model = ModelInfo(
+        id='gpt-6-luna',
+        match=ClauseEquals(equals='gpt-6-luna'),
+        prices=ModelPrice(input_mtok=Decimal('0.1'), output_mtok=Decimal('0')),
+    )
+    alternate_model = ModelInfo(
+        id='gpt-6-luna',
+        match=ClauseEquals(equals='gpt-6-luna'),
+        prices=ModelPrice(input_mtok=Decimal('2'), output_mtok=Decimal('0')),
+    )
+    providers: list[Provider] = [
+        replace(openai_provider, models=[openai_model]),
+        replace(openai_provider, id='openai-decisions', name='OpenAI Decisions', models=[decisions_model]),
+        replace(openai_provider, id='alternate', name='Alternate', models=[alternate_model]),
+    ]
+    set_custom_snapshot(DataSnapshot(providers=providers, from_auto_update=False))
+
+    def respond(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('done')],
+            usage=RequestUsage(input_tokens=1000, cache_read_tokens=200, output_tokens=100),
+            provider_name=provider_name,
+            provider_url='https://api.openai.com/v1/',
+        )
+
+    try:
+        result = await Agent(FunctionModel(respond, model_name='gpt-6-luna')).run('hello')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        response_price = response.cost()
+        assert response_price.provider.id == expected_provider_id
+        assert response_price.total_price == expected_price
+        assert result.usage.cost == expected_price
+    finally:
+        set_custom_snapshot(None)
 
 
 @requires_openai
