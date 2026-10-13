@@ -340,7 +340,7 @@ The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.
 
 !!! note
     The list of tool definitions passed to `prepare_tools` includes both regular function tools and tools from any [toolsets](toolsets.md) registered on the agent, but not [output tools](output.md#tool-output).
-To modify output tools, you can set a `prepare_output_tools` function instead.
+To modify output tools, you can use the [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] capability instead.
 
 Here's an example that makes all tools strict if the model is an OpenAI model:
 
