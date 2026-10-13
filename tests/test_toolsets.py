@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import sys
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import timezone
 from typing import Any, TypeVar
@@ -1929,9 +1930,17 @@ async def call_first_available_tool(_messages: list[ModelMessage], info: AgentIn
     return ModelResponse(parts=[TextPart('No tools left.')])
 
 
-@pytest.mark.parametrize('prefixes', [(), ('demo',), ('inner', 'outer')], ids=['plain', 'prefixed', 'nested'])
-async def test_prefixed_toolset_prepare_retry(prefixes: tuple[str, ...]):
-    """Prefixing preserves the retry count used to disable a tool during preparation.
+TOOL_NAME_WRAPPERS: dict[str, Callable[[AbstractToolset[None]], AbstractToolset[None]]] = {
+    'plain': lambda toolset: toolset,
+    'prefixed': lambda toolset: toolset.prefixed('demo'),
+    'nested': lambda toolset: toolset.prefixed('inner').prefixed('outer'),
+    'renamed': lambda toolset: toolset.renamed({'demo_fail': 'fail'}),
+}
+
+
+@pytest.mark.parametrize('wrapper', TOOL_NAME_WRAPPERS)
+async def test_tool_name_wrapper_prepare_retry(wrapper: str):
+    """Prefixing or renaming preserves the retry count used to disable a tool during preparation.
 
     FunctionModel drives the retry deterministically; this checks preparation before the model request.
     """
@@ -1948,21 +1957,20 @@ async def test_prefixed_toolset_prepare_retry(prefixes: tuple[str, ...]):
         calls.append(ctx.retry)
         raise ModelRetry('Choose another approach.')
 
-    wrapped: AbstractToolset[None] = toolset
-    for prefix in prefixes:
-        wrapped = wrapped.prefixed(prefix)
-
-    result = await Agent(FunctionModel(call_first_available_tool), deps_type=type(None), toolsets=[wrapped]).run(
-        'Try the tool.'
-    )
+    result = await Agent(
+        FunctionModel(call_first_available_tool),
+        deps_type=type(None),
+        toolsets=[TOOL_NAME_WRAPPERS[wrapper](toolset)],
+    ).run('Try the tool.')
 
     assert result.output == 'No tools left.'
     assert prepare_retries == [0, 1]
     assert calls == [0]
 
 
-async def test_prefixed_toolset_prepare_retry_isolated_from_same_named_tool():
-    """A failure of an unprefixed tool must not disable a different tool with the same original name."""
+@pytest.mark.parametrize('wrapper', ['prefixed', 'nested', 'renamed'])
+async def test_tool_name_wrapper_prepare_retry_isolated_from_same_named_tool(wrapper: str):
+    """A failure of an unwrapped tool must not disable a different tool with the same original name."""
     plain = FunctionToolset[None]()
     prefixed = FunctionToolset[None]()
     calls: list[str] = []
@@ -1986,7 +1994,9 @@ async def test_prefixed_toolset_prepare_retry_isolated_from_same_named_tool():
         raise ModelRetry('Choose another approach.')
 
     result = await Agent(
-        FunctionModel(call_first_available_tool), deps_type=type(None), toolsets=[plain, prefixed.prefixed('demo')]
+        FunctionModel(call_first_available_tool),
+        deps_type=type(None),
+        toolsets=[plain, TOOL_NAME_WRAPPERS[wrapper](prefixed)],
     ).run('Try the tools.')
 
     assert result.output == 'No tools left.'

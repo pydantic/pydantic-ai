@@ -20,6 +20,16 @@ class RenamedToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_to_new_name_map = {v: k for k, v in self.name_map.items()}
+        # Preparation uses the original names, while the manager tracks retries under the exposed names.
+        # An exposed name equal to a renamed-away original belongs to a different tool, so its count is dropped.
+        ctx = replace(
+            ctx,
+            retries={
+                self.name_map.get(name, name): count
+                for name, count in ctx.retries.items()
+                if name in self.name_map or name not in original_to_new_name_map
+            },
+        )
         original_tools = await super().get_tools(ctx)
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for original_name, tool in original_tools.items():
