@@ -5578,34 +5578,8 @@ def _assistant_item(item_id: str, phase: str, content: list[dict[str, Any]], *, 
     return {'id': item_id, 'type': 'message', 'status': status, 'role': 'assistant', 'phase': phase, 'content': content}
 
 
-def _item_opened(item_id: str, output_index: int, phase: str, *, text: bool) -> list[dict[str, Any]]:
-    item = _assistant_item(item_id, phase, [], done=False)
-    return [
-        {'type': 'response.output_item.added', 'response_id': 'resp_1', 'output_index': output_index, 'item': item},
-        {'type': 'conversation.item.added', 'previous_item_id': None, 'item': item},
-        {
-            'type': 'response.content_part.added',
-            'response_id': 'resp_1',
-            'item_id': item_id,
-            'output_index': output_index,
-            'content_index': 0,
-            'part': {'type': 'text', 'text': ''} if text else {'type': 'audio', 'transcript': ''},
-        },
-    ]
-
-
-def _item_delta(item_id: str, output_index: int, delta: str, *, text: bool) -> dict[str, Any]:
-    return {
-        'type': 'response.output_text.delta' if text else 'response.output_audio_transcript.delta',
-        'response_id': 'resp_1',
-        'item_id': item_id,
-        'output_index': output_index,
-        'delta': delta,
-    }
-
-
 def _item_done(item_id: str, output_index: int, phase: str, transcript: str, *, text: bool) -> list[dict[str, Any]]:
-    """The frames that finish an item, in the order #10095 lists them."""
+    """The frames that finish an item, in the order https://github.com/pydantic/pydantic-ai/issues/10095 lists them."""
     common = {'response_id': 'resp_1', 'item_id': item_id, 'output_index': output_index, 'content_index': 0}
     if text:
         content: dict[str, Any] = {'type': 'output_text', 'text': transcript}
@@ -5627,25 +5601,47 @@ def _item_done(item_id: str, output_index: int, phase: str, transcript: str, *, 
     ]
 
 
-def _two_item_response(*steps: tuple[Literal['delta', 'done'], str, str], text: bool = False) -> list[dict[str, Any]]:
+def _two_item_response(
+    *steps: tuple[Literal['delta', 'audio', 'done'], str, str], text: bool = False
+) -> list[dict[str, Any]]:
     """A response with items `a` (`commentary`) and `b` (`final_answer`), each added before its first step.
 
-    Each step is a transcript delta or the frames that finish the item, with its final transcript.
+    Each step is a transcript delta, a base64 audio delta, or the frames that finish the item, with its final
+    transcript.
     """
     items = {'a': (0, 'commentary'), 'b': (1, 'final_answer')}
     frames: list[dict[str, Any]] = [
         {'type': 'response.created', 'response': {'id': 'resp_1', 'status': 'in_progress', 'output': []}}
     ]
     opened: set[str] = set()
-    for kind, item, transcript in steps:
+    for kind, item, payload in steps:
         output_index, phase = items[item]
+        common = {'response_id': 'resp_1', 'item_id': item, 'output_index': output_index}
         if item not in opened:
             opened.add(item)
-            frames += _item_opened(item, output_index, phase, text=text)
-        if kind == 'delta':
-            frames.append(_item_delta(item, output_index, transcript, text=text))
+            added = _assistant_item(item, phase, [], done=False)
+            frames += [
+                {
+                    'type': 'response.output_item.added',
+                    'response_id': 'resp_1',
+                    'output_index': output_index,
+                    'item': added,
+                },
+                {'type': 'conversation.item.added', 'previous_item_id': None, 'item': added},
+                {
+                    'type': 'response.content_part.added',
+                    **common,
+                    'content_index': 0,
+                    'part': {'type': 'text', 'text': ''} if text else {'type': 'audio', 'transcript': ''},
+                },
+            ]
+        if kind == 'done':
+            frames += _item_done(item, output_index, phase, payload, text=text)
+        elif kind == 'audio':
+            frames.append({'type': 'response.output_audio.delta', **common, 'content_index': 0, 'delta': payload})
         else:
-            frames += _item_done(item, output_index, phase, transcript, text=text)
+            delta_type = 'response.output_text.delta' if text else 'response.output_audio_transcript.delta'
+            frames.append({'type': delta_type, **common, 'delta': payload})
     frames.append({'type': 'response.done', 'response': {'id': 'resp_1', 'status': 'completed', 'output': []}})
     return frames
 
@@ -5667,21 +5663,26 @@ LATE_TRANSCRIPT_CASES = [
             ('delta', 'b', 'Bonjour.'),
             ('done', 'b', 'Bonjour.'),
         ),
-        history=[
-            ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
-            ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
-        ],
-        stream=[
-            ('start', 0, ''),
-            ('delta', 0, 'Hello world.'),
-            ('end', 0, 'Hello world.'),
-            ('start', 1, ''),
-            ('delta', 1, 'Bonjour.'),
-            ('end', 1, 'Bonjour.'),
-        ],
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello world.'),
+                ('end', 0, 'Hello world.'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('end', 1, 'Bonjour.'),
+            ]
+        ),
     ),
     LateTranscriptCase(
-        # The order #10095 reports: every item's deltas, then every item's `done` frames.
+        # The order https://github.com/pydantic/pydantic-ai/issues/10095 reports: every item's deltas, then every
+        # item's `done` frames.
         id='late-done',
         frames=_two_item_response(
             ('delta', 'a', 'Hello'),
@@ -5691,20 +5692,24 @@ LATE_TRANSCRIPT_CASES = [
             ('done', 'a', 'Hello world.'),
             ('done', 'b', 'Bonjour tout le monde.'),
         ),
-        history=[
-            ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
-            ('SpeechPart', 'Bonjour tout le monde.', {'phase': 'final_answer'}),
-        ],
-        stream=[
-            ('start', 0, ''),
-            ('delta', 0, 'Hello'),
-            ('delta', 0, ' world.'),
-            ('end', 0, 'Hello world.'),
-            ('start', 1, ''),
-            ('delta', 1, 'Bonjour'),
-            ('delta', 1, ' tout le monde.'),
-            ('end', 1, 'Bonjour tout le monde.'),
-        ],
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour tout le monde.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello'),
+                ('delta', 0, ' world.'),
+                ('end', 0, 'Hello world.'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour'),
+                ('delta', 1, ' tout le monde.'),
+                ('end', 1, 'Bonjour tout le monde.'),
+            ]
+        ),
     ),
     LateTranscriptCase(
         id='late-done-empty',
@@ -5714,18 +5719,22 @@ LATE_TRANSCRIPT_CASES = [
             ('done', 'a', ''),
             ('done', 'b', 'Bonjour.'),
         ),
-        history=[
-            ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
-            ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
-        ],
-        stream=[
-            ('start', 0, ''),
-            ('delta', 0, 'Hello world.'),
-            ('end', 0, 'Hello world.'),
-            ('start', 1, ''),
-            ('delta', 1, 'Bonjour.'),
-            ('end', 1, 'Bonjour.'),
-        ],
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello world.'),
+                ('end', 0, 'Hello world.'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('end', 1, 'Bonjour.'),
+            ]
+        ),
     ),
     LateTranscriptCase(
         # Text the stream has not shown yet streams the item's part again under its own index, which replaces it,
@@ -5738,21 +5747,59 @@ LATE_TRANSCRIPT_CASES = [
             ('done', 'a', 'Hello world.'),
             ('done', 'b', 'Bonjour.'),
         ),
-        history=[
-            ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
-            ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
-        ],
-        stream=[
-            ('start', 0, ''),
-            ('delta', 0, 'Hello'),
-            ('end', 0, 'Hello'),
-            ('start', 1, ''),
-            ('delta', 1, 'Bonjour.'),
-            ('start', 0, 'Hello'),
-            ('delta', 0, ' world.'),
-            ('end', 0, 'Hello world.'),
-            ('end', 1, 'Bonjour.'),
-        ],
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello'),
+                ('end', 0, 'Hello'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('start', 0, 'Hello'),
+                ('delta', 0, ' world.'),
+                ('end', 0, 'Hello world.'),
+                ('end', 1, 'Bonjour.'),
+            ]
+        ),
+    ),
+    LateTranscriptCase(
+        # Each late delta streams the item's part again, with the transcript so far.
+        id='late-deltas',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello'),
+            ('delta', 'b', 'Bonjour.'),
+            ('delta', 'a', ' there'),
+            ('delta', 'a', ' world.'),
+            ('done', 'a', 'Hello there world.'),
+            ('done', 'b', 'Bonjour.'),
+        ),
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello there world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello'),
+                ('end', 0, 'Hello'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('start', 0, 'Hello'),
+                ('delta', 0, ' there'),
+                ('end', 0, 'Hello there'),
+                ('start', 0, 'Hello there'),
+                ('delta', 0, ' world.'),
+                ('end', 0, 'Hello there world.'),
+                ('end', 1, 'Bonjour.'),
+            ]
+        ),
     ),
     LateTranscriptCase(
         id='late-delta-text-output',
@@ -5764,21 +5811,25 @@ LATE_TRANSCRIPT_CASES = [
             ('done', 'b', 'Bonjour.'),
             text=True,
         ),
-        history=[
-            ('TextPart', 'Hello world.', {'phase': 'commentary'}),
-            ('TextPart', 'Bonjour.', {'phase': 'final_answer'}),
-        ],
-        stream=[
-            ('start', 0, ''),
-            ('delta', 0, 'Hello'),
-            ('end', 0, 'Hello'),
-            ('start', 1, ''),
-            ('delta', 1, 'Bonjour.'),
-            ('start', 0, 'Hello'),
-            ('delta', 0, ' world.'),
-            ('end', 0, 'Hello world.'),
-            ('end', 1, 'Bonjour.'),
-        ],
+        history=snapshot(
+            [
+                ('TextPart', 'Hello world.', {'phase': 'commentary'}),
+                ('TextPart', 'Bonjour.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello'),
+                ('end', 0, 'Hello'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('start', 0, 'Hello'),
+                ('delta', 0, ' world.'),
+                ('end', 0, 'Hello world.'),
+                ('end', 1, 'Bonjour.'),
+            ]
+        ),
     ),
 ]
 
@@ -5832,9 +5883,63 @@ async def test_late_transcript_keeps_one_part_per_output_item(case: LateTranscri
         else:
             kind = 'start' if isinstance(event, PartStartEvent) else 'end'
             streamed.append((kind, event.index - first_index, text_of(event.part)))
-    assert summarize(session.all_messages()) == case.history
-    assert [(kind, text) for kind, text, _ in summarize(own)] == [(kind, text) for kind, text, _ in case.history]
+    history = summarize(session.all_messages())
+    assert history == case.history
+    assert [(kind, text) for kind, text, _ in summarize(own)] == [(kind, text) for kind, text, _ in history]
     assert streamed == case.stream
+
+
+async def test_late_transcript_restarts_a_speech_part_without_its_audio() -> None:
+    """A late transcript streams the item's speech part again with no audio at its start, as the part first did.
+
+    Retained audio arrives with the part's end, both times, and history keeps it on the item's one part. Scripted
+    frames rather than a recording: the provider's event order can't be produced on demand.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='output_audio',
+    )
+    frames = _two_item_response(
+        ('audio', 'a', base64.b64encode(b'\x01\x00' * 240).decode('ascii')),
+        ('delta', 'a', 'Hello'),
+        ('delta', 'b', 'Bonjour.'),
+        ('done', 'a', 'Hello world.'),
+        ('done', 'b', 'Bonjour.'),
+    )
+    streamed: list[tuple[str, str | None, bool]] = []
+    async with session:
+        await session.send('Greet me twice.')
+        for frame in frames:
+            ws.push(frame)
+        with anyio.fail_after(5):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, (PartStartEvent, PartEndEvent)) and isinstance(event.part, SpeechPart):
+                    kind = 'start' if isinstance(event, PartStartEvent) else 'end'
+                    streamed.append((kind, event.part.transcript, event.part.audio is not None))
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+        recorded = [
+            (part.transcript, part.audio is not None)
+            for message in session.all_messages()
+            if isinstance(message, ModelResponse)
+            for part in message.parts
+            if isinstance(part, SpeechPart)
+        ]
+    assert streamed == snapshot(
+        [
+            ('start', '', False),
+            ('end', 'Hello', True),
+            ('start', '', False),
+            ('start', 'Hello', False),
+            ('end', 'Hello world.', True),
+            ('end', 'Bonjour.', False),
+        ]
+    )
+    assert recorded == snapshot([('Hello world.', True), ('Bonjour.', False)])
 
 
 async def test_transcript_after_its_response_ended_changes_nothing_recorded() -> None:
