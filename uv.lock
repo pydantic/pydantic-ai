@@ -5318,6 +5318,23 @@ wheels = [
 ]
 
 [[package]]
+name = "pgtask"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "psycopg" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/42/50/163df9cd15865d7245a33b6c790b13d1b287b2e36799084006ffaada449c/pgtask-0.3.0.tar.gz", hash = "sha256:bb7d3189e0d599ff0cfc9a82064c1a516b37bb1a1c6da536a930d230b3b06a6f", size = 206890, upload-time = "2026-09-11T10:36:00.545Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8a/9a/612f1995036126fac9e5af8eefe8cf373dc528086e19e144f178d703e030/pgtask-0.3.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:6eb051d7ccc6a4bd7e73afc9093188f390ab6cf7e0a1a5dbf40ba80e268ba215", size = 4168017, upload-time = "2026-09-11T10:35:50.85Z" },
+    { url = "https://files.pythonhosted.org/packages/89/9b/ab0b07ee9f7393580a09a61302588b7b6112159e05d9351f937fc5621018/pgtask-0.3.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:a4245161da2523b6dbfc223531494208399f73fbfcfcf596ec288d05c851cb11", size = 4030212, upload-time = "2026-09-11T10:35:52.97Z" },
+    { url = "https://files.pythonhosted.org/packages/77/0d/8a369ce96318e7a5fd22203d2a6273ce5301d82b8d85f9f824207f059674/pgtask-0.3.0-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:f9d6098f357fbaf510a0f9c192088252906baaa354d9cc07bf8c1128be986969", size = 4420862, upload-time = "2026-09-11T10:35:55.195Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/65/23031c09795f28e50f571108327350c959b674eb5f82c4cda73342aac224/pgtask-0.3.0-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:d43de8d01c4a568975f805149a5edcd3e2e5bba39dbed21c23af41ac33e4de0b", size = 4442585, upload-time = "2026-09-11T10:35:56.946Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/f4/74bd9ee45535444eba5e7920c6ac093cd7fdd0312a412c1197ac7a139f5a/pgtask-0.3.0-cp310-abi3-win_amd64.whl", hash = "sha256:8d102537613ee4a5eeca7ff4cfc23c4d085da318ac10c836180577fa588023e1", size = 3751062, upload-time = "2026-09-11T10:35:58.972Z" },
+]
+
+[[package]]
 name = "pillow"
 version = "12.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -6281,6 +6298,9 @@ notion = [
 ordinal = [
     { name = "pydantic-ai-slim", extra = ["mcp"] },
 ]
+pgtask = [
+    { name = "pgtask" },
+]
 playwright = [
     { name = "idna" },
     { name = "playwright" },
@@ -6338,6 +6358,7 @@ requires-dist = [
     { name = "json-repair", specifier = ">=0.58.0" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.31.0" },
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.2" },
+    { name = "pgtask", marker = "extra == 'pgtask'", specifier = ">=0.2.0,<1" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.61.0" },
     { name = "pydantic-ai-slim", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["anthropic"], marker = "extra == 'anthropic'", editable = "pydantic_ai_slim" },
@@ -6373,7 +6394,7 @@ requires-dist = [
     { name = "stackone-defender", extras = ["onnx"], marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
     { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
-provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "researcher", "skills", "slack", "sprites", "stackone", "temporal", "youdotcom"]
+provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "pgtask", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "researcher", "skills", "slack", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-slim"
