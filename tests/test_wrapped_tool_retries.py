@@ -354,7 +354,8 @@ async def test_custom_get_tools_under_prefix_lists_another_toolset_under_the_pre
 
     Listing an unrelated toolset with that context hands the layers on, so `h` reads the count of
     `fb_h` instead of its own, stays listed after it failed, and `backup` is never offered. A
-    `.prepared()` callback gets a context without the layers instead (see the test above).
+    `.prepared()` callback gets a context without the layers instead, as
+    `test_prepared_under_prefix_lists_another_toolset_with_its_own_counts` shows.
     """
     helpers = helpers_toolset()
     fallback = FunctionToolset[object]()

@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-import copy
 import dataclasses
 import sys
 import warnings
@@ -977,13 +976,11 @@ RunContext.__init__ = _run_context_init_with_capability_loaded
 def with_tool_name_path(ctx: RunContext[AgentDepsT], path: ToolNamePath) -> RunContext[AgentDepsT]:
     """A copy of the context with the given tool name path.
 
-    A shallow copy rather than `dataclasses.replace`, which rebuilds the context from its dataclass
-    fields: `TemporalRunContext` and `RenderRunContext` keep snapshots such as `available_tool_names`
+    Not `dataclasses.replace`, which rebuilds the context from its dataclass fields:
+    `TemporalRunContext` and `RenderRunContext` keep snapshots such as `available_tool_names`
     outside them.
     """
-    path_ctx = copy.copy(ctx)
-    path_ctx._tool_name_path = path  # pyright: ignore[reportPrivateUsage]
-    return path_ctx
+    return _utils.replace_no_init(ctx, _tool_name_path=path)
 
 
 def with_tool_name_layer(ctx: RunContext[AgentDepsT], layer: str | Mapping[str, str]) -> RunContext[AgentDepsT]:
