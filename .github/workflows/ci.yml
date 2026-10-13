@@ -779,8 +779,7 @@ jobs:
       PGTASK_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
     services:
       postgres:
-        # AWS's mirror of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
-        image: public.ecr.aws/docker/library/postgres:16
+        image: postgres:16
         ports:
           - 5432:5432
         env:
