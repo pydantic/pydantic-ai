@@ -1,0 +1,172 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "576"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-4o
+        stream: false
+        input:
+        - role: user
+          content: Return the name 'okay' and values [1, 2, 3, 4].
+        tool_choice: required
+        tools:
+        - name: final_result
+          parameters:
+            properties:
+              name:
+                maxLength: 5
+                minLength: 2
+                type: string
+              values:
+                maxItems: 4
+                minItems: 4
+                prefixItems:
+                - type: integer
+                - type: integer
+                - type: integer
+                - type: integer
+                type: array
+            required:
+            - name
+            - values
+            type: object
+            additionalProperties: false
+          type: function
+          description: The final response which ends this conversation
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "681"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0451b70d707887e4006ace724bd0ec87d2b450fbf6e8a4ddbe
+        object: response
+        created_at: 1791914571
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1791914572
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-4o-2024-08-06
+        moderation: null
+        output:
+        - id: fc_0451b70d707887e4006ace724c3bd887d294823e88500275d1
+          type: function_call
+          status: completed
+          arguments: "{\"name\":\"okay\",\"values\":[1,2,3,4]}"
+          call_id: call_0dobDD38IeQ8u1ItDqnJXvnp
+          name: final_result
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: null
+          effort: null
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: required
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: The final response which ends this conversation
+          name: final_result
+          output_schema: null
+          parameters:
+            properties:
+              name:
+                maxLength: 5
+                minLength: 2
+                type: string
+              values:
+                maxItems: 4
+                minItems: 4
+                prefixItems:
+                - type: integer
+                - type: integer
+                - type: integer
+                - type: integer
+                type: array
+            required:
+            - name
+            - values
+            type: object
+            additionalProperties: false
+          strict: false
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 118
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 16
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 134
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-13T18:02:52.567137+00:00

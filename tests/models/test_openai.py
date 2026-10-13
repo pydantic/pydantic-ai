@@ -3234,7 +3234,7 @@ def tool_with_heterogeneous_tuple(x: tuple[int, str]) -> str:
             snapshot(
                 {
                     'additionalProperties': False,
-                    'properties': {'x': {'type': 'string', 'description': 'minLength=1, format=uri'}},
+                    'properties': {'x': {'description': 'format=uri', 'minLength': 1, 'type': 'string'}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -3675,7 +3675,11 @@ async def test_strict_mode_cannot_infer_strict(
     # Create a mock completion for testing
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
 
-    async def assert_strict(expected_strict: bool | None, profile: ModelProfile | None = None):
+    async def assert_strict(
+        expected_strict: bool | None,
+        profile: ModelProfile | None = None,
+        expected_params_override: dict[str, Any] | None = None,
+    ):
         mock_client = MockOpenAI.create_mock(c)
         m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
         agent = Agent(m)
@@ -3686,7 +3690,8 @@ async def test_strict_mode_cannot_infer_strict(
         kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
         assert 'tools' in kwargs, kwargs
 
-        assert kwargs['tools'][0]['function']['parameters'] == expected_params
+        actual_expected_params = expected_params if expected_params_override is None else expected_params_override
+        assert kwargs['tools'][0]['function']['parameters'] == actual_expected_params
         actual_strict = kwargs['tools'][0]['function'].get('strict')
         assert actual_strict == expected_strict
         if actual_strict is None:
@@ -3695,12 +3700,24 @@ async def test_strict_mode_cannot_infer_strict(
 
     await assert_strict(expected_strict)
 
-    # If the model profile says strict is not supported, we never pass strict
+    # If the model profile says strict is not supported, we never pass strict. This explicit
+    # shared-profile override also retains its conservative length-keyword handling.
+    profile_expected_params = expected_params
+    if tool is tool_with_url and tool_strict is True:
+        profile_expected_params = snapshot(
+            {
+                'additionalProperties': False,
+                'properties': {'x': {'type': 'string', 'description': 'minLength=1, format=uri'}},
+                'required': ['x'],
+                'type': 'object',
+            }
+        )
     await assert_strict(
         None,
         profile=merge_profile(
             OpenAIModelProfile(openai_supports_strict_tool_definition=False), openai_model_profile('test-model')
         ),
+        expected_params_override=profile_expected_params,
     )
 
 

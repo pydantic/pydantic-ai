@@ -1,0 +1,172 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "493"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-4o
+        stream: false
+        input:
+        - role: user
+          content: Return the name 'okay' and values [1, 2, 3, 4].
+        text:
+          format:
+            type: json_schema
+            name: MixedOutput
+            schema:
+              properties:
+                name:
+                  maxLength: 5
+                  minLength: 2
+                  type: string
+                values:
+                  maxItems: 4
+                  minItems: 4
+                  prefixItems:
+                  - type: integer
+                  - type: integer
+                  - type: integer
+                  - type: integer
+                  type: array
+              required:
+              - name
+              - values
+              type: object
+              additionalProperties: false
+            strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "749"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0771bd6c77fa38cb006ace724dbb7087d28d7ecd16ef2db2fb
+        object: response
+        created_at: 1791914573
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1791914574
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-4o-2024-08-06
+        moderation: null
+        output:
+        - id: msg_0771bd6c77fa38cb006ace724e415487d2a567f13969023cc2
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: "{\"name\":\"okay\",\"values\":[1,2,3,4]}"
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: null
+          effort: null
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: json_schema
+            description: null
+            name: MixedOutput
+            schema:
+              properties:
+                name:
+                  maxLength: 5
+                  minLength: 2
+                  type: string
+                values:
+                  maxItems: 4
+                  minItems: 4
+                  prefixItems:
+                  - type: integer
+                  - type: integer
+                  - type: integer
+                  - type: integer
+                  type: array
+              required:
+              - name
+              - values
+              type: object
+              additionalProperties: false
+            strict: false
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 78
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 16
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 94
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-13T18:02:54.551224+00:00

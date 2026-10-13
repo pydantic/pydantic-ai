@@ -142,6 +142,14 @@ editing, geometry, and normalized settings.
 GPT Image models require a verified organization on a paid usage tier: on an unverified organization every request fails
 with a rate-limit error before anything generates. Complex prompts can take up to two minutes to process.
 
+## Structured output schemas
+
+For non-fine-tuned models used with [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], string fields with
+`min_length` or `max_length` keep those bounds in strict structured outputs. Fine-tuned `ft:` models retain the
+conservative fallback. Tuple fields generate `prefixItems`, which strict mode does not support: automatic strict-mode
+selection falls back to non-strict mode, while explicitly strict [`ToolOutput`][pydantic_ai.output.ToolOutput] or
+[`NativeOutput`][pydantic_ai.output.NativeOutput] raises a [`UserError`][pydantic_ai.exceptions.UserError].
+
 ## Model settings
 
 You can customize model behavior using [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]:

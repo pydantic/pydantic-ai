@@ -1,0 +1,152 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "408"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-4o
+        stream: false
+        input:
+        - role: user
+          content: Return a name with the value 'x'.
+        tool_choice: required
+        tools:
+        - name: final_result
+          parameters:
+            properties:
+              name:
+                maxLength: 5
+                minLength: 2
+                type: string
+            required:
+            - name
+            type: object
+            additionalProperties: false
+          type: function
+          description: The final response which ends this conversation
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "736"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_024fa2cb5f3b843d006ace724830e887d29d909cdf3832b649
+        object: response
+        created_at: 1791914568
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1791914568
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-4o-2024-08-06
+        moderation: null
+        output:
+        - id: fc_024fa2cb5f3b843d006ace7248bb6487d285fad45da12cc341
+          type: function_call
+          status: completed
+          arguments: "{\"name\":\"xX\"}"
+          call_id: call_aUBoyyjT60rUJRyN8cmUOd5K
+          name: final_result
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: null
+          effort: null
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: required
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: The final response which ends this conversation
+          name: final_result
+          output_schema: null
+          parameters:
+            properties:
+              name:
+                maxLength: 5
+                minLength: 2
+                type: string
+            required:
+            - name
+            type: object
+            additionalProperties: false
+          strict: true
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 71
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 7
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 78
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-13T18:02:48.992260+00:00

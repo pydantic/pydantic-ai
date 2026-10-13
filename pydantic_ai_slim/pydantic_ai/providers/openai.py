@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile, openai_realtime_model_profile
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    OpenAIModelProfile,
+    openai_model_profile,
+    openai_realtime_model_profile,
+)
 from pydantic_ai.providers import missing_api_key_error
 
 if TYPE_CHECKING:
@@ -24,6 +29,10 @@ from ._openai_compatible import (
     AsyncHTTPClient as _OpenAIHTTPClient,
     OpenAICompatibleProvider as _OpenAICompatibleProvider,
 )
+
+
+class _OpenAIJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
+    _strict_supports_length_constraints = True
 
 
 class OpenAIProvider(_OpenAICompatibleProvider):
@@ -64,6 +73,10 @@ class OpenAIProvider(_OpenAICompatibleProvider):
         return merge_profile(
             profile,
             OpenAIModelProfile(
+                # Fine-tuned models keep the conservative string-bound behavior.
+                json_schema_transformer=(
+                    OpenAIJsonSchemaTransformer if model_name.startswith('ft:') else _OpenAIJsonSchemaTransformer
+                ),
                 tool_addition_mode='with_definitions',
                 tool_deferral_mode='with_tool_search',
                 # GPT-5.6 and later document a model-determined floor: a cached prefix stays eligible for
