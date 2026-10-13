@@ -6,6 +6,7 @@ import importlib.util
 import os
 import types
 from collections.abc import Iterator
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -54,8 +55,9 @@ def _no_real_smol(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatc
 if _HAS_SMOL:  # pragma: no branch - the fixture cannot be defined without its SDK-backed fake
 
     @pytest.fixture
-    def fake_smol(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeSmol]:
-        """Inject a fake `smol` module and yield its control surface."""
-        control = FakeSmol()
+    def fake_smol(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[FakeSmol]:
+        """Inject a fake `smol` module, whose VMs run in `tmp_path`, and yield its control surface."""
+        # Resolved so the directory `pwd -P` reports matches on hosts whose temp directory is a symlink.
+        control = FakeSmol(tmp_path.resolve())
         monkeypatch.setattr('pydantic_ai_harness.smol_sandbox._backend.smol', control.module)
         yield control

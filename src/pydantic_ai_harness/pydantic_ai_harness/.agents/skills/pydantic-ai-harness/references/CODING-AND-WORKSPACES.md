@@ -320,12 +320,15 @@ working_dir='/workspace', env=None)` (backend `SmolSandboxBackend`, extra `[smol
 Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`.
 
 - Without `image` it runs smolvm's Alpine (BusyBox, root, no Python/git/`rg`); pass an OCI image such as
-  `image='python:3.12-alpine'`. No network unless `allow_internet_access=True`. `working_dir` is created.
-- The ref is `WorkspaceRef(provider='smol', id=...)`. Runs never delete the VM:
-  `await SmolSandbox().destroy(ref)` (boots a stopped VM to delete it; quiet if gone).
+  `image='python:3.12-alpine'`. No network unless `allow_internet_access=True`, which is unrestricted
+  egress from this machine's network (LAN, metadata endpoints), not internet-only. `working_dir` is created.
+- The ref is `WorkspaceRef(provider='smol', id='pydantic-ai-<32 hex>')`; any other id raises `ValueError`,
+  so a ref can't reach a VM another tool made. Runs never delete the VM, and VMs have no TTL:
+  `await SmolSandbox().destroy(ref)` (boots a stopped VM to delete it; quiet if gone; waits for a boot
+  in progress, so a `finally` that destroys `backend.ref` also covers a run cancelled mid-boot).
 - Reattaching in the same process works as for the cloud sandboxes. Across processes, smolmachines does
   not flush a VM's disk when the process exits, so stop it first:
-  `await (await SmolSandbox().backend(ref).get_machine()).stop()`.
+  `await (await SmolSandbox().backend(ref).get_sandbox()).stop()`.
 - File operations go through the VM's shell, 64 KiB per command; multi-MiB files take seconds.
 
 ## Remote hosts and bubblewrap

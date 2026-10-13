@@ -15,15 +15,21 @@ command, or error handling:
   event; the old handle's `state()` then reports `stopped`, and `connect` raises `NOT_FOUND`.
 - A persistent VM outlives its process and `connect` boots it again, but only `stop()` (or `sync` in the
   guest) flushes its disk: a VM still running when its process exits loses its unflushed writes.
+- On the local target a VM's id is its name, and `connect` opens any VM this OS user has by name.
+- `ExecOptions.timeout` kills the command in the VM, which then exits 124.
+- The native SDK queues output events without a bound until they are read, so `_MAX_OUTPUT_BYTES`
+  bounds what the backend keeps, not what smolmachines buffers when the guest outpaces the reader.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncGenerator, Mapping
+import re
+import uuid
+from collections.abc import AsyncGenerator, Coroutine, Mapping
 from contextlib import aclosing
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypeVar, cast
 
 import anyio
 
@@ -55,6 +61,27 @@ except ImportError as _import_error:
 
 logger = logging.getLogger(__name__)
 
+_T = TypeVar('_T')
+
+_NAME_PREFIX = 'pydantic-ai-'
+_NAME = re.compile(rf'{_NAME_PREFIX}[0-9a-f]{{32}}')
+"""The names the backend gives its VMs, and so the only refs it attaches to or deletes.
+
+A local VM's id is its name and `connect` opens any VM of this OS user, so without this check a ref
+from message history could reach a VM made by another tool, with host mounts or network.
+"""
+
+_SETUP_TIMEOUT = 60.0
+"""Seconds the backend's own commands in the VM (`mkdir -p` and `pwd -P`) get."""
+
+_ENGINE_TIMEOUT_GRACE = 5.0
+"""Seconds past a command's timeout before smolvm kills it itself, in case this event loop can't."""
+
+_lifecycle: dict[str, asyncio.Task[object]] = {}
+"""This process's latest unfinished creation, attachment or deletion of each VM, by name.
+
+A deletion waits for the creation it races, and neither stops when its callers are cancelled.
+"""
 _HOST_UNAVAILABLE = frozenset(
     {'UNSUPPORTED_PLATFORM', 'RUNTIME_NOT_INSTALLED', 'KVM_UNAVAILABLE', 'HYPERVISOR_UNAVAILABLE'}
 )
@@ -78,8 +105,41 @@ def _local() -> smol.ConnectOptions:
 
 
 def _check_env(env: Mapping[str, str] | None) -> None:
-    if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
+    if env is None:
+        return
+    if any(type(key) is not str or type(value) is not str for key, value in env.items()):
         raise TypeError('env keys and values must be strings')
+    # The engine passes them on as C strings, which would cut a value short at a NUL.
+    if any(not key or '=' in key or '\0' in key or '\0' in value for key, value in env.items()):
+        raise ValueError('env keys must be non-empty without `=` or NUL, and values must not contain NUL')
+
+
+def check_ref(ref: WorkspaceRef) -> None:
+    """Raise `ValueError` unless `ref` names a VM this backend could have created."""
+    if ref.provider != 'smol':
+        raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'smol'")
+    if _NAME.fullmatch(ref.id) is None:
+        raise ValueError(
+            f'SmolSandbox only uses VMs it created, named {_NAME_PREFIX!r} and 32 hex digits, got {ref.id!r}'
+        )
+
+
+def _start(machine_id: str, work: Coroutine[object, object, _T]) -> asyncio.Task[_T]:
+    """Run `work` on `machine_id` in a task its callers' cancellation doesn't stop, recorded in `_lifecycle`."""
+    task = asyncio.create_task(work, name=f'smol-sandbox-{machine_id}')
+    # Waiting callers still get the failure; this only stops asyncio reporting it as never retrieved
+    # when every caller was cancelled first.
+    task.add_done_callback(lambda done: done.cancelled() or done.exception())
+    _lifecycle[machine_id] = task
+    task.add_done_callback(lambda done: _lifecycle.pop(machine_id) if _lifecycle.get(machine_id) is done else None)
+    return task
+
+
+async def _settled(task: asyncio.Task[_T]) -> _T:
+    # `asyncio.wait`, not `asyncio.shield`: on 3.14 a shield cancelled before its task fails reports
+    # that failure to the loop exception handler even though it is retrieved here.
+    await asyncio.wait([task])
+    return task.result()
 
 
 def _events(
@@ -90,7 +150,6 @@ def _events(
     The SDK annotates it as an `AsyncIterator` of bare `dict`s; the event shapes are in the module docstring.
     """
     events = machine.exec_stream(argv, options)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    assert isinstance(events, AsyncGenerator)
     return cast('AsyncGenerator[Mapping[str, object]]', events)
 
 
@@ -103,7 +162,9 @@ class _Output:
         self.size = 0
 
     def add(self, stream: list[str], data: str) -> None:
-        self.size += len(data.encode())
+        # A character is at least one byte, so an event longer than what is left is over the cap
+        # without encoding a copy of it.
+        self.size += len(data) if len(data) > _MAX_OUTPUT_BYTES - self.size else len(data.encode())
         if self.size > _MAX_OUTPUT_BYTES:
             # Only the preview of the event that crosses the cap is kept, so a single huge event
             # can't grow what is retained past the cap.
@@ -130,18 +191,20 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
     so a custom image needs `/bin/sh` and the usual file utilities.
 
     Building one does no I/O. The first operation boots a new persistent VM, or attaches to the one
-    `ref` names, and `get_machine()` returns the SDK's `smol.AsyncMachine`. The backend never deletes
-    the VM; whoever holds the ref does. A ref also works from another process, which boots the VM
+    `ref` names, and `get_sandbox()` returns the SDK's `smol.AsyncMachine`. `ref` is set as soon as a
+    boot starts, and only names VMs the backend creates, `pydantic-ai-` and 32 hex digits. The backend
+    never deletes the VM; whoever holds the ref does. A ref also works from another process, which boots the VM
     again, but only the VM's `stop()` flushes its disk: stop it before this process exits to keep
     recent file changes.
 
     Args:
-        ref: Identity of an existing VM to attach to on first use.
+        ref: Identity of an existing VM to attach to on first use, one this backend created.
         image: OCI image a new VM runs, such as `'python:3.12-alpine'`; `None` boots smolvm's own
             Alpine Linux root filesystem without pulling anything.
         cpus: vCPUs for a new VM; smolvm's default when `None`.
         memory_mb: Memory for a new VM in MiB; smolvm's default when `None`.
-        allow_internet_access: Whether a new VM gets outbound network access.
+        allow_internet_access: Whether a new VM gets unrestricted outbound network access, made from
+            this machine's network: the internet, but also its local network and services.
         working_dir: Absolute directory commands start in and relative paths resolve against, created
             if missing when the backend first reaches the VM; `None` uses the VM's own, `/` on the
             default image.
@@ -160,8 +223,8 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         working_dir: str | None = '/workspace',
         env: Mapping[str, str] | None = None,
     ) -> None:
-        if ref is not None and ref.provider != 'smol':
-            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'smol'")
+        if ref is not None:
+            check_ref(ref)
         _check_env(env)
         self._ref = ref
         self._image = image
@@ -174,10 +237,14 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     @property
     def ref(self) -> WorkspaceRef | None:
-        """Identity of the VM, or `None` before one has been created."""
+        """Identity of the VM, or `None` before one starts booting.
+
+        Set before the boot finishes, so cleanup that runs while it is still booting can pass it to
+        `SmolSandbox.destroy`, which waits for the boot.
+        """
         return self._ref
 
-    async def get_machine(self) -> smol.AsyncMachine:
+    async def get_sandbox(self) -> smol.AsyncMachine:
         """Return the SDK's `smol.AsyncMachine`, for smol features the workspace API does not cover.
 
         On a backend with no VM yet, this boots one or attaches to the one `ref` names, just like the
@@ -190,39 +257,42 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
             return self._machine
         task = self._acquisition
         if task is None:
-            # Concurrent first uses share this task, so they boot one VM. It isn't cancelled with a
-            # caller, so a VM that boots after every caller left still has its ref recorded.
-            task = asyncio.create_task(self._acquire(), name='smol-sandbox-acquisition')
-            # Waiting callers still get the failure; this only stops asyncio reporting it as never
-            # retrieved when every caller was cancelled first.
-            task.add_done_callback(lambda done: done.cancelled() or done.exception())
+            # Concurrent first uses share this task, so they boot one VM.
+            if (ref := self._ref) is None:
+                # Named and recorded before the boot starts, so cleanup has the ref whatever ends the run.
+                ref = self._ref = WorkspaceRef(provider='smol', id=f'{_NAME_PREFIX}{uuid.uuid4().hex}')
+                logger.info('Creating smol VM %s', ref.id)
+                task = _start(ref.id, self._acquire(ref.id, create=True))
+            else:
+                task = _start(ref.id, self._acquire(ref.id, create=False))
             self._acquisition = task
-        # `asyncio.wait`, not `asyncio.shield`: on 3.14 a shield cancelled before its task fails
-        # reports that failure to the loop exception handler even though it is retrieved here.
-        await asyncio.wait([task])
-        return task.result()
+        return await _settled(task)
 
-    async def _acquire(self) -> smol.AsyncMachine:
+    async def _acquire(self, machine_id: str, *, create: bool) -> smol.AsyncMachine:
         try:
             try:
-                if self._ref is None:
-                    config = smol.MachineConfig(image=self._image, resources=self._resources, persistent=True)
+                if create:
+                    config = smol.MachineConfig(
+                        name=machine_id, image=self._image, resources=self._resources, persistent=True
+                    )
                     machine = await smol.AsyncMachine.create(config, _local())
-                    # Recorded before any setup that can fail, so the caller can always delete the VM.
-                    self._ref = WorkspaceRef(provider='smol', id=machine.id)
-                    logger.info('Created smol VM %s', machine.id)
                 else:
-                    machine = await smol.AsyncMachine.connect(self._ref.id, _local())
+                    machine = await smol.AsyncMachine.connect(machine_id, _local())
             except smol.SmolError as error:
-                if error.code == 'NOT_FOUND' and self._ref is not None:
-                    raise WorkspaceUnavailableError(self._gone_message()) from error
+                if create:
+                    # The SDK reported the boot failed, so a retry boots a VM under a new name.
+                    self._ref = None
+                elif error.code == 'NOT_FOUND':
+                    raise WorkspaceUnavailableError(_gone_message(machine_id)) from error
                 if error.code in _HOST_UNAVAILABLE:
                     raise WorkspaceUnavailableError(
                         f'This host cannot run a local smol VM ({error.code}): {error}'
                     ) from error
                 raise
             if self._working_dir is not None:
-                result = await self._exec(machine, ['mkdir', '-p', self._working_dir], env={}, working_dir=None)
+                result = await self._exec(
+                    machine, ['mkdir', '-p', self._working_dir], env={}, working_dir=None, timeout=_SETUP_TIMEOUT
+                )
                 if result.exit_code != 0:
                     raise WorkspaceError(
                         f'Could not create working_dir {self._working_dir!r} in smol VM {machine.id}: {result.stderr}'
@@ -232,14 +302,10 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         finally:
             self._acquisition = None
 
-    def _gone_message(self) -> str:
-        assert self._ref is not None
-        return f"The smol VM {self._ref.id!r} no longer exists. Pass `workspace='new'` to start a fresh VM."
-
     async def working_dir(self) -> str:
         """The canonical absolute directory commands start in."""
         if self._resolved_working_dir is None:
-            result = await self.run(['pwd', '-P'])
+            result = await self.run(['pwd', '-P'], timeout=_SETUP_TIMEOUT)
             printed = result.stdout.removesuffix('\n')
             if result.exit_code != 0 or not printed.startswith('/'):
                 raise WorkspaceError(
@@ -262,7 +328,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         check_timeout(timeout)
         _check_env(env)
         # Booting or attaching is bounded by the SDK; the timeout is the command's alone.
-        machine = await self.get_machine()
+        machine = await self.get_sandbox()
         return await self._exec(
             machine, [*_EXEC, *argv], env={**self._env, **(env or {})}, working_dir=self._working_dir, timeout=timeout
         )
@@ -278,19 +344,22 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
     ) -> CommandResult:
         output = _Output()
         exit_code: int | None = None
-        options = smol.ExecOptions(env=env or None, workdir=working_dir)
+        engine_timeout = None if timeout is None else timeout + _ENGINE_TIMEOUT_GRACE
+        options = smol.ExecOptions(env=env or None, workdir=working_dir, timeout=engine_timeout)
         try:
-            with anyio.move_on_after(timeout):
+            with anyio.move_on_after(timeout) as scope:
                 events = _events(machine, argv, options)
                 # Closing the generator, on any way out of this block, kills the command in the VM.
                 async with aclosing(events):
                     async for event in events:
                         kind = event.get('kind')
                         if kind == 'stdout' or kind == 'stderr':
-                            output.add(output.stdout if kind == 'stdout' else output.stderr, str(event.get('data')))
+                            if type(data := event.get('data')) is not str:
+                                raise WorkspaceError(f'smol sent {kind} output that is not text: {type(data).__name__}')
+                            output.add(output.stdout if kind == 'stdout' else output.stderr, data)
                         elif kind == 'exit':
-                            code = event.get('exit_code')
-                            assert isinstance(code, int)
+                            if type(code := event.get('exit_code')) is not int:
+                                raise WorkspaceError(f'smol sent an exit status that is not an integer: {code!r:.100}')
                             exit_code = code
                         else:
                             # `error`, the only other kind the SDK sends, carries a bracketed code.
@@ -301,9 +370,11 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
                 raise
             raise translated from error
         stdout, stderr = output.text()
-        if exit_code is None:
+        if exit_code is not None:
+            return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
+        if scope.cancelled_caught:
             raise WorkspaceTimeoutError(f'Command timed out after {timeout:g} seconds', stdout=stdout, stderr=stderr)
-        return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
+        raise WorkspaceError(f'The command in smol VM {machine.id} ended without an exit status')
 
     async def _command_error(self, machine: smol.AsyncMachine, error: smol.SmolError) -> Exception:
         """Map a failed command onto the protocol: a VM that is gone is unavailable, anything else propagates.
@@ -311,13 +382,12 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         The VM is probed only after a failure, to keep the round trip off successful commands; a probe
         that fails leaves the original error to propagate rather than ending the run on a guess.
         """
-        if error.code == 'NOT_FOUND':
-            return WorkspaceUnavailableError(self._gone_message())
+        # Even a `NOT_FOUND` is checked: the error's code comes from its text, which may be the guest's.
         try:
             state = await machine.state()
         except smol.SmolError as probe_error:
             if probe_error.code == 'NOT_FOUND':
-                return WorkspaceUnavailableError(self._gone_message())
+                return WorkspaceUnavailableError(_gone_message(machine.id))
             return error
         if state != 'running':
             return WorkspaceUnavailableError(
@@ -332,13 +402,27 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         return error
 
 
-async def delete_machine(machine_id: str) -> None:
-    """Delete a VM by ID; one that is already gone returns quietly.
+def _gone_message(machine_id: str) -> str:
+    return f"The smol VM {machine_id!r} no longer exists. Pass `workspace='new'` to start a fresh VM."
 
-    The SDK has no delete by ID for a local VM, so this attaches first, which boots a stopped VM.
+
+async def delete_machine(ref: WorkspaceRef) -> None:
+    """Delete the VM `ref` names; one that is already gone returns quietly.
+
+    A boot of it still in progress in this process finishes first, and the deletion isn't abandoned
+    when the caller is cancelled. The SDK has no delete by ID for a local VM, so this attaches first,
+    which boots a stopped VM.
     """
+    check_ref(ref)
     if not running_on_asyncio():
         raise UserError(_ASYNCIO_ONLY)
+    await _settled(_start(ref.id, _delete(ref.id, _lifecycle.get(ref.id))))
+
+
+async def _delete(machine_id: str, previous: asyncio.Task[object] | None) -> None:
+    if previous is not None:
+        # Deleting a VM that is still booting would find nothing, and the boot would then leave it behind.
+        await asyncio.wait([previous])
     try:
         machine = await smol.AsyncMachine.connect(machine_id, _local())
     except smol.SmolError as error:

@@ -1,7 +1,8 @@
 """A fake `smol` module whose VMs run commands on the host, so the backend runs everywhere without a hypervisor.
 
 Commands run as host processes, so the workspace conformance suite exercises real process, pipe and
-filesystem behavior. The event shapes and errors mirror what the real SDK produced in the live probes
+filesystem behavior. They are confined to `root`, a test's temporary directory: a VM's own directory
+is `root`, and a command elsewhere fails the test rather than touching the host. The event shapes and errors mirror what the real SDK produced in the live probes
 recorded in `pydantic_ai_harness.smol_sandbox._backend`'s module docstring.
 """
 
@@ -9,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import codecs
-import itertools
 import os
 import signal
 import types
@@ -35,7 +35,8 @@ class FakeVM:
 class FakeSmol:
     """The control surface behind the fake module: inspect VMs and calls, or inject failures."""
 
-    def __init__(self) -> None:
+    def __init__(self, root: Path) -> None:
+        self.root = root
         self.vms: dict[str, FakeVM] = {}
         self.connections: list[tuple[str | None, smol.ConnectOptions | None]] = []
         """`(machine_id, conn)` for every create (`None` id) and connect."""
@@ -45,10 +46,14 @@ class FakeSmol:
         self.state_error: smol.SmolError | None = None
         self.exec_error: str | None = None
         """When set, every command ends with this error event, like an engine failure."""
+        self.exec_events: list[dict[str, object]] | None = None
+        """When set, every command yields exactly these events, like a misbehaving engine or guest."""
         self.create_started = asyncio.Event()
         self.create_gate: asyncio.Event | None = None
         """When set, `create` waits for it, to cancel a caller mid-create."""
-        self.ids = itertools.count(1)
+        self.connect_started = asyncio.Event()
+        self.connect_gate: asyncio.Event | None = None
+        """When set, `connect` boots the VM, then waits for it, to cancel a caller mid-connect."""
         self.module = types.ModuleType('smol')
         self.module.__dict__.update(
             AsyncMachine=type('AsyncMachine', (FakeAsyncMachine,), {'control': self}),
@@ -90,7 +95,9 @@ class FakeAsyncMachine:
             await cls.control.create_gate.wait()
         if cls.control.create_error is not None:
             raise cls.control.create_error
-        vm = FakeVM(id=f'smol-{next(cls.control.ids)}', config=config or smol.MachineConfig())
+        # The backend always names its VMs; the real SDK would make up a `smol-` name otherwise.
+        assert config is not None and config.name is not None
+        vm = FakeVM(id=config.name, config=config)
         cls.control.vms[vm.id] = vm
         return cls(vm)
 
@@ -103,6 +110,9 @@ class FakeAsyncMachine:
         if vm is None:
             raise smol.SmolError('NOT_FOUND', f'VM not found: {machine_id}')
         vm.state = 'running'
+        cls.control.connect_started.set()
+        if cls.control.connect_gate is not None:
+            await cls.control.connect_gate.wait()
         return cls(vm)
 
     async def state(self) -> str:
@@ -117,12 +127,17 @@ class FakeAsyncMachine:
         self, command: list[str], opts: smol.ExecOptions | None = None
     ) -> AsyncIterator[dict[str, object]]:
         self.control.commands.append((command, opts))
-        workdir = opts.workdir if opts is not None else None
+        if self.control.exec_events is not None:
+            for event in self.control.exec_events:
+                yield event
+            return
+        workdir = Path(opts.workdir if opts is not None and opts.workdir is not None else self.control.root)
+        assert workdir.is_relative_to(self.control.root), f'a fake VM command ran outside the test directory: {workdir}'
         if self.control.exec_error is not None:
             failure = self.control.exec_error
         elif self.control.vms.get(self._vm.id) is not self._vm:
             failure = f'[NOT_FOUND] VM not found: {self._vm.id}'
-        elif workdir is not None and not Path(workdir).is_dir():
+        elif not workdir.is_dir():
             failure = '[SMOLVM_ERROR] Agent error (streaming exec): No such file or directory (os error 2)'
         else:
             failure = None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 
 import anyio
@@ -23,10 +24,12 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.smol_sandbox import SmolSandbox, SmolSandboxBackend
+from pydantic_ai_harness.smol_sandbox import SmolSandbox, SmolSandboxBackend, _backend
 
 from .._tool_calls import call_tools
 from .fake_smol import FakeSmol
+
+GONE = WorkspaceRef(provider='smol', id='pydantic-ai-' + '0' * 32)
 
 
 @pytest.fixture
@@ -69,7 +72,12 @@ async def test_invalid_backend_arguments_fail_before_any_vm(fake_smol: FakeSmol)
         SmolSandboxBackend(working_dir='relative')
     with pytest.raises(TypeError, match='env keys and values must be strings'):
         SmolSandboxBackend(env={'COUNT': 1})  # pyright: ignore[reportArgumentType]
+    for env in ({'': 'x'}, {'A=B': 'x'}, {'A\0': 'x'}, {'PATH': '/bin\0/evil'}):
+        with pytest.raises(ValueError, match='env keys must be non-empty without `=` or NUL'):
+            SmolSandboxBackend(env=env)
     backend = SmolSandboxBackend()
+    with pytest.raises(ValueError, match='env keys must be non-empty'):
+        await backend.run(['true'], env={'A=B': 'x'})
     with pytest.raises(TypeError, match='env keys and values must be strings'):
         await backend.run(['true'], env={'COUNT': 1})  # pyright: ignore[reportArgumentType]
     with pytest.raises(ValueError, match='timeout must be a positive finite number'):
@@ -80,6 +88,22 @@ async def test_invalid_backend_arguments_fail_before_any_vm(fake_smol: FakeSmol)
 def test_capability_declines_foreign_reference() -> None:
     capability = SmolSandbox[None]()
     assert capability.get_workspace(None, ref=WorkspaceRef(provider='e2b', id='sbx')) is None  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize('machine_id', ['dev', 'smol-1a2b3c4d', '../../etc/passwd', 'pydantic-ai-' + 'A' * 32])
+async def test_refs_to_vms_it_did_not_create_are_refused(fake_smol: FakeSmol, machine_id: str) -> None:
+    # A local VM's id is its name, so a ref from history could otherwise reach a VM made by another
+    # tool, with host mounts or network.
+    ref = WorkspaceRef(provider='smol', id=machine_id)
+    capability = SmolSandbox[None]()
+    message = 'SmolSandbox only uses VMs it created'
+    with pytest.raises(ValueError, match=message):
+        capability.get_workspace(None, ref=ref)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(ValueError, match=message):
+        capability.backend(ref)
+    with pytest.raises(ValueError, match=message):
+        await capability.destroy(ref)
+    assert fake_smol.connections == []
 
 
 async def test_capability_forwards_creation_options_on_the_local_target(
@@ -95,6 +119,7 @@ async def test_capability_forwards_creation_options_on_the_local_target(
     await backend.run(['true'])
     (vm,) = fake_smol.vms.values()
     assert backend.ref == WorkspaceRef(provider='smol', id=vm.id)
+    assert re.fullmatch('pydantic-ai-[0-9a-f]{32}', vm.id) and vm.config.name == vm.id
     assert vm.config.image == 'python:3.12-alpine' and vm.config.persistent
     assert vm.config.resources == smol.ResourceSpec(cpus=2, memory_mb=2048, network=True)
     assert [conn.target if conn is not None else None for _, conn in fake_smol.connections] == ['local']
@@ -102,7 +127,7 @@ async def test_capability_forwards_creation_options_on_the_local_target(
 
 
 async def test_default_vm_has_no_network_and_its_own_resources(fake_smol: FakeSmol, working_dir: str) -> None:
-    await SmolSandboxBackend(working_dir=working_dir).get_machine()
+    await SmolSandboxBackend(working_dir=working_dir).get_sandbox()
     (vm,) = fake_smol.vms.values()
     assert vm.config.image is None
     assert vm.config.resources == smol.ResourceSpec(network=False)
@@ -114,19 +139,18 @@ async def test_commands_get_the_working_dir_and_layered_env(fake_smol: FakeSmol,
     assert (result.exit_code, result.stdout, result.stderr) == (0, 'base run', f'{working_dir}\n')
     argv, options = fake_smol.commands[-1]
     assert argv[:4] == ['/bin/sh', '-c', 'exec "$@" </dev/null', 'sh']
-    assert options is not None and options.workdir == working_dir
+    assert options is not None and options.workdir == working_dir and options.timeout is None
 
 
 async def test_no_working_dir_uses_the_vms_own(fake_smol: FakeSmol) -> None:
     backend = SmolSandboxBackend(working_dir=None)
-    # The fake runs commands on the host, so the VM's own directory is this process's.
-    assert await backend.working_dir() == str(Path.cwd().resolve())
+    assert await backend.working_dir() == str(fake_smol.root)
     assert [options.workdir if options else None for _, options in fake_smol.commands] == [None]
 
 
 async def test_unresolvable_working_dir_is_an_error(fake_smol: FakeSmol, working_dir: str) -> None:
     backend = SmolSandboxBackend(working_dir=working_dir)
-    await backend.get_machine()
+    await backend.get_sandbox()
     Path(working_dir).rmdir()
     with pytest.raises(WorkspaceError, match=f'The working_dir {working_dir!r} or `/bin/sh` is missing'):
         await backend.working_dir()
@@ -136,13 +160,33 @@ async def test_failed_working_dir_creation_keeps_the_ref(fake_smol: FakeSmol, tm
     (tmp_path / 'file').write_text('not a directory')
     backend = SmolSandboxBackend(working_dir=str(tmp_path / 'file' / 'workspace'))
     with pytest.raises(WorkspaceError, match='Could not create working_dir'):
-        await backend.get_machine()
+        await backend.get_sandbox()
     (vm,) = fake_smol.vms.values()
     # The VM exists, so its ref stays available to delete it; a retry attaches instead of booting another.
     assert backend.ref == WorkspaceRef(provider='smol', id=vm.id)
     with pytest.raises(WorkspaceError, match='Could not create working_dir'):
-        await backend.get_machine()
+        await backend.get_sandbox()
     assert [machine_id for machine_id, _ in fake_smol.connections] == [None, vm.id]
+
+
+async def test_hung_setup_commands_time_out(
+    fake_smol: FakeSmol, working_dir: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A custom image, or root in the guest, can make the backend's own `mkdir` and `pwd` hang.
+    hanging = tmp_path / 'bin'
+    hanging.mkdir()
+    for program in ('mkdir', 'pwd'):
+        (hanging / program).write_text('#!/bin/sh\nexec /bin/sleep 30\n')
+        (hanging / program).chmod(0o755)
+    monkeypatch.setattr(_backend, '_SETUP_TIMEOUT', 0.2)
+    monkeypatch.setenv('PATH', str(hanging))
+    backend = SmolSandboxBackend(working_dir=working_dir)
+    with pytest.raises(WorkspaceTimeoutError, match=r'timed out after 0\.2 seconds'):
+        await backend.get_sandbox()
+    assert backend.ref is not None and len(fake_smol.vms) == 1
+    no_dir = SmolSandboxBackend(working_dir=None, env={'PATH': str(hanging)})
+    with pytest.raises(WorkspaceTimeoutError, match=r'timed out after 0\.2 seconds'):
+        await no_dir.working_dir()
 
 
 async def test_pwd_failure_is_an_error(fake_smol: FakeSmol, working_dir: str) -> None:
@@ -153,35 +197,74 @@ async def test_pwd_failure_is_an_error(fake_smol: FakeSmol, working_dir: str) ->
 
 async def test_concurrent_first_use_boots_once(fake_smol: FakeSmol, working_dir: str) -> None:
     backend = SmolSandboxBackend(working_dir=working_dir)
-    first, second = await asyncio.gather(backend.get_machine(), backend.get_machine())
+    first, second = await asyncio.gather(backend.get_sandbox(), backend.get_sandbox())
     assert first is second
     assert len(fake_smol.vms) == 1
-    assert await backend.get_machine() is first
+    assert await backend.get_sandbox() is first
 
 
 async def test_cancelled_creation_keeps_the_vm_it_made(fake_smol: FakeSmol, working_dir: str) -> None:
     fake_smol.create_gate = gate = asyncio.Event()
     backend = SmolSandboxBackend(working_dir=working_dir)
-    caller = asyncio.create_task(backend.get_machine())
+    caller = asyncio.create_task(backend.get_sandbox())
     with anyio.fail_after(5):
         await fake_smol.create_started.wait()
     caller.cancel()
     with pytest.raises(asyncio.CancelledError):
         await caller
     gate.set()
-    machine = await backend.get_machine()
+    machine = await backend.get_sandbox()
     assert backend.ref == WorkspaceRef(provider='smol', id=machine.id)
     assert len(fake_smol.vms) == 1
+
+
+async def test_cleanup_of_a_cancelled_boot_deletes_the_vm(fake_smol: FakeSmol, working_dir: str) -> None:
+    # The documented cleanup: whatever ends the run, delete the ref if there is one.
+    fake_smol.create_gate = gate = asyncio.Event()
+    backend = SmolSandboxBackend(working_dir=working_dir)
+    caller = asyncio.create_task(backend.get_sandbox())
+    with anyio.fail_after(5):
+        await fake_smol.create_started.wait()
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    ref = backend.ref
+    assert ref is not None and fake_smol.vms == {}
+    cleanup = asyncio.create_task(SmolSandbox[None]().destroy(ref))
+    await asyncio.sleep(0)
+    gate.set()
+    with anyio.fail_after(5):
+        await cleanup
+    assert fake_smol.vms == {}
+    assert [machine_id for machine_id, _ in fake_smol.connections] == [None, ref.id]
+
+
+async def test_cancelled_destroy_still_deletes(fake_smol: FakeSmol, working_dir: str) -> None:
+    backend = SmolSandboxBackend(working_dir=working_dir)
+    await backend.get_sandbox()
+    assert backend.ref is not None
+    # `connect` boots a stopped VM; a cancelled caller must not leave it running undeleted.
+    fake_smol.connect_gate = gate = asyncio.Event()
+    caller = asyncio.create_task(SmolSandbox[None]().destroy(backend.ref))
+    with anyio.fail_after(5):
+        await fake_smol.connect_started.wait()
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    gate.set()
+    with anyio.fail_after(5):
+        await SmolSandbox[None]().destroy(backend.ref)
+    assert fake_smol.vms == {}
 
 
 async def test_failed_creation_can_retry(fake_smol: FakeSmol, working_dir: str) -> None:
     backend = SmolSandboxBackend(working_dir=working_dir)
     fake_smol.create_error = smol.SmolError('SMOLVM_ERROR', 'image pull failed')
     with pytest.raises(smol.SmolError, match='image pull failed'):
-        await backend.get_machine()
+        await backend.get_sandbox()
     assert backend.ref is None
     fake_smol.create_error = None
-    await backend.get_machine()
+    await backend.get_sandbox()
     assert backend.ref is not None
 
 
@@ -195,10 +278,10 @@ async def test_host_that_cannot_run_vms_is_unavailable(fake_smol: FakeSmol, code
 
 
 async def test_attaching_to_a_deleted_vm_is_unavailable(fake_smol: FakeSmol) -> None:
-    backend = SmolSandbox[None]().backend(WorkspaceRef(provider='smol', id='smol-gone'))
-    with pytest.raises(WorkspaceUnavailableError, match="The smol VM 'smol-gone' no longer exists"):
+    backend = SmolSandbox[None]().backend(GONE)
+    with pytest.raises(WorkspaceUnavailableError, match=f"The smol VM '{GONE.id}' no longer exists"):
         await backend.run(['true'])
-    assert backend.ref == WorkspaceRef(provider='smol', id='smol-gone')
+    assert backend.ref == GONE
     assert fake_smol.vms == {}
 
 
@@ -213,7 +296,7 @@ async def test_attach_uses_the_ref_not_the_creation_options(fake_smol: FakeSmol,
 
 async def test_destroy_deletes_by_ref_and_ignores_a_missing_vm(fake_smol: FakeSmol, working_dir: str) -> None:
     backend = SmolSandboxBackend(working_dir=working_dir)
-    await backend.get_machine()
+    await backend.get_sandbox()
     assert backend.ref is not None
     capability = SmolSandbox[None]()
     await capability.destroy(backend.ref)
@@ -225,11 +308,13 @@ async def test_destroy_deletes_by_ref_and_ignores_a_missing_vm(fake_smol: FakeSm
 
 async def test_destroy_surfaces_other_failures(fake_smol: FakeSmol, working_dir: str) -> None:
     backend = SmolSandboxBackend(working_dir=working_dir)
-    await backend.get_machine()
+    await backend.get_sandbox()
     assert backend.ref is not None
     fake_smol.connect_error = smol.SmolError('SMOLVM_ERROR', 'engine busy')
     with pytest.raises(smol.SmolError, match='engine busy'):
         await SmolSandbox[None]().destroy(backend.ref)
+    with pytest.raises(smol.SmolError, match='engine busy'):
+        await SmolSandboxBackend(ref=backend.ref, working_dir=working_dir).run(['true'])
     assert len(fake_smol.vms) == 1
 
 
@@ -240,6 +325,9 @@ async def test_timeout_kills_the_command_and_keeps_partial_output(fake_smol: Fak
     assert caught.value.stdout == 'started\n'
     (vm,) = fake_smol.vms.values()
     assert vm.processes == set()
+    # smolvm kills it itself a little later, in case this event loop is too busy to.
+    _, options = fake_smol.commands[-1]
+    assert options is not None and options.timeout == 5.5
 
 
 async def test_output_past_the_limit_stops_the_command(fake_smol: FakeSmol, working_dir: str) -> None:
@@ -250,9 +338,38 @@ async def test_output_past_the_limit_stops_the_command(fake_smol: FakeSmol, work
     assert caught.value.stdout == 'x' * 64 * 1024 and caught.value.stderr == ''
 
 
+async def test_one_huge_output_event_is_cut_to_the_preview(fake_smol: FakeSmol, working_dir: str) -> None:
+    backend = SmolSandboxBackend(working_dir=working_dir)
+    await backend.get_sandbox()
+    fake_smol.exec_events = [{'kind': 'stderr', 'data': 'x' * (11 * 1024 * 1024)}]
+    with pytest.raises(WorkspaceOutputLimitError) as caught:
+        await backend.run(['true'])
+    assert caught.value.stdout == '' and caught.value.stderr == 'x' * 64 * 1024
+
+
+@pytest.mark.parametrize(
+    ('events', 'message'),
+    [
+        ([{'kind': 'stdout', 'data': 'partial'}], 'ended without an exit status'),
+        ([{'kind': 'exit', 'exit_code': '0'}], "exit status that is not an integer: '0'"),
+        ([{'kind': 'exit', 'exit_code': True}], 'exit status that is not an integer: True'),
+        ([{'kind': 'stdout', 'data': b'bytes'}], 'stdout output that is not text: bytes'),
+    ],
+)
+async def test_malformed_command_streams_are_workspace_errors(
+    fake_smol: FakeSmol, working_dir: str, events: list[dict[str, object]], message: str
+) -> None:
+    backend = SmolSandboxBackend(working_dir=working_dir)
+    await backend.get_sandbox()
+    fake_smol.exec_events = events
+    with pytest.raises(WorkspaceError, match=message) as caught:
+        await backend.run(['true'])
+    assert type(caught.value) is WorkspaceError
+
+
 async def test_engine_errors_are_classified(fake_smol: FakeSmol, working_dir: str) -> None:
     backend = SmolSandboxBackend(working_dir=working_dir)
-    await backend.get_machine()
+    await backend.get_sandbox()
     # A live VM's engine failure propagates for durable engines to retry.
     fake_smol.exec_error = '[NETWORK_ERROR] vsock reset'
     with pytest.raises(smol.SmolError, match='vsock reset') as caught:
@@ -266,25 +383,25 @@ async def test_engine_errors_are_classified(fake_smol: FakeSmol, working_dir: st
     fake_smol.state_error = smol.SmolError('NOT_FOUND', 'VM not found')
     with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
         await backend.run(['true'])
-    # As does an engine that says so directly.
+    # An error that says the VM is gone while it still runs is not believed: its code comes from its text.
     fake_smol.state_error = None
     fake_smol.exec_error = '[NOT_FOUND] VM not found'
-    with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
+    with pytest.raises(smol.SmolError, match='VM not found'):
         await backend.run(['true'])
 
 
 async def test_deleted_vm_is_unavailable_to_its_backend(fake_smol: FakeSmol, working_dir: str) -> None:
     backend = SmolSandboxBackend(working_dir=working_dir)
-    await backend.get_machine()
+    await backend.get_sandbox()
     assert backend.ref is not None
     await SmolSandbox[None]().destroy(backend.ref)
-    with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
+    with pytest.raises(WorkspaceUnavailableError, match='it was stopped or deleted'):
         await backend.run(['true'])
 
 
 async def test_stopped_vm_is_unavailable(fake_smol: FakeSmol, working_dir: str) -> None:
     backend = SmolSandboxBackend(working_dir=working_dir)
-    await backend.get_machine()
+    await backend.get_sandbox()
     (vm,) = fake_smol.vms.values()
     vm.state = 'stopped'
     fake_smol.exec_error = 'io operation failed: connection closed'
@@ -343,5 +460,5 @@ async def test_vms_need_asyncio(fake_smol: FakeSmol, anyio_backend: str) -> None
     with pytest.raises(UserError, match='needs the asyncio event loop'):
         await SmolSandboxBackend().run(['true'])
     with pytest.raises(UserError, match='needs the asyncio event loop'):
-        await SmolSandbox[None]().destroy(WorkspaceRef(provider='smol', id='smol-1'))
+        await SmolSandbox[None]().destroy(GONE)
     assert fake_smol.vms == {}
