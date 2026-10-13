@@ -20,7 +20,7 @@ import pytest
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.batch import (
@@ -1126,3 +1126,25 @@ async def test_registered_batch_wrapper_uses_its_own_model_id(client: Client, re
             with pytest.raises(WorkflowFailureError) as exc_info:
                 await handle.result()
             assert any('must be registered' in str(error) for error in failure_causes(exc_info.value))
+
+
+@workflow.defn(failure_exception_types=[UnexpectedModelBehavior])
+class BoundedWaitWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await deadline_agent.run('bounded-wait')).output
+
+
+async def test_exhausting_wait_rounds_cancels_the_pending_batch(
+    client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider.hold = True
+    monkeypatch.setattr('pydantic_ai.durable_exec._base.MAX_BACKGROUND_POLLS', 1)
+    queue = 'batch-bounded-wait-queue'
+    async with Worker(client, task_queue=queue, workflows=[BoundedWaitWorkflow], plugins=[AgentPlugin(deadline_agent)]):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(BoundedWaitWorkflow.run, id=f'bounded-wait-{uuid.uuid4()}', task_queue=queue)
+        assert any('maximum number of durable wait rounds' in str(error) for error in failure_causes(exc_info.value))
+        await asyncio.wait_for(provider.cancelled_job.wait(), READINESS_WAIT_TIMEOUT)
+        assert provider.canceled == provider.batch_ids('bounded-wait')
+    assert len(provider.batch_ids('bounded-wait')) == 1
