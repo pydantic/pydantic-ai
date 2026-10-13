@@ -114,7 +114,8 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   toolset needs its own `id`. `Agent(...)` raises a `UserError` if either is missing.
 - Don't rename an agent or toolset while tasks that use it are still running. Their steps are saved
   under the old names, so after a crash the renamed calls run again.
-- Tool results are saved as JSON, so tools must return values that can be converted to JSON. If a
+- Tool results are saved as JSON, so tools must return values that can be converted to JSON. A
+  result that can't be fails the task, and pgtask retries it until `max_attempts` runs out. If a
   saved result no longer matches the type the call returns, the run fails with
   `CheckpointDecodeError` instead of running the tool again.
 - A result is saved only after the call finishes. If the worker crashes after a tool has done

@@ -65,6 +65,7 @@ class PGTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         toolset_lifecycles={'function': 'enter-always', 'mcp': 'enter-in-durable-unit', 'dynamic': 'enter-never'},
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
     )
+    # pgtask has no non-retryable error type, so a serialization failure retries until `max_attempts` runs out.
 
     def __init__(
         self,
