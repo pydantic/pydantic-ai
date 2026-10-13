@@ -1759,25 +1759,31 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 to apps, or the server returns an error. Send its `code`, `message` and `data` to the view
                 as the JSON-RPC error.
         """
-        params = params or {}
         async with self:
             try:
-                if method == 'tools/call':
-                    name = params.get('name')
-                    arguments = params.get('arguments', {})
-                    if not isinstance(name, str) or not _utils.is_str_dict(arguments):
-                        raise MCPError(message='`tools/call` needs a string `name` and object `arguments`', code=-32602)
-                    tool = next((t for t in await self.list_tools() if t.name == name), None)
-                    if tool is None or not _app_can_call(tool):
-                        raise MCPError(message=f'Tool {name!r} is not available to apps', code=-32602)
-                    result = await self.client.call_tool_mcp(name, arguments)
-                elif method == 'resources/read':
-                    uri = params.get('uri')
-                    if not isinstance(uri, str):
-                        raise MCPError(message='`resources/read` needs a string `uri`', code=-32602)
-                    result = await self.client.read_resource_mcp(uri)
-                else:
-                    raise MCPError(message=f'Method {method!r} is not supported for MCP Apps', code=-32601)
+                match method, params or {}:
+                    case 'tools/call', {'name': str(name), **rest} if _utils.is_str_dict(
+                        arguments := rest.get('arguments', {})
+                    ):
+                        tool = next((t for t in await self.list_tools() if t.name == name), None)
+                        if tool is None or not _app_can_call(tool):
+                            raise MCPError(
+                                message=f'Tool {name!r} is not available to apps', code=mcp_types.INVALID_PARAMS
+                            )
+                        result = await self.client.call_tool_mcp(name, arguments)
+                    case 'tools/call', _:
+                        raise MCPError(
+                            message='`tools/call` needs a string `name` and object `arguments`',
+                            code=mcp_types.INVALID_PARAMS,
+                        )
+                    case 'resources/read', {'uri': str(uri)}:
+                        result = await self.client.read_resource_mcp(uri)
+                    case 'resources/read', _:
+                        raise MCPError(message='`resources/read` needs a string `uri`', code=mcp_types.INVALID_PARAMS)
+                    case _:
+                        raise MCPError(
+                            message=f'Method {method!r} is not supported for MCP Apps', code=mcp_types.METHOD_NOT_FOUND
+                        )
             except McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
         return result.model_dump(mode='json', by_alias=True, exclude_none=True)

@@ -1036,6 +1036,12 @@ class TestMCPToolsetIntegration:
                 '`tools/call` needs a string `name` and object `arguments` (code: -32602)',
                 id='no-name',
             ),
+            pytest.param(
+                'tools/call',
+                ['plain'],
+                '`tools/call` needs a string `name` and object `arguments` (code: -32602)',
+                id='params-not-an-object',
+            ),
             pytest.param('resources/read', {}, '`resources/read` needs a string `uri` (code: -32602)', id='no-uri'),
             pytest.param(
                 'sampling/createMessage',
@@ -1048,8 +1054,8 @@ class TestMCPToolsetIntegration:
             ),
         ],
     )
-    async def test_handle_app_request_rejects(self, method: str, params: dict[str, Any], expected_error: str):
-        """A view can't call tools hidden from apps or on other servers, nor use methods the relay doesn't support."""
+    async def test_handle_app_request_rejects(self, method: str, params: Any, expected_error: str):
+        """A view can't call tools hidden from apps or on other servers, send malformed params, or use other methods."""
         toolset = MCPToolset(self._mcp_apps_server())
         with pytest.raises(MCPError) as exc_info:
             await toolset.handle_app_request(method, params)
