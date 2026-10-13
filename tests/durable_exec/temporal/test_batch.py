@@ -150,6 +150,8 @@ class FastRetryOutbound(WorkflowOutboundInterceptor):
 class FaultOutbound(OutboundInterceptor):
     async def signal_workflow(self, input: SignalWorkflowInput) -> None:
         if input.signal == 'pydantic_ai__batch_result':
+            if faults.query_error is not None:
+                return
             if faults.drop_signals:
                 faults.drop_signals -= 1
                 return
@@ -809,7 +811,6 @@ async def test_result_delivery_recovers_from_signal_failures(client: Client, fai
 
 @pytest.mark.parametrize('status', [RPCStatusCode.NOT_FOUND, RPCStatusCode.UNAVAILABLE])
 async def test_collection_reports_an_unreachable_queue(client: Client, status: RPCStatusCode) -> None:
-    faults.drop_signals = 1
     faults.query_error = status
     faults.cancel_error = status
     with pytest.raises(WorkflowFailureError) as exc_info:
