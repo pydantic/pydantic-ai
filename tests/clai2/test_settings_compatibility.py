@@ -15,6 +15,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
+from pydantic_clai2.builtin_plugins.coder import DEFAULT_SKILL_FOLDERS, CoderSettings
 from pydantic_clai2.builtin_plugins.day_ai import DayAISource
 from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireSettings, LogfireSource
 from pydantic_clai2.builtin_plugins.logfire_mcp import LogfireMCPSettings
@@ -755,6 +756,61 @@ def test_logfire_mcp_settings_from_older_builds_load_under_the_same_id(tmp_path:
     plugins_command(store, ['add', 'logfire', 'pydantic_clai2.builtin_plugins.logfire'])
     plugins_command(store, ['disable', 'logfire'])
     assert {plugin.id: plugin.enabled for plugin in store.plugins()} == {'logfire_mcp': True, 'observability': False}
+
+
+@pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'build-without-skill-folders'])
+async def test_saved_skill_folders_load_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool
+) -> None:
+    """A `coder` saved before skills existed gets the default folders; a build lacking the feature drops a saved list."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'coder',
+                '{"id": "coder", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "sub_agents": false, "skill_folders": ["team-skills"]}}',
+            ),
+        )
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'older',
+                '{"id": "older", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "sub_agents": false}}',
+            ),
+        )
+    store.save_plugin(store.plugins()[0], requires={'skill_folders': frozenset({'coder-skill-folders'})})
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    entries = {entry.name: entry for entry in loader.entries() if entry.name in {'coder', 'older'}}
+    # Through the host: an earlier `loader.reload('coder')` in this process may have replaced the module's class.
+    folders = {
+        name: entry.loaded.plugin.host.settings(CoderSettings).skill_folders
+        for name, entry in entries.items()
+        if entry.loaded is not None
+    }
+    assert folders == {
+        'coder': ['team-skills'] if supported else list(DEFAULT_SKILL_FOLDERS),
+        'older': list(DEFAULT_SKILL_FOLDERS),
+    }
+    # `/plugins` shows the notice; startup does not print it.
+    assert entries['coder'].ignored == (
+        None if supported else 'coder: ignored saved skill_folders (needs coder-skill-folders); using defaults.'
+    )
+    assert store.plugins() == saved
+    await loader.close('exit')
 
 
 @pytest.mark.parametrize(
