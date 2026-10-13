@@ -35,11 +35,8 @@ pydantic-core = false
 pydantic-ai-harness = false
 logfire-api = false
 cassetter = false
-aiohttp = "2026-10-05T17:43:49Z"
-listentome = false
 asyncpg = "2026-10-06T20:32:41Z"
-fastavro = "2026-10-05T22:24:00Z"
-rpds-py = "2026-10-04T16:32:38Z"
+listentome = false
 logfire = false
 pydantic-settings = false
 pydantic-monty-client = false
@@ -48,7 +45,6 @@ pydantic-monty = false
 termflow-md = "2026-10-02T15:05:25Z"
 anthropic = "2026-10-08T03:42:01.588842Z"
 openai = "2026-10-06T21:31:20Z"
-google-genai = "2026-09-22T17:23:02Z"
 
 [manifest]
 members = [
@@ -2346,15 +2342,15 @@ wheels = [
 
 [[package]]
 name = "genai-prices"
-version = "0.1.9"
+version = "0.1.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx2" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d6/f0/4b4c7f63de6d558714d2207808080dd0988d0317a54ebcde790e4f6c1b6e/genai_prices-0.1.9.tar.gz", hash = "sha256:20ec774d32ec5d345510877fac415f2560bbfeb081bc4cd4e7ebce57a5503e8d", size = 118447, upload-time = "2026-09-25T03:47:27.569Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c4/0b/159528e8580f9a5c985be78fcbea6230a1bcc1d46a9f8b681511d2c37e3f/genai_prices-0.1.10.tar.gz", hash = "sha256:889ba486497f8a85e9dd0e9228a27f2e135e31a850e96924b880f22c132092ac", size = 125604, upload-time = "2026-10-09T17:58:15.876Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1b/e0/57d07f653813b7ea9e3a82064a2b6a112f63004530ac665e0934829473c7/genai_prices-0.1.9-py3-none-any.whl", hash = "sha256:3da8faa0a126e4df7be36696b90abe2be1fea8826bfcf45d39d91bc397fa9d1d", size = 125549, upload-time = "2026-09-25T03:47:26.483Z" },
+    { url = "https://files.pythonhosted.org/packages/11/0c/379fe71fccf01d829f1d72f805189453f12ba4b96e4b49a5cde8e1afd5ba/genai_prices-0.1.10-py3-none-any.whl", hash = "sha256:1f0eb9ff0b02f3a40b3aa590098fbc3bfc9e08ef124fa0bd132e9d899a6fec88", size = 132788, upload-time = "2026-10-09T17:58:14.463Z" },
 ]
 
 [[package]]
@@ -5318,6 +5314,23 @@ wheels = [
 ]
 
 [[package]]
+name = "pgtask"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "psycopg" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/42/50/163df9cd15865d7245a33b6c790b13d1b287b2e36799084006ffaada449c/pgtask-0.3.0.tar.gz", hash = "sha256:bb7d3189e0d599ff0cfc9a82064c1a516b37bb1a1c6da536a930d230b3b06a6f", size = 206890, upload-time = "2026-09-11T10:36:00.545Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8a/9a/612f1995036126fac9e5af8eefe8cf373dc528086e19e144f178d703e030/pgtask-0.3.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:6eb051d7ccc6a4bd7e73afc9093188f390ab6cf7e0a1a5dbf40ba80e268ba215", size = 4168017, upload-time = "2026-09-11T10:35:50.85Z" },
+    { url = "https://files.pythonhosted.org/packages/89/9b/ab0b07ee9f7393580a09a61302588b7b6112159e05d9351f937fc5621018/pgtask-0.3.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:a4245161da2523b6dbfc223531494208399f73fbfcfcf596ec288d05c851cb11", size = 4030212, upload-time = "2026-09-11T10:35:52.97Z" },
+    { url = "https://files.pythonhosted.org/packages/77/0d/8a369ce96318e7a5fd22203d2a6273ce5301d82b8d85f9f824207f059674/pgtask-0.3.0-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:f9d6098f357fbaf510a0f9c192088252906baaa354d9cc07bf8c1128be986969", size = 4420862, upload-time = "2026-09-11T10:35:55.195Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/65/23031c09795f28e50f571108327350c959b674eb5f82c4cda73342aac224/pgtask-0.3.0-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:d43de8d01c4a568975f805149a5edcd3e2e5bba39dbed21c23af41ac33e4de0b", size = 4442585, upload-time = "2026-09-11T10:35:56.946Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/f4/74bd9ee45535444eba5e7920c6ac093cd7fdd0312a412c1197ac7a139f5a/pgtask-0.3.0-cp310-abi3-win_amd64.whl", hash = "sha256:8d102537613ee4a5eeca7ff4cfc23c4d085da318ac10c836180577fa588023e1", size = 3751062, upload-time = "2026-09-11T10:35:58.972Z" },
+]
+
+[[package]]
 name = "pillow"
 version = "12.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -6281,6 +6294,9 @@ notion = [
 ordinal = [
     { name = "pydantic-ai-slim", extra = ["mcp"] },
 ]
+pgtask = [
+    { name = "pgtask" },
+]
 playwright = [
     { name = "idna" },
     { name = "playwright" },
@@ -6299,6 +6315,9 @@ pylon = [
     { name = "pydantic-ai-slim", extra = ["mcp"] },
 ]
 render = [
+    { name = "render" },
+]
+render-sandbox = [
     { name = "render" },
 ]
 researcher = [
@@ -6341,6 +6360,7 @@ requires-dist = [
     { name = "json-repair", specifier = ">=0.58.0" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.31.0" },
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.2" },
+    { name = "pgtask", marker = "extra == 'pgtask'", specifier = ">=0.2.0,<1" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.61.0" },
     { name = "pydantic-ai-slim", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["anthropic"], marker = "extra == 'anthropic'", editable = "pydantic_ai_slim" },
@@ -6369,7 +6389,8 @@ requires-dist = [
     { name = "pydantic-monty", marker = "extra == 'dynamic-workflow'", specifier = ">=1.0.0,<2" },
     { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.17.0" },
     { name = "pyyaml", marker = "extra == 'skills'", specifier = ">=6.0.2" },
-    { name = "render", marker = "extra == 'render'", specifier = ">=1.2.0,<1.3" },
+    { name = "render", marker = "extra == 'render'", specifier = ">=1.2.0" },
+    { name = "render", marker = "extra == 'render-sandbox'", specifier = ">=1.2.0,<1.3" },
     { name = "ripgrep", marker = "sys_platform != 'android' and extra == 'coder'", specifier = "==14.1.0" },
     { name = "sprites-py", marker = "extra == 'sprites'", specifier = ">=0.7.0,<0.8" },
     { name = "stackone-defender", marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender'", specifier = ">=0.7.3,<0.8" },
@@ -6377,7 +6398,7 @@ requires-dist = [
     { name = "stackone-defender", extras = ["onnx"], marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
     { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
-provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "researcher", "skills", "slack", "sprites", "stackone", "temporal", "youdotcom"]
+provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "pgtask", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "render-sandbox", "researcher", "skills", "slack", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-slim"
@@ -6549,7 +6570,7 @@ requires-dist = [
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0,<5" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "fastmcp-tasks", marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
-    { name = "genai-prices", specifier = ">=0.1.9" },
+    { name = "genai-prices", specifier = ">=0.1.10" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.25.0" },
     { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.25.0" },
     { name = "griffelib", specifier = ">=2.0" },
@@ -6616,7 +6637,7 @@ dependencies = [
     { name = "opentelemetry-instrumentation-httpx" },
     { name = "pillow" },
     { name = "prompt-toolkit" },
-    { name = "pydantic-ai-harness", extra = ["coder"] },
+    { name = "pydantic-ai-harness", extra = ["coder", "skills"] },
     { name = "pydantic-ai-slim", extra = ["anthropic", "mcp", "openai"] },
     { name = "pydantic-monty" },
     { name = "pyfiglet" },
@@ -6640,7 +6661,7 @@ requires-dist = [
     { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.65b0" },
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.52" },
-    { name = "pydantic-ai-harness", extras = ["coder"], editable = "src/pydantic_ai_harness" },
+    { name = "pydantic-ai-harness", extras = ["coder", "skills"], editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "mcp", "openai"], editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["typesafe"], marker = "extra == 'typesafe'", editable = "pydantic_ai_slim" },
     { name = "pydantic-monty", specifier = ">=1.0.0,<2" },

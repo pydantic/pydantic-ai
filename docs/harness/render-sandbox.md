@@ -28,7 +28,7 @@ The adapter does not forward host environment variables or credentials into the 
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[render,anthropic]"
+pip/uv-add "pydantic-ai-harness[render-sandbox,anthropic]"
 ```
 
 The `anthropic` extra is for this example's model. Use your model provider's extra when choosing another provider. The Render SDK dependency is bounded to the tested 1.2 minor series because its sandbox API is still evolving.
@@ -110,7 +110,7 @@ Pass `config=RenderSandboxConfig(...)` to `RenderSandbox` or `RenderSandboxBacke
 
 Readiness, individual control operations, cleanup, and command stopping have separate bounded timeouts. Tool command deadlines come from the standard tools or `workspace.run(timeout=...)`; waiting for a dispatch slot precedes that deadline. Each file helper command, SDK copy, and staging cleanup has its own 30-second default bound. Pacing waits are separate, so a complete read or write can take longer than 30 seconds.
 
-Use `files={'input.txt': 'contents'}` to seed a run before its first model request. Use `Coder(sub_agents=False)` for a coding agent, or choose the narrower [`Shell`](shell.md) and [`FileSystem`](filesystem.md) capabilities. With `Coder`, repository inspection can create the sandbox before a model calls a tool. A run that never touches the workspace creates no sandbox.
+Use `files={'input.txt': 'contents'}` to seed a run before its first model request. Use `Coder(sub_agents=False)` for a coding agent, or choose the narrower [`Shell`](shell.md) and [`FileSystem`](filesystem.md) capabilities. With `Coder`, repository inspection can create the sandbox before a model calls a tool. An ordinary run that never touches the workspace creates no sandbox; Workflows prepares it before the run.
 
 ## Keep or attach a sandbox
 
@@ -130,7 +130,37 @@ File contents use Render's native `copy_to` and `copy_from` SDK methods. File me
 
 If termination cannot be confirmed, `RenderSandboxCleanupError` preserves failure and the backend retains its reference for a cleanup retry. If a create response is lost before an ID is known, the error states that cleanup is uncertain; the requested sandbox lifetime remains the backstop.
 
-This capability does not support durable execution containers or serialized agent specs. It rejects durable runs before creating resources. Use it in ordinary agent runs; it does not depend on Render Workflows.
+## Use with Render Workflows
+
+Install `pydantic-ai-harness[render,render-sandbox,anthropic]` to combine background agent tasks with an isolated workspace. Save this as `app.py`, then follow the [Render Workflows guide](render-workflows.md) to start the worker and submit `solve`:
+
+```python {test="skip"}
+# Render registers background tasks; Pydantic supplies the agent and its tools.
+from render import TaskContext, Workflows
+from pydantic_ai import Agent
+from pydantic_ai_harness import FileSystem, RenderSandbox, RenderWorkflows, Shell
+
+# Build these once at module load so every worker registers the same task names.
+app = Workflows()
+workflows = RenderWorkflows(app)
+sandbox = RenderSandbox(id='sandbox')
+agent = Agent(
+    'anthropic:claude-haiku-5-5',
+    name='sandbox_agent',
+    capabilities=[workflows, sandbox, Shell(), FileSystem()],
+)
+
+# Render supplies ctx; the caller supplies only the prompt.
+@workflows.task
+async def solve(ctx: TaskContext, prompt: str) -> str:
+    del ctx
+    # Model and tool tasks share one sandbox. Owned cleanup finishes before return.
+    return (await agent.run(prompt)).output
+```
+
+Set the same host credentials on every worker. The explicit `id='sandbox'` gives cleanup a stable task name. Pydantic creates the workspace before the run, passes its reference to child tasks, and terminates an owned sandbox in a cleanup task. Attached sandboxes stay caller-owned. Use `on_finish` to read wanted files before deletion; use `auto_cleanup=False` to retain them.
+
+A root-task retry starts the agent again and can repeat work. A worker crash or a lost create response can prevent cleanup, so the sandbox lifetime remains the backstop. Set it long enough for the whole agent run. Other durable engines and serialized agent specs remain unsupported. Ordinary agent runs still work without Workflows.
 
 ## Observe lifecycle and cleanup
 

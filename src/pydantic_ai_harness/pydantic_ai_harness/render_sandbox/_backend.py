@@ -129,7 +129,7 @@ class _DispatchPacer:
 _DISPATCH_PACERS: WeakKeyDictionary[RenderAsync, _DispatchPacer] = WeakKeyDictionary()
 
 
-async def _drain(operation: Coroutine[object, object, _T]) -> _T:
+async def finish_despite_cancellation(operation: Coroutine[object, object, _T]) -> _T:
     """Finish an already-bounded ownership operation despite repeated cancellation."""
     task = asyncio.create_task(operation)
     cancelled: asyncio.CancelledError | None = None
@@ -274,7 +274,7 @@ class RenderSandboxBackend:
                     self._create_task = asyncio.create_task(self._create())
                 # On cancellation, wait for the bounded create to record its ID before
                 # releasing this lock. Concurrent first users cannot create twice.
-                await _drain(self._await_create())
+                await finish_despite_cancellation(self._await_create())
             assert self._ref is not None
             try:
                 async with asyncio.timeout(self.config.readiness_timeout):
@@ -465,4 +465,4 @@ class RenderSandboxBackend:
         """
         if self._destroy_task is None or (self._destroy_task.done() and self._destroy_task.exception()):
             self._destroy_task = asyncio.create_task(self._destroy(asyncio.current_task()))
-        await _drain(self._await_destroy())
+        await finish_despite_cancellation(self._await_destroy())

@@ -117,10 +117,26 @@ including its instructions, tool definitions, and `FilePart` payloads. For the s
 anchor, and for a whole history with no usage anchor, the estimator uses `tokenizer` when supplied
 or a ~4-characters-per-token heuristic. That estimated portion cannot see `FilePart` payloads, and
 counts a file inside a tool return as the `See file <identifier>.` reference that stands in for it.
-Pending tool schemas newly revealed for the request are conservatively estimated by the
+When the instructions changed since the anchor, the new set replaces the old one in the estimate
+rather than adding to it, since a request sends only one. Pending tool schemas newly revealed for the request are conservatively estimated by the
 implementation, since they are not covered by the earlier anchor.
 
 **If you already set an absolute `max_tokens`, re-check it.** The estimator used to count only user and system prompts, tool returns, response text, and tool calls. `ThinkingPart` / `CompactionPart` content, `RetryPromptPart` content, `NativeToolCallPart` / `NativeToolReturnPart`, and the most recent `ModelRequest.instructions` are now counted too, so the same history measures higher and an unchanged `max_tokens` compacts earlier. How much earlier depends on how much of the history is thinking blocks, retries, and instructions; on a thinking-heavy tool-calling history it can be several times the old count. What each strategy clears is unchanged -- only when it runs.
+
+### What counts toward `keep_tokens`
+
+The retained tail is measured per message with `estimate_message_tokens`, so `keep_tokens` means
+tokens as the provider counts them. A response counts at least its reported `output_tokens`, which
+includes thinking that some providers return as an empty part with only a signature. The messages
+between two responses that carry usage share the difference between their `input_tokens`, which is
+exactly what the provider counted for them. Before the first such response, after the last, and
+where the history did not grow between two of them (as across an earlier compaction), `tokenizer` or the
+~4-characters-per-token heuristic applies. Instructions are not part of the tail. A history with no
+provider usage is measured with the heuristic as before.
+
+**If you set `keep_tokens`, re-check it.** It used to be measured with the heuristic alone, which
+on a thinking-heavy history can see a third of the real tokens or less, so the same budget kept
+several times more history than it named. It now keeps the named amount, so fewer messages.
 
 ## Reporting usage: `ReportContextUsage`
 

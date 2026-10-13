@@ -10,7 +10,7 @@ when upgrading the experimental SDK API.
 try:
     from ._backend import RenderSandboxBackend, RenderSandboxConfig
 except ImportError as exc:
-    raise ImportError('Install `pydantic-ai-harness[render]` to use RenderSandbox.') from exc
+    raise ImportError('Install `pydantic-ai-harness[render-sandbox]` to use RenderSandbox.') from exc
 
 from ._capability import RenderSandbox
 from ._types import RenderSandboxCleanupError, RenderSandboxEvent

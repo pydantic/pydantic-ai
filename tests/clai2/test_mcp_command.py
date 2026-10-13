@@ -142,7 +142,7 @@ def test_form_rows_preview_and_examples(tmp_path: Path) -> None:
     form.select_type('sse')
     assert form.config == EXAMPLES['sse'], 'an untouched example follows the type'
     assert 'OAuth sign-in: off' in [item.label for item in form.items()]
-    assert 'OAuth signs in' in form.preview()
+    assert '/mcp auth NAME signs in' in form.preview()
     form.config = '{"url": "https://example.com/sse"}'
     form.select_type('http')
     assert form.config == '{"url": "https://example.com/sse"}', 'edited configuration is kept'

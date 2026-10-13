@@ -49,11 +49,13 @@ if TYPE_CHECKING:
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
     from .ordinal import Ordinal
+    from .pgtask import PGTaskDurability
     from .planning import Planning
     from .posthog import PostHog
     from .prompt_injection_defender import PromptInjectionDefender
     from .pydantic_ai_docs import PydanticAIDocs
     from .pylon import Pylon
+    from .render import RenderWorkflows
     from .render_sandbox import RenderSandbox, RenderSandboxBackend
     from .repo_context import RepoContext
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
@@ -115,12 +117,14 @@ __all__ = [
     'OutputBlocked',
     'OutputGuardrail',
     'OutputGuardrailFunc',
+    'PGTaskDurability',
     'Planning',
     'PostHog',
     'PromptInjectionDefender',
     'PydanticAIDocs',
     'Pylon',
     'READ_ONLY_TOOL_NAMES',
+    'RenderWorkflows',
     'ReportContextUsage',
     'RenderSandbox',
     'RenderSandboxBackend',
@@ -179,11 +183,13 @@ _CAPABILITY_EXPORTS = {
     'Memory': 'memory',
     'ModalSandbox': 'modal_sandbox',
     'Ordinal': 'ordinal',
+    'PGTaskDurability': 'pgtask',
     'Planning': 'planning',
     'PostHog': 'posthog',
     'PromptInjectionDefender': 'prompt_injection_defender',
     'PydanticAIDocs': 'pydantic_ai_docs',
     'Pylon': 'pylon',
+    'RenderWorkflows': 'render',
     'ReportContextUsage': 'compaction',
     'RenderSandbox': 'render_sandbox',
     'RepoContext': 'repo_context',

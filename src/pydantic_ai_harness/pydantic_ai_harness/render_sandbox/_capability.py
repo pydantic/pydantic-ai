@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
+from copy import copy
 from dataclasses import dataclass, field
 from types import MappingProxyType, TracebackType
 from typing import Self
@@ -10,13 +11,13 @@ from typing import Self
 from render import RenderAsync
 
 from pydantic_ai import RunContext
-from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef, WrapperWorkspace
 
-from ._backend import RenderSandboxBackend, RenderSandboxConfig
+from ._backend import RenderSandboxBackend, RenderSandboxConfig, finish_despite_cancellation
 from ._types import RenderSandboxEvent
 
 
@@ -49,6 +50,10 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
 
     on_finish receives the public Workspace after successful model completion and before
     owned cleanup. It can verify results and capture files using ordinary workspace methods.
+    With RenderWorkflows, set an explicit id (for example, id='sandbox') and build
+    the agent before workers start. Workspace operations and owned termination run
+    as child tasks. Root retries can repeat work; the configured lifetime bounds an
+    environment left behind by a worker crash. Other durable engines are unsupported.
     The client, environment values, and seed file contents are excluded from repr.
     """
 
@@ -58,6 +63,10 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
     files: Mapping[str, str | bytes] | None = field(default=None, repr=False)
     on_finish: Callable[[Workspace], Awaitable[None]] | None = field(default=None, repr=False)
     on_sandbox_event: Callable[[RenderSandboxEvent], None] | None = field(default=None, repr=False)
+
+    # Each durable run gets its own copy. Remember ownership before Workflows creates
+    # the environment in a child task and rebuilds the workspace from its reference.
+    _cleanup_backend: RenderSandboxBackend | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.defer_loading:
@@ -89,8 +98,7 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
         return None
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        if ctx.in_durable_context:
-            raise UserError('RenderSandbox does not support durable execution; use it outside a durable container.')
+        self._check_durability(ctx)
         if ref is not None and ref.provider != 'render':
             return None
         return _RunBackend(
@@ -102,6 +110,48 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
             owner=self,
         )
 
+    def _check_durability(self, ctx: RunContext[AgentDepsT]) -> None:
+        if ctx.in_durable_context:
+            # Workflows retries restart the root task. Replay-based engines need a
+            # different lifetime policy, so do not silently enable those here.
+            from ..render import RenderWorkflows
+
+            if ctx.agent is None or RenderWorkflows.from_agent(ctx.agent) is None:
+                raise UserError('RenderSandbox only supports durable execution with RenderWorkflows.')
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        if not ctx.in_durable_context:
+            return self
+        self._check_durability(ctx)
+        # Inspect only ownership, without operating on the unwrapped workspace.
+        # Commands and files still go through ctx.workspace, preserving its policies.
+        workspace = ctx.workspace
+        while isinstance(workspace, WrapperWorkspace):
+            workspace = workspace.wrapped
+        bound = copy(self)
+        bound._cleanup_backend = self._owned_backend(ctx, workspace.backend)
+        return bound
+
+    def _owned_backend(self, ctx: RunContext[AgentDepsT], backend: WorkspaceBackend) -> RenderSandboxBackend | None:
+        # Explicit backends, attached refs, and another provider's workspace remain
+        # caller-owned. Object identity also keeps simultaneous runs independent.
+        if (
+            isinstance(backend, _RunBackend)
+            and backend.owner is self
+            and backend.run_id == ctx.run_id
+            and backend.owned
+            and self.auto_cleanup
+        ):
+            return backend
+        return None
+
+    @durable_operation('destroy')
+    async def _destroy_workspace(self, ctx: RunContext[AgentDepsT], ref: WorkspaceRef) -> None:
+        # A child task receives the portable ID, not the root worker's client or
+        # backend object, and can terminate that same environment on any worker.
+        del ctx
+        await self.destroy(ref)
+
     def backend(self, ref: WorkspaceRef) -> RenderSandboxBackend:
         """Build a lazy backend for an existing sandbox without acquiring or owning it."""
         return RenderSandboxBackend(self.client, config=self.config, ref=ref, on_sandbox_event=self.on_sandbox_event)
@@ -111,18 +161,8 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
         await self.backend(ref).destroy()
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[object]:
-        if ctx.in_durable_context:
-            raise UserError('RenderSandbox does not support durable execution; use it outside a durable container.')
-        backend = ctx.workspace.backend
-        cleanup: RenderSandboxBackend | None = None
-        if (
-            isinstance(backend, _RunBackend)
-            and backend.owner is self
-            and backend.run_id == ctx.run_id
-            and backend.owned
-            and self.auto_cleanup
-        ):
-            cleanup = backend
+        self._check_durability(ctx)
+        cleanup = self._cleanup_backend if ctx.in_durable_context else self._owned_backend(ctx, ctx.workspace.backend)
         run_error: BaseException | None = None
         try:
             # Standard Pydantic tools use our workspace's native content transfers and
@@ -139,11 +179,18 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
         finally:
             if cleanup is not None:
                 try:
-                    await cleanup.destroy()
+                    if ctx.in_durable_context:
+                        # Workflows has already ensured this workspace before wrap_run.
+                        # Finish a submitted cleanup even if the caller is cancelled.
+                        ref = ctx.workspace.ref
+                        assert ref is not None
+                        await finish_despite_cancellation(self._destroy_workspace(ctx, ref))
+                    else:
+                        await cleanup.destroy()
                 except BaseException as cleanup_error:
                     if run_error is not None:
                         # An explicit cause survives Pydantic graph teardown, which can
                         # replace implicit exception context while closing its task group.
-                        run_error.add_note(f'Workspace cleanup also failed; retain {cleanup.ref!r} for recovery.')
+                        run_error.add_note(f'Workspace cleanup also failed; retain {ctx.workspace.ref!r} for recovery.')
                         raise run_error from cleanup_error
                     raise

@@ -51,7 +51,7 @@ except UserError as e:
 ## Coder
 
 Combined capability: default instructions + `FileSystem` + `Shell` + `RepoContext` + `SubAgents` +
-`ClearToolResults(max_fraction=0.7)`, `WarnNearLimits(max_context_fraction=0.9)`, a `ToolOutputLimits`
+`ClearToolResults(max_fraction=0.7)`, a `ToolOutputLimits`
 that truncates any tool result to 64,000 chars (no `read_tool_result`), `RepairToolArguments`, and
 prompt caching (unified `cache=True`).
 
@@ -440,12 +440,16 @@ task's approval fails the run.
 
 ## Render Sandbox
 
-`RenderSandbox` from `pydantic_ai_harness` uses the `[render]` extra and the host's
+`RenderSandbox` from `pydantic_ai_harness` uses the `[render-sandbox]` extra and the host's
 `RENDER_API_KEY` and `RENDER_WORKSPACE_ID`. Compose it with `Coder`, or `Shell` and
 `FileSystem`. Defaults are a 300-second lifetime, denied sandbox egress, and cleanup
 of a fresh owned sandbox after each run. Use `on_finish` to capture output first.
 Attached references stay caller-owned; `auto_cleanup=False` retains a fresh sandbox
 for later attachment, followed by explicit `destroy(ref)`. Native file transfers
-carry contents; command timeouts stop the foreground process group. Durable
-containers and agent-spec serialization are unsupported. See the
+carry contents; command timeouts stop the foreground process group. With
+`RenderWorkflows`, give the sandbox an explicit ID, for example
+`RenderSandbox(id='sandbox')`, and run the agent inside `@workflows.task`. The
+workspace reference crosses task boundaries; owned termination is a child task.
+Root retries can repeat work, and a worker crash can leave cleanup to the sandbox
+lifetime. Other durable engines and agent-spec serialization are unsupported. See the
 [Render Sandbox guide](https://pydantic.dev/docs/ai/harness/render-sandbox/).

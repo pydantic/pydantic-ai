@@ -594,9 +594,12 @@ async def test_durable_run_rejected_before_resource_creation(workspace_harness: 
         tool_model(),
         name='render_durable_rejection',
         deps_type=type(None),
-        capabilities=[FakeDurability(), capability(workspace_harness)],
+        capabilities=[
+            FakeDurability(),
+            RenderSandbox(id='sandbox', client=workspace_harness.client, config=workspace_harness.config),
+        ],
     )
-    with pytest.raises(UserError, match='does not support durable execution'):
+    with pytest.raises(UserError, match='only supports durable execution with RenderWorkflows'):
         await agent.run('Run a command')
     assert workspace_harness.created == []
     assert workspace_harness.commands == []

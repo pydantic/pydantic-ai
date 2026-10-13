@@ -14,6 +14,7 @@ from rich.text import Text
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
+from pydantic_clai2.cli.self_update import installed
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
@@ -31,6 +32,7 @@ async def test_startup_and_plugin_messages_are_captured_once_before_editor_opens
                 captured.append(self.transcript)
                 text = '\n'.join(Text.from_ansi(row).plain for row in self.transcript.frame(width=200, height=200).rows)
                 assert '/new starts a session' in text
+                assert f'pydantic-clai2 {installed().label}' in text
                 assert text.count('PLUGIN_LOAD_NOTICE') == 1
             super().paint(rows)
 

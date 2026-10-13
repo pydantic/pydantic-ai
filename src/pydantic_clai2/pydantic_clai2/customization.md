@@ -23,7 +23,7 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   to CLAI's settings (/spinner init writes a starter). /spinner picks one; the
   choice persists as display.spinner.
 - React to prompts or session lifecycle: override on_session_start,
-  on_session_end, on_turn_start, or on_turn_end.
+  on_session_end, on_turn_start, on_turn_end, or on_conversation_changed.
 - Configure a plugin: declare a Pydantic settings model as the class's type
   parameter, `Plugin[MySettings]`, and read self.settings.
 - Offer a settings menu: override async configure().
@@ -271,14 +271,15 @@ are not recursively reloaded. Use `/plugins reload NAME` to reload only one plug
 
 ## Hooks, tools and settings
 
-The four CLAI moments are async methods returning None:
+The CLAI moments are async methods returning None:
 
 | Method | Event | Use |
 | --- | --- | --- |
-| on_session_start | SessionStart(agent, settings) | Initialize session resources |
+| on_session_start | SessionStart(agent, settings, conversation_chosen) | Initialize session resources |
 | on_session_end | SessionEnd(reason) | Clean up; reason is exit, eof, or error |
 | on_turn_start | TurnStart(text) | Rewrite event.text or event.cancel() |
 | on_turn_end | TurnEnd(text, outcome, result, error) | Observe completion or failure |
+| on_conversation_changed | ConversationChanged(conversation_id, title) | Follow /new, /clear, /resume, and retitles |
 
 Import these event classes from pydantic_clai2.plugins. Event payloads are typed,
 keyword-only dataclasses. A raising on_turn_start cancels the turn. Do not
@@ -385,7 +386,8 @@ unknown key would break their plugin loading.
 - A build that lists every feature a setting needs applies it as saved.
 - A build that lacks one, or does not recognize a name, ignores that one setting. It uses the
   shipped declaration's value (for a built-in) or the plugin's own default, keeps every other
-  setting, and prints one line per plugin, such as
+  setting. Startup stays quiet; the plugin's /plugins row and the result of /plugins enable
+  or reload show one line, such as
   coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.
 - Reading never rewrites anything. When that build saves the plugin's settings, it writes the
   ignored values back unchanged, still tagged. A tag only goes away when its value changes.
@@ -486,11 +488,12 @@ class Where(Plugin):
 ```
 
 The fragment is appended after the built-in figures and painted muted. The row
-repaints about ten times a second, so it runs that often: no blocking IO, no
-awaits, no printing. Return an empty string to contribute nothing that frame.
-Fragments are truncated from the right on narrow terminals and cannot set their
-own colours. get_status_segments adds to the row; replacing the row, prompt
-editor, splash, or adding custom palettes is still a CLAI source change.
+repaints about ten times a second while CLAI works and once a second while idle,
+so it runs that often: no blocking IO, no awaits, no printing. Return an empty
+string to contribute nothing that frame. Fragments are truncated from the right
+on narrow terminals and cannot set their own colours. get_status_segments adds
+to the row; replacing the row, prompt editor, splash, or adding custom palettes
+is still a CLAI source change.
 
 Offer a working animation with get_spinners; the user selects it with /spinner:
 
