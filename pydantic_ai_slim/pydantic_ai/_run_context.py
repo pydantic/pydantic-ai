@@ -211,10 +211,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     instrumentation_version: int = DEFAULT_INSTRUMENTATION_VERSION
     """Instrumentation settings version, if instrumentation is enabled."""
     retries: dict[str, int] = field(default_factory=dict[str, int])
-    """Number of retries for each tool so far, keyed by tool name.
+    """Number of retries for each tool so far, keyed by the tool name the model sees.
 
-    Inside a prefixed or renamed toolset, a wrapped tool's count is keyed by its original name, and a prefixed
-    toolset only sees its own tools' counts.
+    While a prefixed or renamed toolset lists its tools (for example in a tool's `prepare` function), a wrapped
+    tool's count is keyed by its original name. A prefixed toolset sees only its own tools' counts, without the
+    prefix, while a renamed toolset keeps the other keys too.
     """
     tool_call_id: str | None = None
     """The ID of the tool call."""

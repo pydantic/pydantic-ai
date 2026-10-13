@@ -22,6 +22,7 @@ class RenamedToolset(WrapperToolset[AgentDepsT]):
         original_to_new_name_map = {v: k for k, v in self.name_map.items()}
         # Preparation uses the original names, while the manager tracks retries under the exposed names.
         # An exposed name equal to a renamed-away original belongs to a different tool, so its count is dropped.
+        # Exposed names stay: an entry whose original is absent leaves a same-named inner tool exposed under that name.
         ctx = replace(
             ctx,
             retries={
