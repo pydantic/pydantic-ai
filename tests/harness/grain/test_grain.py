@@ -9,7 +9,6 @@ import httpx
 import pytest
 from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
-from mcp.server.fastmcp.server import FastMCP, Settings
 from mcp.types import ToolAnnotations
 
 from pydantic_ai import Agent
@@ -22,9 +21,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.grain import Grain
 
-# The MCP SDK leaves a settings annotation unresolved in some supported dependency
-# combinations. Rebuild it before warnings are escalated by the test suite.
-Settings.model_rebuild()
+from .._mcp_server import MCPServer
 
 DepsT = TypeVar('DepsT')
 
@@ -68,7 +65,7 @@ class TestGrain:
         [(False, '{"read":"read","write":"written","unmarked":"unmarked"}'), (True, '{"read":"read"}')],
     )
     async def test_read_only_keeps_only_read_only_tools(self, read_only: bool, expected: str) -> None:
-        server = FastMCP('grain-fake')
+        server = MCPServer('grain-fake')
 
         @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
         def read() -> str:
@@ -87,7 +84,7 @@ class TestGrain:
 
     @pytest.mark.parametrize('include', [True, False])
     async def test_server_instructions(self, include: bool) -> None:
-        server = FastMCP('grain-fake', instructions='Grain instructions.')
+        server = MCPServer('grain-fake', instructions='Grain instructions.')
         agent = Agent(TestModel(call_tools=[]), capabilities=[Grain(client=server, include_instructions=include)])
         request = (await agent.run('Hello')).all_messages()[0]
         assert isinstance(request, ModelRequest)
