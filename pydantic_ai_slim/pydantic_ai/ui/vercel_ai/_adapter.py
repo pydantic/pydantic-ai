@@ -1064,7 +1064,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     message_index += 1
 
                 if user_ui_parts:
-                    user_message = UIMessage(id=id_generator(msg, 'user', message_index), role='user', parts=user_ui_parts)
+                    user_message = UIMessage(
+                        id=id_generator(msg, 'user', message_index), role='user', parts=user_ui_parts
+                    )
                     if request_metadata:
                         user_message.metadata = request_metadata
                     result.append(user_message)
