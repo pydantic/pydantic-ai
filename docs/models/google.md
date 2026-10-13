@@ -491,8 +491,10 @@ decode is one model request:
   the input tokens of the first request.
 - Timeouts apply to each request. The Google providers create their client with the 20-minute read timeout Google
   recommends.
-- If a later request fails, the whole model request fails, and the output of the earlier requests, already billed, is
-  lost.
+- If a later request fails, the model request fails. A run that isn't streamed loses the output of the earlier requests,
+  already billed. A streamed run keeps what it streamed as a response with
+  [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] that carries the finished requests' usage, which
+  [`capture_run_messages()`][pydantic_ai.capture_run_messages] returns.
 - On [Temporal](../durable_execution/temporal.md#activity-configuration), the whole long decode runs in one model
   request activity, so its `start_to_close_timeout` must cover every request. A retried activity starts the response
   over.

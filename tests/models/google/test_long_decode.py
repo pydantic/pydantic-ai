@@ -19,7 +19,7 @@ from decimal import Decimal
 import httpx2
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
     FinalResultEvent,
@@ -488,15 +488,41 @@ async def test_per_request_input_limit_reads_the_first_request(
 async def test_failed_continuation_request_raises(stream: bool, allow_model_requests: None):
     """A continuation request that fails fails the model request, as google-genai does not retry it.
 
-    The output of the requests before it is lost, though billed.
+    Not streamed, the output of the requests before it is lost, though billed. Streamed, the run keeps what was
+    streamed as an interrupted response carrying the finished requests' usage.
     """
     requests: list[dict[str, object]] = []
     error = {'error': {'code': 503, 'message': 'The model is overloaded.', 'status': 'UNAVAILABLE'}}
     responses = [*_two_requests(stream)[:1], httpx2.Response(503, json=error)]
     agent = Agent(_model(responses, requests), model_settings={'max_tokens': 100_000})
 
-    with pytest.raises(ModelHTTPError) as exc_info:
+    with capture_run_messages() as messages, pytest.raises(ModelHTTPError) as exc_info:
         await _run(agent, stream)
 
     assert exc_info.value.status_code == 503
     assert len(requests) == 2
+    if stream:
+        assert messages[1:] == snapshot(
+            [
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content='1\n2\n3\n',
+                            provider_name='google',
+                            provider_details={'thought_signature': _b64(b'signature')},
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=10, output_tokens=6),
+                    model_name='gemini-4-argon',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    provider_response_id='request-1',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='interrupted',
+                )
+            ]
+        )
+    else:
+        assert messages[1:] == []
