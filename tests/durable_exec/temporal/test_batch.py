@@ -741,6 +741,12 @@ async def test_batch_resumes_after_workers_are_replaced(client: Client, other_cl
             RestartWorkflow.run, 'restart', id=f'batch-restart-{uuid.uuid4()}', task_queue=queue
         )
         await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
+        async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+            while not any(
+                event.HasField('activity_task_completed_event_attributes')
+                for event in (await handle.fetch_history()).events
+            ):
+                pass
     provider.hold = False
     async with Worker(
         other_client,
