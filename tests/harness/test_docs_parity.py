@@ -416,3 +416,40 @@ def test_coder_entry_page_describes_current_tools(surface: str) -> None:
     assert 'allowlisted shell' not in introduction
     assert 'explorer sub-agent' not in introduction
     assert 'no default instructions' not in introduction
+
+
+# Removed MCP server classes: the per-transport `MCPServer*` classes and
+# `FastMCPToolset` were replaced by `pydantic_ai.mcp.MCPToolset` (the MCP row in
+# docs/migration.md). Harness docs pages and capability READMEs must reference the
+# current API; the migration table's V1 column is the one place that keeps the
+# old names, as the historical mapping. `MCPServerTool` and
+# `TemporalMCPServer` contain `MCPServer` but are current symbols, so only the
+# exact removed names are matched here.
+_REMOVED_MCP_SYMBOLS = (
+    'MCPServerStdio',
+    'MCPServerSSE',
+    'MCPServerStreamableHTTP',
+    'MCPServerHTTP',
+    'FastMCPToolset',
+)
+# docs/migration.md keeps the old names in the migration table's V1 column.
+_REMOVED_MCP_SYMBOL_ALLOWLIST = frozenset({_ROOT / '../../docs/migration.md'})
+
+
+def test_harness_docs_reference_no_removed_mcp_server_classes() -> None:
+    repo_root = _ROOT.parent.parent
+    scanned = sorted(_DOCS_DIR.glob('*.md'))
+    scanned += [package / 'README.md' for package in _CAPABILITY_PACKAGES]
+    scanned += sorted(_REMOVED_MCP_SYMBOL_ALLOWLIST)
+    offenders: list[str] = []
+    for path in scanned:
+        if path in _REMOVED_MCP_SYMBOL_ALLOWLIST:
+            continue
+        text = path.read_text(encoding='utf-8')
+        offenders += [
+            f'{path.relative_to(repo_root)} references {symbol}' for symbol in _REMOVED_MCP_SYMBOLS if symbol in text
+        ]
+    assert not offenders, (
+        'Removed MCP classes reappeared in harness docs; reference `pydantic_ai.mcp.MCPToolset` instead '
+        '(docs/migration.md keeps the old names as the historical mapping):\n' + '\n'.join(offenders)
+    )

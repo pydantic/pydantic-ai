@@ -576,6 +576,11 @@ def _warn_missing_return_schemas(names: Sequence[str]) -> None:
 def global_mode_is_sequential(get_mode: Callable[..., ParallelExecutionMode]) -> bool:
     """Whether the run-scoped execution mode forces sandbox tool calls to run sequentially.
 
+    Only `'sequential'` does. `'parallel_ordered_events'` runs top-level tool calls concurrently and
+    orders only their result events, which nested sandbox calls do not emit, so it dispatches them
+    concurrently like `'parallel'`. `DBOSDurability` defaults to that mode, so serializing there
+    would make every `asyncio.gather` in a DBOS run cost the sum of its calls' latencies.
+
     pydantic-ai v1's `get_parallel_execution_mode` took the pending calls list
     and folded per-tool `sequential` flags into the result; v2 dropped the
     argument and returns only the run-scoped context-var mode. Passing `[]` in
@@ -588,8 +593,8 @@ def global_mode_is_sequential(get_mode: Callable[..., ParallelExecutionMode]) ->
     major's stubs pyright resolves.
     """
     if inspect.signature(get_mode).parameters:
-        return get_mode([]) != 'parallel'
-    return get_mode() != 'parallel'
+        return get_mode([]) == 'sequential'
+    return get_mode() == 'sequential'
 
 
 @dataclass(kw_only=True)
