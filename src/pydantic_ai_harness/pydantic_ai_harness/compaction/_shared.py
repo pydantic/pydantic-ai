@@ -12,6 +12,7 @@ from dataclasses import dataclass, replace
 from json import dumps
 from typing import TYPE_CHECKING, Protocol, Self, assert_never, runtime_checkable
 
+from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -271,7 +272,9 @@ def estimate_context_tokens(
     `input_tokens` measured everything the provider was actually sent for that request --
     instructions, tool definitions, and every prior message -- and its `output_tokens` measured
     the response's own parts, so their sum is ground truth for the history up to and including
-    that response. Only the messages after the anchor are estimated with the character
+    that response. A response a provider SDK continued across several requests (Google long
+    decode) sums their usage, re-counting earlier output as input, so it anchors on the first
+    request's input tokens instead. Only the messages after the anchor are estimated with the character
     heuristic (or *tokenizer*), without re-counting instructions, which the anchor already
     covers; when the instructions changed since the anchor, the estimate swaps the old set for
     the new one rather than adding the new set on top. Tool schemas named by availability
@@ -293,7 +296,7 @@ def estimate_context_tokens(
     """
     if anchor := _latest_usage_anchor(messages):
         index, message = anchor
-        anchored = message.usage.input_tokens + message.usage.output_tokens
+        anchored = context_tokens(message)
         segments = [
             *_collect_message_text(messages[index + 1 :]),
             *_revealed_tool_schema_text(messages[index + 1 :], model_request_parameters),
@@ -327,7 +330,9 @@ def estimate_message_tokens(
     earlier one is exactly what the earlier response and the requests after it added, so those
     messages share that difference in proportion to their estimates. Where the history did not grow
     between two such responses, as across a compaction, the difference measures nothing and the
-    estimates stand; so do messages before the first such response and after the last.
+    estimates stand; so do messages before the first such response and after the last. A response a
+    provider continued across several requests enters the difference with its first request's input
+    tokens, since its summed `input_tokens` re-count the earlier requests' output.
 
     Instructions are left out: they are sent with every request, not carried by any one message.
     """
@@ -357,8 +362,11 @@ def _estimate_segments(segments: Sequence[str], tokenizer: Callable[[str], int] 
 
 
 def _reported_input_tokens(message: ModelMessage) -> int:
-    """The provider-reported input tokens of a response, or 0 for a request or a response without usage."""
-    return message.usage.input_tokens if isinstance(message, ModelResponse) else 0
+    """The provider-reported input tokens of a response, or 0 for a request or a response without usage.
+
+    For a response a provider continued across several requests, the first request's input tokens.
+    """
+    return context_input_tokens(message) if isinstance(message, ModelResponse) else 0
 
 
 def _has_reported_usage(messages: Sequence[ModelMessage]) -> bool:
