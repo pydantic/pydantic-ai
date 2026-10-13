@@ -144,13 +144,20 @@ before handing the PR back or requesting merge:
 Run this final metadata check after CI, comments, and any selected `douwebot` review have settled:
 
 1. Dispatch a fresh subagent that has not worked on the PR. Run the subagent on the latest light model your harness
-   supports, or on the session's model when the harness has only one. The check compares text against written rules.
+   supports. When the harness uses only one model, run the subagent on the session's model. The check compares text
+   against written rules.
 2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, title, body, labels, and complete catalog.
 3. Ask it to check only the title, body, and labels against this skill and the root `AGENTS.md`.
-4. Require either `current` or exact corrections: replacement title/body and label additions/removals. Each correction
-   cites the rule it enforces and quotes the title, body text, or label that breaks the rule.
-5. Verify each correction before you apply it. A correction is verified when the cited rule says what the correction
-   claims, the current title, body, or labels break that rule, and the replacement breaks no rule in this skill or the
-   root `AGENTS.md`. Apply only verified corrections. Committed changes restart the post-push loop; GitHub
-   metadata-only changes do not.
+4. Require either `current` or exact corrections: replacement title/body and label additions/removals.
+   - Require each correction to cite the rule it enforces.
+   - Require each correction to quote the title, body text, or label that breaks the rule. When the rule requires a
+     missing element, require the correction to name that element instead.
+5. Verify each correction before you apply it. A correction is verified when all three hold:
+   - The cited rule says what the correction claims.
+   - The current title, body, or labels break that rule.
+   - The corrected title, body, and labels break no rule in this skill or the root `AGENTS.md`.
+
+   Apply only verified corrections. When the current title, body, or labels break the rule an unverified correction
+   describes, write your own correction and verify it the same way. Committed changes restart the post-push loop;
+   GitHub metadata-only changes do not.
 6. Hand the PR back after you apply the verified corrections.
