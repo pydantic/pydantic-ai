@@ -108,7 +108,7 @@ Structured server error content is serialized as JSON for both `'retry'` and `'f
 
 ## Render MCP Apps in a Frontend
 
-For an MCP server that ships UI with its tools ([MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview)), pass `MCPToolset(include_app_data=True)`. Calls to a tool whose `_meta.ui.resourceUri` names a UI resource then keep an `MCPAppToolResult` under `ToolReturnPart.metadata['mcp_app']`, which the model never sees; the AG-UI adapter forwards it as an `mcp-apps` activity and the Vercel AI adapter as a `data-mcp-apps` chunk. The application is the host: it fetches the page with `read_resource_contents(uri)` (keeping the MIME type and the `_meta.ui` CSP and permissions), renders it in a sandboxed iframe, and relays the page's own requests to the server.
+For an MCP server that ships UI with its tools ([MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview)), pass `MCPToolset(include_app_data=True)`. Calls to a tool whose `_meta.ui.resourceUri` names a UI resource then keep an `MCPAppToolResult` under `ToolReturnPart.metadata['mcp_app']`, which the model never sees; the AG-UI adapter forwards it as an `mcp-apps` activity and the Vercel AI adapter as a `data-mcp-apps` chunk. The application is the host: it fetches the page with `read_resource_contents(uri)` (keeping the MIME type and the `_meta.ui` CSP and permissions), renders it in a sandboxed iframe, and relays the page's own requests (`tools/call`, `resources/read`) to the server with `handle_app_request(method, params)`, which only calls tools whose `_meta.ui.visibility` includes `"app"` and returns the full wire result, `isError` included.
 
 ## Use Embeddings for RAG
 

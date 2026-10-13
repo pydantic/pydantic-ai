@@ -785,6 +785,14 @@ class TestMCPToolsetIntegration:
         {'io.modelcontextprotocol/serverInfo': {'name': 'apps_server', 'version': IsStr()}} if MCP_SDK_V2 else {}
     )
 
+    # FastMCP 4 servers speak a newer protocol revision, whose results carry extra fields the relay passes through.
+    _APPS_RESULT_FIELDS: dict[str, Any] = {'resultType': 'complete'} if MCP_SDK_V2 else {}
+    _APPS_READ_FIELDS: dict[str, Any] = (
+        {'resultType': 'complete', 'cacheScope': 'private', 'ttlMs': 0, '_meta': _APPS_SERVER_INFO}
+        if MCP_SDK_V2
+        else {}
+    )
+
     @staticmethod
     def _mcp_apps_server() -> FastMCP[None]:
         """An MCP Apps (SEP-1865) server: two app tools, a plain tool, and the UI resource they render with."""
@@ -816,6 +824,18 @@ class TestMCPToolsetIntegration:
         def plain(city: str) -> FastMCPToolResult:
             """Has no UI."""
             return FastMCPToolResult(content=[McpTextContent(type='text', text=city)])
+
+        @server.tool(meta={'ui': {'visibility': ['app']}})
+        def select_day(day: str) -> FastMCPToolResult:
+            """Only the app calls this."""
+            if day not in ('monday', 'tuesday'):
+                raise ToolError(f'No forecast for {day}')
+            return FastMCPToolResult(content=[McpTextContent(type='text', text=day)], meta={'selectedDay': day})
+
+        @server.tool(meta={'ui': {'visibility': ['model']}})
+        def model_only() -> str:
+            """Only the model calls this."""
+            return 'model only'
 
         return server
 
@@ -948,6 +968,107 @@ class TestMCPToolsetIntegration:
         )
         assert contents.metadata is not None
         assert contents.metadata['ui'] == snapshot({'csp': {'connectDomains': ['https://api.weather.example']}})
+
+    @pytest.mark.parametrize(
+        ('method', 'params', 'expected'),
+        [
+            pytest.param(
+                'tools/call',
+                {'name': 'select_day', 'arguments': {'day': 'monday'}},
+                {
+                    'content': [{'type': 'text', 'text': 'monday'}],
+                    'isError': False,
+                    '_meta': {'selectedDay': 'monday', **_APPS_SERVER_INFO},
+                    **_APPS_RESULT_FIELDS,
+                },
+                id='app-only-tool',
+            ),
+            pytest.param(
+                'tools/call',
+                {'name': 'select_day', 'arguments': {'day': 'sunday'}},
+                {
+                    'content': [{'type': 'text', 'text': 'No forecast for sunday'}],
+                    'isError': True,
+                    **({'_meta': _APPS_SERVER_INFO} if _APPS_SERVER_INFO else {}),
+                    **_APPS_RESULT_FIELDS,
+                },
+                id='error-result',
+            ),
+            pytest.param(
+                'tools/call',
+                {'name': 'plain', 'arguments': {'city': 'a'}},
+                {'content': [{'type': 'text', 'text': 'a'}], 'isError': False, **_APPS_RESULT_FIELDS}
+                | ({'_meta': _APPS_SERVER_INFO} if _APPS_SERVER_INFO else {}),
+                id='tool-without-visibility',
+            ),
+            pytest.param(
+                'resources/read',
+                {'uri': 'ui://weather/forecast'},
+                {
+                    'contents': [
+                        {
+                            'uri': 'ui://weather/forecast',
+                            'mimeType': 'text/html;profile=mcp-app',
+                            '_meta': {'ui': {'csp': {'connectDomains': ['https://api.weather.example']}}},
+                            'text': '<!doctype html><html><body>forecast</body></html>',
+                        }
+                    ],
+                    **_APPS_READ_FIELDS,
+                },
+                id='resource-read',
+            ),
+        ],
+    )
+    async def test_handle_app_request(self, method: str, params: dict[str, Any], expected: dict[str, Any]):
+        """Requests from an MCP App view get the server's full wire result, `isError` results included."""
+        toolset = MCPToolset(self._mcp_apps_server())
+        assert await toolset.handle_app_request(method, params) == expected
+
+    @pytest.mark.parametrize(
+        ('method', 'params', 'expected_error'),
+        [
+            pytest.param(
+                'tools/call',
+                {'name': 'model_only'},
+                "Tool 'model_only' is not available to apps (code: -32602)",
+                id='model-only-tool',
+            ),
+            pytest.param(
+                'tools/call',
+                {'name': 'missing'},
+                "Tool 'missing' is not available to apps (code: -32602)",
+                id='unknown-tool',
+            ),
+            pytest.param(
+                'tools/call',
+                {'name': 'plain', 'arguments': ['a']},
+                '`tools/call` needs a string `name` and object `arguments` (code: -32602)',
+                id='malformed-arguments',
+            ),
+            pytest.param(
+                'tools/call',
+                {},
+                '`tools/call` needs a string `name` and object `arguments` (code: -32602)',
+                id='no-name',
+            ),
+            pytest.param('resources/read', {}, '`resources/read` needs a string `uri` (code: -32602)', id='no-uri'),
+            pytest.param(
+                'sampling/createMessage',
+                {},
+                "Method 'sampling/createMessage' is not supported for MCP Apps (code: -32601)",
+                id='unsupported-method',
+            ),
+            pytest.param(
+                'resources/read', {'uri': 'ui://missing'}, IsStr(regex=r'.*ui://missing.*'), id='server-error'
+            ),
+        ],
+    )
+    async def test_handle_app_request_rejects(self, method: str, params: dict[str, Any], expected_error: str):
+        """A view can't call tools hidden from apps or on other servers, nor use methods the relay doesn't support."""
+        toolset = MCPToolset(self._mcp_apps_server())
+        with pytest.raises(MCPError) as exc_info:
+            await toolset.handle_app_request(method, params)
+        assert str(exc_info.value) == expected_error
 
     async def test_tool_annotations_keep_the_wire_spelling(
         self, fastmcp_server: FastMCP[None], run_context: RunContext

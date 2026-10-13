@@ -1745,6 +1745,54 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """
         return [ResourceContents.from_mcp_sdk(c) for c in await self._read_resource(uri)]
 
+    async def handle_app_request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Send a request from an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) view to the server.
+
+        An MCP Apps view runs in the browser and can't reach the server, so the host relays its requests.
+        Call this from the endpoint your frontend forwards them to, with the JSON-RPC `method` and `params`
+        the view sent, and return the result to the view as is. Supported methods are `tools/call` and
+        `resources/read`.
+
+        A `tools/call` is only sent for a tool on this server whose `_meta.ui.visibility` includes `"app"`
+        (the default when it's omitted). Its result is the server's full `CallToolResult`, including
+        `isError` results, which are not raised. The view's `_meta` isn't forwarded, and
+        [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call] doesn't apply to these calls.
+
+        Args:
+            method: The JSON-RPC method the view sent.
+            params: The JSON-RPC params the view sent.
+
+        Returns:
+            The result in MCP wire format.
+
+        Raises:
+            MCPError: If the method isn't supported, the params are malformed, the tool isn't available
+                to apps, or the server returns an error. Send its `code`, `message` and `data` to the view
+                as the JSON-RPC error.
+        """
+        params = params or {}
+        async with self:
+            try:
+                if method == 'tools/call':
+                    name = params.get('name')
+                    arguments = params.get('arguments', {})
+                    if not isinstance(name, str) or not _utils.is_str_dict(arguments):
+                        raise MCPError(message='`tools/call` needs a string `name` and object `arguments`', code=-32602)
+                    tool = next((t for t in await self.list_tools() if t.name == name), None)
+                    if tool is None or not _app_can_call(tool):
+                        raise MCPError(message=f'Tool {name!r} is not available to apps', code=-32602)
+                    result = await self.client.call_tool_mcp(name, arguments)
+                elif method == 'resources/read':
+                    uri = params.get('uri')
+                    if not isinstance(uri, str):
+                        raise MCPError(message='`resources/read` needs a string `uri`', code=-32602)
+                    result = await self.client.read_resource_mcp(uri)
+                else:
+                    raise MCPError(message=f'Method {method!r} is not supported for MCP Apps', code=-32601)
+            except McpError as e:
+                raise MCPError.from_mcp_sdk(e) from e
+        return result.model_dump(mode='json', by_alias=True, exclude_none=True)
+
     async def _read_resource(
         self, uri: str | Resource
     ) -> list[mcp_types.TextResourceContents | mcp_types.BlobResourceContents]:
@@ -1939,6 +1987,15 @@ def _app_resource_uri(tool_def: ToolDefinition) -> str | None:
             return uri
         case _:
             return None
+
+
+def _app_can_call(tool: mcp_types.Tool) -> bool:
+    """Whether an MCP Apps view may call a tool: `_meta.ui.visibility` includes `"app"`, or is omitted."""
+    match tool.meta:
+        case {'ui': {'visibility': visibility}} if isinstance(visibility, list):
+            return 'app' in visibility
+        case _:
+            return True
 
 
 def _call_tool_result_to_wire(result: CallToolResult) -> dict[str, Any]:
