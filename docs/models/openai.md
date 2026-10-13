@@ -299,7 +299,7 @@ async def main():
 
 [`openai_previous_response_id='auto'`](#referencing-earlier-responses) makes each continuation send only new input items, including tool results within a single run. Without that setting, the connected model sends the full mapped message history on each request. Keep passing the conversation or message history between runs in either case.
 
-The connection binds the model configured on the agent for every run in the context. It takes precedence over `run(model=...)` and run-dependent model selection, so choose a concrete model before connecting.
+Runs in the context that don't pass `model=` use the connection; a run's `model=` argument is honored as usual.
 
 Each connection owns one ordered response stream and supports **one active response at a time**. Concurrent tasks can open separate `agent.connect()` contexts on the same agent. Finishing a response leaves the socket open; cancelling a request, leaving a stream before completion, or losing the transport closes it. Further requests in that context raise an error. `Agent.connect()` owns the provider client of a temporary model created for the connection; existing model instances and agent tools retain their lifetimes. Exiting restores the agent's previous model selection, so an ordinary Responses agent uses HTTP again. Opening or closing an `Agent` context inside `connect()` does not close the socket.
 

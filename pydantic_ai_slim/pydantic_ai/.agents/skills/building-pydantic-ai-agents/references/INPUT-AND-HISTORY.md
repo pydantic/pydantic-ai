@@ -53,7 +53,7 @@ Important distinctions:
 
 Use `async with agent.connect():` on an agent configured with an OpenAI Responses model, including `Agent('openai-responses:gpt-6-astra')`. Call the agent's ordinary run methods inside the context; the context binds the connection automatically. Keep passing the conversation between runs. Set `OpenAIResponsesModelSettings(openai_previous_response_id='auto')` to send only new input, including internal tool results.
 
-The connection binds the configured model for every run, including a run that passes `model=`. It takes precedence over run-dependent model selection, so configure a concrete model before connecting.
+Runs without `model=` use the connection; a run's `model=` argument is honored as usual.
 
 Keep the connection context open for the whole tool loop. Run one response at a time per connection. Concurrent tasks can open separate contexts on the same agent. An agent connection owns the provider client of a temporary model created for the connection; existing model instances and agent tools keep their lifetimes. Context exit restores the agent's previous model selection.
 

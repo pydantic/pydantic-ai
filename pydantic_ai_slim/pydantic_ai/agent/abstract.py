@@ -13,7 +13,13 @@ from collections.abc import (
     Sequence,
 )
 from concurrent.futures import Executor
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    contextmanager,
+)
 from dataclasses import dataclass
 from types import FrameType, TracebackType
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeAlias, cast, overload
@@ -1746,12 +1752,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         The configured model must support [`Model.connect()`][pydantic_ai.models.Model.connect],
         such as [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
         A model selected by a run-dependent capability cannot be connected outside a run.
-        The connection binds the configured model for every run in the context, including runs
-        that pass `model=`. It takes precedence over per-run model arguments and run-dependent
-        model selection; configure the model before entering the context.
 
-        Runs use the connected model without an additional `model` argument. The connection
-        closes and the previous model selection is restored when the context exits. Each context
+        Runs in the context that don't pass `model=` use the connected model; a run's `model=`
+        argument is honored as usual. The connection closes when the context exits. Each context
         opens an independent connection; concurrent tasks can open their own contexts on the same agent.
         The model's connection context defines request concurrency and interruption behavior.
 
@@ -1777,13 +1780,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             else:
                 model = selection
             async with model.connect() as connected:
-                with self.override(model=connected):
+                with self._use_connected_model(connected):
                     yield self
 
     def _get_model_selection_outside_run(
         self, model: models.Model | models.KnownModelName | str | None = None
     ) -> models.Model | str:
         """Resolve the configured model selection for operations that do not have run dependencies."""
+        raise NotImplementedError
+
+    def _use_connected_model(self, model: models.Model) -> AbstractContextManager[None]:
+        """Use a connected model in place of the configured model selection for runs in this context."""
         raise NotImplementedError
 
     @contextmanager

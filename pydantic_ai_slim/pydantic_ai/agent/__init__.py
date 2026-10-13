@@ -807,6 +807,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_model: ContextVar[_utils.Option[models.Model | models.KnownModelName | str]] = ContextVar(
             '_override_model', default=None
         )
+        self._connected_model: ContextVar[models.Model | None] = ContextVar('_connected_model', default=None)
         self._override_toolsets: ContextVar[_utils.Option[Sequence[AbstractToolset[AgentDepsT]]]] = ContextVar(
             '_override_toolsets', default=None
         )
@@ -1553,6 +1554,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         metadata = {**resolved.metadata, **metadata}
                 else:
                     metadata = resolved.metadata
+
+        # `connect()` replaces only the configured model selection: run and spec models still win.
+        if model is None:
+            model = self._connected_model.get()
 
         # `override(retries=...)` wins over the run kwarg + spec, matching the precedence
         # of `model`/`deps`/`instructions`/etc. (see `Agent._get_model`). This keeps testing
@@ -3217,6 +3222,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if entered_model := self._entered_models_by_selection.get((id(capability), selection)):
                 return entered_model
         return selection
+
+    @contextmanager
+    def _use_connected_model(self, model: models.Model) -> Generator[None]:
+        if self._override_model.get() is not None:
+            # An override model already wins over run models, so the connection replaces it.
+            with self.override(model=model):
+                yield
+            return
+        token = self._connected_model.set(model)
+        try:
+            yield
+        finally:
+            self._connected_model.reset(token)
 
     def _resolve_instrumentation_settings(self) -> InstrumentationSettings | None:
         """Resolve effective `InstrumentationSettings` from `Agent.instrument_all` / `agent.instrument`."""

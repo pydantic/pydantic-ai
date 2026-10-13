@@ -452,23 +452,29 @@ async def test_agent_connection_closes_inferred_provider_after_count_tokens(
         assert socket.close_count == 1
 
 
-async def test_agent_connection_pins_model_and_restores_run_override(
-    allow_model_requests: None, sockets: SocketHarness, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize('selection', ['configured', 'static-capability'])
+async def test_agent_connection_replaces_only_configured_model(
+    allow_model_requests: None, sockets: SocketHarness, monkeypatch: pytest.MonkeyPatch, selection: str
 ):
-    """The connection wins over a run model, then the explicit run model works after exit."""
+    """Runs without `model=` use the connection; run models and overrides inside it keep their precedence."""
     monkeypatch.setenv('OPENAI_API_KEY', 'test')
     socket = sockets.pending[0]
-    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
-    agent = Agent(source)
-    explicit_model = TestModel(custom_output_text='explicit run model')
+    socket.responses.append(text_events('connected again', 'resp_again'))
+    if selection == 'configured':
+        agent = Agent(OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test')))
+    else:
+        agent = Agent(capabilities=[StaticModelCapability()], deps_type=type(None))
 
     async with agent.connect():
-        connected_result = await agent.run('inside', model=explicit_model)
-        assert connected_result.output == 'ready'
+        explicit_result = await agent.run('inside', model=TestModel(custom_output_text='explicit run model'))
+        assert explicit_result.output == 'explicit run model'
+        assert socket.sent == []
+        assert (await agent.run('connected')).output == 'ready'
+        with agent.override(model=TestModel(custom_output_text='override model')):
+            assert (await agent.run('overridden')).output == 'override model'
+        assert (await agent.run('connected again')).output == 'connected again'
 
-    outside_result = await agent.run('outside', model=explicit_model)
-    assert outside_result.output == 'explicit run model'
-    assert len(socket.sent) == 1
+    assert len(socket.sent) == 2
     assert socket.close_count == 1
 
 
