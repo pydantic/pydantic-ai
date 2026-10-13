@@ -831,6 +831,62 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
     assert len(client.posts) == 1
 
 
+def test_shim_time_limit_opens_a_task_incident_that_does_not_blame_the_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A run that used its whole time budget is reported as its own limit, not a provider timeout."""
+    workflow = 'CI Review'
+    task_key = 'CI Review:workflow_run:pr-123:head-a1b2'
+    monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', task_key)
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'workflow_run')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    shim.emit_result(
+        'run timed out after 28min', usage=None, session_id='s', is_error=True, error=shim.RunTimeLimitExceeded()
+    )
+    agent_artifact = tmp_path / 'agent-stdio.log'
+    agent_artifact.write_text(capsys.readouterr().out)
+    health_artifact = tmp_path / 'provider-health.json'
+    _write_health(
+        health_artifact,
+        health.Health(
+            workflow,
+            task_key,
+            'workflow_run',
+            1,
+            True,
+            'Provider health check passed',
+            '2026-10-01T12:00:00Z',
+            health.Quota('healthy'),
+        ),
+    )
+    client = FakeGitHub()
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+
+    _monitor_command(
+        argparse.Namespace(
+            repository=None,
+            run_id=70,
+            run_attempt=1,
+            conclusion='failure',
+            health_artifact=health_artifact,
+            agent_artifact=agent_artifact,
+            dry_run=False,
+            recover_issue=None,
+        )
+    )
+
+    [issue] = client.issues
+    assert _marker_from_body(issue.body) == health.IncidentMarker(
+        'task', f'{workflow}:{task_key}', 'time_limit', '70', None
+    )
+    assert issue.body.startswith('## Operational failure\n\nThe agent reached its per-run time limit\n\n')
+    assert 'The run stopped at its own limit, not on a provider error.' in issue.body
+    assert 'Confirm provider credentials' not in issue.body
+
+
 @pytest.mark.parametrize('stale_is_error', [False, True])
 def test_monitor_uses_fresh_quota_when_agent_result_is_from_prior_attempt(
     stale_is_error: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
