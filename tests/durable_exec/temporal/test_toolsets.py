@@ -26,6 +26,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelRetry,
     MultiModalContent,
     PartStartEvent,
     RequestUsage,
@@ -490,6 +491,115 @@ async def test_dynamic_toolset_outside_workflow():
         'Get the weather for Paris', deps=DynamicToolsetDeps(user_name='Bob')
     )
     assert result.output == snapshot('{"get_dynamic_weather":"Weather in a for Bob: sunny."}')
+
+
+# --- `prepare` retry counts behind prefixed and renamed toolsets (issue #9741) ---
+# A tool's `prepare` looks its retry count up by the name the model sees. A dynamic toolset lists its tools
+# inside an activity, so the prefixes and renames around it have to travel with the run context.
+
+
+def _call_first_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if info.function_tools:
+        return ModelResponse(parts=[ToolCallPart(info.function_tools[0].name, {})])
+    return ModelResponse(
+        parts=[TextPart(f'No tools left. {info.instructions}' if info.instructions else 'No tools left.')]
+    )
+
+
+def _retry_aware_toolset(toolset_id: str) -> FunctionToolset[None]:
+    toolset = FunctionToolset[None](id=toolset_id)
+
+    async def disable_after_failure(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        return None if ctx.retry else tool_def
+
+    @toolset.tool(prepare=disable_after_failure)
+    async def fail(ctx: RunContext[None]) -> str:
+        raise ModelRetry('Choose another approach.')
+
+    return toolset
+
+
+def _retry_aware_toolset_with_instructions(ctx: RunContext[None]) -> FunctionToolset[None]:
+    toolset = _retry_aware_toolset('dynamic_retry_aware')
+
+    @toolset.instructions
+    def failures(ctx: RunContext[None]) -> str:
+        return f'demo_fail failed {ctx.retries.get("demo_fail", 0)} times.'
+
+    return toolset
+
+
+def _toolset_until_failure(ctx: RunContext[None]) -> FunctionToolset[None] | None:
+    if ctx.retries.get('demo_fail', 0):
+        return None
+    toolset = FunctionToolset[None](id='dynamic_until_failure')
+
+    @toolset.tool
+    async def fail(ctx: RunContext[None]) -> str:
+        raise ModelRetry('Choose another approach.')
+
+    return toolset
+
+
+def _prepare_retry_agent(name: str, toolset: AbstractToolset[None]) -> Agent[None, str]:
+    return Agent(
+        FunctionModel(_call_first_tool),
+        name=f'prepare_retry_{name}',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+
+
+PREPARE_RETRY_AGENTS = {
+    'prefixed': _prepare_retry_agent('prefixed', _retry_aware_toolset('static_prefixed').prefixed('demo')),
+    'nested': _prepare_retry_agent('nested', _retry_aware_toolset('static_nested').prefixed('inner').prefixed('outer')),
+    'renamed': _prepare_retry_agent('renamed', _retry_aware_toolset('static_renamed').renamed({'demo_fail': 'fail'})),
+    'dynamic': _prepare_retry_agent(
+        'dynamic', DynamicToolset[None](_retry_aware_toolset_with_instructions, id='dynamic').prefixed('demo')
+    ),
+    'dynamic_gate': _prepare_retry_agent(
+        'dynamic_gate', DynamicToolset[None](_toolset_until_failure, id='dynamic_gate').prefixed('demo')
+    ),
+}
+
+
+@workflow.defn
+class PrepareRetryWorkflow:
+    @workflow.run
+    async def run(self, agent_name: str) -> str:
+        result = await PREPARE_RETRY_AGENTS[agent_name].run('Try the tool.')
+        return result.output
+
+
+async def test_tool_name_wrapper_prepare_retry_in_workflow(client: Client):
+    """Behind a prefix or rename, a tool's `prepare` sees its retry count in a workflow too, and `ctx.retries` keeps the names the model sees.
+
+    `dynamic` lists its tools and instructions inside an activity: its `prepare` disables the tool after one
+    failure, and its instructions read the count under the exposed name. `dynamic_gate` stops offering its
+    tool from the factory once `ctx.retries['demo_fail']` is set, which the call activity must agree with.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PrepareRetryWorkflow],
+        plugins=[AgentPlugin(agent) for agent in PREPARE_RETRY_AGENTS.values()],
+    ):
+        outputs = {
+            name: await client.execute_workflow(
+                PrepareRetryWorkflow.run, args=[name], id=f'test_prepare_retry_{name}', task_queue=TASK_QUEUE
+            )
+            for name in PREPARE_RETRY_AGENTS
+        }
+    assert outputs == snapshot(
+        {
+            'prefixed': 'No tools left.',
+            'nested': 'No tools left.',
+            'renamed': 'No tools left.',
+            'dynamic': 'No tools left. demo_fail failed 1 times.',
+            'dynamic_gate': 'No tools left.',
+        }
+    )
 
 
 # --- DynamicToolset.get_instructions test (issue #5282) ---

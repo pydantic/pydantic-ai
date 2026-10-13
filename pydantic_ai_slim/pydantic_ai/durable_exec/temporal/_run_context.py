@@ -240,6 +240,9 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             # deferred capability (whose load is itself the reveal for its tools) from one that has
             # since been reconfigured always-on. Derived from the registry, so it must travel too.
             '_deferred_capability_ids': ctx._deferred_capability_ids,
+            # The prefixes and renames around a dynamic toolset, so its tools' `prepare` functions see the
+            # same retry counts inside the activity as they would in-process.
+            '_tool_name_layers': ctx._tool_name_layers,
             'capability_active': ctx.capability_active,
         }
         # Only the reference crosses into the activity; the live handle stays in the workflow, and

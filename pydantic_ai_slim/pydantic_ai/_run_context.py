@@ -211,12 +211,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     instrumentation_version: int = DEFAULT_INSTRUMENTATION_VERSION
     """Instrumentation settings version, if instrumentation is enabled."""
     retries: dict[str, int] = field(default_factory=dict[str, int])
-    """Number of retries for each tool so far, keyed by the tool name the model sees.
-
-    While a prefixed or renamed toolset lists its tools (for example in a tool's `prepare` function), a wrapped
-    tool's count is keyed by its original name. A prefixed toolset sees only its own tools' counts, without the
-    prefix, while a renamed toolset keeps the other keys too.
-    """
+    """Number of retries for each tool so far."""
     tool_call_id: str | None = None
     """The ID of the tool call."""
     tool_name: str | None = None
@@ -450,6 +445,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     _capability: AbstractCapability[RunContextAgentDepsT] | None = field(default=None, repr=False)
     """The capability whose hook is currently being dispatched, if any."""
 
+    _tool_name_layers: tuple[str | dict[str, str], ...] = field(default=(), repr=False)
+    """How the toolsets wrapping the one being listed or called change tool names, outermost first.
+
+    Each layer is a prefix added by a `PrefixedToolset` or an original-to-new name map from a
+    `RenamedToolset`. A wrapped toolset uses them to find the name the model sees, which is the name
+    `retries` counts under. See `_exposed_tool_name`.
+    """
+
     @property
     def model_id(self) -> str | None:
         """The identifier from which the run's active `model` was resolved.
@@ -548,6 +551,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
             # A durable run context can omit live model state and message history at an activity boundary.
             return None
         return context_window_fraction(messages, model.context_window)
+
+    def _exposed_tool_name(self, name: str) -> str:
+        """The name the model sees for a tool that the toolset being listed or called names `name`."""
+        for layer in reversed(self._tool_name_layers):
+            name = f'{layer}{name}' if isinstance(layer, str) else layer.get(name, name)
+        return name
 
     def _emit_event(self, event: _messages.AgentStreamEvent) -> None:
         """Append an event to the run's event buffer for the agent graph to drain into the event stream.

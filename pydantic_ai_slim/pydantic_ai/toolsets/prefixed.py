@@ -22,14 +22,7 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
         return 'Change the `prefix` attribute to avoid name conflicts.'
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        # Preparation uses the original names, while the manager tracks retries under the exposed names.
-        prefix = f'{self.prefix}_'
-        ctx = replace(
-            ctx,
-            retries={
-                name.removeprefix(prefix): count for name, count in ctx.retries.items() if name.startswith(prefix)
-            },
-        )
+        ctx = self._with_name_layer(ctx)
         return {
             new_name: replace(
                 tool,
@@ -37,13 +30,18 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
                 tool_def=replace(tool.tool_def, name=new_name),
             )
             for name, tool in (await super().get_tools(ctx)).items()
-            if (new_name := f'{prefix}{name}')
+            if (new_name := f'{self.prefix}_{name}')
         }
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         original_name = name.removeprefix(self.prefix + '_')
-        ctx = replace(ctx, tool_name=original_name)
+        # Calling a dynamic toolset durably lists its tools again, which needs the same retry counts.
+        ctx = replace(self._with_name_layer(ctx), tool_name=original_name)
         tool = replace(tool, tool_def=replace(tool.tool_def, name=original_name))
         return await super().call_tool(original_name, tool_args, ctx, tool)
+
+    def _with_name_layer(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        layers = (*ctx._tool_name_layers, f'{self.prefix}_')  # pyright: ignore[reportPrivateUsage]
+        return replace(ctx, _tool_name_layers=layers)

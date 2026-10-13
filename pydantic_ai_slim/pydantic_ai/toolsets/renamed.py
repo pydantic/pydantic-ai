@@ -20,21 +20,7 @@ class RenamedToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_to_new_name_map = {v: k for k, v in self.name_map.items()}
-        # Preparation uses the original names, while the manager tracks retries under the exposed names.
-        # An exposed name equal to a renamed-away original belongs to a different tool, so its count is dropped.
-        # Exposed names stay: an entry whose original is absent leaves a same-named inner tool exposed under that name.
-        ctx = replace(
-            ctx,
-            retries={
-                **{name: count for name, count in ctx.retries.items() if name not in original_to_new_name_map},
-                **{
-                    original_name: ctx.retries[new_name]
-                    for original_name, new_name in original_to_new_name_map.items()
-                    if new_name in ctx.retries
-                },
-            },
-        )
-        original_tools = await super().get_tools(ctx)
+        original_tools = await super().get_tools(self._with_name_layer(ctx))
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for original_name, tool in original_tools.items():
             new_name = original_to_new_name_map.get(original_name, None)
@@ -58,6 +44,12 @@ class RenamedToolset(WrapperToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         original_name = self.name_map.get(name, name)
-        ctx = replace(ctx, tool_name=original_name)
+        # Calling a dynamic toolset durably lists its tools again, which needs the same retry counts.
+        ctx = replace(self._with_name_layer(ctx), tool_name=original_name)
         tool = replace(tool, tool_def=replace(tool.tool_def, name=original_name))
         return await super().call_tool(original_name, tool_args, ctx, tool)
+
+    def _with_name_layer(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        original_to_new_name_map = {v: k for k, v in self.name_map.items()}
+        layers = (*ctx._tool_name_layers, original_to_new_name_map)  # pyright: ignore[reportPrivateUsage]
+        return replace(ctx, _tool_name_layers=layers)

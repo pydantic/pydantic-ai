@@ -632,7 +632,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             run_context = replace(
                 ctx,
                 tool_name=original_name,
-                retry=ctx.retries.get(original_name, 0),
+                retry=ctx.retries.get(ctx._exposed_tool_name(original_name), 0),  # pyright: ignore[reportPrivateUsage]
                 max_retries=max_retries,
             )
             tool_def = await tool.prepare_tool_def(run_context)

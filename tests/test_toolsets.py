@@ -2000,6 +2000,86 @@ async def test_tool_name_wrapper_prepare_retry_isolated_from_same_named_tool(wra
     assert prepare_retries == [0, 0, 1]
 
 
+@pytest.mark.parametrize('wrapper', ['prefixed', 'renamed'])
+async def test_tool_name_wrapper_keeps_retries_keys(wrapper: str):
+    """While a prefixed or renamed toolset lists its tools, `ctx.retries` keeps the names the model sees.
+
+    Tool `prepare` functions, `.prepared()` and `.filtered()` functions inside the wrapper all see the run's
+    counts, including those of tools outside it, under their exposed names.
+    """
+    plain = FunctionToolset[None]()
+    wrapped = FunctionToolset[None]()
+    seen: dict[str, list[dict[str, int]]] = {'prepare': [], 'prepared': [], 'filtered': []}
+
+    async def prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        return None if ctx.retry else tool_def
+
+    async def prepare_wrapped(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        seen['prepare'].append(dict(ctx.retries))
+        return await prepare(ctx, tool_def)
+
+    @plain.tool_plain(prepare=prepare)
+    async def fail() -> str:
+        raise ModelRetry('Choose another approach.')
+
+    @wrapped.tool_plain(name='fail', prepare=prepare_wrapped)
+    async def another_fail() -> str:
+        raise ModelRetry('Choose another approach.')
+
+    def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        seen['prepared'].append(dict(ctx.retries))
+        return tool_defs
+
+    def filter_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> bool:
+        seen['filtered'].append(dict(ctx.retries))
+        return True
+
+    listed = wrapped.prepared(prepare_tools).filtered(filter_tool)
+    result = await Agent(
+        FunctionModel(call_first_available_tool),
+        deps_type=type(None),
+        toolsets=[plain, TOOL_NAME_WRAPPERS[wrapper](listed)],
+    ).run('Try the tools.')
+
+    assert result.output == 'No tools left.'
+    assert seen == snapshot(
+        {
+            'prepare': [{}, {'fail': 1}, {'fail': 1, 'demo_fail': 1}],
+            'prepared': [{}, {'fail': 1}, {'fail': 1, 'demo_fail': 1}],
+            'filtered': [{}, {'fail': 1}],
+        }
+    )
+
+
+async def test_prefixed_toolset_retries_reset_in_place():
+    """A `.prepared()` function inside a prefixed toolset gets the run's own `ctx.retries`, so clearing a count resets it."""
+    toolset = FunctionToolset[None]()
+    calls: list[int] = []
+
+    @toolset.tool
+    async def fail(ctx: RunContext[None]) -> str:
+        calls.append(ctx.retry)
+        raise ModelRetry('Choose another approach.')
+
+    def reset_retries(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        ctx.retries.pop('demo_fail', None)
+        return tool_defs
+
+    def call_three_times(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(calls) < 3:
+            return ModelResponse(parts=[ToolCallPart('demo_fail', {})])
+        return ModelResponse(parts=[TextPart('Survived.')])
+
+    result = await Agent(
+        FunctionModel(call_three_times),
+        deps_type=type(None),
+        toolsets=[toolset.prepared(reset_retries).prefixed('demo')],
+    ).run('Try the tool.')
+
+    assert result.output == 'Survived.'
+    assert calls == [0, 0, 0]
+
+
 async def test_renamed_toolset_name_collision():
     """Renaming a tool onto a name another tool already occupies must raise, not silently drop one.
 
