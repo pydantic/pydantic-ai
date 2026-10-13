@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import sys
 import warnings
 from typing import TYPE_CHECKING, TypeAlias, TypeVar
 
-# Import httpcore2 eagerly: httpx2 defers it to first client construction, which performs blocking
-# I/O if that happens inside the event loop.
-import httpcore2  # noqa: F401  # pyright: ignore[reportUnusedImport]
+if sys.platform != 'emscripten':
+    # On emscripten, httpx2 uses a separate HTTP adaptor that does not depend on
+    # httpcore2, so we only import httpcore2 on non-emscripten platforms.
+
+    # Import httpcore2 eagerly: httpx2 defers it to first client construction, which performs blocking
+    # I/O if that happens inside the event loop.
+    import httpcore2  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import httpx2
 
 from ._warnings import PydanticAIDeprecationWarning
