@@ -66,7 +66,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and run its tests.')
 ```
 
-The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B and Sprites. A
+The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B and Sprites, and a local smolvm microVM. A
 sandbox is created the first time the run uses it (a tool call, or `Coder` loading repo
 instructions at run start; durable runs create it when they start), and keeps running after the run until you or its
 provider stop it; see [Cleaning up](#cleaning-up). If the run never used it, calling a method on `result.workspace` after a run with `ref=None` may create a new sandbox that no message records. Check the ref before using the workspace after a run, and arrange to clean up any new sandbox you create.
