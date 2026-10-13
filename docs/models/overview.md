@@ -662,7 +662,6 @@ def answer(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('The capital of France is Paris.')])
 
 
-# These deterministic models simulate an empty primary response and a backup answer.
 def has_no_actionable_output(response: ModelResponse) -> bool:
     return not any(
         (isinstance(part, TextPart) and part.has_content())
@@ -672,6 +671,7 @@ def has_no_actionable_output(response: ModelResponse) -> bool:
 
 
 agent = Agent(
+    # These deterministic models simulate an empty primary response and a backup answer.
     FallbackModel(
         FunctionModel(empty, model_name='primary'),
         FunctionModel(answer, model_name='backup'),
