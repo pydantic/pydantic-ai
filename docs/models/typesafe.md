@@ -182,13 +182,13 @@ These come from running Jev behind Pydantic AI, not from TypeSafe.
 Jev reads text only. To ask about a document, image or video, add the [File Understanding](../capabilities/file-understanding.md) capability with a model that can read it, and Jev gets a description in the file's place:
 
 ```python
-from enum import Enum
+from enum import StrEnum
 
 from pydantic_ai import Agent, DocumentUrl
 from pydantic_ai.capabilities import FileUnderstanding
 
 
-class DocumentSubject(str, Enum):
+class DocumentSubject(StrEnum):
     """What is this document about?"""
 
     animals = 'animals'
