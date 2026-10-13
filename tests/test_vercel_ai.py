@@ -5011,24 +5011,64 @@ async def test_adapter_dump_messages():
                 'id': IsStr(),
                 'role': 'system',
                 'metadata': None,
-                'parts': [
-                    {'type': 'text', 'text': 'You are a helpful assistant.', 'state': 'done', 'provider_metadata': None}
-                ],
+                'parts': [{'type': 'text', 'text': 'You are a helpful assistant.', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
                 'role': 'user',
                 'metadata': None,
-                'parts': [{'type': 'text', 'text': 'Hello, world!', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Hello, world!', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
                 'role': 'assistant',
                 'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
-                'parts': [{'type': 'text', 'text': 'Hi there!', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Hi there!', 'state': 'done'}],
             },
         ]
     )
+
+
+async def test_adapter_dump_messages_omits_unset_optional_fields(tiny_image: BinaryImage):
+    """The AI SDK's `validateUIMessages` rejects `null` for optional part fields, so unset ones are omitted."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Hello', tiny_image, ImageUrl(url='https://example.com/a.png')])]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Thinking'),
+                TextPart(content='Hi'),
+                FilePart(content=tiny_image),
+                ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='call_1'),
+                ToolCallPart(tool_name='noop', args={}, tool_call_id='call_2'),
+                ToolCallPart(tool_name='flaky', args={}, tool_call_id='call_3'),
+                NativeToolCallPart(tool_name='web_search', args={'query': 'x'}, tool_call_id='call_4'),
+                NativeToolReturnPart(tool_name='web_search', content={'results': []}, tool_call_id='call_4'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_weather', content='Sunny', tool_call_id='call_1'),
+                ToolReturnPart(tool_name='noop', content=None, tool_call_id='call_2'),
+                RetryPromptPart(tool_name='flaky', content='Try again', tool_call_id='call_3'),
+            ]
+        ),
+        ModelResponse(parts=[ToolCallPart(tool_name='deferred', args={}, tool_call_id='call_5')]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages, sdk_version=6)
+    dumped = [msg.model_dump(mode='json', by_alias=True) for msg in ui_messages]
+
+    # `output: null` is a real tool result, which the AI SDK accepts and `load_messages` restores.
+    null_keys = [
+        (part['type'], key) for msg in dumped for part in msg['parts'] for key, value in part.items() if value is None
+    ]
+    assert null_keys == snapshot([('tool-noop', 'output')])
+
+    reloaded = VercelAIAdapter.load_messages([UIMessage.model_validate(msg) for msg in dumped])
+    noop_return = next(
+        part for part in iter_message_parts(reloaded, ModelRequest, ToolReturnPart) if part.tool_call_id == 'call_2'
+    )
+    assert noop_return.content is None
 
 
 async def test_adapter_dump_messages_with_tools():
@@ -5066,25 +5106,21 @@ async def test_adapter_dump_messages_with_tools():
                 'id': IsStr(),
                 'role': 'user',
                 'metadata': None,
-                'parts': [{'type': 'text', 'text': 'Search for something', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Search for something', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
                 'role': 'assistant',
                 'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
                 'parts': [
-                    {'type': 'text', 'text': 'Let me search for that.', 'state': 'done', 'provider_metadata': None},
+                    {'type': 'text', 'text': 'Let me search for that.', 'state': 'done'},
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'tool_123',
-                        'title': None,
                         'state': 'output-available',
                         'input': {'query': 'test query'},
                         'provider_executed': False,
                         'output': {'results': ['result1', 'result2']},
-                        'call_provider_metadata': None,
-                        'preliminary': None,
-                        'approval': None,
                     },
                 ],
             },
@@ -5092,9 +5128,7 @@ async def test_adapter_dump_messages_with_tools():
                 'id': IsStr(),
                 'role': 'assistant',
                 'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
-                'parts': [
-                    {'type': 'text', 'text': 'Here are the results.', 'state': 'done', 'provider_metadata': None}
-                ],
+                'parts': [{'type': 'text', 'text': 'Here are the results.', 'state': 'done'}],
             },
         ]
     )
@@ -5769,7 +5803,7 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
                 'id': IsStr(),
                 'role': 'user',
                 'metadata': None,
-                'parts': [{'type': 'text', 'text': 'Send data', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Send data', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
@@ -5779,18 +5813,13 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
                     {
                         'type': 'tool-send_data',
                         'tool_call_id': 'call_1',
-                        'title': None,
                         'state': 'output-available',
                         'input': {},
                         'provider_executed': False,
                         'output': 'Data sent',
-                        'call_provider_metadata': None,
-                        'preliminary': None,
-                        'approval': None,
                     },
                     {
                         'type': 'data-custom',
-                        'id': None,
                         'data': {'key': 'value'},
                     },
                 ],
@@ -5799,7 +5828,7 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
                 'id': IsStr(),
                 'role': 'assistant',
                 'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
-                'parts': [{'type': 'text', 'text': 'Done', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Done', 'state': 'done'}],
             },
         ]
     )
@@ -5843,7 +5872,7 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
                 'id': IsStr(),
                 'role': 'user',
                 'metadata': None,
-                'parts': [{'type': 'text', 'text': 'Send events', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Send events', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
@@ -5853,23 +5882,17 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
                     {
                         'type': 'tool-send_events',
                         'tool_call_id': 'call_1',
-                        'title': None,
                         'state': 'output-available',
                         'input': {},
                         'provider_executed': False,
                         'output': 'Events sent',
-                        'call_provider_metadata': None,
-                        'preliminary': None,
-                        'approval': None,
                     },
                     {
                         'type': 'data-event1',
-                        'id': None,
                         'data': {'key1': 'value1'},
                     },
                     {
                         'type': 'data-event2',
-                        'id': None,
                         'data': {'key2': 'value2'},
                     },
                 ],
@@ -5878,7 +5901,7 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
                 'id': IsStr(),
                 'role': 'assistant',
                 'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
-                'parts': [{'type': 'text', 'text': 'Done', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Done', 'state': 'done'}],
             },
         ]
     )
@@ -5933,7 +5956,7 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                 'id': IsStr(),
                 'role': 'user',
                 'metadata': None,
-                'parts': [{'type': 'text', 'text': 'Send data', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Send data', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
@@ -5943,40 +5966,22 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                     {
                         'type': 'tool-send_data',
                         'tool_call_id': 'call_1',
-                        'title': None,
                         'state': 'output-available',
                         'input': {},
                         'provider_executed': False,
                         'output': 'Data sent',
-                        'call_provider_metadata': None,
-                        'preliminary': None,
-                        'approval': None,
                     },
-                    {
-                        'type': 'source-url',
-                        'source_id': 'src_1',
-                        'url': 'https://example.com',
-                        'title': 'Example',
-                        'provider_metadata': None,
-                    },
+                    {'type': 'source-url', 'source_id': 'src_1', 'url': 'https://example.com', 'title': 'Example'},
                     {
                         'type': 'source-document',
                         'source_id': 'doc_1',
                         'media_type': 'application/pdf',
                         'title': 'Doc',
                         'filename': 'doc.pdf',
-                        'provider_metadata': None,
                     },
-                    {
-                        'type': 'file',
-                        'media_type': 'image/png',
-                        'filename': None,
-                        'url': 'https://example.com/file.png',
-                        'provider_metadata': None,
-                    },
+                    {'type': 'file', 'media_type': 'image/png', 'url': 'https://example.com/file.png'},
                     {
                         'type': 'data-valid',
-                        'id': None,
                         'data': {'survived': True},
                     },
                 ],
@@ -5985,7 +5990,7 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                 'id': IsStr(),
                 'role': 'assistant',
                 'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
-                'parts': [{'type': 'text', 'text': 'Done', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Done', 'state': 'done'}],
             },
         ]
     )
@@ -6090,7 +6095,7 @@ async def test_adapter_dump_messages_with_builtin_tools():
                 'id': IsStr(),
                 'role': 'user',
                 'metadata': None,
-                'parts': [{'type': 'text', 'text': 'Search for something', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Search for something', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
@@ -6100,7 +6105,6 @@ async def test_adapter_dump_messages_with_builtin_tools():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'tool_456',
-                        'title': None,
                         'state': 'output-available',
                         'input': {'query': 'test'},
                         'output': {'status': 'completed'},
@@ -6117,8 +6121,6 @@ async def test_adapter_dump_messages_with_builtin_tools():
                                 },
                             }
                         },
-                        'preliminary': None,
-                        'approval': None,
                     }
                 ],
             },
@@ -6151,7 +6153,7 @@ async def test_adapter_dump_messages_with_builtin_tool_without_return():
                 'id': IsStr(),
                 'role': 'user',
                 'metadata': None,
-                'parts': [{'type': 'text', 'text': 'Search for something', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Search for something', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
@@ -6161,12 +6163,10 @@ async def test_adapter_dump_messages_with_builtin_tool_without_return():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'orphan_tool_id',
-                        'title': None,
                         'state': 'input-available',
                         'input': {'query': 'orphan query'},
                         'provider_executed': True,
                         'call_provider_metadata': {'pydantic_ai': {'provider_name': 'openai'}},
-                        'approval': None,
                     }
                 ],
             },
@@ -6195,20 +6195,15 @@ async def test_adapter_dump_messages_with_thinking():
                 'id': IsStr(),
                 'role': 'user',
                 'metadata': None,
-                'parts': [{'type': 'text', 'text': 'Tell me something', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Tell me something', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
                 'role': 'assistant',
                 'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
                 'parts': [
-                    {
-                        'type': 'reasoning',
-                        'text': 'Let me think about this...',
-                        'state': 'done',
-                        'provider_metadata': None,
-                    },
-                    {'type': 'text', 'text': 'Here is my answer.', 'state': 'done', 'provider_metadata': None},
+                    {'type': 'reasoning', 'text': 'Let me think about this...', 'state': 'done'},
+                    {'type': 'text', 'text': 'Here is my answer.', 'state': 'done'},
                 ],
             },
         ]
@@ -6280,21 +6275,9 @@ async def test_adapter_dump_messages_with_files():
                 'role': 'user',
                 'metadata': None,
                 'parts': [
-                    {'type': 'text', 'text': 'Here is an image:', 'state': 'done', 'provider_metadata': None},
-                    {
-                        'type': 'file',
-                        'media_type': 'image/png',
-                        'filename': None,
-                        'url': 'data:image/png;base64,ZmFrZV9pbWFnZQ==',
-                        'provider_metadata': None,
-                    },
-                    {
-                        'type': 'file',
-                        'media_type': 'image/png',
-                        'filename': None,
-                        'url': 'https://example.com/image.png',
-                        'provider_metadata': None,
-                    },
+                    {'type': 'text', 'text': 'Here is an image:', 'state': 'done'},
+                    {'type': 'file', 'media_type': 'image/png', 'url': 'data:image/png;base64,ZmFrZV9pbWFnZQ=='},
+                    {'type': 'file', 'media_type': 'image/png', 'url': 'https://example.com/image.png'},
                 ],
             },
             {
@@ -6302,13 +6285,11 @@ async def test_adapter_dump_messages_with_files():
                 'role': 'assistant',
                 'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
                 'parts': [
-                    {'type': 'text', 'text': 'Nice image!', 'state': 'done', 'provider_metadata': None},
+                    {'type': 'text', 'text': 'Nice image!', 'state': 'done'},
                     {
                         'type': 'file',
                         'media_type': 'application/pdf',
-                        'filename': None,
                         'url': 'data:application/pdf;base64,cmVzcG9uc2VfZmlsZQ==',
-                        'provider_metadata': None,
                     },
                 ],
             },
@@ -6346,7 +6327,7 @@ async def test_adapter_dump_messages_with_retry():
                 'id': IsStr(),
                 'role': 'user',
                 'metadata': None,
-                'parts': [{'type': 'text', 'text': 'Do something', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Do something', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
@@ -6356,9 +6337,7 @@ async def test_adapter_dump_messages_with_retry():
                     {
                         'type': 'tool-my_tool',
                         'tool_call_id': 'tool_789',
-                        'title': None,
                         'state': 'output-error',
-                        'raw_input': None,
                         'input': {'arg': 'value'},
                         'provider_executed': False,
                         'error_text': """\
@@ -6366,8 +6345,6 @@ Tool failed with error
 
 Fix the errors and try again.\
 """,
-                        'call_provider_metadata': None,
-                        'approval': None,
                     }
                 ],
             },
@@ -6414,13 +6391,13 @@ async def test_adapter_dump_messages_with_retry_no_tool_name():
                 'id': IsStr(),
                 'role': 'user',
                 'metadata': None,
-                'parts': [{'type': 'text', 'text': 'Give me a number', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Give me a number', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
                 'role': 'assistant',
                 'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
-                'parts': [{'type': 'text', 'text': 'Not a valid number', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Not a valid number', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
@@ -6436,7 +6413,6 @@ Output validation failed: expected integer
 Fix the errors and try again.\
 """,
                         'state': 'done',
-                        'provider_metadata': None,
                     }
                 ],
             },
@@ -6497,7 +6473,7 @@ async def test_adapter_dump_messages_consecutive_text():
                 'id': IsStr(),
                 'role': 'assistant',
                 'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
-                'parts': [{'type': 'text', 'text': 'First second', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'First second', 'state': 'done'}],
             }
         ]
     )
@@ -6536,11 +6512,10 @@ async def test_adapter_dump_messages_text_with_interruption():
                 'role': 'assistant',
                 'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
                 'parts': [
-                    {'type': 'text', 'text': 'Before tool', 'state': 'done', 'provider_metadata': None},
+                    {'type': 'text', 'text': 'Before tool', 'state': 'done'},
                     {
                         'type': 'tool-test',
                         'tool_call_id': 't1',
-                        'title': None,
                         'state': 'output-available',
                         'input': {},
                         'output': 'result',
@@ -6551,15 +6526,8 @@ async def test_adapter_dump_messages_text_with_interruption():
                                 'return_meta': {'provider_name': 'test'},
                             }
                         },
-                        'preliminary': None,
-                        'approval': None,
                     },
-                    {
-                        'type': 'text',
-                        'text': 'After tool',
-                        'state': 'done',
-                        'provider_metadata': None,
-                    },
+                    {'type': 'text', 'text': 'After tool', 'state': 'done'},
                 ],
             }
         ]
@@ -7205,12 +7173,9 @@ async def test_adapter_dump_messages_with_invalid_json_args():
                     {
                         'type': 'tool-test',
                         'tool_call_id': 'call_1',
-                        'title': None,
                         'state': 'input-available',
                         'provider_executed': False,
                         'input': {'INVALID_JSON': '{invalid json'},
-                        'call_provider_metadata': None,
-                        'approval': None,
                     }
                 ],
             }
@@ -7239,13 +7204,8 @@ async def test_adapter_dump_messages_text_before_thinking():
                 'role': 'assistant',
                 'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
                 'parts': [
-                    {'type': 'text', 'text': 'Let me check.', 'state': 'done', 'provider_metadata': None},
-                    {
-                        'type': 'reasoning',
-                        'text': 'Okay, I am checking now.',
-                        'state': 'done',
-                        'provider_metadata': None,
-                    },
+                    {'type': 'text', 'text': 'Let me check.', 'state': 'done'},
+                    {'type': 'reasoning', 'text': 'Okay, I am checking now.', 'state': 'done'},
                 ],
             }
         ]
@@ -7279,12 +7239,9 @@ async def test_adapter_dump_messages_tool_call_without_return():
                     {
                         'type': 'tool-get_weather',
                         'tool_call_id': 'tool_abc',
-                        'title': None,
                         'state': 'input-available',
                         'provider_executed': False,
                         'input': {'city': 'New York'},
-                        'call_provider_metadata': None,
-                        'approval': None,
                     }
                 ],
             }
@@ -7314,11 +7271,9 @@ async def test_adapter_dump_messages_deferred_tool_approval():
         {
             'type': 'tool-dangerous_action',
             'tool_call_id': 'deferred_tc1',
-            'title': None,
             'state': 'approval-requested',
             'input': {'target': 'production'},
             'provider_executed': False,
-            'call_provider_metadata': None,
             'approval': {'id': 'deferred_tc1'},
         }
     )
@@ -7349,7 +7304,7 @@ async def test_adapter_dump_messages_deferred_tool_v5_fallback():
     dicts = [msg.model_dump() for msg in ui_messages]
     tool_part = dicts[0]['parts'][0]
     assert tool_part['state'] == 'input-available'
-    assert tool_part['approval'] is None
+    assert 'approval' not in tool_part
 
 
 async def test_adapter_dump_messages_deferred_tool_with_resolved_result():
@@ -7427,19 +7382,11 @@ async def test_adapter_dump_messages_assistant_starts_with_tool():
                     {
                         'type': 'tool-t',
                         'tool_call_id': 'tc1',
-                        'title': None,
                         'state': 'input-available',
                         'provider_executed': False,
                         'input': {},
-                        'call_provider_metadata': None,
-                        'approval': None,
                     },
-                    {
-                        'type': 'text',
-                        'text': 'Some text',
-                        'state': 'done',
-                        'provider_metadata': None,
-                    },
+                    {'type': 'text', 'text': 'Some text', 'state': 'done'},
                 ],
             }
         ]
@@ -7479,15 +7426,7 @@ async def test_adapter_dump_messages_file_without_text():
                 'id': IsStr(),
                 'role': 'assistant',
                 'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
-                'parts': [
-                    {
-                        'type': 'file',
-                        'media_type': 'image/png',
-                        'filename': None,
-                        'url': 'data:image/png;base64,ZmlsZV9kYXRh',
-                        'provider_metadata': None,
-                    }
-                ],
+                'parts': [{'type': 'file', 'media_type': 'image/png', 'url': 'data:image/png;base64,ZmlsZV9kYXRh'}],
             }
         ]
     )
@@ -7906,7 +7845,7 @@ async def test_adapter_dump_messages_thinking_with_metadata():
                             }
                         },
                     },
-                    {'type': 'text', 'text': 'Here is my answer.', 'state': 'done', 'provider_metadata': None},
+                    {'type': 'text', 'text': 'Here is my answer.', 'state': 'done'},
                 ],
             }
         ]
@@ -7976,8 +7915,8 @@ async def test_adapter_dump_messages_with_cache_point():
                 'role': 'user',
                 'metadata': None,
                 'parts': [
-                    {'type': 'text', 'text': 'Hello', 'state': 'done', 'provider_metadata': None},
-                    {'type': 'text', 'text': 'World', 'state': 'done', 'provider_metadata': None},
+                    {'type': 'text', 'text': 'Hello', 'state': 'done'},
+                    {'type': 'text', 'text': 'World', 'state': 'done'},
                 ],
             }
         ]
@@ -8195,7 +8134,7 @@ async def test_adapter_tool_call_part_with_provider_metadata():
                 'id': IsStr(),
                 'role': 'user',
                 'metadata': None,
-                'parts': [{'type': 'text', 'text': 'Do something', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Do something', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
@@ -8205,7 +8144,6 @@ async def test_adapter_tool_call_part_with_provider_metadata():
                     {
                         'type': 'tool-my_tool',
                         'tool_call_id': 'tool_abc',
-                        'title': None,
                         'state': 'output-available',
                         'input': {'arg': 'value'},
                         'provider_executed': False,
@@ -8217,8 +8155,6 @@ async def test_adapter_tool_call_part_with_provider_metadata():
                                 'provider_details': {'index': 0, 'type': 'function'},
                             }
                         },
-                        'preliminary': None,
-                        'approval': None,
                     }
                 ],
             },
@@ -8370,7 +8306,6 @@ async def test_adapter_file_part_with_provider_metadata():
                     {
                         'type': 'file',
                         'media_type': 'image/png',
-                        'filename': None,
                         'url': 'data:image/png;base64,ZmlsZV9kYXRh',
                         'provider_metadata': {
                             'pydantic_ai': {
@@ -8554,7 +8489,7 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                 'id': IsStr(),
                 'role': 'user',
                 'metadata': None,
-                'parts': [{'type': 'text', 'text': 'Search', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Search', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
@@ -8564,7 +8499,6 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'bt_123',
-                        'title': None,
                         'state': 'output-available',
                         'input': {'query': 'test'},
                         'output': '{"results":[]}',
@@ -8582,8 +8516,6 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                                 },
                             }
                         },
-                        'preliminary': None,
-                        'approval': None,
                     }
                 ],
             },
@@ -8631,7 +8563,7 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                 'id': IsStr(),
                 'role': 'user',
                 'metadata': None,
-                'parts': [{'type': 'text', 'text': 'Search', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Search', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
@@ -8641,10 +8573,8 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'bt_err_123',
-                        'title': None,
                         'state': 'output-error',
                         'input': {'query': 'test'},
-                        'raw_input': None,
                         'error_text': 'Search failed: rate limit exceeded',
                         'provider_executed': True,
                         'call_provider_metadata': {
@@ -8660,7 +8590,6 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                                 },
                             }
                         },
-                        'approval': None,
                     }
                 ],
             },
@@ -8895,7 +8824,7 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
                 'id': IsStr(),
                 'role': 'user',
                 'metadata': None,
-                'parts': [{'type': 'text', 'text': 'Do task', 'state': 'done', 'provider_metadata': None}],
+                'parts': [{'type': 'text', 'text': 'Do task', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
@@ -8905,9 +8834,7 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
                     {
                         'type': 'tool-failing_tool',
                         'tool_call_id': 'tc_fail',
-                        'title': None,
                         'state': 'output-error',
-                        'raw_input': None,
                         'input': {'x': 1},
                         'provider_executed': False,
                         'error_text': """\
@@ -8922,7 +8849,6 @@ Fix the errors and try again.\
                                 'provider_details': {'attempt': 1},
                             }
                         },
-                        'approval': None,
                     }
                 ],
             },
@@ -9883,14 +9809,10 @@ async def test_adapter_dump_messages_tool_return_error():
             {
                 'type': 'tool-my_tool',
                 'tool_call_id': 'tc_err',
-                'title': None,
                 'state': 'output-error',
-                'raw_input': None,
                 'input': {'x': 1},
                 'error_text': 'Something went wrong',
                 'provider_executed': False,
-                'call_provider_metadata': None,
-                'approval': None,
             }
         ]
     )
@@ -9929,14 +9851,10 @@ async def test_adapter_dump_messages_builtin_tool_error_backward_compat():
             {
                 'type': 'tool-web_search',
                 'tool_call_id': 'bt_old',
-                'title': None,
                 'state': 'output-error',
-                'raw_input': None,
                 'input': {'query': 'test'},
                 'error_text': 'Rate limit exceeded',
                 'provider_executed': True,
-                'call_provider_metadata': None,
-                'approval': None,
             }
         ]
     )
@@ -10018,14 +9936,11 @@ async def test_adapter_dump_messages_tool_return_interrupted_is_neutral():
             {
                 'type': 'tool-my_tool',
                 'tool_call_id': 'tc_int',
-                'title': None,
                 'state': 'output-available',
                 'input': {'x': 1},
                 'output': 'The tool call was interrupted before a result was produced.',
                 'provider_executed': False,
                 'call_provider_metadata': {'pydantic_ai': {'outcome': 'interrupted'}},
-                'preliminary': None,
-                'approval': None,
             }
         ]
     )

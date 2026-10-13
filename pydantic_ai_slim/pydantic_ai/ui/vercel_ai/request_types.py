@@ -9,7 +9,7 @@ Tool approval types (`ToolApprovalRequested`, `ToolApprovalResponded`) require A
 from abc import ABC
 from typing import Annotated, Any, Literal
 
-from pydantic import Discriminator, Field, StrictBool
+from pydantic import Discriminator, Field, SerializerFunctionWrapHandler, StrictBool, model_serializer
 
 from ._models import CamelBaseModel
 
@@ -19,8 +19,22 @@ ProviderMetadata = dict[str, dict[str, JSONValue]]
 """Provider metadata."""
 
 
+_NULLABLE_PART_FIELDS = frozenset({'input', 'output', 'data'})
+"""Part fields the AI SDK types as `unknown`, so `null` is a real value there."""
+
+
 class BaseUIPart(CamelBaseModel, ABC):
     """Abstract base class for all UI parts."""
+
+    # The AI SDK types optional part fields as `field?: T`, so `validateUIMessages` rejects `null` for them.
+    # No return annotation: one would replace the part's serialization JSON schema with a bare `object`.
+    @model_serializer(mode='wrap')
+    def _omit_unset_optional_fields(self, handler: SerializerFunctionWrapHandler):
+        return {
+            key: value
+            for key, value in handler(self).items()
+            if value is not None or key in _NULLABLE_PART_FIELDS
+        }
 
 
 class TextUIPart(BaseUIPart):
@@ -43,7 +57,7 @@ class ReasoningUIPart(BaseUIPart):
 
     type: Literal['reasoning'] = 'reasoning'
 
-    id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    id: str | None = None
     """UI part ID from the AI SDK client; not mapped to `ThinkingPart.id`."""
 
     text: str
