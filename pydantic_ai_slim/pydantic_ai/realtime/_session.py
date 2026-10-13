@@ -933,6 +933,9 @@ class RealtimeSession:
         self._active_assistant_index = 0
         self._assistant_transcript = ''
         self._output_audio = bytearray()
+        # The index and part of each output item whose part ended in the response being assembled, for a
+        # transcript of the item that arrives after it ended.
+        self._ended_assistant_parts: dict[str, tuple[int, SpeechPart | TextPart]] = {}
 
         # A realtime session is duplex: the user's part and the model's assemble at the same time, and
         # each response starts a fresh `_response_parts` list. Numbering streamed parts by their
@@ -2575,6 +2578,8 @@ class RealtimeSession:
         # An id-less provider cannot associate transcripts with overlapping input items. Its first
         # output frame is therefore the boundary that closes the anonymous user turn before the reply.
         events = self._finalize_anonymous_user_before_output()
+        if (late := self._late_assistant_transcript(text, output_text=output_text, item_id=item_id)) is not None:
+            return [*events, *late]
         events.extend(self._ensure_active_assistant(output_text=output_text, item_id=item_id))
         active = self._active_assistant
         assert active is not None
@@ -2590,6 +2595,44 @@ class RealtimeSession:
         if appended:
             events.append(PartDeltaEvent(index=self._active_assistant_index, delta=delta))
         return events
+
+    def _late_assistant_transcript(
+        self, text: str, *, output_text: bool, item_id: str | None
+    ) -> list[RealtimeEvent] | None:
+        """Fold a transcript into the part its item already ended, or `None` when the item has no ended part.
+
+        A provider can finish an item after a later item's content arrived, so the item's transcript comes late.
+        Text the stream already showed only updates the recorded part. New text streams the part again under the
+        index it ended with, which a `PartStartEvent` replaces, so the item still streams as one part.
+        """
+        if item_id is None or item_id == self._active_assistant_item_id:
+            return None
+        ended = self._ended_assistant_parts.get(item_id)
+        if ended is None or output_text != isinstance(ended[1], TextPart):
+            return None
+        index, part = ended
+        if isinstance(part, TextPart):
+            transcript, appended = accumulate_transcript(part.content, text)
+            restarted: SpeechPart | TextPart = part
+            updated: SpeechPart | TextPart = replace(part, content=transcript)
+            delta: SpeechPartDelta | TextPartDelta = TextPartDelta(content_delta=appended)
+        else:
+            transcript, appended = accumulate_transcript(part.transcript or '', text)
+            # Retained audio appears at the part's end, not at its start.
+            restarted = replace(part, audio=None)
+            updated = replace(part, transcript=transcript or None)
+            delta = SpeechPartDelta(speaker='assistant', transcript_delta=appended, transcript=transcript)
+        position = next(position for position, existing in enumerate(self._response_parts) if existing is part)
+        self._response_parts[position] = updated
+        self._ended_assistant_parts[item_id] = (index, updated)
+        if not appended:
+            return []
+        return [
+            *self._finalize_assistant_part(),
+            PartStartEvent(index=index, part=restarted),
+            PartDeltaEvent(index=index, delta=delta),
+            PartEndEvent(index=index, part=updated),
+        ]
 
     def _handle_assistant_audio(self, data: bytes, *, item_id: str | None = None) -> list[RealtimeEvent]:
         events = self._finalize_anonymous_user_before_output()
@@ -2615,6 +2658,8 @@ class RealtimeSession:
             if self._retain_output and self._output_audio:
                 part = replace(part, audio=self._retain_audio(bytes(self._output_audio), output=True))
         index = self._active_assistant_index
+        if self._active_assistant_item_id is not None:
+            self._ended_assistant_parts[self._active_assistant_item_id] = (index, part)
         self._active_assistant = None
         self._active_assistant_item_id = None
         self._assistant_transcript = ''
@@ -2653,6 +2698,7 @@ class RealtimeSession:
         # Native tool parts (web grounding / code execution) lead the response (call+return, then
         # speech), matching the classic `GoogleModel`, which prepends them ahead of the assistant's text.
         parts = [*self._native_tool_parts, *self._response_parts]
+        self._ended_assistant_parts.clear()
         if interrupted:
             for index in range(len(parts) - 1, -1, -1):
                 if isinstance(part := parts[index], SpeechPart):

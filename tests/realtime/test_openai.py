@@ -4,13 +4,16 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import base64
+import gc
 import hashlib
 import io
 import json
 import re
 import wave
+import weakref
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Literal, cast, get_args, get_origin
 from unittest.mock import patch
@@ -40,13 +43,17 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartDeltaEvent,
     PartEndEvent,
+    PartStartEvent,
     RealtimeSessionErrorEvent,
     RetryPromptPart,
     SpeechPart,
+    SpeechPartDelta,
     SystemPromptPart,
     TextContent,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
@@ -5563,3 +5570,316 @@ async def test_retained_audio_is_kept_once_when_the_core_keeps_history() -> None
     assert [part.transcript for part in speech(legacy)] == ['Hello.']
     assert all(part.audio is None for part in speech(legacy))
     assert [part.audio is not None for part in streamed] == [True]
+
+
+def _assistant_item(item_id: str, phase: str, content: list[dict[str, Any]], *, done: bool) -> dict[str, Any]:
+    status = 'completed' if done else 'in_progress'
+    return {'id': item_id, 'type': 'message', 'status': status, 'role': 'assistant', 'phase': phase, 'content': content}
+
+
+def _item_opened(item_id: str, output_index: int, phase: str, *, text: bool) -> list[dict[str, Any]]:
+    item = _assistant_item(item_id, phase, [], done=False)
+    return [
+        {'type': 'response.output_item.added', 'response_id': 'resp_1', 'output_index': output_index, 'item': item},
+        {'type': 'conversation.item.added', 'previous_item_id': None, 'item': item},
+        {
+            'type': 'response.content_part.added',
+            'response_id': 'resp_1',
+            'item_id': item_id,
+            'output_index': output_index,
+            'content_index': 0,
+            'part': {'type': 'text', 'text': ''} if text else {'type': 'audio', 'transcript': ''},
+        },
+    ]
+
+
+def _item_delta(item_id: str, output_index: int, delta: str, *, text: bool) -> dict[str, Any]:
+    return {
+        'type': 'response.output_text.delta' if text else 'response.output_audio_transcript.delta',
+        'response_id': 'resp_1',
+        'item_id': item_id,
+        'output_index': output_index,
+        'delta': delta,
+    }
+
+
+def _item_done(item_id: str, output_index: int, phase: str, transcript: str, *, text: bool) -> list[dict[str, Any]]:
+    """The frames that finish an item, in the order #10095 lists them."""
+    common = {'response_id': 'resp_1', 'item_id': item_id, 'output_index': output_index, 'content_index': 0}
+    if text:
+        content: dict[str, Any] = {'type': 'output_text', 'text': transcript}
+        part: dict[str, Any] = {'type': 'text', 'text': transcript}
+        finished = [{'type': 'response.output_text.done', **common, 'text': transcript}]
+    else:
+        content = {'type': 'output_audio', 'transcript': transcript}
+        part = {'type': 'audio', 'transcript': transcript}
+        finished = [
+            {'type': 'response.output_audio.done', **common},
+            {'type': 'response.output_audio_transcript.done', **common, 'transcript': transcript},
+        ]
+    item = _assistant_item(item_id, phase, [content], done=True)
+    return [
+        *finished,
+        {'type': 'response.content_part.done', **common, 'part': part},
+        {'type': 'response.output_item.done', 'response_id': 'resp_1', 'output_index': output_index, 'item': item},
+        {'type': 'conversation.item.done', 'previous_item_id': None, 'item': item},
+    ]
+
+
+def _two_item_response(*steps: tuple[Literal['delta', 'done'], str, str], text: bool = False) -> list[dict[str, Any]]:
+    """A response with items `a` (`commentary`) and `b` (`final_answer`), each added before its first step.
+
+    Each step is a transcript delta or the frames that finish the item, with its final transcript.
+    """
+    items = {'a': (0, 'commentary'), 'b': (1, 'final_answer')}
+    frames: list[dict[str, Any]] = [
+        {'type': 'response.created', 'response': {'id': 'resp_1', 'status': 'in_progress', 'output': []}}
+    ]
+    opened: set[str] = set()
+    for kind, item, transcript in steps:
+        output_index, phase = items[item]
+        if item not in opened:
+            opened.add(item)
+            frames += _item_opened(item, output_index, phase, text=text)
+        if kind == 'delta':
+            frames.append(_item_delta(item, output_index, transcript, text=text))
+        else:
+            frames += _item_done(item, output_index, phase, transcript, text=text)
+    frames.append({'type': 'response.done', 'response': {'id': 'resp_1', 'status': 'completed', 'output': []}})
+    return frames
+
+
+@dataclass(frozen=True)
+class LateTranscriptCase:
+    id: str
+    frames: list[dict[str, Any]]
+    history: list[tuple[str, str | None, dict[str, Any] | None]]
+    stream: list[tuple[str, int, str | None]]
+
+
+LATE_TRANSCRIPT_CASES = [
+    LateTranscriptCase(
+        id='in-order',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello world.'),
+            ('done', 'a', 'Hello world.'),
+            ('delta', 'b', 'Bonjour.'),
+            ('done', 'b', 'Bonjour.'),
+        ),
+        history=[
+            ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+            ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+        ],
+        stream=[
+            ('start', 0, ''),
+            ('delta', 0, 'Hello world.'),
+            ('end', 0, 'Hello world.'),
+            ('start', 1, ''),
+            ('delta', 1, 'Bonjour.'),
+            ('end', 1, 'Bonjour.'),
+        ],
+    ),
+    LateTranscriptCase(
+        # The order #10095 reports: every item's deltas, then every item's `done` frames.
+        id='late-done',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello'),
+            ('delta', 'a', ' world.'),
+            ('delta', 'b', 'Bonjour'),
+            ('delta', 'b', ' tout le monde.'),
+            ('done', 'a', 'Hello world.'),
+            ('done', 'b', 'Bonjour tout le monde.'),
+        ),
+        history=[
+            ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+            ('SpeechPart', 'Bonjour tout le monde.', {'phase': 'final_answer'}),
+        ],
+        stream=[
+            ('start', 0, ''),
+            ('delta', 0, 'Hello'),
+            ('delta', 0, ' world.'),
+            ('end', 0, 'Hello world.'),
+            ('start', 1, ''),
+            ('delta', 1, 'Bonjour'),
+            ('delta', 1, ' tout le monde.'),
+            ('end', 1, 'Bonjour tout le monde.'),
+        ],
+    ),
+    LateTranscriptCase(
+        id='late-done-empty',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello world.'),
+            ('delta', 'b', 'Bonjour.'),
+            ('done', 'a', ''),
+            ('done', 'b', 'Bonjour.'),
+        ),
+        history=[
+            ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+            ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+        ],
+        stream=[
+            ('start', 0, ''),
+            ('delta', 0, 'Hello world.'),
+            ('end', 0, 'Hello world.'),
+            ('start', 1, ''),
+            ('delta', 1, 'Bonjour.'),
+            ('end', 1, 'Bonjour.'),
+        ],
+    ),
+    LateTranscriptCase(
+        # Text the stream has not shown yet re-opens the item's part under its own index, which replaces it.
+        id='late-delta',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello'),
+            ('delta', 'b', 'Bonjour.'),
+            ('delta', 'a', ' world.'),
+            ('done', 'a', 'Hello world.'),
+            ('done', 'b', 'Bonjour.'),
+        ),
+        history=[
+            ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+            ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+        ],
+        stream=[
+            ('start', 0, ''),
+            ('delta', 0, 'Hello'),
+            ('end', 0, 'Hello'),
+            ('start', 1, ''),
+            ('delta', 1, 'Bonjour.'),
+            ('end', 1, 'Bonjour.'),
+            ('start', 0, 'Hello'),
+            ('delta', 0, ' world.'),
+            ('end', 0, 'Hello world.'),
+        ],
+    ),
+    LateTranscriptCase(
+        id='late-delta-text-output',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello'),
+            ('delta', 'b', 'Bonjour.'),
+            ('delta', 'a', ' world.'),
+            ('done', 'a', 'Hello world.'),
+            ('done', 'b', 'Bonjour.'),
+            text=True,
+        ),
+        history=[
+            ('TextPart', 'Hello world.', {'phase': 'commentary'}),
+            ('TextPart', 'Bonjour.', {'phase': 'final_answer'}),
+        ],
+        stream=[
+            ('start', 0, ''),
+            ('delta', 0, 'Hello'),
+            ('end', 0, 'Hello'),
+            ('start', 1, ''),
+            ('delta', 1, 'Bonjour.'),
+            ('end', 1, 'Bonjour.'),
+            ('start', 0, 'Hello'),
+            ('delta', 0, ' world.'),
+            ('end', 0, 'Hello world.'),
+        ],
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in LATE_TRANSCRIPT_CASES])
+async def test_late_transcript_keeps_one_part_per_output_item(case: LateTranscriptCase) -> None:
+    """A transcript that arrives for an item after a later item's content keeps that item to one part.
+
+    Both in history and in the event stream: a late transcript that adds nothing streams nothing, and one that
+    adds text re-opens the item's part under the index it streamed with.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    stream: list[PartStartEvent | PartDeltaEvent | PartEndEvent] = []
+    async with session:
+        await session.send('Greet me twice.')
+        for frame in case.frames:
+            ws.push(frame)
+        with anyio.fail_after(5):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, (PartStartEvent, PartDeltaEvent, PartEndEvent)):
+                    stream.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+        own = session._own_messages()  # pyright: ignore[reportPrivateUsage]
+
+    def text_of(part: Any) -> str | None:
+        return part.content if isinstance(part, TextPart) else part.transcript
+
+    def summarize(messages: list[ModelMessage]) -> list[tuple[str, str | None, dict[str, Any] | None]]:
+        (response,) = [message for message in messages if isinstance(message, ModelResponse)]
+        return [(type(part).__name__, text_of(part), part.provider_details) for part in response.parts]
+
+    first_index = stream[0].index
+    streamed: list[tuple[str, int, str | None]] = []
+    for event in stream:
+        if isinstance(event, PartDeltaEvent):
+            delta = event.delta
+            if isinstance(delta, TextPartDelta):
+                streamed.append(('delta', event.index - first_index, delta.content_delta))
+            else:
+                assert isinstance(delta, SpeechPartDelta)
+                streamed.append(('delta', event.index - first_index, delta.transcript_delta))
+        else:
+            kind = 'start' if isinstance(event, PartStartEvent) else 'end'
+            streamed.append((kind, event.index - first_index, text_of(event.part)))
+    assert summarize(session.all_messages()) == case.history
+    assert [(kind, text) for kind, text, _ in summarize(own)] == [(kind, text) for kind, text, _ in case.history]
+    assert streamed == case.stream
+
+
+async def test_evicted_output_audio_is_released() -> None:
+    """Output audio `retain_audio_max_seconds` evicts from history is no longer held anywhere in the session.
+
+    Nothing in the messages shows memory that is still held, so a weak reference to the evicted audio checks it.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='output_audio',
+        retain_audio_max_seconds=1.5,
+    )
+    one_second = base64.b64encode(b'\x01\x00' * 24000).decode('ascii')
+
+    def reply(response_id: str) -> list[dict[str, Any]]:
+        item = {'response_id': response_id, 'item_id': f'item-{response_id}'}
+        return [
+            {'type': 'response.created', 'response': {'id': response_id, 'status': 'in_progress', 'output': []}},
+            {'type': 'response.output_audio.delta', **item, 'delta': one_second},
+            {'type': 'response.output_audio_transcript.delta', **item, 'delta': 'Hello.'},
+            {'type': 'response.done', 'response': {'id': response_id, 'status': 'completed', 'output': []}},
+        ]
+
+    def retained() -> list[BinaryContent | None]:
+        return [
+            part.audio for message in session.all_messages() for part in message.parts if isinstance(part, SpeechPart)
+        ]
+
+    async with session:
+        await session.send('Hi.')
+        for frame in reply('resp_1'):
+            ws.push(frame)
+        evicted: weakref.ref[BinaryContent] | None = None
+        with anyio.fail_after(5):
+            async for event in session:  # pragma: no branch
+                if not isinstance(event, RealtimeTurnCompleteEvent):
+                    continue
+                if evicted is not None:
+                    break
+                (audio,) = retained()
+                assert audio is not None
+                evicted = weakref.ref(audio)
+                del audio
+                await session.send('Again.')
+                await ws.wait_for_creates(2)
+                for frame in reply('resp_2'):
+                    ws.push(frame)
+        assert [audio is not None for audio in retained()] == [False, True]
+        gc.collect()
+        assert evicted is not None and evicted() is None
