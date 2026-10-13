@@ -1491,7 +1491,8 @@ jobs:
       github.repository == 'pydantic/pydantic-ai' &&
       (github.event_name != 'workflow_run' ||
        github.event.workflow_run.event != 'pull_request' ||
-       github.event.workflow_run.head_repository.full_name == github.repository)
+       (github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.actor.login != 'dependabot[bot]'))
     env:
       PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
     permissions:
@@ -1612,8 +1613,28 @@ jobs:
     }
 
 
-def test_provider_health_monitor_rejects_credentialless_fork_runs(tmp_path: Path):
-    """The ungated monitor that opened #9753 must not pass CI policy checks."""
+@pytest.mark.parametrize(
+    ('gate', 'weakened_gate'),
+    [
+        # The ungated monitor that opened #9753 on a fork run.
+        (
+            "if: >-\n      github.repository == 'pydantic/pydantic-ai' &&\n"
+            "      (github.event_name != 'workflow_run' ||\n"
+            "       github.event.workflow_run.event != 'pull_request' ||\n"
+            '       (github.event.workflow_run.head_repository.full_name == github.repository &&\n'
+            "        github.event.workflow_run.actor.login != 'dependabot[bot]'))",
+            "if: github.repository == 'pydantic/pydantic-ai'",
+        ),
+        # The fork-only gate that opened #10181 on a Dependabot run.
+        (
+            '       (github.event.workflow_run.head_repository.full_name == github.repository &&\n'
+            "        github.event.workflow_run.actor.login != 'dependabot[bot]'))",
+            '       github.event.workflow_run.head_repository.full_name == github.repository)',
+        ),
+    ],
+)
+def test_provider_health_monitor_rejects_credentialless_runs(tmp_path: Path, gate: str, weakened_gate: str):
+    """A monitor that reconciles runs without Actions secrets must not pass CI policy checks."""
     workflows = tmp_path / '.github' / 'workflows'
     for source in WORKFLOWS_DIR.glob('pydantic-ai-*.md'):
         _write(workflows / source.name, source.read_text(encoding='utf-8'))
@@ -1621,19 +1642,10 @@ def test_provider_health_monitor_rejects_credentialless_fork_runs(tmp_path: Path
     monitor = _write(workflows / 'agent-provider-health.yml', trusted_config)
     assert check_provider_health_monitor(workflows) == []
 
-    _write(
-        monitor,
-        trusted_config.replace(
-            "if: >-\n      github.repository == 'pydantic/pydantic-ai' &&\n"
-            "      (github.event_name != 'workflow_run' ||\n"
-            "       github.event.workflow_run.event != 'pull_request' ||\n"
-            '       github.event.workflow_run.head_repository.full_name == github.repository)',
-            "if: github.repository == 'pydantic/pydantic-ai'",
-            1,
-        ),
-    )
+    assert gate in trusted_config
+    _write(monitor, trusted_config.replace(gate, weakened_gate, 1))
     assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
-        'provider-health-monitor-fork-gate'
+        'provider-health-monitor-credential-gate'
     ]
 
 

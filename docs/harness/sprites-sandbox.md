@@ -52,7 +52,7 @@ followup = agent.run_sync(
 )
 ```
 
-The follow-up run finds the Sprite in the message history and works in it, so the clone is still there. Without the history, a run starts a new Sprite. If the Sprite has been deleted, the run raises `WorkspaceUnavailableError` instead of starting over in an empty one. A command exiting 137 after confirmed Sprite deletion also raises this error; a SIGKILLed command in a live Sprite returns exit 137.
+The follow-up run finds the Sprite in the message history and works in it, so the clone is still there. Without the history, a run starts a new Sprite. If the Sprite has been deleted, the run raises `WorkspaceUnavailableError` instead of starting over in an empty one. If the Sprite is deleted while a command runs, the command raises this error too, whatever exit code it reported: after each command, the backend asks the Sprites control plane whether the Sprite still exists. That lookup counts against the command's `timeout`, and a lookup that fails or runs out of time returns the command's result, so a SIGKILLed command in a live Sprite still returns exit 137.
 
 ## Choose the tools
 
