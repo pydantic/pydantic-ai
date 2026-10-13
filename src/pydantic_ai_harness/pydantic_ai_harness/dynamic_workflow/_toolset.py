@@ -470,7 +470,8 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        if name == SAVE_TOOL_NAME:
+        # With saving off, `tool_name` may itself be `save_workflow`: that call is a script to run.
+        if name == SAVE_TOOL_NAME and name != self.tool_name:
             return await self._save_workflow(tool_args, ctx)
         if in_workflow.get():
             return {'error': _NESTED_REFUSAL}

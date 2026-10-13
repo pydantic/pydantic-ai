@@ -103,6 +103,18 @@ def test_parse_rejects_invalid_files(source: str, error: str) -> None:
     assert error in str(exc_info.value)
 
 
+async def test_a_too_deeply_nested_file_is_skipped(tmp_path: Path) -> None:
+    source = "meta = {'name': 'deep', 'description': " + "'a' + " * 100_000 + "'a'}"
+    with pytest.raises(ValueError, match='too deeply nested to parse'):
+        SavedWorkflow.parse(source)
+    _write(tmp_path / 'workflows', 'deep.py', source)
+    with pytest.warns(UserWarning, match='too deeply nested to parse'):
+        library = await WorkflowLibrary.load(_workspace(tmp_path), ['workflows'], agent_names={'reviewer'})
+    assert library.workflows == {}
+    [path] = library.errors
+    assert path.endswith('deep.py')
+
+
 def test_create_renders_a_file_that_parses_back() -> None:
     workflow = _workflow('echo', "await agent(args['text'])", args={'type': 'object'}, agents=['reviewer'])
     assert workflow.source == snapshot("""\
@@ -301,18 +313,19 @@ async def test_nested_workflows_can_run_in_parallel() -> None:
 @pytest.mark.parametrize(
     ('code', 'error'),
     [
-        ("await workflow('nope')", "unknown saved workflow 'nope'"),
-        ("import json\nawait workflow(json.loads('1'))", 'workflow name must be a string, got int'),
-        ("await workflow('echo', {'x': {1, 2}})", "workflow 'echo' args must be a JSON object"),
-        ("await workflow('loop')", "workflow 'loop' would call itself: loop -> loop"),
+        ("await workflow('nope')", "ValueError: unknown saved workflow 'nope'"),
+        ("import json\nawait workflow(json.loads('1'))", 'TypeError: workflow name must be a string, got int'),
+        ("await workflow('echo', {'x': {1, 2}})", "ValueError: workflow 'echo' args must be a JSON object"),
+        ("await workflow('echo')", "ValueError: workflow 'echo' is missing required args: text"),
+        ("await workflow('loop')", "ValueError: workflow 'loop' would call itself: loop -> loop"),
         ("await workflow('deep', {'n': 0})", "workflow 'deep3' would nest deeper than 2 saved workflows"),
-        ("await workflow('broken')", "workflow 'broken' failed:"),
-        ("await workflow('mistyped')", "workflow 'mistyped' failed:"),
+        ("await workflow('broken')", "RuntimeError: workflow 'broken' failed:"),
+        ("await workflow('mistyped')", "RuntimeError: workflow 'mistyped' failed:"),
     ],
 )
-async def test_nested_workflow_failures_raise_runtime_error(code: str, error: str) -> None:
+async def test_nested_workflow_failures_raise_in_the_calling_script(code: str, error: str) -> None:
     ts = _toolset(
-        _workflow('echo', "await agent(args['text'])"),
+        _workflow('echo', "await agent(args['text'])", args={'type': 'object', 'required': ['text']}),
         _workflow('loop', "await workflow('loop')"),
         _workflow('deep', "await workflow('deep2')"),
         _workflow('deep2', "await workflow('deep3')"),
@@ -322,7 +335,8 @@ async def test_nested_workflow_failures_raise_runtime_error(code: str, error: st
         max_workflow_depth=2,
     )
     guarded = 'try:\n' + ''.join(f'    {line}\n' for line in code.splitlines())
-    caught = await call_workflow_tool(ts, {'code': guarded + 'except Exception as e:\n    r = str(e)\nr'})
+    handler = 'except Exception as e:\n    r = type(e).__name__ + ": " + str(e)\nr'
+    caught = await call_workflow_tool(ts, {'code': guarded + handler})
     assert error in caught
 
 
@@ -507,7 +521,11 @@ async def test_workflows_none_turns_saved_workflows_off(tmp_path: Path) -> None:
 def test_tool_name_cannot_take_the_save_tools_name() -> None:
     with pytest.raises(UserError, match="`tool_name` cannot be 'save_workflow'"):
         _toolset(save_directory='workflows', tool_name='save_workflow')
-    assert _toolset(tool_name='save_workflow').tool_name == 'save_workflow'
+
+
+async def test_tool_name_can_be_save_workflow_when_saving_is_off() -> None:
+    ts = _toolset(tool_name='save_workflow')
+    assert await call_workflow_tool(ts, {'code': "await reviewer(task='x')"}) == 'reviewer:x'
 
 
 async def test_saves_stay_in_their_own_run_when_a_toolset_is_reused(tmp_path: Path) -> None:

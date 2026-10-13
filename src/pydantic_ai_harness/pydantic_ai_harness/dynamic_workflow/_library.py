@@ -81,6 +81,8 @@ class SavedWorkflow:
             tree = compile(source, path or '<workflow>', 'exec', _PARSE_FLAGS)
         except SyntaxError as error:
             raise ValueError(f'syntax error on line {error.lineno}: {error.msg}') from error
+        except RecursionError as error:
+            raise ValueError('too deeply nested to parse') from error
         assert isinstance(tree, ast.Module)
         meta_nodes = [
             node.value

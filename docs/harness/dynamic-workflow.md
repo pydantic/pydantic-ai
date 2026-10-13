@@ -120,11 +120,11 @@ Besides the sub-agent functions, every script can use a few helpers. None of the
 | `await agent(task, *, name=None, schema=None, model=None, phase=None)` | Runs one sub-agent. `name` picks it; without it, `default_agent` runs, or the only sub-agent when there is one. `schema` is a JSON schema (`{"type": "object", ...}`) the output must follow for this call, so the result is a `dict`. `model` names the model to run it with, such as `'openai:gpt-5'`. `phase` also calls `phase(phase)` first. |
 | `await parallel(tasks)` | Runs awaitables, or zero-argument functions, concurrently and returns their results in order. A failed item becomes `None`, so one failure does not sink the batch. |
 | `await pipeline(items, *stages)` | Runs every item through each stage in turn, without waiting for the other items between stages. A stage is called as `stage(prev, item, index)`; a stage that raises or returns `None` ends that item with `None`. |
-
-Both raise `ValueError` up front when given more than `max_items_per_call` items.
 | `log(message)` / `phase(title)` | Reports progress, as a `WorkflowLogEvent` or `WorkflowPhaseEvent` in the agent's event stream. |
 | `budget()` | `{"max": ..., "used": ..., "remaining": ...}` sub-agent calls for this run. |
 | `args` | The arguments the script was run with. See [saved workflows](#saved-workflows). |
+
+`parallel` and `pipeline` both raise `ValueError` up front when given more than `max_items_per_call` items.
 
 For example, a review that verifies every finding, where one failing file does not sink the batch:
 
@@ -227,7 +227,7 @@ At the start of each run, the files are listed to the model in an `<available_wo
 - run one from inside a script with `await workflow('triage-files', {'files': [...]})`, which returns its result;
 - save a script with the `save_workflow` tool, which writes the file and makes it available right away. It creates the directory on first save, and refuses to replace an existing workflow unless the model passes `overwrite`. It is offered only when the run's workspace is writable.
 
-A saved workflow reads its inputs from the `args` global. `workflow()` runs one in a sandbox session of its own that shares the calling script's `max_agent_calls` budget and `max_concurrent_agents` cap. It raises `RuntimeError` for an unknown name, missing `args`, or a failure inside, and refuses a workflow that would run itself, directly or through another, or nest deeper than `max_workflow_depth` (3 by default).
+A saved workflow reads its inputs from the `args` global. `workflow()` runs one in a sandbox session of its own that shares the calling script's `max_agent_calls` budget and `max_concurrent_agents` cap. It refuses a workflow that would run itself, directly or through another, or nest deeper than `max_workflow_depth` (3 by default). Like a bad `agent()` call, a call it refuses raises `ValueError`: an unknown name, `args` that are not a JSON object or miss a required key, or a cycle or depth past the limit. A workflow that fails while running raises `RuntimeError`.
 
 The directory defaults to `workflows`, relative to the workspace. Pass `workflows=` for another directory, or several, which are all listed and saved into the first:
 
