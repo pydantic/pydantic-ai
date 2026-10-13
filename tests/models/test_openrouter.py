@@ -59,6 +59,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openrouter import (
         OpenRouterModel,
         OpenRouterModelSettings,
+        OpenRouterProviderConfig,
         _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
         _openrouter_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
         _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
@@ -126,42 +127,28 @@ async def test_openrouter_provider_quantization_and_sort(
     assert request_capture.body()['provider'] == {'quantizations': ['nvfp4'], 'sort': 'exacto'}
 
 
-async def test_openrouter_provider_preferred_min_throughput_wire_payload(allow_model_requests: None) -> None:
-    """`preferred_min_throughput` percentile cutoffs pass through to the provider payload verbatim.
+async def test_openrouter_provider_performance_thresholds(allow_model_requests: None) -> None:
+    """`preferred_min_throughput` and `preferred_max_latency` pass through to the provider payload verbatim.
 
     A mocked client pins the exact request-payload mapping, so this is a unit test rather than a
     VCR test despite the module-level `vcr` mark; a recording would need a real OpenRouter key.
     """
     mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
     model = OpenRouterModel('z-ai/glm-5.3-flash', provider=OpenRouterProvider(openai_client=mock_client))
+    provider_config: OpenRouterProviderConfig = {
+        'sort': 'price',
+        'preferred_min_throughput': {'p75': 50.0},
+        'preferred_max_latency': 0.35,
+    }
     await Agent(model).run(
         'Who are you? One sentence.',
-        model_settings=OpenRouterModelSettings(
-            max_tokens=300,
-            openrouter_provider={'preferred_min_throughput': {'p75': 50.0}},
-        ),
+        model_settings=OpenRouterModelSettings(max_tokens=300, openrouter_provider=provider_config),
     )
     assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_body']['provider'] == {
-        'preferred_min_throughput': {'p75': 50.0}
+        'sort': 'price',
+        'preferred_min_throughput': {'p75': 50.0},
+        'preferred_max_latency': 0.35,
     }
-
-
-async def test_openrouter_provider_preferred_max_latency_wire_payload(allow_model_requests: None) -> None:
-    """A bare `preferred_max_latency` value passes through to the provider payload verbatim.
-
-    A mocked client pins the exact request-payload mapping, so this is a unit test rather than a
-    VCR test despite the module-level `vcr` mark; a recording would need a real OpenRouter key.
-    """
-    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
-    model = OpenRouterModel('z-ai/glm-5.3-flash', provider=OpenRouterProvider(openai_client=mock_client))
-    await Agent(model).run(
-        'Who are you? One sentence.',
-        model_settings=OpenRouterModelSettings(
-            max_tokens=300,
-            openrouter_provider={'preferred_max_latency': 0.35},
-        ),
-    )
-    assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_body']['provider'] == {'preferred_max_latency': 0.35}
 
 
 async def test_openrouter_stream_with_native_options(allow_model_requests: None, openrouter_api_key: str) -> None:

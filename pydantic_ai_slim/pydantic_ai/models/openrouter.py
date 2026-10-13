@@ -259,10 +259,10 @@ class OpenRouterProviderConfig(TypedDict, total=False):
     """The maximum pricing you want to pay for this request. [See details](https://openrouter.ai/docs/features/provider-routing#max-price)"""
 
     preferred_min_throughput: float | _OpenRouterPercentileCutoffs
-    """The minimum throughput you want to pay for, in tokens per second: a bare value is treated as the p50 cutoff, or specify percentile cutoffs. [See details](https://openrouter.ai/docs/features/provider-routing)"""
+    """The minimum throughput you want to pay for, in tokens per second: a bare value is treated as the p50 cutoff, or specify percentile cutoffs. [See details](https://openrouter.ai/docs/features/provider-routing#performance-thresholds)"""
 
     preferred_max_latency: float | _OpenRouterPercentileCutoffs
-    """The maximum latency you want to pay for, in seconds: a bare value is treated as the p50 cutoff, or specify percentile cutoffs. [See details](https://openrouter.ai/docs/features/provider-routing)"""
+    """The maximum latency you want to pay for, in seconds: a bare value is treated as the p50 cutoff, or specify percentile cutoffs. [See details](https://openrouter.ai/docs/features/provider-routing#performance-thresholds)"""
 
 
 class OpenRouterReasoning(TypedDict, total=False):

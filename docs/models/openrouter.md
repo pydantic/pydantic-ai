@@ -109,7 +109,7 @@ If a resolved choice named a single tool, the available tool list is filtered to
 
 ## Provider routing
 
-OpenRouter routes a request between providers serving the same model. The [`Provider` object](https://openrouter.ai/docs/features/provider-routing) you pass in `openrouter_provider` is sent verbatim, so you can steer routing on performance with `preferred_min_throughput` (the minimum throughput you want to pay for, in tokens per second) and `preferred_max_latency` (the maximum latency you want to pay for, in seconds). Each accepts a bare value, treated as the p50 cutoff, or per-percentile cutoffs:
+OpenRouter routes a request between providers serving the same model. The [`Provider` object](https://openrouter.ai/docs/features/provider-routing#performance-thresholds) you pass in `openrouter_provider` is sent verbatim, so you can steer routing on performance with `preferred_min_throughput` (the minimum throughput you want to pay for, in tokens per second) and `preferred_max_latency` (the maximum latency you want to pay for, in seconds). Each accepts a bare value, treated as the p50 cutoff, or per-percentile cutoffs:
 
 ```python
 from pydantic_ai import Agent
@@ -129,6 +129,7 @@ result = agent.run_sync(
     ),
 )
 ```
+
 ## Prompt Caching
 
 OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) for downstream providers that implement it.
