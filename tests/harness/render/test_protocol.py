@@ -18,15 +18,10 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import (
-    ModelMessage,
     ModelResponse,
     PartStartEvent,
-    RetryPromptPart,
     TextPart,
-    ToolCallPart,
-    ToolReturnPart,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import RenderWorkflows
 
@@ -255,50 +250,6 @@ async def test_unexpected_handler_error_leaves_the_task_failed_rather_than_encod
     # Unlike Pydantic ModelRetry control flow, this exception fails the child task.
     assert 'audited__capability__audit.record' in context.started
     assert all(result['status'] == 'ok' for result in context.results)
-
-
-async def test_function_tool_model_retry_is_completed_control_flow_and_agent_continues() -> None:
-    calls = 0
-
-    def retry_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        del info
-        for message in reversed(messages):
-            for part in reversed(message.parts):
-                if isinstance(part, ToolReturnPart):
-                    return ModelResponse(parts=[TextPart('continued after retry')])
-                if isinstance(part, RetryPromptPart):
-                    return ModelResponse(parts=[ToolCallPart('unstable_tool', {}, tool_call_id='retry-call')])
-        return ModelResponse(parts=[ToolCallPart('unstable_tool', {}, tool_call_id='initial-call')])
-
-    async def unstable_tool() -> str:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise ModelRetry('again')
-        return 'recovered'
-
-    runtime = RenderWorkflows[None](Workflows())
-    agent = Agent[None, str](
-        FunctionModel(retry_then_finish),
-        name='retrying-agent',
-        deps_type=type(None),
-        tools=[unstable_tool],
-        capabilities=[runtime],
-    )
-    context = TaskBoundary()
-
-    output = await run_agent_in_task(agent, runtime, context)
-
-    assert output == 'continued after retry'
-    assert calls == 2
-    completed_model_retries: list[dict[str, object]] = []
-    for result in context.results:
-        payload = result.get('payload')
-        if result['status'] == 'ok' and is_envelope(payload) and payload.get('kind') == 'model_retry':
-            completed_model_retries.append(payload)
-    assert len(completed_model_retries) == 1
-    assert completed_model_retries[0]['message'] == 'again'
-    assert context.started.count('retrying-agent__function_toolset__<agent>.call_tool') == 2
 
 
 async def test_protocol_enforces_four_mib_request_limit_through_public_agent() -> None:

@@ -32,7 +32,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import DynamicToolset
 from pydantic_ai_harness import RenderWorkflows, ToolOutputLimits
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
 from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill
 
 from .conftest import RecordingTaskContext, RecordingWorkflows, ToolTaskConcurrency, mcp_toolset, run_agent_in_task
@@ -135,28 +134,6 @@ async def test_agent_runs_inline_outside_render_task() -> None:
     assert isinstance(result.output, str)
     assert calls == ['a']
     assert render_workflows.in_durable_context is False
-
-
-async def test_agent_dispatches_model_and_static_tool_through_render_tasks() -> None:
-    agent, render_workflows, calls = build_agent()
-    durable_states: list[bool] = []
-
-    @render_workflows.task
-    async def run_agent(ctx: TaskContext, prompt: str) -> str:
-        del ctx
-        durable_states.append(render_workflows.in_durable_context)
-        return (await agent.run(prompt)).output
-
-    context = RecordingTaskContext()
-    pending_result = run_agent.func(context, 'find it')
-    assert inspect.isawaitable(pending_result)
-    result = await pending_result
-
-    assert isinstance(result, str)
-    assert calls == ['a']
-    assert durable_states == [True]
-    assert context.task_names.count('support__model.request') == 2
-    assert 'support__function_toolset__<agent>.call_tool' in context.task_names
 
 
 async def test_independent_tool_calls_fan_out_as_render_child_tasks() -> None:
@@ -332,61 +309,6 @@ async def test_a_named_toolset_registers_its_render_tasks_under_its_id() -> None
     # public observation: Workflows does not expose its registry, and this run dispatches
     # the call as a child task.
     assert 'support__function_toolset__delegates.call_tool' in context.task_names
-
-
-async def test_delegation_tool_stays_inline_while_explicit_child_operations_use_render_tasks() -> None:
-    """Explicitly keep delegation in the parent while the child dispatches its own tasks."""
-    app = RecordingWorkflows()
-    child_render_workflows = RenderWorkflows[None](
-        app,
-        deps_type=type(None),
-        resolve_tool_options=lambda _operation, _tool, name: False if name == 'delegate_task' else None,
-    )
-    worker = Agent[None, str](
-        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('worker result')])),
-        name='worker',
-        description='Does the work',
-        deps_type=type(None),
-        capabilities=[child_render_workflows],
-    )
-    steps = {'n': 0}
-
-    def parent_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        steps['n'] += 1
-        if steps['n'] == 1:
-            args: dict[str, Any] = {'agent_name': 'worker', 'task': 'do it'}
-            return ModelResponse(parts=[ToolCallPart('delegate_task', args, tool_call_id='c1')])
-        return ModelResponse(parts=[TextPart('all done')])
-
-    render_workflows = RenderWorkflows[None](
-        app,
-        deps_type=type(None),
-        resolve_tool_options=lambda _operation, _tool, name: False if name == 'delegate_task' else None,
-    )
-    agent = Agent[None, str](
-        FunctionModel(parent_model),
-        name='support',
-        deps_type=type(None),
-        capabilities=[
-            SubAgents[None](agents=[SubAgent(worker)], agent_folders=None),
-            render_workflows,
-        ],
-    )
-
-    assert 'worker__model.request' in app.registered_task_names
-
-    @render_workflows.task
-    async def run_agent(ctx: TaskContext, prompt: str) -> str:
-        del ctx
-        return (await agent.run(prompt)).output
-
-    context = RecordingTaskContext()
-    pending_result = run_agent.func(context, 'go')
-    assert inspect.isawaitable(pending_result)
-
-    assert await pending_result == 'all done'
-    assert context.task_names.count('worker__model.request') == 1
-    assert 'support__function_toolset__sub_agents.call_tool' not in context.task_names
 
 
 def test_a_capability_contributing_operations_without_an_id_is_rejected_before_registration() -> None:

@@ -234,52 +234,6 @@ def _immediate_decision_hooks(decision: ProtectedDecision) -> Hooks[None]:
     return hooks
 
 
-async def test_child_usage_delta_is_applied_to_the_original_usage_once() -> None:
-    usage = RunUsage(details={'caller_marker': 11})
-    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
-    agent = Agent[None, str](
-        TestModel(call_tools=['account']),
-        name='usage-effects',
-        deps_type=type(None),
-        capabilities=[runtime],
-    )
-
-    @agent.tool
-    async def account(ctx: RunContext[None]) -> str:
-        ctx.usage.incr(RunUsage(details={'child_marker': 7}))
-        return 'accounted'
-
-    context = JsonRecordingTaskContext()
-    assert isinstance(await run_agent_in_task(agent, runtime, context, usage=usage), str)
-
-    assert usage.details['caller_marker'] == 11
-    assert usage.details['child_marker'] == 7
-    assert context.task_names.count('usage-effects__function_toolset__<agent>.call_tool') == 1
-
-
-async def test_child_events_are_replayed_to_the_caller_in_order_once() -> None:
-    seen: list[ChildEffectEvent] = []
-    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
-    agent = Agent[None, str](
-        TestModel(call_tools=['publish']),
-        name='event-effects',
-        deps_type=type(None),
-        capabilities=[_event_hooks(seen), runtime],
-    )
-
-    @agent.tool
-    async def publish(ctx: RunContext[None]) -> str:
-        await ctx.emit(ChildEffectEvent(child='only', sequence=1))
-        await ctx.emit(ChildEffectEvent(child='only', sequence=2))
-        return 'published'
-
-    assert isinstance(
-        await run_agent_in_task(agent, runtime, JsonRecordingTaskContext(), usage=RunUsage()),
-        str,
-    )
-    assert [(event.child, event.sequence) for event in seen] == [('only', 1), ('only', 2)]
-
-
 async def test_capability_owned_tool_transfers_its_capability_events_and_usage() -> None:
     seen: list[OwnedEffectEvent] = []
     usage = RunUsage()

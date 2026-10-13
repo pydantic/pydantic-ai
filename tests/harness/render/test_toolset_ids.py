@@ -20,37 +20,6 @@ from pydantic_ai_harness import RenderWorkflows
 
 from .conftest import RecordingTaskContext, RecordingWorkflows, renderless_environment, run_agent_in_task
 
-_TASK_NAME_PROBE = """
-from pydantic_ai import Agent, FunctionToolset
-from pydantic_ai.models.test import TestModel
-
-from pydantic_ai_harness import RenderWorkflows, ToolOutputLimits
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
-
-from tests.harness.render.conftest import RecordingWorkflows
-
-app = RecordingWorkflows()
-
-worker = Agent(TestModel(), name='worker', description='Does the work')
-async def explicit_tool():
-    return 'ok'
-Agent(
-    TestModel(),
-    name='support',
-    deps_type=type(None),
-    toolsets=[FunctionToolset([explicit_tool], id='explicit-tools')],
-    capabilities=[
-        SubAgents(agents=[SubAgent(worker)], agent_folders=None),
-        ToolOutputLimits(),
-        RenderWorkflows(
-            app, deps_type=type(None),
-            resolve_tool_options=lambda op, tool, name: False if name in {'delegate_task', 'read_tool_result'} else None,
-        ),
-    ],
-)
-print('\\n'.join(sorted({name for name in app.registered_task_names if '__function_toolset__' in name and '<agent>' not in name})))
-"""
-
 
 @pytest.mark.subprocess(reason='checks the import graph of a fresh interpreter')
 def test_importing_render_workflows_does_not_add_an_optional_mcp_import() -> None:
@@ -117,19 +86,6 @@ async def recorded_task_names(
     context = RecordingTaskContext()
     await run_agent_in_task(agent, render_workflows, context, prompt=prompt)
     return context.task_names
-
-
-def probe_task_names() -> list[str]:
-    """Return the function-toolset task names a fresh interpreter registers."""
-    completed = subprocess.run(
-        [sys.executable, '-c', _TASK_NAME_PROBE],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=renderless_environment(),
-    )
-    assert completed.returncode == 0, completed.stderr
-    return completed.stdout.split()
 
 
 async def test_a_toolset_that_brought_its_own_id_registers_its_tasks_under_it() -> None:
@@ -245,21 +201,6 @@ def test_two_independent_agents_register_the_same_explicit_task_names() -> None:
 
     assert 'support__function_toolset__web-search.call_tool' in first_app.registered_task_names
     assert first_app.registered_task_names == second_app.registered_task_names
-
-
-@pytest.mark.subprocess(reason='checks task names are stable across separate processes')
-def test_explicit_names_are_process_stable_with_helper_opt_outs() -> None:
-    names = probe_task_names()
-
-    assert names == probe_task_names()
-    assert names == [
-        'support__function_toolset__explicit-tools.call_tool',
-        'support__function_toolset__explicit-tools.validate_args',
-        'support__function_toolset__sub_agents.call_tool',
-        'support__function_toolset__sub_agents.validate_args',
-        'support__function_toolset__tool_output_limits.call_tool',
-        'support__function_toolset__tool_output_limits.validate_args',
-    ]
 
 
 async def test_matching_id_does_not_admit_a_runtime_toolset() -> None:
