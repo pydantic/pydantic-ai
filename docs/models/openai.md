@@ -271,7 +271,7 @@ The features below are specific to the Responses API and only available on [`Ope
 
 Use [`agent.connect()`][pydantic_ai.agent.AbstractAgent.connect] to reuse one WebSocket across model requests. This can reduce transport overhead in runs with repeated tool calls. Install the optional WebSocket dependency with `pip install 'pydantic-ai-slim[openai,realtime]'` and use an asyncio event loop.
 
-Runs inside the context that don't pass `model=` use the connection, and a run's `model=` argument is honored as usual. Tools, structured output, capabilities, and streaming work as they do over HTTP. Set [`openai_previous_response_id='auto'`](#referencing-earlier-responses) so each request, including a tool result within a run, sends only new input:
+Runs inside the context that select no model of their own use the connection. A run's `model=`, a run `spec` model, and a run capability model are honored as usual. Tools, structured output, capabilities, and streaming work as they do over HTTP. Set [`openai_previous_response_id='auto'`](#referencing-earlier-responses) so each request, including a tool result within a run, sends only new input:
 
 ```python {title="openai_websocket.py" test="skip"}
 from pydantic_ai import Agent
@@ -299,7 +299,7 @@ async def main():
 
 Without that setting, each request sends the full message history. Keep passing the conversation or message history between runs either way.
 
-A connection supports **one active response at a time**. Concurrent tasks can each open their own `agent.connect()` context on the same agent. A completed response leaves the socket open. Cancelling a request, leaving a stream before it completes, or losing the transport closes the socket, and further requests in that context raise an error.
+A connection supports **one active response at a time**. Concurrent tasks can each open their own `agent.connect()` context on the same agent. Parallel tool calls that each start a child run on the run's model (`ctx.model`) overlap on one socket and fail, so give those child runs their own model or connection. A completed response leaves the socket open. Cancelling a request, leaving a stream before it completes, or losing the transport closes the socket, and further requests in that context raise an error.
 
 A connection doesn't reconnect, retry an interrupted generation, or switch to HTTP. To recover, open a new connection and resume with the full `message_history`. On the recovery run, pass `model_settings=OpenAIResponsesModelSettings(openai_previous_response_id=None)` to clear an inherited `'auto'` value, so the full history is sent without a previous response ID. With `openai_store=False` or Zero Data Retention, `previous_response_id` works only on the same socket, through OpenAI's connection-local cache. See [OpenAI's WebSocket guide](https://developers.openai.com/api/docs/guides/websocket-mode/) for connection and retention limits.
 

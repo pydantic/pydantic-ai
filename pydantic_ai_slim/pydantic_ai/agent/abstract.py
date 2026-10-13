@@ -1753,8 +1753,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         such as [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
         A model selected by a run-dependent capability cannot be connected outside a run.
 
-        Runs in the context that don't pass `model=` use the connected model; a run's `model=`
-        argument is honored as usual. The connection closes when the context exits. Each context
+        Runs in the context that select no model of their own use the connected model; a run's
+        `model=`, a run `spec` model, and a run capability model are honored as usual.
+        The connection closes when the context exits. Each context
         opens an independent connection; concurrent tasks can open their own contexts on the same agent.
         The model's connection context defines request concurrency and interruption behavior.
 

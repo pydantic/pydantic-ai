@@ -1555,10 +1555,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 else:
                     metadata = resolved.metadata
 
-        # `connect()` replaces only the configured model selection: run and spec models still win.
-        if model is None:
-            model = self._connected_model.get()
-
         # `override(retries=...)` wins over the run kwarg + spec, matching the precedence
         # of `model`/`deps`/`instructions`/etc. (see `Agent._get_model`). This keeps testing
         # fixtures that wrap call sites in `agent.override(retries=N)` effective even when
@@ -1579,6 +1575,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
         extra_capabilities = self._bind_run_capabilities(extra_capabilities)
+        # `connect()` replaces only the configured model selection: run, spec, and run capability models still win.
+        if model is None and (not extra_capabilities or CombinedCapability(extra_capabilities).get_model() is None):
+            model = self._connected_model.get()
         model_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
         bootstrap_capability: AbstractCapability[AgentDepsT]
         if len(model_layers) > 1:

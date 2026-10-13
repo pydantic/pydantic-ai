@@ -149,9 +149,9 @@ Use a model instance instead of a string when the user needs provider-specific c
 
 Use `async with agent.connect():` on an agent configured with an OpenAI Responses model, including `Agent('openai-responses:gpt-6-astra')`. Call the agent's ordinary run methods inside the context; the context binds the connection automatically. Keep passing the conversation between runs. Set `OpenAIResponsesModelSettings(openai_previous_response_id='auto')` to send only new input, including internal tool results.
 
-Runs without `model=` use the connection; a run's `model=` argument is honored as usual.
+Runs that select no model of their own use the connection. A run's `model=`, a run `spec` model, and a run capability model are honored as usual.
 
-Keep the connection context open for the whole tool loop. Run one response at a time per connection. Concurrent tasks can open separate contexts on the same agent. An agent connection owns the provider client of a temporary model created for the connection; existing model instances and agent tools keep their lifetimes. Context exit restores the agent's previous model selection.
+Keep the connection context open for the whole tool loop. Run one response at a time per connection. Parallel tool calls that each start a child run on `ctx.model` overlap on the parent's socket and fail; give those child runs their own model or connection. Concurrent tasks can open separate contexts on the same agent. An agent connection owns the provider client of a temporary model created for the connection; existing model instances and agent tools keep their lifetimes. Context exit restores the agent's previous model selection.
 
 For direct model use or connection options, open `async with model.connect() as connected` on an `OpenAIResponsesModel`. Pass `connected` to an `Agent` or a run's `model` argument. The source model continues to use HTTP. To use a `FallbackModel`, connect each concrete `OpenAIResponsesModel` with an `AsyncExitStack` first, then construct the fallback from those connected models; other fallback models can keep using HTTP.
 

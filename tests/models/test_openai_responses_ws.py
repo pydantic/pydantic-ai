@@ -264,6 +264,11 @@ class StaticModelCapability(AbstractCapability[None]):
         return 'openai-responses:gpt-4o'
 
 
+class RunModelCapability(AbstractCapability[object]):
+    def get_model(self) -> TestModel:
+        return TestModel(custom_output_text='run capability model')
+
+
 @dataclass
 class ScriptedSocket:
     """Control interruptions and concurrency beneath the real SDK event parser."""
@@ -455,7 +460,7 @@ async def test_agent_connection_closes_inferred_provider_after_count_tokens(
 async def test_agent_connection_replaces_only_configured_model(
     allow_model_requests: None, sockets: SocketHarness, monkeypatch: pytest.MonkeyPatch, selection: str
 ):
-    """Runs without `model=` use the connection; run models and overrides inside it keep their precedence."""
+    """Runs that select no model use the connection; run models, run capability models, and overrides win."""
     monkeypatch.setenv('OPENAI_API_KEY', 'test')
     socket = sockets.pending[0]
     socket.responses.append(text_events('connected again', 'resp_again'))
@@ -467,6 +472,9 @@ async def test_agent_connection_replaces_only_configured_model(
     async with agent.connect():
         explicit_result = await agent.run('inside', model=TestModel(custom_output_text='explicit run model'))
         assert explicit_result.output == 'explicit run model'
+        assert socket.sent == []
+        capability_result = await agent.run('capability', capabilities=[RunModelCapability()])
+        assert capability_result.output == 'run capability model'
         assert socket.sent == []
         assert (await agent.run('connected')).output == 'ready'
         with agent.override(model=TestModel(custom_output_text='override model')):
