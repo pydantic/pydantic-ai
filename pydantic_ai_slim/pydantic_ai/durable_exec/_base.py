@@ -178,6 +178,10 @@ class _RestrictedRunContext(Protocol):
 MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 
 _CONVERSATION_ID_NAMESPACE = uuid.UUID('b4a5470b-7dc5-4744-b6d4-27f7c81a3775')
+_UNSUPPORTED_BATCH_QUEUE = (
+    '`BatchModel` requests need a durable batch queue, which {engine_name} does not provide. '
+    'Use the wrapped model directly, or a durable execution engine with batch support, such as Temporal.'
+)
 """Namespace for the UUID5 a durable run derives its default `conversation_id` from."""
 
 
@@ -411,10 +415,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         bound._toolsets_by_id = {}
         bound._bind_to_agent(agent)
         if bound.get_durable_batch_binding() is None and any(map(find_batch_model, bound._models_by_id.values())):
-            raise UserError(
-                f'`BatchModel` requests need a durable batch queue, which {self.engine_name} does not provide. '
-                'Use the wrapped model directly, or a durable execution engine with batch support, such as Temporal.'
-            )
+            raise UserError(_UNSUPPORTED_BATCH_QUEUE.format(engine_name=self.engine_name))
         backend = bound.get_durable_operation_backend()
         # Registered engines need the complete registration set before a worker starts. Callable
         # engines bind per request because their durable unit names can depend on that request's
@@ -1736,10 +1737,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return None
         binding = self.get_durable_batch_binding()
         if binding is None:
-            raise UserError(
-                f'`BatchModel` requests need a durable batch queue, which {self.engine_name} does not provide. '
-                'Use the wrapped model directly, or a durable execution engine with batch support, such as Temporal.'
-            )
+            raise UserError(_UNSUPPORTED_BATCH_QUEUE.format(engine_name=self.engine_name))
         registered, model_id = self._registered_model_id(batch_model)
         if not registered:
             # The queue rebuilds the model on the worker, outside any run, so only the registry can supply it.
