@@ -330,7 +330,9 @@ def estimate_message_tokens(
     earlier one is exactly what the earlier response and the requests after it added, so those
     messages share that difference in proportion to their estimates. Where the history did not grow
     between two such responses, as across a compaction, the difference measures nothing and the
-    estimates stand; so do messages before the first such response and after the last.
+    estimates stand; so do messages before the first such response and after the last. A response a
+    provider continued across several requests enters the difference with its first request's input
+    tokens, since its summed `input_tokens` re-count the earlier requests' output.
 
     Instructions are left out: they are sent with every request, not carried by any one message.
     """
@@ -360,7 +362,10 @@ def _estimate_segments(segments: Sequence[str], tokenizer: Callable[[str], int] 
 
 
 def _reported_input_tokens(message: ModelMessage) -> int:
-    """The provider-reported input tokens of a response, or 0 for a request or a response without usage."""
+    """The provider-reported input tokens of a response, or 0 for a request or a response without usage.
+
+    For a response a provider continued across several requests, the first request's input tokens.
+    """
     return context_input_tokens(message) if isinstance(message, ModelResponse) else 0
 
 
