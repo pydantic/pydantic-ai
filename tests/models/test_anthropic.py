@@ -3320,18 +3320,32 @@ def test_model_error_reported_in_stream(
             id='404-in-stream',
         ),
         pytest.param(404, 'not_found_error', 'model: claude-unknown', False, id='404-other'),
+        pytest.param(
+            404,
+            None,
+            'Container not found. The provided container has expired or does not exist.',
+            True,
+            id='404-bedrock-shape',
+        ),
+        pytest.param(404, None, 'model: claude-unknown', False, id='404-bedrock-shape-other'),
     ],
 )
-def test_expired_container_error(status_code: int, error_type: str, message: str, expected: bool) -> None:
+def test_expired_container_error(status_code: int, error_type: str | None, message: str, expected: bool) -> None:
     """Anthropic answered an expired container with a 500 and now with a 404 `not_found_error`.
 
     `test_anthropic_code_execution_files_rejected_container_is_dropped_and_retried` records the current 404;
-    the 500 can't be recorded anymore, so the check is pinned here.
+    the 500 can't be recorded anymore, so the check is pinned here. `error_type` of `None` is Bedrock's
+    envelope, which reports the message at the top level of the body with no `error` wrapper (#9479).
     """
+    body: dict[str, object] = (
+        {'message': message}
+        if error_type is None
+        else {'type': 'error', 'error': {'type': error_type, 'message': message}}
+    )
     error = APIStatusError(
         'test error',
         response=httpx2.Response(status_code=status_code, request=httpx2.Request('POST', 'https://example.com/v1')),
-        body={'type': 'error', 'error': {'type': error_type, 'message': message}},
+        body=body,
     )
     assert _is_expired_container_error(error) is expected
 
