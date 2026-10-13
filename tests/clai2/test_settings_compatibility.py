@@ -74,12 +74,15 @@ async def test_logfire_user_tag_settings_survive_older_builds(
             'user_tag': ['logfire-user-tag'],
             'account': ['logfire-user-tag'],
             'httpx': ['logfire-httpx'],
+            'variables_key': ['logfire-variables-key'],
         }
         old_view = apply_requirements(
             saved.settings, stored_requirements(requirements, saved.settings), defaults={}, supported=frozenset()
         )
         assert old_view.settings == {
-            key: value for key, value in saved.settings.items() if key not in ('user_tag', 'account', 'httpx')
+            key: value
+            for key, value in saved.settings.items()
+            if key not in ('user_tag', 'account', 'httpx', 'variables_key')
         }
         monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
         await loader.reload('observability')
@@ -109,6 +112,7 @@ async def test_httpx_opt_in_is_ignored_by_older_builds(tmp_path: Path, recorder:
             'httpx': ['logfire-httpx'],
             'user_tag': ['logfire-user-tag'],
             'account': ['logfire-user-tag'],
+            'variables_key': ['logfire-variables-key'],
         }
         old_view = apply_requirements(
             saved.settings,
@@ -117,6 +121,30 @@ async def test_httpx_opt_in_is_ignored_by_older_builds(tmp_path: Path, recorder:
             supported=frozenset({'logfire-user-tag'}),
         )
         assert old_view.settings['httpx'] is False
+        assert store.plugins() == [saved]
+    finally:
+        await loader.close('exit')
+
+
+async def test_variables_key_is_ignored_by_older_builds(tmp_path: Path, recorder: Recorder) -> None:
+    """A build without `variables_key` forbids unknown settings, so the key is tagged for it to drop instead."""
+    loader, store = observability_loader(tmp_path)
+    try:
+        await loader.load_all()
+        source = LogfireSource(_observability_host(loader))
+        row = next(row for row in source.rows() if row.key == 'variables_key')
+        source.apply(row, 'LOGFIRE_API_KEY_TEAM')
+        [saved] = store.plugins()
+        assert saved.settings['variables_key'] == {'name': 'LOGFIRE_API_KEY_TEAM'}
+        requirements = store.plugin_requirements('observability')
+        old_view = apply_requirements(
+            saved.settings,
+            stored_requirements(requirements, saved.settings),
+            defaults={},
+            supported=frozenset({'logfire-user-tag', 'logfire-httpx'}),
+        )
+        assert 'variables_key' not in old_view.settings
+        assert old_view.ignored == {'variables_key': frozenset({'logfire-variables-key'})}
         assert store.plugins() == [saved]
     finally:
         await loader.close('exit')

@@ -461,6 +461,14 @@ over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings;
 whose write token then replaces `LOGFIRE_TOKEN` and the credential file, so its
 project receives the telemetry. If that key is missing, the plugin warns and
 exports nothing rather than falling back to another project.
+`variables_key` likewise takes the name of a `/keys` entry, holding a Logfire API
+key with the `project:read_variables` scope, which the plugin passes to
+`logfire.configure(api_key=...)` instead of `LOGFIRE_API_KEY`. A capability that
+reads Logfire managed variables through the plugin's instance then reads them
+from that key's project; write tokens cannot read variables. The key is used only
+when something reads a variable. If it is missing, the plugin warns and the SDK
+reads `LOGFIRE_API_KEY` as if no key were chosen. The **Variables API key** row
+sets it. The stock agent is named `clai2`, the name its run spans carry.
 Content flags do not suppress all metadata: tool names and definitions may still
 be recorded. Logfire's usual scrubbing is enabled. Set `httpx` to `true` to
 instrument `httpx` and `httpx2` requests process-wide while this plugin is loaded.

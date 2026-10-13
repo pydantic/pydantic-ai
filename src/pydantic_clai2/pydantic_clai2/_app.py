@@ -177,8 +177,11 @@ def create_agent(model: str | None = None) -> Agent[None, str]:
 
 
 def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str]:
-    """Build the CLI-owned template; caller-supplied agents are never reconstructed."""
-    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[customization_guide()])
+    """Build the CLI-owned template; caller-supplied agents are never reconstructed.
+
+    It is named `clai2`, which its run spans carry and which Logfire Agent Control addresses it by.
+    """
+    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[customization_guide()], name='clai2')
 
 
 @asynccontextmanager

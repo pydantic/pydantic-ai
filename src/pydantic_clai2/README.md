@@ -2373,10 +2373,18 @@ scrubbing remains enabled. Set `httpx` to `true` to trace HTTP requests made wit
 Logfire also captures HTTP headers and request and response bodies; with it off,
 those are not captured. HTTP instrumentation is process-wide, unlike agent tracing.
 
-Two more options choose where telemetry goes and what it covers. `token` names a
+More options choose where telemetry goes, what it covers, and what it reads. `token` names a
 `/keys` entry holding a Logfire write token, which then takes the place of
 `LOGFIRE_TOKEN` and the credential file; a missing key stops export with a warning
-rather than falling back. `ui_events` (default `true`; set `false` to opt out) adds spans and logs in the
+rather than falling back. `variables_key` names a `/keys` entry holding a Logfire
+API key with the `project:read_variables` scope (write tokens cannot read
+variables), which the plugin's Logfire instance then reads
+[managed variables](https://logfire.pydantic.dev/docs/reference/advanced/managed-variables/)
+with instead of `LOGFIRE_API_KEY`. Nothing reads them unless a capability asks the
+instance for one, so the key is only used then. A missing key is reported, and
+the SDK falls back to `LOGFIRE_API_KEY` as if none were chosen. CLAI's own agent
+is named `clai2`, so its runs are `invoke_agent clai2` spans and Logfire Agent
+Control can address it by that name. `ui_events` (default `true`; set `false` to opt out) adds spans and logs in the
 `clai2` scope for UI interactions: menus, slash commands, `/set`, plugin actions,
 `/keys`, prompt submissions, steering, interrupts, completions, and session start,
 clear, and resume. They record names and listed choices, never typed values or
