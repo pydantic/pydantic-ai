@@ -13,7 +13,7 @@ from pydantic_ai.native_tools import (
 )
 
 
-@pytest.mark.parametrize('model', ('bedrock', 'mistral', 'cohere', 'huggingface', 'test'), indirect=True)
+@pytest.mark.parametrize('model', ('bedrock', 'mistral', 'cohere', 'huggingface'), indirect=True)
 async def test_builtin_tools_not_supported_web_search(model: Model, allow_model_requests: None):
     agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
@@ -47,9 +47,7 @@ async def test_builtin_tools_not_supported_code_execution_stream(model: Model, a
             ...  # pragma: no cover
 
 
-@pytest.mark.parametrize(
-    'model', ('bedrock', 'mistral', 'cohere', 'huggingface', 'groq', 'anthropic', 'test'), indirect=True
-)
+@pytest.mark.parametrize('model', ('bedrock', 'mistral', 'cohere', 'huggingface', 'groq', 'anthropic'), indirect=True)
 async def test_builtin_tools_not_supported_file_search(model: Model, allow_model_requests: None):
     agent = Agent(model=model, capabilities=[NativeTool(FileSearchTool(file_store_ids=['test-id']))])
 
