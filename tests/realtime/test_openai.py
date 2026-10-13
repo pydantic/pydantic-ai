@@ -5884,8 +5884,8 @@ async def test_late_transcript_keeps_one_part_per_output_item(case: LateTranscri
 
     Both in history and in the event stream: a late transcript that adds nothing streams nothing, and one that
     adds text streams the item's part again under the index it ended with. A late transcript of the other
-    modality than the item's part opens a part of its own, as it did before. Scripted frames rather than a
-    recording: the provider's event order can't be produced on demand.
+    modality than the item's part opens a part of its own. Scripted frames rather than a recording: the
+    provider's event order can't be produced on demand.
     """
     ws = _QueuedWebSocket()
     connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]  # a scripted socket stands in for the websocket
