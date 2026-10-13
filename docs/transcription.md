@@ -243,8 +243,9 @@ Transcriber.instrument_all()
 
 Each call opens a span named `transcription {model}` carrying `gen_ai.operation.name='transcription'` and
 `gen_ai.output.type='text'`, with the model identity, usage, cost, and the number of segments. `transcription` is a custom
-operation name: the OpenTelemetry GenAI conventions enumerate no value for speech-to-text. The transcript is recorded
-unless [`include_content`][pydantic_ai.models.instrumented.InstrumentationSettings] is disabled. The audio itself, audio
+operation name: the OpenTelemetry GenAI conventions enumerate no value for speech-to-text. The transcript and the
+`openai_prompt` setting are recorded unless
+[`include_content`][pydantic_ai.models.instrumented.InstrumentationSettings] is disabled. The audio itself, audio
 URLs, and the `extra_headers` and `extra_body` request escape hatches are never recorded.
 
 See the [Debugging and Monitoring guide](logfire.md) for more details on using Logfire with Pydantic AI.
