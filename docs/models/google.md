@@ -497,7 +497,8 @@ decode is one model request:
   [`capture_run_messages()`][pydantic_ai.capture_run_messages] returns.
 - On [Temporal](../durable_execution/temporal.md#activity-configuration), the whole long decode runs in one model
   request activity, so its `start_to_close_timeout` must cover every request. A retried activity starts the response
-  over.
+  over. The merged response is the activity's one result, so a very long output can exceed Temporal's
+  [payload limit](../durable_execution/temporal.md#large-payloads).
 
 Without `max_tokens`, Google's default output limit applies, and a response that reaches it ends with
 `finish_reason='length'`.
