@@ -28,12 +28,14 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AudioUrl,
+    BinaryAudio,
     BinaryContent,
     BinaryImage,
     CachePoint,
     DocumentUrl,
     FilePart,
     ImageUrl,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -2432,6 +2434,186 @@ async def test_special_token_text_is_counted_as_live_counts_it() -> None:
     assert len(sent) == 1
 
 
+# --- idle audio -------------------------------------------------------------------------------------
+
+#: A generous bound on waiting for something the test has set in motion, so a loaded runner doesn't flake.
+READINESS_WAIT_TIMEOUT = 10
+
+
+class _AudioSink(OpenAILiveConnection):
+    """A connection that records the events it sends, and says when the first frame of silence goes out."""
+
+    def __init__(self) -> None:
+        super().__init__(object())  # pyright: ignore[reportArgumentType]
+        self.sent: list[dict[str, Any]] = []
+        self.silence_sent = anyio.Event()
+
+    async def _send_event(self, event: dict[str, Any]) -> None:
+        self.sent.append(event)
+        if event['type'] == 'session.input_audio.append' and not any(base64.b64decode(event['audio'])):
+            self.silence_sent.set()
+
+
+def test_idle_frames_follow_a_quiet_gap_at_a_microphones_pace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The first frame of silence waits out the gap after the application's audio; the rest follow every 100 ms.
+
+    The timing is pinned on a fixed clock: `test_the_idle_pump_streams_silence_until_closed` runs the real one.
+    """
+    clock = [10.0]
+    monkeypatch.setattr(live_module, '_pump_clock', lambda: clock[0])
+    connection = _connection()
+    connection._input_audio_end = 10.0  # pyright: ignore[reportPrivateUsage]
+
+    assert connection._idle_frame_due() == pytest.approx(10.3)  # pyright: ignore[reportPrivateUsage]
+    connection._next_idle_frame = 10.3 + 0.1  # pyright: ignore[reportPrivateUsage]
+    assert connection._idle_frame_due() == pytest.approx(10.4)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_application_audio_pushes_the_next_idle_frame_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    """While the application streams audio, the pump stays quiet; it picks up again once that audio stops."""
+    clock = [5.0]
+    monkeypatch.setattr(live_module, '_pump_clock', lambda: clock[0])
+    connection = _AudioSink()
+    connection._next_idle_frame = 5.1  # pyright: ignore[reportPrivateUsage]
+
+    await connection.send(BinaryAudio(data=b'\x01\x00' * 10, media_type='audio/pcm'))
+
+    # The quiet gap starts where the application's audio ends on Live's timeline: 10 samples after now.
+    assert connection._idle_frame_due() == pytest.approx(5.3 + 10 / 24000)  # pyright: ignore[reportPrivateUsage]
+    # Due already, so the wait returns at once and books the next frame a microphone frame later.
+    clock[0] = 5.3 + 10 / 24000
+    await connection._wait_for_idle_frame()  # pyright: ignore[reportPrivateUsage]
+    assert connection._idle_frame_due() == pytest.approx(5.4 + 10 / 24000)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_audio_sent_in_a_burst_holds_the_pump_back_until_it_has_played(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A long chunk, or a whole clip sent at once, plays on Live's timeline for as long as it lasts.
+
+    Timing the gap from the send would splice silence into the middle of the user's speech.
+    """
+    clock = [5.0]
+    monkeypatch.setattr(live_module, '_pump_clock', lambda: clock[0])
+    connection = _AudioSink()
+
+    # Two 400 ms chunks sent back to back: 800 ms of speech, ending at 5.8.
+    for _ in range(2):
+        await connection.send(BinaryAudio(data=bytes(9600 * 2), media_type='audio/pcm'))
+    assert connection._idle_frame_due() == pytest.approx(5.8 + 0.3)  # pyright: ignore[reportPrivateUsage]
+    # A chunk sent after the previous audio has played starts from now, not from where that audio ended.
+    clock[0] = 7.0
+    await connection.send(BinaryAudio(data=bytes(4800), media_type='audio/pcm'))
+    assert connection._idle_frame_due() == pytest.approx(7.1 + 0.3)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_failed_idle_pump_ends_the_session_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pump that died of anything but the socket going away would leave text deferred forever, so it raises.
+
+    The socket here stays quiet, so it is the pump's failure itself that has to wake the read loop.
+    """
+
+    async def broken(self: OpenAILiveConnection) -> None:
+        raise RuntimeError('pump broke')
+
+    monkeypatch.setattr(OpenAILiveConnection, '_pump_idle_audio', broken)
+    connection = OpenAILiveConnection(_FakeWebSocket([]), idle_audio=True)  # pyright: ignore[reportArgumentType]
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(RuntimeError, match='pump broke'):
+        async for _ in connection:
+            pass  # pragma: no cover
+    await connection.aclose()
+
+
+async def test_audio_sent_before_the_pump_starts_still_plays_out_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [5.0]
+    monkeypatch.setattr(live_module, '_pump_clock', lambda: clock[0])
+    connection = _AudioSink()
+    await connection.send(BinaryAudio(data=bytes(48000), media_type='audio/pcm'))  # one second
+
+    connection._start_idle_audio()  # pyright: ignore[reportPrivateUsage]
+    assert connection._idle_frame_due() == pytest.approx(6.3)  # pyright: ignore[reportPrivateUsage]
+    await connection.aclose()
+
+
+async def test_the_idle_pump_streams_silence_until_closed() -> None:
+    """Without application audio the pump streams 100 ms frames of silence, and closing the connection stops it."""
+    connection = _AudioSink()
+    connection._start_idle_audio()  # pyright: ignore[reportPrivateUsage]
+    task = connection._idle_audio_task  # pyright: ignore[reportPrivateUsage]
+    assert task is not None
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await connection.silence_sent.wait()
+    await connection.aclose()
+
+    assert task.done()
+    # 100 ms of 24 kHz PCM16.
+    assert len(base64.b64decode(connection.sent[0]['audio'])) == 4800
+
+
+async def test_the_idle_pump_stops_when_the_socket_does() -> None:
+    """A socket that has gone away ends the pump quietly: the read loop is what reports the close."""
+
+    class _Closed(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            raise websockets.ConnectionClosedError(None, None)
+
+    connection = _Closed(object())  # pyright: ignore[reportArgumentType]
+    connection._start_idle_audio()  # pyright: ignore[reportPrivateUsage]
+    task = connection._idle_audio_task  # pyright: ignore[reportPrivateUsage]
+    assert task is not None
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await task
+    await connection.aclose()
+
+
+async def test_idle_audio_starts_only_when_asked_for(model: OpenAILiveModel) -> None:
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    with _patched_connect(_FakeWebSocket([started])):
+        async with model.connect(
+            messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            assert connection._idle_audio_task is None  # pyright: ignore[reportPrivateUsage]
+    with _patched_connect(_FakeWebSocket([started])):
+        async with model.connect(
+            messages=[],
+            model_settings=OpenAILiveModelSettings(openai_live_idle_audio=True),
+            model_request_parameters=ModelRequestParameters(),
+        ) as connection:
+            # The pump starts with the connection's reading, as a session's does straight after connecting.
+            events = connection.__aiter__()
+            first = asyncio.ensure_future(events.__anext__())
+            await asyncio.sleep(0)
+            task = connection._idle_audio_task  # pyright: ignore[reportPrivateUsage]
+            assert task is not None and not task.done()
+            # Starting again is a no-op rather than a second pump.
+            connection._start_idle_audio()  # pyright: ignore[reportPrivateUsage]
+            assert connection._idle_audio_task is task  # pyright: ignore[reportPrivateUsage]
+            first.cancel()
+    assert task.done()
+
+
+async def test_audio_sent_as_the_pump_wakes_holds_its_frame_back() -> None:
+    """Application audio that lands between the pump's wait and its send wins: the pump waits again."""
+    connection = _AudioSink()
+    waits = 0
+
+    async def wait_for_idle_frame() -> None:
+        nonlocal waits
+        waits += 1
+        if waits == 1:
+            await connection.send(BinaryAudio(data=b'\x01\x00' * 10, media_type='audio/pcm'))
+
+    connection._wait_for_idle_frame = wait_for_idle_frame  # pyright: ignore[reportPrivateUsage]
+    connection._start_idle_audio()  # pyright: ignore[reportPrivateUsage]
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await connection.silence_sent.wait()
+    await connection.aclose()
+
+    assert waits >= 2
+    assert any(base64.b64decode(connection.sent[0]['audio']))
+
+
 # --- browser WebRTC ---------------------------------------------------------------------------------
 
 
@@ -2624,16 +2806,94 @@ async def test_a_sideband_must_attach_through_the_same_provider(model: OpenAILiv
             pass  # pragma: no cover
 
 
-async def test_a_sideband_cannot_seed_history(model: OpenAILiveModel) -> None:
-    """Live takes its history when the session starts, which the offer already did."""
-    with pytest.raises(UserError, match='cannot seed `message_history`'):
+async def test_a_sideband_refuses_idle_audio(model: OpenAILiveModel) -> None:
+    """The browser carries a WebRTC call's audio, so a sideband has none of its own to replace with silence."""
+    with pytest.raises(UserError, match='`openai_live_idle_audio` cannot be set'):
         async with model.connect_webrtc(
             WebRTCSession(provider_name='openai', session_id='live_test'),
-            messages=[ModelRequest(parts=[UserPromptPart(content='My name is Ada.')])],
-            model_settings=None,
+            messages=[],
+            model_settings=OpenAILiveModelSettings(openai_live_idle_audio=True),
             model_request_parameters=ModelRequestParameters(),
         ):
             pass  # pragma: no cover
+
+
+_HISTORY = [
+    ModelRequest(parts=[UserPromptPart(content='My name is Ada.')]),
+    ModelResponse(parts=[TextPart(content='Nice to meet you, Ada.')]),
+]
+_SEEDED_INPUT = [
+    {'role': 'user', 'content': [{'type': 'input_text', 'text': 'My name is Ada.'}]},
+    {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Nice to meet you, Ada.'}]},
+]
+
+
+async def test_answering_an_offer_seeds_the_history() -> None:
+    """Live takes history only when a session starts, which on a WebRTC call is the offer."""
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return _created()
+
+    await _webrtc_model(handler).answer_webrtc_offer('v=0', message_history=_HISTORY)
+
+    assert sent[0]['session']['input'] == _SEEDED_INPUT
+
+
+async def test_a_sideband_opened_with_the_offers_history_seeds_nothing(model: OpenAILiveModel) -> None:
+    """The history the offer seeded is already in the session Live replays, so the sideband adds nothing."""
+    ws = _FakeWebSocket([_started_frame(input=_SEEDED_INPUT)])
+    with _patched_connect(ws):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='openai', session_id='live_test'),
+            # The trailing request is the one the session adds for the instructions; it seeds nothing.
+            messages=[*_HISTORY, ModelRequest(parts=[], instructions='Be brief.')],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ):
+            pass
+    assert ws.sent == []
+
+
+async def test_a_sideband_accepts_history_live_echoes_with_other_whitespace(model: OpenAILiveModel) -> None:
+    """The check is that it is the same conversation, so whitespace Live might normalize doesn't fail a call."""
+    echoed = [
+        {'role': 'user', 'content': [{'type': 'input_text', 'text': 'My name  is\nAda.'}]},
+        _SEEDED_INPUT[1],
+    ]
+    with _patched_connect(_FakeWebSocket([_started_frame(input=echoed)])):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='openai', session_id='live_test'),
+            messages=_HISTORY,
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ):
+            pass
+
+
+@pytest.mark.parametrize(
+    ('started_input', 'sideband_history'),
+    [
+        pytest.param([], _HISTORY, id='offer-seeded-nothing'),
+        pytest.param(_SEEDED_INPUT[:1], _HISTORY, id='offer-seeded-other-history'),
+        # The other direction: the offer seeded history, and the sideband was opened without it.
+        pytest.param(_SEEDED_INPUT, [], id='sideband-opened-without-the-offers-history'),
+    ],
+)
+async def test_a_sideband_with_history_the_offer_did_not_seed_raises(
+    model: OpenAILiveModel, started_input: list[dict[str, Any]], sideband_history: list[ModelMessage]
+) -> None:
+    """Live can't take history after the session starts, so the model would never see what history records."""
+    with _patched_connect(_FakeWebSocket([_started_frame(input=started_input)])):
+        with pytest.raises(UserError, match='must be opened with the same `message_history`'):
+            async with model.connect_webrtc(
+                WebRTCSession(provider_name='openai', session_id='live_test'),
+                messages=sideband_history,
+                model_settings=None,
+                model_request_parameters=ModelRequestParameters(),
+            ):
+                pass  # pragma: no cover
 
 
 async def test_closing_a_session_records_the_seconds_live_reports_as_it_ends(model: OpenAILiveModel) -> None:
@@ -2685,6 +2945,21 @@ async def _ended(connection: OpenAILiveConnection) -> list[SessionUsage]:
 class _LiveSink(OpenAILiveConnection):
     def __init__(self, ws: _FakeWebSocket) -> None:
         super().__init__(ws)  # pyright: ignore[reportArgumentType]
+
+
+async def test_ending_the_session_stops_the_idle_pump_first() -> None:
+    """Silence after `session.close` would only be billed, so the pump stops before it is sent."""
+    ws = _FakeWebSocket([], closed_seconds=4)
+    connection = OpenAILiveConnection(ws, idle_audio=True)  # pyright: ignore[reportArgumentType]
+    connection._start_idle_audio()  # pyright: ignore[reportPrivateUsage]
+    pump = connection._idle_audio_task  # pyright: ignore[reportPrivateUsage]
+    assert pump is not None
+
+    await _ended(connection)
+
+    assert pump.done()
+    assert [json.loads(frame)['type'] for frame in ws.sent][-1:] == ['session.close']
+    await connection.aclose()
 
 
 async def test_ending_the_session_reads_every_frame_until_session_closed() -> None:
@@ -3135,6 +3410,114 @@ async def test_a_message_too_long_to_replay_alone_is_skipped() -> None:
 def test_a_document_url_of_unknown_type_is_left_to_the_mapper() -> None:
     """Whether it can be sent is the Responses mapping's call, as on `OpenAIResponsesModel`."""
     assert not live_module._is_audio_or_video_url(DocumentUrl(url='https://example.com/noext'))  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_the_idle_pump_carries_on_to_the_replacement_socket() -> None:
+    """A drop the connection can redial doesn't stop the pump: the silence that follows goes to the new socket."""
+
+    class _DeadSocket(_FakeWebSocket):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.pump_hit_the_drop = anyio.Event()
+
+        async def send(self, data: str) -> None:
+            self.pump_hit_the_drop.set()
+            raise websockets.ConnectionClosedError(None, None)
+
+        async def recv(self) -> str:
+            # The read loop only learns of the drop once the pump has already run into it.
+            await self.pump_hit_the_drop.wait()
+            raise websockets.ConnectionClosedError(None, None)
+
+    class _Replacement(_FakeWebSocket):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.silence_arrived = anyio.Event()
+
+        async def send(self, data: str) -> None:
+            await super().send(data)
+            self.silence_arrived.set()
+
+    dead, replacement = _DeadSocket(), _Replacement()
+
+    async def dial(fork_from: str | None, seed: list[dict[str, Any]]) -> tuple[Any, str | None]:
+        return replacement, 's2'
+
+    connection = OpenAILiveConnection(dead, dial=dial, reconnect={'base_delay': 0.0}, session_id='s1', idle_audio=True)  # pyright: ignore[reportArgumentType]
+    assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=False)]
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await replacement.silence_arrived.wait()
+    pump = connection._idle_audio_task  # pyright: ignore[reportPrivateUsage]
+    assert pump is not None and not pump.done()
+    await connection.aclose()
+
+    assert json.loads(replacement.sent[0]) == {
+        'type': 'session.input_audio.append',
+        'audio': base64.b64encode(bytes(4800)).decode(),
+    }
+
+
+async def test_audio_booked_on_a_lost_session_doesnt_hold_back_the_replacements_silence() -> None:
+    """A redial drops the application audio still due to play on the old session, so idle frames start at once."""
+    replacement = _FakeWebSocket([])
+
+    async def dial(fork_from: str | None, seed: list[dict[str, Any]]) -> tuple[Any, str | None]:
+        return replacement, 's2'
+
+    dropping: Any = _DroppingWebSocket([])
+    connection = OpenAILiveConnection(
+        dropping, dial=dial, reconnect={'base_delay': 0.0}, session_id='s1', idle_audio=True
+    )
+    # A minute of audio sent just before the drop, which will now never play.
+    connection._input_audio_end = live_module._pump_clock() + 60  # pyright: ignore[reportPrivateUsage]
+    assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=False)]
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        while not replacement.sent:
+            await anyio.sleep(0.05)
+    await connection.aclose()
+
+
+async def test_application_audio_after_an_idle_frame_plays_once_that_frame_has(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audio sent just after a frame of silence queues behind it on Live's timeline, so the gap counts from there."""
+    clock = [10.0]
+    monkeypatch.setattr(live_module, '_pump_clock', lambda: clock[0])
+    connection = _AudioSink()
+    connection._start_idle_audio()  # pyright: ignore[reportPrivateUsage]
+    clock[0] = 10.3
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await connection.silence_sent.wait()
+
+    await connection.send(BinaryAudio(data=b'\x01\x00' * 10, media_type='audio/pcm'))
+
+    # The silence plays until 10.4, the application's 10 samples after it, and then the quiet gap.
+    assert connection._idle_frame_due() == pytest.approx(10.7 + 10 / 24000)  # pyright: ignore[reportPrivateUsage]
+    await connection.aclose()
+
+
+async def test_audio_whose_send_was_cancelled_doesnt_hold_the_pump_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [5.0]
+    monkeypatch.setattr(live_module, '_pump_clock', lambda: clock[0])
+
+    class _Stuck(_AudioSink):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sending = anyio.Event()
+
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            self.sending.set()
+            await anyio.sleep_forever()
+
+    connection = _Stuck()
+    sending = asyncio.create_task(connection.send(BinaryAudio(data=bytes(48000), media_type='audio/pcm')))
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await connection.sending.wait()
+    # A second of audio booked while it was going out.
+    assert connection._idle_frame_due() == pytest.approx(6.3)  # pyright: ignore[reportPrivateUsage]
+    sending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await sending
+
+    assert connection._idle_frame_due() == pytest.approx(0.3)  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize('ending', ['expired', 'connection_lost', 'dropped'])

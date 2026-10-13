@@ -13,7 +13,7 @@ Give an agent a persistent notebook that it can update, search, and reuse across
 
 Memory gives each agent a notebook made of Markdown files:
 
-- `MEMORY.md` is the main notebook. By default, a bounded excerpt and the names of other files are added to the current request as delimited user-role context.
+- `MEMORY.md` is the main notebook. By default, a bounded excerpt and the names of other files are added beside the latest user prompt as delimited user-role context.
 - Other files hold longer or focused notes. The model reads them on demand or finds them with bounded text search.
 
 The model gets four tools:
@@ -46,7 +46,7 @@ The namespace is resolved by application code, not supplied to the tools. The mo
 
 ## Injection modes and limits
 
-Automatic injection is enabled by default. Trusted usage guidance remains in model instructions, while model-written memory is enclosed in `<memory>` delimiters in a user-role part on the current request. Together, the guidance, main notebook, and file listing share a finite `max_tokens` budget, estimated at four characters per token. The default is 2,000 approximate tokens. `max_lines` is an additional limit on the main notebook. Backend reads are limited by `max_memory_size`, and the number of requested paths is derived from the prompt budget, so the capability never requests an unbounded file or listing. Content that does not fit is omitted with a prompt directing the model to use `read_memory` or `search_memory`.
+Automatic injection is enabled by default. Trusted usage guidance remains in model instructions, while model-written memory is enclosed in `<memory>` delimiters in a user-role part beside the latest user prompt. Together, the guidance, main notebook, and file listing share a finite `max_tokens` budget, estimated at four characters per token. The default is 2,000 approximate tokens. `max_lines` is an additional limit on the main notebook. Backend reads are limited by `max_memory_size`, and the number of requested paths is derived from the prompt budget, so the capability never requests an unbounded file or listing. Content that does not fit is omitted with a prompt directing the model to use `read_memory` or `search_memory`.
 
 When `heading` is set, the same `## {heading}` labels both the trusted guidance and the user-role memory block.
 
@@ -62,6 +62,8 @@ memory = Memory(
 ```
 
 Only the current request retains the injected user-role part, so copies do not accumulate in message history. A part saved to history by an earlier release is removed on the next request. Each model request receives the latest bounded snapshot, including after `write_memory` or an external update changes `MEMORY.md`.
+
+The block goes on the request that holds the latest user prompt, so after a tool call, or when a run resumes after a deferred tool approval, it stays with the user's prompt rather than following the tool results, where a model could read it as a new message from the user. With no user prompt in the history, it goes on the last request. While the snapshot is unchanged, each request in a tool loop starts with the previous one, so prefix caching keeps working. When the snapshot changes, or a new user prompt moves the block, the content from the block's earlier position onward changes once.
 
 When combining it with compaction, list compaction before `Memory`; otherwise a later persistent rewrite replaces the request-only memory block.
 

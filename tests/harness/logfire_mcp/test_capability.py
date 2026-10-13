@@ -228,6 +228,7 @@ class TestLogfireMCP:
 
 
 class TestPerRunAuth:
+    @pytest.mark.subprocess(reason='uses the `whoami_url` MCP server, which runs in its own process')
     async def test_concurrent_runs_use_their_own_credentials(self, whoami_url: str) -> None:
         agent = Agent(TestModel(), deps_type=str, capabilities=[LogfireMCP[str](url=whoami_url, auth=per_user_token)])
         alice, bob = await asyncio.gather(

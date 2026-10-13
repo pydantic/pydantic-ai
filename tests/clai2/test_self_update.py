@@ -197,7 +197,7 @@ def test_install_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     ]
     assert update.overrides() == (
         f'pydantic-clai2 @ {release}/pydantic_clai2-{NEWER}.tar.gz\n'
-        f'pydantic-ai-harness[coder] @ {release}/pydantic_ai_harness-{NEWER}.tar.gz\n'
+        f'pydantic-ai-harness[coder,skills] @ {release}/pydantic_ai_harness-{NEWER}.tar.gz\n'
         f'pydantic-ai-slim[anthropic,mcp,openai] @ {release}/pydantic_ai_slim-{NEWER}.tar.gz\n'
         f'pydantic-graph @ {release}/pydantic_graph-{NEWER}.tar.gz\n'
     )
@@ -245,7 +245,7 @@ def _updates(
         if '--overrides' in command:
             # The overrides file exists while uv runs and preserves the packages' required extras.
             text = Path(command[command.index('--overrides') + 1]).read_text(encoding='utf-8')
-            assert 'pydantic-ai-harness[coder] @ ' in text
+            assert 'pydantic-ai-harness[coder,skills] @ ' in text
             assert 'pydantic-ai-slim[anthropic,mcp,openai] @ ' in text
         return (codes or [0]).pop(0)
 
@@ -344,6 +344,7 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
         await current.command(['now'])
 
 
+@pytest.mark.subprocess(reason='runs a Python one-liner in place of `uv` to check the exit status is returned')
 async def test_run_uv_returns_the_exit_status() -> None:
     assert await _run_uv([sys.executable, '-c', 'raise SystemExit(3)']) == 3
 
@@ -468,7 +469,9 @@ async def test_tool_executable_asks_uv_for_its_bin_directory(tmp_path: Path) -> 
     assert await tool_executable(str(uv)) is None
 
 
-async def _relaunch_after(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, prompts: list[str]) -> Relaunch:
+async def _relaunch_after(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, prompts: list[str], *, session_id: str | None = None
+) -> Relaunch:
     updates, _ = _updates(['main'])
 
     def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
@@ -483,6 +486,7 @@ async def _relaunch_after(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, promp
             settings=Settings(model='test', update_channel='main'),
             console=Console(file=StringIO(), width=200),
             store=SettingsStore(tmp_path / 'config.db'),
+            session_id=session_id,
         )
     assert raised.value.code == 0
     assert raised.value.executable == '/tools/clai2'
@@ -490,7 +494,20 @@ async def _relaunch_after(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, promp
 
 
 async def test_shell_relaunches_after_an_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    assert (await _relaunch_after(monkeypatch, tmp_path, [])).session_id is None
+    fresh = await _relaunch_after(monkeypatch, tmp_path, [])
+    assert (fresh.session_id, fresh.new_session_id) == (None, None)
+    named = await _relaunch_after(monkeypatch, tmp_path, [], session_id='0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f')
+    assert (named.session_id, named.new_session_id) == (None, '0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f')
+
+    def rebuild(factory: Callable[[], object]) -> object:
+        return factory()
+
+    # `/reload` rebuilds the shell, which keeps the conversation the launch options chose.
+    monkeypatch.setattr(_app, 'reload_clai', rebuild)
+    reloaded = await _relaunch_after(
+        monkeypatch, tmp_path, ['/reload'], session_id='0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f'
+    )
+    assert (reloaded.session_id, reloaded.new_session_id) == (None, '0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f')
     resumed = await _relaunch_after(monkeypatch, tmp_path, ['hello'])
     assert resumed.session_id is not None
     saved = await SqliteConversationStore(database=tmp_path / 'sessions.db').get(conversation_id=resumed.session_id)
@@ -500,6 +517,16 @@ async def test_shell_relaunches_after_an_install(tmp_path: Path, monkeypatch: py
 def test_relaunch_argv(tmp_path: Path) -> None:
     bare = argparse.Namespace(agent=None, model=None, request_limit=None, database=None)
     assert relaunch_argv(bare, executable='/b/clai2', session_id=None) == ['/b/clai2']
+    assert relaunch_argv(bare, executable='/b/clai2', session_id=None, new_session_id='u') == [
+        '/b/clai2',
+        '--session-id',
+        'u',
+    ]
+    assert relaunch_argv(bare, executable='/b/clai2', session_id='s', new_session_id='u') == [
+        '/b/clai2',
+        '--resume',
+        's',
+    ]
     full = argparse.Namespace(agent='m:a', model='test', request_limit=5, database=tmp_path / 'c.db')
     assert relaunch_argv(full, executable='/b/clai2', session_id='abc') == [
         '/b/clai2',

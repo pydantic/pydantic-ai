@@ -879,22 +879,27 @@ class TestLLMReminder:
             await reminder(no_run_id)
         assert len(caplog.records) == 4  # run-1 once, run-2 once, and each failure without a run id
 
-    async def test_remembers_a_bounded_number_of_runs(self, caplog: pytest.LogCaptureFixture) -> None:
+    async def test_remembers_a_bounded_number_of_runs(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A small bound stands in for `_WARNED_RUNS_KEPT` so the eviction is reached in a few runs.
+        monkeypatch.setattr('pydantic_ai_harness.system_reminders._capability._WARNED_RUNS_KEPT', 4)
+
         def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise RuntimeError('model down')
 
         reminder = LLMReminder(model=FunctionModel(boom))
         messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('ship the fix')])]
         with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.system_reminders'):
-            for index in range(258):
+            for index in range(6):
                 ctx = _ctx(messages=messages)
                 ctx.run_id = f'run-{index}'
                 await reminder(ctx)
             oldest = _ctx(messages=messages)
             oldest.run_id = 'run-0'
             await reminder(oldest)
-        # 258 distinct runs, then the oldest again: it was evicted, so it warns a second time.
-        assert len(caplog.records) == 259
+        # 6 distinct runs, then the oldest again: it was evicted, so it warns a second time.
+        assert len(caplog.records) == 7
 
     def test_zero_max_context_messages_raises(self) -> None:
         with pytest.raises(ValueError, match='max_context_messages must be >= 1'):

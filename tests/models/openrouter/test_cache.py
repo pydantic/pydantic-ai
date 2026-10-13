@@ -7,8 +7,9 @@ OpenRouter API).
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Mapping
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from cassetter import Cassette
@@ -28,13 +29,19 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..._inline_snapshot import snapshot
 from ...cassette_utils import single_request_body
 from ...conftest import IsDatetime, IsStr, try_import
+from ..mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
+    from openai.types.chat import ChatCompletion
+    from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
     from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
     from pydantic_ai.providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 
@@ -1052,3 +1059,83 @@ async def test_openrouter_cache_messages_marks_previous_request_after_wide_turn(
         0,
         len(mapped) - 1,
     ]
+
+
+# ===== Prompt caching: TTL ordering =====
+
+
+def _cache_ttls(kwargs: Mapping[str, Any]) -> list[str]:
+    """The TTL of every `cache_control` in a mocked request, in the order Anthropic processes them: tools, then the
+    leading system messages, then the rest of the conversation. Every message here has list content."""
+    blocks = [*kwargs['tools'], *(part for message in kwargs['messages'] for part in message['content'])]
+    return [block['cache_control']['ttl'] for block in blocks if 'cache_control' in block]
+
+
+@pytest.mark.parametrize(
+    ('settings', 'expected_ttls'),
+    [
+        # Plain dicts: parameters are built at collection time, also on installs without `openai`.
+        pytest.param({'cache': True}, ['1h', '1h', '1h', '5m'], id='unified-cache'),
+        pytest.param({'openrouter_cache_instructions': '5m'}, ['1h', '1h'], id='instructions-5m'),
+    ],
+)
+async def test_openrouter_earlier_cache_breakpoints_raised_to_later_longer_ttl(
+    allow_model_requests: None, settings: dict[str, Any], expected_ttls: list[str]
+) -> None:
+    """Five-minute breakpoints before a one-hour `CachePoint` are raised to an hour, since Anthropic rejects a request
+    where "a ttl='1h' cache_control block must not come after a ttl='5m' cache_control block". The conversation's
+    breakpoint after it stays five minutes. A mocked client, since the property is a request the API would reject;
+    `test_openrouter_cache_earlier_breakpoint_raised_to_later_longer_ttl_e2e` shows OpenRouter accepting it."""
+    message = ChatCompletionMessage.model_construct(role='assistant', content='Done.')
+    choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
+    completion = ChatCompletion.model_construct(
+        id='123', choices=[choice], created=1704067200, model='test', object='chat.completion', provider='test'
+    )
+    mock_client = MockOpenAI.create_mock(completion)
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(model, instructions='System instructions.', model_settings=cast(ModelSettings, settings))
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    await agent.run(['Some context', CachePoint(ttl='1h'), 'Question'])
+
+    assert _cache_ttls(get_mock_chat_completion_kwargs(mock_client)[0]) == expected_ttls
+
+
+async def test_openrouter_cache_earlier_breakpoint_raised_to_later_longer_ttl_e2e(
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
+) -> None:
+    """A five-minute instructions breakpoint before a one-hour `CachePoint` is raised to an hour. Sent as is, Anthropic
+    rejects the request, and OpenRouter passes the 400 through."""
+    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    agent = Agent(
+        model,
+        instructions='You are a concise Python assistant. ' + 'Answer questions about Python concisely. ' * 300,
+        model_settings=OpenRouterModelSettings(
+            openrouter_cache_instructions='5m', openrouter_provider={'only': ['anthropic']}
+        ),
+    )
+
+    result = await agent.run(
+        ['Some context about Python. ' * 300, CachePoint(ttl='1h'), 'Name one Python web framework, in one word.']
+    )
+
+    system_message, user_message = single_request_body(vcr)['messages']
+    assert [system_message['content'][-1]['cache_control'], user_message['content'][0]['cache_control']] == snapshot(
+        [{'type': 'ephemeral', 'ttl': '1h'}, {'type': 'ephemeral', 'ttl': '1h'}]
+    )
+    # OpenRouter doesn't split cache writes by TTL, so `cost` prices them all as five-minute writes. The recorded
+    # response's own `cost` (0.023577) is the one-hour write price: 3913 tokens at $6/MTok, plus input and output.
+    assert result.usage == snapshot(
+        RunUsage(
+            details={'is_byok': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
+            input_tokens=3926,
+            output_reasoning_tokens=0,
+            output_tokens=4,
+            cache_write_tokens=3913,
+            cost=Decimal('0.01477275'),
+            requests=1,
+        )
+    )

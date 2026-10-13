@@ -283,28 +283,29 @@ NEW_CONVERSATION: Literal['new'] = 'new'
 def resolve_conversation_id(
     explicit: str | None,
     message_history: Sequence[_messages.ModelMessage] | None,
+    *,
+    default: str | None = None,
 ) -> str:
     """Resolve the `conversation_id` to use for an agent run.
 
     Priority:
 
-    1. `explicit == 'new'` → fresh UUID7 (forks a conversation off the supplied history).
+    1. `explicit == 'new'` → fresh id (forks a conversation off the supplied history).
     2. Explicit string → used as-is.
     3. Most recent non-`None` `conversation_id` on `message_history` (scanned from the end).
-    4. Fresh UUID7.
+    4. Fresh id.
 
-    A fresh UUID7 is intentionally distinct from the run's `run_id`, so callers can
+    A fresh id is `default` when given (a durable engine's replay-stable id), and a UUID7
+    otherwise. Either way it is distinct from the run's `run_id`, so callers can
     treat the two identifiers as independent.
     """
-    if explicit == NEW_CONVERSATION:
-        return str(uuid7())
-    if explicit is not None:
+    if explicit is not None and explicit != NEW_CONVERSATION:
         return explicit
-    if message_history:
+    if explicit is None and message_history:
         for message in reversed(message_history):
             if (cid := message.conversation_id) is not None:
                 return cid
-    return str(uuid7())
+    return default if default is not None else str(uuid7())
 
 
 def resolve_conversation(
@@ -355,7 +356,8 @@ def resolve_run_id(
     Priority:
 
     1. Explicit string → used as-is (raises `UserError` if empty, or if that id already
-       appears on `message_history`).
+       appears on `message_history`). `Agent` passes a durable engine's replay-stable
+       default here when the caller gave none.
     2. Fresh UUID7.
     """
     if explicit is not None:
@@ -756,7 +758,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             await self._reevaluate_dynamic_prompts(messages, run_context)
 
         if next_message:
-            await self._reevaluate_dynamic_prompts([next_message], run_context)
+            reevaluated: list[_messages.ModelMessage] = [next_message]
+            await self._reevaluate_dynamic_prompts(reevaluated, run_context)
+            next_message = cast(_messages.ModelRequest, reevaluated[0])
         else:
             parts: list[_messages.ModelRequestPart] = []
             if not messages:
@@ -831,7 +835,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         """Reevaluate any `SystemPromptPart` with dynamic_ref in the provided messages by running the associated runner function."""
         # Only proceed if there's at least one dynamic runner.
         if self.system_prompt_dynamic_functions:
-            for msg in messages:
+            for index, msg in enumerate(messages):
                 if isinstance(msg, _messages.ModelRequest):
                     reevaluated_message_parts: list[_messages.ModelRequestPart] = []
                     for part in msg.parts:
@@ -848,9 +852,10 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
                         reevaluated_message_parts.append(part)
 
-                    # Replace message parts with reevaluated ones to prevent mutating parts list
+                    # Replace the whole message instead of assigning to msg.parts so
+                    # caller-owned message_history objects are never mutated in place.
                     if reevaluated_message_parts != msg.parts:
-                        msg.parts = reevaluated_message_parts
+                        messages[index] = replace(msg, parts=reevaluated_message_parts)
 
     async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.SystemPromptPart]:
         """Build the initial system-prompt messages for the conversation."""
@@ -1092,7 +1097,22 @@ def _split_resume_seed(
     return list(messages), None
 
 
-def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: _usage.RequestUsage) -> None:
+def _record_attempts_usage(usage: _usage.RunUsage, attempts: Sequence[_messages.ModelRequestAttempt] | None) -> None:
+    """Record the usage of attempts that failed before a response, such as responses a `FallbackModel` rejected.
+
+    Only their tokens and cost are recorded: a failed attempt isn't a response the agent acted on, so it
+    doesn't count as a request towards [`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit].
+    """
+    for attempt in attempts or ():
+        if attempt.usage is not None:
+            _usage_attribution.record_usage(usage, attempt.usage)
+
+
+def _check_continuation_usage(
+    run_context: RunContext[Any],
+    continuation_usage: _usage.RequestUsage,
+    attempts: Sequence[_messages.ModelRequestAttempt] | None = None,
+) -> None:
     """Enforce token limits mid-turn against a provisional total during continuations.
 
     Continuation segments accumulate usage but aren't committed to the run usage until the
@@ -1103,12 +1123,18 @@ def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: 
     the agent graph (where `run_context.usage` is the live run usage) and inside a durable
     boundary (where it's the serialized snapshot the activity/step/task received — the final
     workflow-side check still applies when the merged response is committed).
+
+    `attempts` are the turn's failed attempts (e.g. responses a `FallbackModel` rejected before the one
+    that suspended), whose usage is committed alongside the merged response's.
     """
     if run_context.usage_limits:
         provisional = deepcopy(run_context.usage)
         provisional.incr(continuation_usage)  # usage-attribution: a provisional copy, for a check only
+        attempt_usages = [attempt.usage for attempt in attempts or () if attempt.usage is not None]
+        for attempt_usage in attempt_usages:
+            provisional.incr(attempt_usage)  # usage-attribution: a provisional copy, for a check only
         run_context.usage_limits.check_tokens(provisional)
-        if continuation_usage.cost is not None:
+        if continuation_usage.cost is not None or any(usage.cost is not None for usage in attempt_usages):
             # Continuation usage is provisional, so only warn after the run successfully finishes.
             run_context.usage_limits.check_cost(provisional, warn_if_cost_unavailable=False)
 
@@ -1122,7 +1148,7 @@ async def _check_resume_seed_usage(
         return
     try:
         fill_response_cost(seed)
-        _check_continuation_usage(run_context, seed.usage)
+        _check_continuation_usage(run_context, seed.usage, seed.failed_attempts)
     except BaseException:
         await cancel_suspended_job(model, seed)
         raise
@@ -1234,7 +1260,7 @@ async def model_request(
                 if response.state == 'suspended':
                     fill_response_cost(response)
                     try:
-                        _check_continuation_usage(run_context, response.usage)
+                        _check_continuation_usage(run_context, response.usage, response.failed_attempts)
                     except BaseException:
                         await cancel_suspended_job(model, response)
                         raise
@@ -1250,7 +1276,7 @@ async def model_request(
                 # Enforce token limits early against a provisional total so a runaway
                 # continuation can't blow the budget; the total is committed once later.
                 try:
-                    _check_continuation_usage(run_context, response.usage)
+                    _check_continuation_usage(run_context, response.usage, response.failed_attempts)
                 except BaseException:
                     # The limit tripped on a still-suspended merge: cancel the live
                     # server-side job before propagating so it doesn't leak (mirrors the
@@ -1634,6 +1660,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         )
         fill_response_cost(partial_response)
         partial_response.workspace_ref = ctx.deps.workspace_ref
+        _record_attempts_usage(ctx.state.usage, partial_response.failed_attempts)
         _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)
         if partial_response.parts:
             # The agent acted on what was streamed before the interruption, so the step counts;
@@ -2089,10 +2116,27 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         request_context: ModelRequestContext,
         error: Exception,
     ) -> _messages.ModelResponse:
+        if isinstance(error, exceptions.FallbackExceptionGroup):
+            # No response reaches history, but a response a `FallbackModel` rejected was still billed,
+            # so it counts towards the run's usage and its token and cost limits.
+            _record_attempts_usage(ctx.state.usage, error.attempts)
+            # No response carries them either, so `wrap_model_request` finds them on the request context.
+            request_context._usage_response_ledger.attempts.extend(error.attempts)  # pyright: ignore[reportPrivateUsage]
         root_capability = ctx.deps.root_capability
-        if not root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
-            raise error
-        return await root_capability.on_model_request_error(run_context, request_context=request_context, error=error)
+        try:
+            if not root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
+                raise error
+            return await root_capability.on_model_request_error(
+                run_context, request_context=request_context, error=error
+            )
+        except exceptions.FallbackExceptionGroup as unrecovered:
+            # A limit the rejected responses exceeded is what stopped the run, so that's raised, with the
+            # group as its cause.
+            try:
+                ModelRequestNode._enforce_usage_limits(ctx, [])
+            except exceptions.UsageLimitExceeded as limit_exceeded:
+                raise limit_exceeded from unrecovered
+            raise
 
     @staticmethod
     def _append_response(
@@ -2127,6 +2171,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if request_context is not None:
             request_context._usage_response_ledger.responses.append(response)  # pyright: ignore[reportPrivateUsage]
         fill_response_cost(response)
+        # Attempts that failed before the response, such as responses a `FallbackModel` rejected, were billed too.
+        _record_attempts_usage(ctx.state.usage, response.failed_attempts)
         _usage_attribution.record_usage(ctx.state.usage, response.usage)
 
     @staticmethod

@@ -14,6 +14,7 @@ from starlette.routing import Route
 
 from ag_ui.core import EventType, StateSnapshotEvent
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Caching
 from pydantic_ai.ui import StateDeps
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
@@ -90,7 +91,9 @@ class RecipeSnapshot(BaseModel):
     )
 
 
-agent = Agent('openai:gpt-5-mini', deps_type=StateDeps[RecipeSnapshot])
+agent = Agent(
+    'openai:gpt-5-mini', deps_type=StateDeps[RecipeSnapshot], capabilities=[Caching()]
+)
 
 
 @agent.tool_plain

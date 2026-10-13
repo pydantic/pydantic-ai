@@ -142,7 +142,7 @@ def test_form_rows_preview_and_examples(tmp_path: Path) -> None:
     form.select_type('sse')
     assert form.config == EXAMPLES['sse'], 'an untouched example follows the type'
     assert 'OAuth sign-in: off' in [item.label for item in form.items()]
-    assert 'OAuth signs in' in form.preview()
+    assert '/mcp auth NAME signs in' in form.preview()
     form.config = '{"url": "https://example.com/sse"}'
     form.select_type('http')
     assert form.config == '{"url": "https://example.com/sse"}', 'edited configuration is kept'
@@ -222,6 +222,7 @@ async def test_edit_prefills_renames_and_cancels(tmp_path: Path) -> None:
     assert await command(['edit', 'renamed']) == 'No changes.'
 
 
+@pytest.mark.subprocess(reason='starts a real stdio MCP server written in Python')
 async def test_edit_restarts_a_running_server(tmp_path: Path) -> None:
     server = tmp_path / 'server.py'
     server.write_text(
@@ -245,6 +246,7 @@ async def test_edit_refuses_servers_mcp_does_not_own(tmp_path: Path) -> None:
         await command(['edit', 'legacy'])
 
 
+@pytest.mark.subprocess(reason='runs Python scripts as the `$VISUAL`/`$EDITOR` commands')
 def test_editor_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     edit = tmp_path / 'edit.py'
     edit.write_text('import sys, pathlib\npathlib.Path(sys.argv[1]).write_text("{\\"command\\": \\"edited\\"}")\n')
@@ -511,6 +513,7 @@ async def test_symlinked_project_file_is_never_trusted(tmp_path: Path) -> None:
     assert store.trust_state(project) == 'untrusted' and store.project_servers() == {}
 
 
+@pytest.mark.subprocess(reason='starts a real stdio MCP server written in Python')
 async def test_revoke_disconnects_project_servers(tmp_path: Path) -> None:
     server = tmp_path / 'server.py'
     server.write_text('from mcp.server.fastmcp import FastMCP\nFastMCP("t").run()\n')
