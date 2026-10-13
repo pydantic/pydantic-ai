@@ -9,15 +9,14 @@ the Anthropic codec that involve no network call.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
 from datetime import timedelta
 
 import pytest
 
-from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
+from pydantic_ai import Agent, ModelRequest, UserPromptPart
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.batch import BatchModel, BatchRequest, BatchResult, BatchSettings, BatchStatus
+from pydantic_ai.models.batch import BatchModel, BatchResult, BatchSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 
@@ -30,48 +29,10 @@ with try_import() as anthropic_available:
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 
-class UnreachableBatchProvider:
-    """A batch API that fails any call, so a test passing proves nothing reached it."""
-
-    @property
-    def max_requests(self) -> int:
-        raise NotImplementedError
-
-    async def encode(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-        *,
-        custom_id: str,
-    ) -> BatchRequest:
-        raise NotImplementedError
-
-    async def create(self, requests: Sequence[BatchRequest]) -> str:
-        raise NotImplementedError
-
-    async def status(self, batch_id: str, *, group: str | None = None) -> BatchStatus:
-        raise NotImplementedError
-
-    async def results(self, batch_id: str, *, group: str | None = None) -> list[BatchResult] | None:
-        raise NotImplementedError
-
-    async def cancel(self, batch_id: str, *, group: str | None = None) -> None:
-        raise NotImplementedError
-
-    def decode(
-        self,
-        result: BatchResult,
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
-        raise NotImplementedError
-
-
 class BatchCapableTestModel(TestModel):
     @property
-    def batch_provider(self) -> UnreachableBatchProvider:
-        return UnreachableBatchProvider()
+    def batch_max_requests(self) -> int:
+        return 100_000
 
 
 @pytest.mark.parametrize(
@@ -84,7 +45,7 @@ class BatchCapableTestModel(TestModel):
 )
 def test_batch_settings_reject_non_positive_values(settings: dict[str, object]) -> None:
     with pytest.raises(UserError, match='must be positive'):
-        BatchSettings(**settings)  # pyright: ignore[reportArgumentType]
+        BatchModel(BatchCapableTestModel(), batch_settings=BatchSettings(**settings))  # pyright: ignore[reportArgumentType]
 
 
 def test_batch_model_needs_a_model_with_a_batch_api() -> None:
@@ -118,10 +79,9 @@ def test_anthropic_batch_api_is_only_on_the_claude_api_client(monkeypatch: pytes
         ),
     )
 
-    assert direct.batch_provider is not None
-    assert direct.batch_provider.max_requests == 100_000
-    assert BatchModel(direct).batch_provider.max_requests == 100_000
-    assert bedrock.batch_provider is None
+    assert direct.batch_max_requests == 100_000
+    assert BatchModel(direct).batch_max_requests == 100_000
+    assert bedrock.batch_max_requests is None
     with pytest.raises(UserError, match='has no batch API'):
         BatchModel(bedrock)
 
@@ -135,9 +95,9 @@ async def test_anthropic_batch_request_carries_the_messages_params_without_secre
     model = AnthropicModel(
         'claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=AsyncAnthropic(api_key='secret-key'))
     )
-    assert model.batch_provider is not None
+    assert model is not None
 
-    request = await model.batch_provider.encode(
+    request = await model.batch_encode(
         [ModelRequest(parts=[UserPromptPart('Hello')])],
         {'max_tokens': 100, 'stop_sequences': ['END']},
         ModelRequestParameters(),
@@ -158,10 +118,10 @@ async def test_anthropic_batch_request_carries_the_messages_params_without_secre
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 async def test_anthropic_batch_rejects_per_request_headers() -> None:
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
-    assert model.batch_provider is not None
+    assert model is not None
 
     with pytest.raises(UserError, match='`extra_headers` are not supported for `BatchModel` requests'):
-        await model.batch_provider.encode(
+        await model.batch_encode(
             [ModelRequest(parts=[UserPromptPart('Hello')])],
             {'extra_headers': {'X-Tenant': 'a'}},
             ModelRequestParameters(),
@@ -173,10 +133,10 @@ async def test_anthropic_batch_rejects_per_request_headers() -> None:
 @pytest.mark.parametrize('status', ['expired', 'canceled'])
 def test_anthropic_batch_request_that_never_ran_is_a_model_error(status: str) -> None:
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
-    assert model.batch_provider is not None
+    assert model is not None
 
     with pytest.raises(ModelAPIError, match=f'The batch request was {status} before the model ran it.'):
-        model.batch_provider.decode(
+        model.batch_decode(
             BatchResult(custom_id='item1', status=status),  # pyright: ignore[reportArgumentType]
             None,
             ModelRequestParameters(),
@@ -205,27 +165,27 @@ async def test_an_engine_without_batch_support_rejects_a_runtime_model() -> None
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 async def test_anthropic_batch_refuses_a_different_registered_client(allow_model_requests: None) -> None:
-    first = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='first-key')).batch_provider
-    second = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='second-key')).batch_provider
+    first = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='first-key'))
+    second = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='second-key'))
     assert first is not None and second is not None
-    request = await first.encode(
+    request = await first.batch_encode(
         [ModelRequest(parts=[UserPromptPart('hello')])], None, ModelRequestParameters(), custom_id='item'
     )
     with pytest.raises(UserError, match='does not match the batch request group'):
-        await second.create([request])
+        await second.batch_create([request])
     with pytest.raises(UserError, match='does not match the batch request group'):
-        await second.status('batch', group=request.group)
+        await second.batch_status('batch', group=request.group)
     with pytest.raises(UserError, match='does not match the batch request group'):
-        await second.results('batch', group=request.group)
+        await second.batch_results('batch', group=request.group)
     with pytest.raises(UserError, match='does not match the batch request group'):
-        await second.cancel('batch', group=request.group)
-    other = await second.encode(
+        await second.batch_cancel('batch', group=request.group)
+    other = await second.batch_encode(
         [ModelRequest(parts=[UserPromptPart('hello')])], None, ModelRequestParameters(), custom_id='other'
     )
     with pytest.raises(UserError, match='does not match the batch request group'):
-        await first.create([request, other])
+        await first.batch_create([request, other])
     with pytest.raises(UserError, match='at least one request'):
-        await first.create([])
+        await first.batch_create([])
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
@@ -240,10 +200,10 @@ async def test_anthropic_batch_refuses_a_different_registered_client(allow_model
     ],
 )
 async def test_anthropic_batch_rejects_synchronous_only_parameters(settings: ModelSettings) -> None:
-    provider = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key='test')).batch_provider
+    provider = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key='test'))
     assert provider is not None
     with pytest.raises(UserError, match='not support'):
-        await provider.encode(
+        await provider.batch_encode(
             [ModelRequest(parts=[UserPromptPart('hello')])], settings, ModelRequestParameters(), custom_id='item'
         )
 
@@ -253,9 +213,9 @@ async def test_anthropic_batch_preserves_supported_settings() -> None:
     from pydantic_ai.models.anthropic import AnthropicModelSettings
     from pydantic_ai.tools import ToolDefinition
 
-    provider = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test')).batch_provider
+    provider = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
     assert provider is not None
-    request = await provider.encode(
+    request = await provider.batch_encode(
         [ModelRequest(parts=[UserPromptPart('hello')], instructions='Answer briefly')],
         AnthropicModelSettings(
             max_tokens=100,
@@ -294,3 +254,18 @@ async def test_wrapped_non_batch_model_keeps_durable_execution() -> None:
         'hello'
     )
     assert isinstance(result.output, str)
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+async def test_direct_batch_methods_reject_a_bedrock_client(
+    monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
+) -> None:
+    monkeypatch.delenv('AWS_BEARER_TOKEN_BEDROCK', raising=False)
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(
+            anthropic_client=AsyncAnthropicBedrock(aws_region='us-east-1', aws_access_key='a', aws_secret_key='b')
+        ),
+    )
+    with pytest.raises(UserError, match='does not support Message Batches'):
+        await model.batch_status('batch')

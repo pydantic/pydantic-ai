@@ -106,7 +106,7 @@ if TYPE_CHECKING:
 
     from ..agent.abstract import AbstractAgent
     from ..usage import RunUsage
-    from .batch import BatchProvider
+    from .batch import BatchRequest, BatchResult, BatchStatus
 else:
     # Legacy HTTPX is optional, so this module has to import without it. The annotation then degrades
     # to `object`, dropping static checking of what `create_async_http_client` hands back — the client
@@ -546,13 +546,49 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         return getattr(self, '_provider', None)
 
     @property
-    def batch_provider(self) -> BatchProvider | None:
-        """The provider batch API this model's requests can go through, or `None` if it has none.
-
-        Read by [`BatchModel`][pydantic_ai.models.batch.BatchModel]. Model classes whose provider offers
-        a batch API override this.
-        """
+    def batch_max_requests(self) -> int | None:
+        """The most requests the provider accepts in one batch, or `None` when batching is unsupported."""
         return None
+
+    async def batch_encode(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        *,
+        custom_id: str,
+    ) -> BatchRequest:
+        """Encode a model request the way the model would send it on its own."""
+        raise NotImplementedError
+
+    async def batch_create(self, requests: Sequence[BatchRequest]) -> str:
+        """Submit requests that share a `group` as one batch, and return its ID."""
+        raise NotImplementedError
+
+    async def batch_status(self, batch_id: str, *, group: str | None = None) -> BatchStatus:
+        """Retrieve the job state without downloading its results.
+
+        `ended` means processing finished, including failed, expired or canceled requests.
+        The caller owns scheduling and persistence when using this API directly.
+        """
+        raise NotImplementedError
+
+    async def batch_results(self, batch_id: str, *, group: str | None = None) -> list[BatchResult] | None:
+        """Return the batch's results once it has ended, or `None` while it is still processing."""
+        raise NotImplementedError
+
+    async def batch_cancel(self, batch_id: str, *, group: str | None = None) -> None:
+        """Cancel a batch that is still processing."""
+        raise NotImplementedError
+
+    def batch_decode(
+        self,
+        result: BatchResult,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        """Turn a result into a response, or raise the model error the request would have raised on its own."""
+        raise NotImplementedError
 
     async def __aenter__(self) -> Self:
         """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""

@@ -32,8 +32,8 @@ from pydantic_ai.durable_exec._batch import BatchTicket
 from pydantic_ai.durable_exec._operation import ModelRequestParams
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse
-from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.batch import BatchModel, BatchProvider
+from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models.batch import BatchModel
 from pydantic_ai.settings import ModelSettings
 
 from ._activity_execution import execute_activity
@@ -159,7 +159,7 @@ class TemporalBatchBinding:
 
         @activity.defn(name=f'{prefix}submit')
         async def submit(params: SubmitParams) -> str:
-            creation = asyncio.create_task(self._resolve_model(params.model_id).batch_provider.create(params.requests))
+            creation = asyncio.create_task(self._resolve_model(params.model_id).wrapped.batch_create(params.requests))
             try:
                 async with heartbeating():
                     return await asyncio.shield(creation)
@@ -174,7 +174,7 @@ class TemporalBatchBinding:
         @activity.defn(name=f'{prefix}cancel_job')
         async def cancel_job(params: CancelJobParams) -> None:
             async with heartbeating():
-                await self._resolve_model(params.model_id).batch_provider.cancel(params.batch_id, group=params.group)
+                await self._resolve_model(params.model_id).wrapped.batch_cancel(params.batch_id, group=params.group)
 
         self._enqueue = enqueue
         self._withdraw = withdraw
@@ -196,10 +196,11 @@ class TemporalBatchBinding:
         _inbox().pending.add(wire.item_id)
         try:
             return await self._execute(self._enqueue, wire, bounded_enqueue=True)
-        except BaseException:
+        except BaseException as error:
             _inbox().pending.discard(wire.item_id)
             _inbox().outcomes.pop(wire.item_id, None)
-            await _shielded(self._execute(self._withdraw, wire, bounded_enqueue=True))
+            if not isinstance(error, UserError):
+                await _shielded(self._execute(self._withdraw, wire, bounded_enqueue=True))
             raise
 
     async def wait(self, ticket: BatchTicket, params: ModelRequestParams) -> ModelResponse | None:
@@ -241,18 +242,20 @@ class TemporalBatchBinding:
 
     def _policy(self, model_id: str | None, model: BatchModel, group: str) -> QueuePolicy:
         settings = model.batch_settings
+        provider_limit = model.wrapped.batch_max_requests
+        assert provider_limit is not None, 'checked by BatchModel'
         return QueuePolicy(
             agent_name=self._agent_name,
             group=group,
             model_id=model_id,
-            max_requests=min(settings.max_requests, model.batch_provider.max_requests),
-            max_wait=settings.max_wait,
-            poll_interval=settings.poll_interval,
+            max_requests=min(settings.get('max_requests', 100), provider_limit),
+            max_wait=settings.get('max_wait', timedelta(seconds=30)),
+            poll_interval=settings.get('poll_interval', timedelta(minutes=1)),
         )
 
     async def _enqueue_activity(self, params: EnqueueParams) -> BatchTicket:
         model = self._resolve_model(params.model_id)
-        request = await model.batch_provider.encode(
+        request = await model.wrapped.batch_encode(
             params.messages,
             cast(ModelSettings | None, params.model_settings),
             params.model_request_parameters,
@@ -292,7 +295,7 @@ class TemporalBatchBinding:
     async def _withdraw_activity(self, params: EnqueueParams) -> None:
         model = self._resolve_model(params.model_id)
         # Encoded again only to find the queue, which the request's group decides.
-        request = await model.batch_provider.encode(
+        request = await model.wrapped.batch_encode(
             params.messages,
             cast(ModelSettings | None, params.model_settings),
             params.model_request_parameters,
@@ -322,19 +325,19 @@ class TemporalBatchBinding:
 
     async def _collect_activity(self, params: CollectParams) -> ModelResponse | None:
         model = self._resolve_model(params.model_id)
-        provider = model.batch_provider
+        provider = model.wrapped
         outcome = params.outcome or await self._recover_outcome(params.ticket, provider)
         if outcome is None:
             return None
         if outcome.result is None and outcome.error is None and outcome.batch_id is not None:
-            results = await provider.results(outcome.batch_id, group=params.ticket.group) or []
+            results = await provider.batch_results(outcome.batch_id, group=params.ticket.group) or []
             result = next((item for item in results if item.custom_id == params.ticket.item_id), None)
             outcome = replace(outcome, result=result)
         # A request's own error reproduces on every attempt; the run's model retry handling decides what's next.
         with model_errors_as_application_errors(non_retryable=True):
             if outcome.result is None or outcome.batch_id is None:
                 raise ModelAPIError(model.model_name, outcome.error or 'The batch request has no result.')
-            response = provider.decode(
+            response = provider.batch_decode(
                 outcome.result, cast(ModelSettings | None, params.model_settings), params.model_request_parameters
             )
         batch_details = (response.provider_details or {}).get('batch')
@@ -351,7 +354,7 @@ class TemporalBatchBinding:
             },
         )
 
-    async def _recover_outcome(self, ticket: BatchTicket, provider: BatchProvider) -> Outcome | None:
+    async def _recover_outcome(self, ticket: BatchTicket, provider: Model) -> Outcome | None:
         """Ask the queue what became of a request whose result hasn't been signalled, or `None` if it's still pending."""
         handle = activity.client().get_workflow_handle_for(BatchQueueWorkflow.run, ticket.queue_id)
         try:
@@ -370,12 +373,12 @@ class TemporalBatchBinding:
         if status.error is not None or status.batch_id is None:
             return Outcome(item_id=item_id, batch_id=status.batch_id, error=status.error)
         # The result was delivered but never reached this workflow, so fetch it again.
-        results = await provider.results(status.batch_id, group=ticket.group) or []
+        results = await provider.batch_results(status.batch_id, group=ticket.group) or []
         result = next((result for result in results if result.custom_id == item_id), None)
         return Outcome(item_id=item_id, batch_id=status.batch_id, result=result)
 
     async def _poll_activity(self, params: PollParams) -> PollResult:
-        results = await self._resolve_model(params.model_id).batch_provider.results(params.batch_id, group=params.group)
+        results = await self._resolve_model(params.model_id).wrapped.batch_results(params.batch_id, group=params.group)
         if results is None:
             return PollResult(ended=False)
         by_id = {result.custom_id: result for result in results}

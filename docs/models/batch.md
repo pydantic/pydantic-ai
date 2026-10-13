@@ -21,12 +21,11 @@ settings: ModelSettings = {'max_tokens': 100}
 
 
 async def main() -> None:
-    provider = model.batch_provider
-    assert provider is not None
+    assert model.batch_max_requests is not None
     batch_id = os.environ.get('BATCH_ID')
     if batch_id is None:
         requests = [
-            await provider.encode(
+            await model.batch_encode(
                 [ModelRequest(parts=[UserPromptPart(prompt)])],
                 settings,
                 parameters,
@@ -37,18 +36,18 @@ async def main() -> None:
                 ('invoice-2', 'Classify: cannot reset my password.'),
             )
         ]
-        batch_id = await provider.create(requests)
+        batch_id = await model.batch_create(requests)
         logfire.info('Submitted batch {batch_id}', batch_id=batch_id)
         return
 
-    status = await provider.status(batch_id)
+    status = await model.batch_status(batch_id)
     logfire.info('Batch {batch_id}: {status}', batch_id=batch_id, status=status)
     if status != 'ended':
         return
-    results = await provider.results(batch_id)
+    results = await model.batch_results(batch_id)
     assert results is not None
     for result in results:
-        response = provider.decode(result, settings, parameters)
+        response = model.batch_decode(result, settings, parameters)
         logfire.info('Request {request_id}: {text}', request_id=result.custom_id, text=response.text)
 
 
@@ -61,20 +60,20 @@ Set `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL`, then run the example to submit a 
 Save the returned batch ID. Run it again with `BATCH_ID` to check completion and decode results.
 Install `pydantic-ai[anthropic,logfire]` to run this example.
 
-[`Model.batch_provider`][pydantic_ai.models.Model.batch_provider] returns a
-[`BatchProvider`][pydantic_ai.models.batch.BatchProvider] or `None` when unsupported.
+[`Model.batch_max_requests`][pydantic_ai.models.Model.batch_max_requests] returns a
+[`Model`][pydantic_ai.models.batch.Model] or `None` when unsupported.
 Anthropic's direct API supports this interface. This API does not require a durable engine.
 You own persistence, scheduling and recovery; it does not run an agent, tools or output validators.
 For automatic durable agent batching, use [`BatchModel`](../durable_execution/batching.md).
 
 | Operation | Behavior |
 | --- | --- |
-| `encode(...)` | Capture messages, model settings and request parameters in a serializable `BatchRequest`. |
-| `create(requests)` | Submit compatible requests and return a provider batch ID. |
-| `status(batch_id)` | Retrieve `in_progress`, `canceling` or `ended` without downloading results. |
-| `results(batch_id)` | Return keyed outcomes, or `None` while processing. |
-| `decode(result, settings, parameters)` | Return a `ModelResponse`, or raise the item's model error. |
-| `cancel(batch_id)` | Request cancellation of the entire job. Completed requests may still be billed. |
+| `batch_encode(...)` | Capture messages, model settings and request parameters in a serializable `BatchRequest`. |
+| `batch_create(requests)` | Submit compatible requests and return a provider batch ID. |
+| `batch_status(batch_id)` | Retrieve `in_progress`, `canceling` or `ended` without downloading results. |
+| `batch_results(batch_id)` | Return keyed outcomes, or `None` while processing. |
+| `batch_decode(result, settings, parameters)` | Return a `ModelResponse`, or raise the item's model error. |
+| `batch_cancel(batch_id)` | Request cancellation of the entire job. Completed requests may still be billed. |
 
 Persist batch IDs and each request's ID, settings and parameters before collecting results.
 Use the same settings and parameters for encoding and decoding. Match results by `custom_id`, not order.

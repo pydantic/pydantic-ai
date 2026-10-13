@@ -176,4 +176,4 @@ Extensibility entry points:
 
 Reach for these only when the built-in primitives are genuinely insufficient.
 
-For direct bulk requests, use `model.batch_provider` to encode, create, check status, retrieve results, cancel and decode. Persist batch IDs and request settings yourself; this API does not run tools or require a durable engine.
+For direct bulk requests, use `model` to encode, create, check status, retrieve results, cancel and decode. Persist batch IDs and request settings yourself; this API does not run tools or require a durable engine.

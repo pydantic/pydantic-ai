@@ -52,7 +52,7 @@ from pydantic_ai.models import (
     infer_model,
 )
 from pydantic_ai.models._continuation import MAX_BACKGROUND_POLLS
-from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
@@ -1663,13 +1663,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         assert model_scope is not None
         active_model = await model_scope.enter_async_context(managed_model_scope(request_context.model, owned=owned))
         request_context.model = active_model
-        model_id = self._model_id_for_request(ctx, request_context)
+        batch = self._batch_binding_for(request_context.model)
+        model_id = batch[1] if batch is not None else self._model_id_for_request(ctx, request_context)
         model_name = request_context.model.model_name
         backend = self.get_durable_operation_backend()
         operations = self._bound_model_operations or self._bind_model_operations(
             backend, model_id=model_id, model_name=model_name
         )
-        batch = self._batch_binding_for(request_context.model)
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
             params = ModelRequestParams(
@@ -1739,14 +1739,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         binding = self.get_durable_batch_binding()
         if binding is None:
             raise UserError(_UNSUPPORTED_BATCH_QUEUE.format(engine_name=self.engine_name))
-        registered, model_id = self._registered_model_id(batch_model)
-        if not registered:
-            # The queue rebuilds the model on the worker, outside any run, so only the registry can supply it.
-            raise UserError(
-                f'A `BatchModel` used inside a {self.engine_name} {self.durable_container_noun} must be registered '
-                f"with `{type(self).__name__}`, as the agent's model or in `models=`."
-            )
-        return binding, model_id
+        for model_id, registered in self._models_by_id.items():
+            if isinstance(registered, InstrumentedModel) and registered.wrapped is model:
+                return binding, None if model_id == 'default' else model_id
+        return binding, self._find_model_id(model)
 
     async def _batch_request(self, binding: DurableBatchBinding, params: ModelRequestParams) -> ModelResponse:
         """Queue a request and wait for its durable result.

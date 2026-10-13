@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
-from typing_extensions import Literal, Protocol, TypeAlias  # noqa: UP035
+from typing_extensions import Literal, TypeAlias, TypedDict  # noqa: UP035
 
 from .._run_context import RunContext
 from ..exceptions import UserError
@@ -19,7 +19,6 @@ from .wrapper import WrapperModel
 
 __all__ = (
     'BatchModel',
-    'BatchProvider',
     'BatchRequest',
     'BatchResult',
     'BatchResultStatus',
@@ -34,34 +33,25 @@ BatchResultStatus: TypeAlias = Literal['succeeded', 'errored', 'expired', 'cance
 """How the provider finished one request of a batch."""
 
 
-@dataclass(frozen=True, kw_only=True)
-class BatchSettings:
+class BatchSettings(TypedDict, total=False):
     """When a durable batch queue submits the requests it has collected.
 
     A batch is submitted when it holds `max_requests` requests, when its oldest request has waited
     `max_wait`, or when it reaches the provider's or engine's size limit, whichever comes first.
     """
 
-    max_requests: int = 100
-    """The most requests one batch holds. The provider's own limit caps it."""
+    max_requests: int
+    """The most requests one batch holds. Defaults to 100; the provider's own limit caps it."""
 
-    max_wait: timedelta = timedelta(seconds=30)
+    max_wait: timedelta
     """How long the oldest queued request waits for others before its batch is submitted.
 
     Counted from when the queue durably accepted it, so later arrivals never extend it. Provider
-    processing time comes on top.
+    processing time comes on top. Defaults to 30 seconds.
     """
 
-    poll_interval: timedelta = timedelta(minutes=1)
-    """How often a submitted batch is checked for results."""
-
-    def __post_init__(self) -> None:
-        if self.max_requests <= 0:
-            raise UserError('`BatchSettings.max_requests` must be positive.')
-        if self.max_wait <= timedelta(0):
-            raise UserError('`BatchSettings.max_wait` must be positive.')
-        if self.poll_interval <= timedelta(0):
-            raise UserError('`BatchSettings.poll_interval` must be positive.')
+    poll_interval: timedelta
+    """How often a submitted batch is checked for results. Defaults to one minute."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -95,55 +85,6 @@ class BatchResult:
     """The provider-native result, as JSON, for a request that succeeded or errored."""
 
 
-class BatchProvider(Protocol):
-    """A provider batch API, as returned by [`Model.batch_provider`][pydantic_ai.models.Model.batch_provider]."""
-
-    @property
-    def max_requests(self) -> int:
-        """The most requests the provider accepts in one batch."""
-        ...
-
-    async def encode(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-        *,
-        custom_id: str,
-    ) -> BatchRequest:
-        """Encode a model request the way the model would send it on its own."""
-        ...
-
-    async def create(self, requests: Sequence[BatchRequest]) -> str:
-        """Submit requests that share a `group` as one batch, and return its ID."""
-        ...
-
-    async def status(self, batch_id: str, *, group: str | None = None) -> BatchStatus:
-        """Retrieve the job state without downloading its results.
-
-        `ended` means processing finished, including failed, expired or canceled requests.
-        The caller owns scheduling and persistence when using this API directly.
-        """
-        ...
-
-    async def results(self, batch_id: str, *, group: str | None = None) -> list[BatchResult] | None:
-        """Return the batch's results once it has ended, or `None` while it is still processing."""
-        ...
-
-    async def cancel(self, batch_id: str, *, group: str | None = None) -> None:
-        """Cancel a batch that is still processing."""
-        ...
-
-    def decode(
-        self,
-        result: BatchResult,
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
-        """Turn a result into a response, or raise the model error the request would have raised on its own."""
-        ...
-
-
 @dataclass(init=False)
 class BatchModel(WrapperModel):
     """Send a model's requests through its provider's batch API.
@@ -163,15 +104,19 @@ class BatchModel(WrapperModel):
 
     def __init__(self, wrapped: Model, *, batch_settings: BatchSettings | None = None) -> None:
         super().__init__(wrapped)
-        if self.wrapped.batch_provider is None:
+        if self.wrapped.batch_max_requests is None:
             raise UserError(f'{type(self.wrapped).__name__} {self.wrapped.model_name!r} has no batch API.')
-        self.batch_settings = batch_settings or BatchSettings()
+        self.batch_settings = batch_settings.copy() if batch_settings is not None else {}
+        if self.batch_settings.get('max_requests', 100) <= 0:
+            raise UserError('`BatchSettings.max_requests` must be positive.')
+        if self.batch_settings.get('max_wait', timedelta(seconds=30)) <= timedelta(0):
+            raise UserError('`BatchSettings.max_wait` must be positive.')
+        if self.batch_settings.get('poll_interval', timedelta(minutes=1)) <= timedelta(0):
+            raise UserError('`BatchSettings.poll_interval` must be positive.')
 
     @property
-    def batch_provider(self) -> BatchProvider:
-        provider = self.wrapped.batch_provider
-        assert provider is not None, 'checked in `__init__`'
-        return provider
+    def batch_max_requests(self) -> int | None:
+        return self.wrapped.batch_max_requests
 
     async def request(
         self,

@@ -263,6 +263,28 @@ class BatchQueueWorkflow:
         item = self._state.items.get(item_id)
         return None if item is None else ItemStatus(state=item.state, batch_id=item.batch_id, error=item.error)
 
+    @cancel.validator
+    def _validate_cancel(self, item_id: str) -> None:
+        if item_id in self._state.items:
+            return
+        now = workflow.now()
+        candidate = replace(
+            self._state,
+            items={
+                **self._state.items,
+                item_id: QueueItem(
+                    consumer=Consumer(item_id=item_id, workflow_id='', run_id=''),
+                    accepted_at=now,
+                    state='canceled',
+                    finished_at=now,
+                ),
+            },
+        )
+        if len(to_json(candidate)) > _MAX_QUEUE_BYTES:
+            raise ApplicationError(
+                'The batch queue is full; cancellation is retried after retention.', type='BatchQueueFull'
+            )
+
     def _purge(self) -> None:
         cutoff = workflow.now() - _RETENTION
         expired = [
