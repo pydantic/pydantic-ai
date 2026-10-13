@@ -4,19 +4,29 @@ import asyncio
 import codecs
 import contextlib
 import io
+import os
 import signal
 import subprocess
 import sys
+import threading
 import time
+from collections.abc import Generator
+from types import FrameType
 
 from rich.console import Console
 from rich.text import Text
 
+from pydantic_clai2.cli.interactive_commands import needs_terminal
 from pydantic_clai2.runtime._processes import kill_process_tree, signal_process_group
+from pydantic_clai2.ui.menus.menu_worker import full_terminal
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.stderr_relay import terminal_stderr
 
-HELP = '!COMMAND: Run COMMAND with the system shell (/bin/sh, or cmd.exe on Windows); save command and output for the next prompt'
+HELP = (
+    '!COMMAND: Run COMMAND with the system shell (/bin/sh, or cmd.exe on Windows); save command and output for the next prompt\n'
+    '!!COMMAND: Give COMMAND the terminal, as editors, pagers, and REPLs such as `!vim` get anyway; save only its exit status'
+)
 
 # Matches `subprocess.run`: a Ctrl-C'd child gets this long to exit on its own SIGINT before it is killed.
 _INTERRUPT_GRACE = 0.25
@@ -74,19 +84,35 @@ def _interrupt(process: asyncio.SubprocessTransport) -> None:
 def shell_command(text: str) -> str | None:
     """Return the command for `!command` input, or `None` when the input is a prompt.
 
-    A bare `!`, or `!` followed only by whitespace, stays a prompt.
+    A bare `!` or `!!`, or one followed only by whitespace, stays a prompt. `!!command` returns
+    `!command`, which `run_shell_command` runs with the terminal.
     """
     stripped = text.strip()
     if not stripped.startswith('!'):
         return None
-    return stripped[1:].strip() or None
+    command = stripped[1:].strip()
+    return command if command.lstrip('!').strip() else None
+
+
+def terminal_command(command: str) -> str | None:
+    """The command to run with the terminal handed over, or `None` to capture its output.
+
+    That is a command forced with a leading `!` (typed as `!!command`), or one `needs_terminal` recognizes.
+    """
+    if command.startswith('!'):
+        return command[1:].strip()
+    return command if needs_terminal(command) else None
 
 
 async def run_shell_command(command: str, *, console: Console, interrupts: Interrupts) -> str:
-    """Run locally, streaming output and returning context for the next model request.
+    """Run locally and return context for the next model request.
 
-    Ctrl-C cancels only this command, not CLAI; cancellation terminates the shell's process tree.
+    Output streams to the transcript and is saved, except for a `terminal_command`, which gets the
+    terminal itself (`run_in_terminal`). Ctrl-C cancels only this command, not CLAI; cancellation
+    terminates the shell's process tree.
     """
+    if (interactive := terminal_command(command)) is not None:
+        return await run_in_terminal(interactive, console=console)
     console.print(Text.assemble(('$ ', theme.color(theme.ACCENT)), command))
     console.print('Shell command and output saved for the next prompt', style=theme.color(theme.MUTED))
     output = _ShellOutput(console=console)
@@ -154,3 +180,90 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
         f'The user ran a local shell command (not an agent tool call):\n'
         f'$ {command}\n{status}\n\nstdout:\n{output.stdout.getvalue()}\n\nstderr:\n{output.stderr.getvalue()}'
     )
+
+
+async def run_in_terminal(command: str, *, console: Console) -> str:
+    """Hand the terminal to an interactive command and return context naming it and its exit status.
+
+    The live panel leaves the screen, the command inherits CLAI's standard streams, and the panel
+    repaints once it exits. The command stays in CLAI's process group, in the terminal's foreground,
+    so it gets Ctrl-C and window size changes itself. Its output is never captured.
+    """
+    console.print(Text.assemble(('$ ', theme.color(theme.ACCENT)), command))
+    console.print(
+        'Interactive command: it has the terminal, and its output is not saved', style=theme.color(theme.MUTED)
+    )
+    started = time.monotonic()
+    error: str | None = None
+    exit_code = 0
+    with full_terminal(), terminal_modes_kept(), _ctrl_c_ignored():
+        try:
+            exit_code = await _wait_in_terminal(command)
+        except (OSError, ValueError) as exc:  # `ValueError`: the command text contains a NUL byte.
+            error = str(exc)
+    elapsed = f' ({time.monotonic() - started:.1f}s)'
+    if error is not None:
+        status = f'Shell error: {error}'
+        console.print(status, style=theme.color(theme.ERROR), markup=False)
+    elif exit_code:
+        status = f'Exit code {exit_code}'
+        console.print(f'{status}{elapsed}', style=theme.color(theme.ERROR), highlight=False)
+    else:
+        status = 'Exit code 0'
+        console.print(f'Done{elapsed}', style=theme.color(theme.SUCCESS), highlight=False)
+    console.print()
+    return (
+        'The user ran an interactive local shell command in the terminal (not an agent tool call); '
+        f'its output was not captured:\n$ {command}\n{status}'
+    )
+
+
+async def _wait_in_terminal(command: str) -> int:
+    """Run `command` with CLAI's standard streams and return its exit status; cancellation kills it."""
+    # Spawning is shielded, so a cancellation that arrives meanwhile still finds the process to kill.
+    spawn = asyncio.create_task(asyncio.create_subprocess_shell(command, stderr=terminal_stderr()))
+    try:
+        process = await asyncio.shield(spawn)
+        return await process.wait()
+    except asyncio.CancelledError:
+        # Nothing is left to kill when spawning failed or the process was already reaped.
+        with contextlib.suppress(OSError, ValueError):
+            process = await spawn
+            process.kill()
+            await process.wait()
+        raise
+
+
+@contextlib.contextmanager
+def terminal_modes_kept(fd: int = 0) -> Generator[None]:
+    """Restore the terminal's modes on `fd` afterwards, in case a command exits leaving it in raw mode."""
+    if sys.platform == 'win32' or not os.isatty(fd):
+        yield
+        return
+    import termios
+
+    modes = termios.tcgetattr(fd)
+    try:
+        yield
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, modes)
+
+
+def _ignore(signum: int, frame: FrameType | None) -> None:
+    """Ctrl-C belongs to the command that has the terminal."""
+
+
+@contextlib.contextmanager
+def _ctrl_c_ignored() -> Generator[None]:
+    """Leave Ctrl-C to the command, which the terminal signals along with CLAI.
+
+    A handler that does nothing, not `SIG_IGN`, which the command would inherit.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = signal.signal(signal.SIGINT, _ignore)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
