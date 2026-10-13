@@ -559,6 +559,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return None
 
     def _default_run_id(self) -> str | None:
+        """A replay-stable `run_id` for a run started without one, or `None` to generate a UUID7."""
+        return None
+
+    def _default_conversation_id(self, run_id: str) -> str | None:
+        """A replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7."""
         return None
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:

@@ -2,8 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from ._mcp import MCPReadOnlyNoToolsWarning
-from ._warn import HarnessDeprecationWarning
+from ._warn import HarnessDeprecationWarning, MCPReadOnlyNoToolsWarning
 
 if TYPE_CHECKING:
     from .absurd import AbsurdDurability
@@ -50,11 +49,13 @@ if TYPE_CHECKING:
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
     from .ordinal import Ordinal
+    from .pgtask import PGTaskDurability
     from .planning import Planning
     from .posthog import PostHog
     from .prompt_injection_defender import PromptInjectionDefender
     from .pydantic_ai_docs import PydanticAIDocs
     from .pylon import Pylon
+    from .render import RenderWorkflows
     from .repo_context import RepoContext
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
@@ -115,12 +116,14 @@ __all__ = [
     'OutputBlocked',
     'OutputGuardrail',
     'OutputGuardrailFunc',
+    'PGTaskDurability',
     'Planning',
     'PostHog',
     'PromptInjectionDefender',
     'PydanticAIDocs',
     'Pylon',
     'READ_ONLY_TOOL_NAMES',
+    'RenderWorkflows',
     'ReportContextUsage',
     'RepoContext',
     'Researcher',
@@ -177,11 +180,13 @@ _CAPABILITY_EXPORTS = {
     'Memory': 'memory',
     'ModalSandbox': 'modal_sandbox',
     'Ordinal': 'ordinal',
+    'PGTaskDurability': 'pgtask',
     'Planning': 'planning',
     'PostHog': 'posthog',
     'PromptInjectionDefender': 'prompt_injection_defender',
     'PydanticAIDocs': 'pydantic_ai_docs',
     'Pylon': 'pylon',
+    'RenderWorkflows': 'render',
     'ReportContextUsage': 'compaction',
     'RepoContext': 'repo_context',
     'Researcher': 'researcher',

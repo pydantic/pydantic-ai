@@ -21,7 +21,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -353,7 +353,7 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
+                    provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)},
                     provider_response_id='x',
                     run_id=IsStr(),
                     conversation_id=IsStr(),

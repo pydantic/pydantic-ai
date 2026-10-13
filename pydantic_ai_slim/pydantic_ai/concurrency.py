@@ -6,11 +6,10 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import Self, TypeAlias
 
 import anyio
 from opentelemetry.trace import Tracer, get_tracer
-from typing_extensions import Self
 
 from .exceptions import UserError
 

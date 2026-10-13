@@ -170,8 +170,12 @@ Addressing steps by mutable integer index (insert/remove/reorder) is error-prone
 
 The plan is never injected into the system prompt or instructions. Static usage guidance goes there (cache-stable); only the mutable plan rides the ephemeral tail reminder, which lives solely in the per-request copy and is never persisted. Set `inject=False` to disable it. Pydantic AI maps `CachePoint` for models whose profiles support prompt caching; on other models it is ignored.
 
-With a durable-execution capability attached, the plan read used to build that reminder is a
-journaled capability operation. Replay reuses the recorded plan instead of reading the store again.
+With a durable-execution capability attached, every plan store call is a journaled capability
+operation: the plan read used to build that reminder, and each read and write the plan tools make.
+Replay reuses the recorded result instead of calling the store again, so recovering a run doesn't
+append a step to a persistent store a second time. Under an engine that runs function tools in workflow code,
+like DBOS, a plan tool call runs alone, without overlapping other tool calls, so its recorded store
+calls keep the same order on replay.
 `Planning` carries the stable default `id='planning'`, so durable recovery works without
 configuration.
 Engines that run tools and capability operations in a separate worker, like Temporal, don't

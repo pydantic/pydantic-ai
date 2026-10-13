@@ -5,7 +5,7 @@ from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
 from threading import Event
-from typing import TypeVar
+from typing import Protocol, TypeVar
 
 import anyio
 from termflow.tui.keys import read_key
@@ -15,18 +15,30 @@ from termflow.tui.textinput import TextInputResult
 from pydantic_clai2.ui import telemetry
 
 ResultT = TypeVar('ResultT')
+
+
+class Hold(Protocol):
+    """Pause the live panel while a widget owns the terminal."""
+
+    def __call__(self, *, leave_screen: bool) -> AbstractContextManager[None]: ...
+
+
+def _no_hold(*, leave_screen: bool) -> AbstractContextManager[None]:
+    return nullcontext()
+
+
 _STOP: ContextVar[Event | None] = ContextVar('menu_stop', default=None)
-_HOLD: ContextVar[Callable[[], AbstractContextManager[None]]] = ContextVar('menu_hold', default=nullcontext)
+_HOLD: ContextVar[Hold] = ContextVar('menu_hold', default=_no_hold)
 
 
 @contextmanager
-def holding_output(hold: Callable[[], AbstractContextManager[None]]) -> Generator[None]:
+def holding_output(hold: Hold) -> Generator[None]:
     """Enter `hold` around every menu worker started in this context.
 
-    A menu opened while a turn streams sets this to the editor's output hold, so the
-    run's output waits in order until the menu leaves the screen. Only the widget is
-    held: anything the command prints outside `run_worker`, such as a login URL,
-    still appears as it happens.
+    The live editor sets this to its panel's hold for as long as it is open, so a menu
+    gets the screen to itself and output, such as a streaming turn's, waits in the
+    transcript until the menu closes. Only the widget is held: anything the command
+    prints outside `run_worker`, such as a login URL, still appears as it happens.
     """
     token = _HOLD.set(hold)
     try:
@@ -48,16 +60,20 @@ def menu_key() -> str:
     return read_key(timeout=0.05)
 
 
-async def run_worker(operation: Callable[[], ResultT]) -> ResultT:
+async def run_worker(operation: Callable[[], ResultT], *, inline: bool = False) -> ResultT:
     """Request menu exit on cancellation, then join before releasing terminal ownership.
 
     Every menu opens here, so this is where UI telemetry times it: a `menu {menu}` span named after
     `operation`, noting whether the user cancelled it, but never what they picked or typed.
+    `inline` keeps the live panel on screen for a widget that paints through it, like `ask_user`'s.
     """
     stop = Event()
     token = _STOP.set(stop)
     try:
-        with _HOLD.get()(), telemetry.span('menu {menu}', menu=telemetry.operation_name(operation)) as span:
+        with (
+            _HOLD.get()(leave_screen=not inline),
+            telemetry.span('menu {menu}', menu=telemetry.operation_name(operation)) as span,
+        ):
             task = asyncio.create_task(asyncio.to_thread(operation))
             try:
                 result = await asyncio.shield(task)

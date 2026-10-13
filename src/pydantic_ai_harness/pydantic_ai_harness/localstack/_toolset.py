@@ -8,12 +8,11 @@ import tempfile
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 from urllib.parse import urlsplit
 
 import anyio
 import httpx
-from typing_extensions import Self
 
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry

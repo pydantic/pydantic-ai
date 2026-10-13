@@ -181,7 +181,7 @@ async def test_fast_command_tracks_active_model(tmp_path: Path, model: str | Non
     if not available:
         with pytest.raises(ValueError, match='Unknown command /fast'):
             await shell.commands.execute_async('/fast')
-    for command in ('/set model openai-codex:xyz', '/add_model openai-codex:xyz', '/model openai-codex:xyz'):
+    for command in ('/set model openai-codex:xyz', '/model add openai-codex:xyz', '/model openai-codex:xyz'):
         await shell.commands.execute_async(command)
         assert '/fast:' in await shell.commands.execute_async('/help')
         assert 'Fast mode on' in await shell.commands.execute_async('/fast on')

@@ -104,3 +104,23 @@ agent = Agent(model)
 ```
 
 If you do not need a custom HTTP client, omit the `http_client=custom_http_client` argument.
+
+### Custom base URL
+
+`ZaiProvider` uses the international general API endpoint `https://api.z.ai/api/paas/v4` by default. To use a different endpoint, such as the one for the [GLM Coding Plan](https://docs.z.ai/devpack/overview) or the China-facing `https://open.bigmodel.cn/api/paas/v4`, pass a custom `base_url`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.zai import ZaiModel
+from pydantic_ai.providers.zai import ZaiProvider
+
+model = ZaiModel(
+    'glm-5',
+    provider=ZaiProvider(
+        api_key='your-api-key',
+        base_url='https://api.z.ai/api/coding/paas/v4',  # GLM Coding Plan
+    ),
+)
+agent = Agent(model)
+...
+```

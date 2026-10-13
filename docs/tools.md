@@ -417,7 +417,7 @@ docstring written under each member as that option's description. Such an enum r
 values instead of a plain `enum` list:
 
 ```python {title="enum_options.py"}
-from enum import Enum
+from enum import StrEnum
 
 from pydantic_ai import (
     Agent,
@@ -429,7 +429,7 @@ from pydantic_ai import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 
-class Urgency(UseEnumMemberDocstrings, str, Enum):
+class Urgency(UseEnumMemberDocstrings, StrEnum):
     """How urgent the ticket is."""
 
     low = 'low'
