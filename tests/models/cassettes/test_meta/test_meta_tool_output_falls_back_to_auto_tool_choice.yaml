@@ -1,0 +1,127 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.meta.ai/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "465"
+      content-type:
+      - application/json
+      host:
+      - api.meta.ai
+    body:
+      type: json
+      content:
+        model: muse-spark-1.3
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Which city is the Eiffel Tower in?
+        tool_choice: auto
+        tools:
+        - name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+            additionalProperties: false
+          type: function
+          description: The final response which ends this conversation
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      connection:
+      - keep-alive
+      content-length:
+      - "7149"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        top_logprobs: 0
+        temperature: 1.0
+        top_p: 1.0
+        service_tier: auto
+        model: muse-spark-1.3
+        reasoning:
+          effort: high
+        background: false
+        tools:
+        - type: function
+          name: final_result
+          description: The final response which ends this conversation
+          parameters:
+            required:
+            - city
+            - country
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            type: object
+            additionalProperties: false
+          strict: true
+        tool_choice: auto
+        truncation: disabled
+        id: resp_6acd7a1dd6382edb80054bda
+        object: response
+        status: completed
+        created_at: 1791851037.0
+        completed_at: 1791851037.0
+        error: null
+        incomplete_details: null
+        output:
+        - type: reasoning
+          id: rs_6acd7a1dd6382edb80054bda:rs_b9799172-0a53-4a57-a896-2579d57028b2
+          encrypted_content: >-
+            Q-PaDgFGonzKemGRTdDKnxcJde3WkDIOtjH3putOPmweeclr1padk1UIgIGGjg5abRGOjpij99Lds8uG569zQknKK1ddKpxym5RMSfs-QdsyR4SF8EoFzMHtn4B5IiH16N0qe9z0OQPeswVpVD2WydEYWOmYlxG8L3ToxGHRUv6PvQIAGRk9H_65TmRr3MUcFLQZfT37z1JD1bzk-1R4xGhx38IA_SxNN5uKhRJDczXlMO6-bcQzelzS-N4GEfj_1JORy2EwytH3h9S3_tsS9vA95egbIK0eKJhgBpbIB2i_Fty9vgKMNs1lSbkEhwwct47fCSJtUTANbf_ccbh50JA7b8hpNcbr0WOclR1JzbbOeh4GdOVyFNmUsG0WqBe8qsQGTtglbguYX9nZt3_tq_CTpg70RqgKb2w8Ok1N73Dj6DvawL5WwZfoikgfo7Ge20nQ0qoTP4Rc13q0wWTEQ8uQmuWEDWGOzGF4LLwcs2waQ9Dag3AGQaR8izk-heGuFiJ8YlEdtFpdiV7jF7cd_MRytsmNjTaTyOm_6rQ3UJysJCwPce8HdAePV7tq0vQd85Ykp2A_mHYTWPh6-LnsVaZixbNRCWbc6P7to1MtytXDcp-YgjkvHvMtCbdm9x3_-XZwxDlUzx87DZSqASoZKyArI-NZ5-FkaVmiSranXwQiQPYCw3L5HH7UA8Wl8PDhbUxcUNdn--QLA9AisAbMIWMja_H2Ci_gLYo2j3XHQ8B5dXDx7oeP9bOClhPm9wFBvsUcqQJRG4DmVZN8wJdod3Xv1BSbPgsqUcEVgrhl6Tyzk9aXdaXJwWT7C4BVr7d2GsTxz8ibGEDK-e_oaqIe7xuTJe2lcG3NcjYNAiOmKig90UKTSINZsOK-9dPxn1X6y-NE7FdHXRG7JQu1Xb69JyYaK5b2P_MRxT-Vrq9Ez4eA26LnROjx_n7XE5fcmp8adrGK4h_UjwTFD3STB99yPk_UQVoSOiaTMwmcTzh-V4kxAtW6Aj9bP0DU0Bp-5F8WBg6FxZvTLtyJRRZoAezzMwbcizCstYQUI_rHU75Z2Sp5HZ6NoXcf5lrgr9mcXpZ4HhPEfTfs14swxem73n1KTZqc8eXclKD_GtsMM0HfBmiiIGrLa3mlsxwVS2daYVesszIu-dH4Gf4qajqrHtfUqGXMk5OsakTkZGDv42papNTHJw_FVHH5kGQU7x-4gvOPOX5g7n9OwvML_6apxeHPMefZeyJ8WF4Mx_907TpSqxBR-eCbM0PFNwdZqkafSkaEaLom4V0_AWL3a2yIaPbtBobxjREymMRC-qHnfwAG8eu58EKTB0qgymWgWXzQ3JF2OQ2-IWJB9xk9wKLMnFOcy6dKHT5QxA3icKbQtxIdkta3DqL1dRJw5bUnSbD4tpPCMLgmXyDBtGNEntcvev235i_erJVLqFFLgf2tgnfAmgRq1G0_WWJnEH6TwNLSV-LphJwpToVtyg1HXJ2GCLlYotqA_p-ef20z7c2uYs5mHZJzUdMeGj32odaVLCiTk4pLTmZPNpZUWAlamcf_r05MB-lnLcBYlEXw6ag8OitKqfmkmDmw4BwMTUfo1TuKk6e4QEglDfb-HKeez47ogu-0RAAghOg_BK_gjlTUIMCQjppCTGybK4oQbc9qlwNChe8UQ0tIMkZYT5S1IR99KxXLASvP6JHD0qqIc_jLzs2yIpAZ5tLT3JBoa7_ojepufF3spfBRqzaJ2yZtFAA3D4y1W6JWdMqEILl6DTZlArySJA3NYwDiE-qGsQXM1aSC1fEdSbuBh1p88uovOtr2lTkKgfhaNfbU53X4nYlcgBrjO3CXV8QiNklr6pyuVx-Qo6somI_3DnX4SG5VhCB02fg_-P0rj_e6dA2GF_U7otIe3d2jqV3dr8IwbA6lIWVpYKMXoNvL_lRbgcOJIBN61AxUUcyR3o4y-bWFjt-TAQAQgX-Qiai2FTf_Db0RFjEywriulz63mcO6NlXBjH0imY85U9w5oUxQtZgbuxmm-bLoJKJ51j7-3xs0NVyLHvXDyGWkuBFkZGUA_B6l3x3chVzTE1f-QpJqh9rhOy7AkLIZAUwgn2evjoY-8wIcKPkvarmtsloRvZA_JlhCPfYPjgvWsUbBaVWC9Pa9cmqF_vR2tERBgROctmhCt6L1QBtR7P4NOLM29Z6BaDYlX1mODJ1pg-wepJmBZ9r73ZPkJLHEpJgncYDANX-03fd04YRY-5q2t9riUyaLhKKB44sb88tTdIgOwtErO7pFeTDQ_9Qr7oF5PKGCpAWxE6ucPAeDAZg4Hul-qOL5B5uuYCbGSpQwPcv61RDezfmWicKggb6Jrn3XGSrBx0jv-igPm69s9hinIp9MAYj3N6st1h6lZXp9-F6FaVqsgb0Xls13JHOTY4bG3w96rYpQmX2YpAQK8IM6EESh6sHqiH_oT4nXCRSfCrO9qH6H_KahLl3iOiiR9twf3r10wJoxh9XAePpgJT0RP-853Dx73aJp8t-lJsIiuf0flzLDu4KoNod-lq1XtEEa1dCnIoHX-j2lWtfLhpbzPkM9zJBPVi9ca6PPE7YvzDpmzpjR3TrKEMTY-oYZ0_aSdEiePkilqWA2FszZ43Ej8JVhEp6Dt7PeyJomPWfJCBkKg9uiLahxNwNXCqs_75RlGXyUeU9v6Ra05j-PB19olUtDStVlRPLn0MvyucjMspZF2OYVU70S0bokRqP8U--JRiNFjl0UCaMe14uA7y_lOugZmEE70d1IWrRu5vO-C9aivKO0KFtcHtmf_JwNZvawnvydwhYCw5Jz6T0k_rQNDfq93i0eYWFnyFigOvRpOif0k5b56PoCstaBrKRne8WKQ9Fhbn3p1EEGT6qYRISQgc4d5x1kPPrXzEIUfVjEVuNZ8XT4UGb42iUDA5oVTW8SSyRQUiyBNKAuPg4ezNiLa_S7zlOGFxbIL6CUbrj_1g4A2vtLjyIk2hELzyPPJPYKiQdxZ5ddbG6nrdbKTXyN3Tz4yWXGCTCPIapwE367MciqRZ2q4uEucNNACu9XHYdTD8dJjYRAxabULjJ4Bofgs7jtPrFUYlMnZiXq5eeMEiOC4oGmru8ag0tpaYuOxv1yRicSJV8eoyCiOAvtyAFARlyIjpV7PQcGCzOpYE0crUrsj4dJzQ02F_22qLMdCAHIli-RJZMwOJF6JC3dxZju8RO2C2CY8y3M8iL9d_ENpFrFEYZ3toVTaq4PBrnVGA9IJX7ZVmzJHcz7yTLMwtfSWVmCRKCXpST_aKRG44SROj2WYPSbrbCtMuEYAP1Mfh5XDwp4kbKHUuPc8BzUx3q8s5SgC7dQ8_09PprVPgr_s8xDLzt67f120Mf4OFqd5L86qxGzI-8eS2FPH4NQeVKXTboogUeHFYDxnzKUR-KbbGhCHP_Z0TCkM4hSlBWvXJgCOtynhYLDC-lvV1H8lhQ0kgr8P_k1Qrs1BO0ULejQf4l9KWpn5HJI4ZYKFBnN0uALlTytAIrUCr3UrhBRT5yJzD2vXAPZPocbrn9IslxgPyAbNUrHWTh57Xh0Ro3GQqjeCQmTHLbVCUAWEi_xxlY6O0l9xbjKrWrlIpJ-A5f6eJLNAw2vzVi2TdGxCaXyQYqwZjCGpzOKyAtVs-2ThGemF0TElJxlCGUsDxJgVvgpD59Rx9oun7RhYbhhU3VX45hIXeR0BVpuih1zXaDX4b0La7_qJ8M7kiGsIAUMGeqC51yLrMVtCYWfUMjpzFsAwyfu_AlhgajR4cv4Avf9V6xFx5ajyaU6skbCUpeCdc2rBUGmhuxhPB_19Jvy5A4ZYn16NNjG5rTP6A6reJC_Ct5hHA9F61n7N3awXrbBZ7nN70cvP9AGSWVenmlj00qlXVfdyNzbqPh3WM9rJ8Q6L3sA9HKvhJH5r9nNg60VJNZFu8te7Acw1UyJO95OtRMhj-DZGhjP-rLB0-RY4D8rw1DBpfcwiReFkON7NHuKE1CcQtOKzQFZc7Ca8OcvM9kRpRW69GI2T77t8tWgMcJbe2RBEPj9jamg7askDwAy6epbVZ6J6cZnmwNF53QLiVikTqsowNtxjeyNzZsynjntosfZ0vXwu6kIXUX0r_Vmr7vCHSQzu9YoCvPk2f5oEZyAsjTCtWivvAFPyq6vD68ajKFQM6bSWYTtFPmK0H36RpblRE9RYzv0wcHZfdQ8yqqJ9XDk0Qp5Vb-7j5T3T0PkSASWuPR0es4a-6WdeCwNO1Mj_qL6ikgoY_IwZhGKVtbhdSNmoShi0fWmC-4P-1q6aOb9nfsvhvu70D92m0f6rTFQ80El-vFg8MLzdM0AscorbUprOrLjrXy2-tEs3GLsAJFn2W73kNGs8NPl0-MKezTMRJ0TrYw60lqiHaDWS0B-SGhGeBT3VFWgMmzQjsfH0DamELDb6kYPFW8z-R90EvEQc6A2eDltgTH-cz-LbUdmSCy2MAikBKitUiqWwPGr3GLXl4cAQjuBE1XS39x0CAxtv0Tfyjbgt655FA7dYCk-6yHDGT4SFJhwUoiAoWBzEK94a_xIQz138K3CAYRmCagNKajXFso0WbqxmRvZjbi0sWIBFZXuKBwNN4PpLlR7Jn7lksBkst5z1-9MLZrtTZkvzkvXTr_kxheBgw0524Ty0JH4da4KZv5v3EnD8WAhjZ1t1_jGhVvN-vrdaeXlRSD7V-F4nfA1o9rT5-L57xBcXfb3ZsZ-4LCSrWRGLEvNwMQKk3l0X8a7Jg_-5aCxOKLoFGjuOA1C7wvbcchZrN3S9zPQoO0lq9eiwk4Vdm5Nkb-XjZoGQP8icX9HIetk66A6L-4UdYMuAVWTRENZ3EWq0pALrTe0nrD-lB7_YucFNTT68zZ1P0HwAqpx4DiTkEHWZ2f3foA7S2ZCSqdndQyPAYBLrx2L45Twgp-SsNpBWO7kL7di-yKgxBdC_sHUdBmEgGmzdRlF3VYW1APer3t5vricnEwGES33qUf8vV5i7Lub2BLL31TC9dlfpa4BwC8Pi_a0he5UVviNbNfoO8II7dOmHvSHzVebBafzWRyNpva08DOP08e_9WNkYXkMgTAxQD3HqUAQ4YNXqPV6iYa9C-hmDH8c5ww0lTtkgL8SD_9N5XlRYi8nk_X3Q4qNng9XTtYhLPVOkSBXPCbdqhtRwOBMd2zIP6lwTsGfZKExLvXTrTDnEhq4MksQRqyQ8CvlgLS8oKS9r9gexkLTrEz9e9UDzw5tiILcE79_CXfbtun0-fmBe8Q0AljQrKqhYv9xnDyqq80iDJH-_afIE8h8sGiITnwsBUhadSLMF3jQFXKeZY63kr5Ug6-wZ3hIfO7F7eI7PYhDgl-nHttfT2ecLOaWjRXEnCB9x68m_Q83JvxOflXsPYfn1jL1Z_l9q2b_Y1U9tdZWkVzZuJCREz7qMGwwKh3UEHxnGdeBongaA9riNtqA3ZhPHtKrL0BCHjYyXwed7prDftpz-OJTnVmisaiiMcLGF4mrnmgysceGAvMcTNrDEz4rPAuWSJT0yA
+          summary: []
+          status: completed
+        - type: message
+          id: rs_49c93a96-f13e-4b3c-8876-413febda0d4c
+          role: assistant
+          content:
+          - type: output_text
+            text: Eiffel Tower location -- sending Paris result.
+            annotations: []
+            logprobs: []
+          phase: commentary
+          status: completed
+        - type: function_call
+          id: fc_f358c01e-1b6a-4592-839f-940047666e1c
+          call_id: call_f358c01e-1b6a-4592-839f-940047666e1c
+          name: final_result
+          arguments: "{\"city\":\"Paris\",\"country\":\"France\"}"
+          status: completed
+        instructions: null
+        usage:
+          input_tokens: 557
+          input_tokens_details:
+            cached_tokens: 113
+          output_tokens: 413
+          output_tokens_details:
+            reasoning_tokens: 331
+          total_tokens: 970
+        parallel_tool_calls: true
+        store: true
+  recorded_at: 2026-10-13T00:23:58.008426+00:00

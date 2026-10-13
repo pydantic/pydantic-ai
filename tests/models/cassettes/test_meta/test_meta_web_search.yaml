@@ -1,0 +1,165 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.meta.ai/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "290"
+      content-type:
+      - application/json
+      host:
+      - api.meta.ai
+    body:
+      type: json
+      content:
+        model: muse-spark-1.3
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: "Search the web: what city hosted the 2024 Summer Olympics? Reply with just the city."
+        tool_choice: auto
+        tools:
+        - type: web_search
+          search_context_size: medium
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      connection:
+      - keep-alive
+      content-length:
+      - "11541"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        top_logprobs: 0
+        temperature: 1.0
+        top_p: 1.0
+        service_tier: auto
+        model: muse-spark-1.3
+        reasoning:
+          effort: high
+        background: false
+        tools:
+        - type: web_search
+          search_context_size: medium
+        tool_choice: auto
+        truncation: disabled
+        id: resp_6acd7a287d3cba5afc8a45f0
+        object: response
+        status: completed
+        created_at: 1791851048.0
+        completed_at: 1791851063.0
+        error: null
+        incomplete_details: null
+        output:
+        - type: reasoning
+          id: rs_6acd7a287d3cba5afc8a45f0:rs_58c802d2-bb5b-4833-a820-4bd87979be8d
+          encrypted_content: >-
+            Q-PaDgESlgNRKxb5tAMhOKh-35cE5RLj9JhZsQEaVl6reN3EycU2X0JrrJkn8818GY03Snjp8_tzniFSQ__lbR85YI__NmGjGHjPKYG2PWrQ5RWHiTaM8X0mmQYUyI6VO4NbywV6QixO_UFmReN48HW7oguMF22P27Q8GugnIjmjaY5nWn1it0Ow_AWU33rL-X3eaoI7z1LKGyFrHAultA7Qbm2UIRDntjyNyU150UVy6WO88_q8s_npIwsdTQjEuDtCGgK-2uCAsUdpLbjTAg-l5NSqC6JYy3sGv6IB8pTz2owLMXEFdcc_bQuyBjyZ3cISgZFKDE6ZMBeJTNBQyxeAMxCUxlxeFgj03_n5LxGk0h5_zzzmTGfecE3e3Ax8zZLKlKVS-c4-WSf-7cpDIYKGFzxz2zppbKqR0bkxqe99vRmVIiuvBlP_qX4DWQLPE9JzS_UH4DkNcpnt52R9ZnQE2vVfX_qVuuSL97FUF9BqA9aQnZrrLgbyEFFQlvMKJwBTze5ZVUB2foQSayrk1d2eDL9bFapBVdTWD09i8Nh0wSYTRX0u-Bx4nepuTGdxLcvYKbb0OaCp1HwgYK2MmJcSLmvYA5umS6zrRfBGO23xxSVjOtieVXQCcqSqWemqBTdOrMeoTcgbkXGMSG7-6ibXHpuCIu5ylTWPNPIo4kGgD7VcdVZIwqWvO2feZflCR3HbGTrsOlk25CWmXUzb_f2xoQFWj__wjQFdHyOOqV-Ym3kugdcMFmuzKTybROiMIzAVfKpqhCpwXgx8-At_xCTrC-vryzkLSBg1W3tXBkolsb6S58ddh5M9QkxNmpE8FtJui3EUo-1QIcKjUiNqEOGJl8bck2h2zxPMp7ZxX8Sm6saUHdjuzw_ViRuYyAxIF-hEs_WzkKiYR4xCn70CqXCTzfccdSK27-U9YfCuqm4XXkx7eM6kOh9SAalA6fg2UHLvUtC3NR1Zk1S629JKMhpfrhElPMIT6jMkihxdS86KT5CbM4A_D7XG-QF0tbQgotpYU_IeKj5aLJ-hswuxGrsj6jaW2u_933PrRdapBW3IKdyf8w28yxj1byo-pDm9oW6wd0aHeSkKRToAxCSaQmN5AWYjrUhq2ohTnriwSN6uFJPtSfdi9GAXYPCCRGxY1FglkJ0rnIJu3DR5g4ixD3wbmGzvad4c88RI8phoOHGBrHyOQzsDZnLBAXdZZMh7Zj8dOJnGJMakLYrn-NADjxjpieappASlWcgk8NLzfwPaK2VnyV7G9u79HgICgSJusEKXhCq66lA8T-sB_woB9A7FIbgoCobrCKzT2BrrGYG-xGEaET9D0FPxvyow9hZXvjsXFen99Af3fAXEK4rPj-JxYIRvYzZuAXZIcK7cOt4gMz7BVEUwyc50fPxeNsZMU01-4cLuwgaBoM850bHg5gkvruQNi71CIGOEzfdja4-niYCIIeruTXLCjV15lF90WAQKeQo_UkR1p08ekzNvZ5SeVIPZ6Tg0Z5i4VbBElB_XApNO3ytZrA7nj2HdgM4vy9I3FDdILbsaQvlZKWL8Dxsq5UwmvoODtlXN78jdymz5cGVOFBYNJKr9oyKfiNlZgxSKqPunzVFHqyvApfAoj3SM3ozg44vD_j0eJzwrM9g40aIzuXSA6WUNMJgwN9IseRahMC6fw7zSFmCUxez3Rq3BdtniFzOyEJyEhEir6N0N6PUNcHNyEu0eGx_mIryvppEzDc1PPAy9_PmgAcbFXPXFW54T8Vqhn-Wjs5N66LIqjUb-PHqSCL-XZb4OxR-jRkQVdQa9f9k38YVJG_OFtmsrPMe0z8F4mYBd2JxQloQIiL6h2XX7fHznIGQzr-6496zEWXlBpQAjAThjFwffHFkmrO0issKFKOr1q9s_2tTriKAwhbGkexRHXPT_MxGO-ZSuOthq5mDjHtSybfPfMGqsXMfV3OgMjeXpDjYXwlGb2KgZMf1wL1ytdURN6O0Cp6NUZwSuMx2_MOlmAKwlHhlZDv0xrRuKVgzy9oA9vgQNOOcRj9_cwU4ZKWSR8EqiUZWNNXxSqL8Zqx0QBIsN8IXYNGXUOpkbhP7_cShgmp_679GY7eCd7ase1yKprL1nCRI25NTLgjSDXyozXC4Z8nsDdiZMeoncx9J3Cw99H6eYy125ib6YTZBBA9_ZefXdV1ZETFtG2NJN9e9rRJsc9l7t6cCQyGednLGzPAaiO6ZJB9p0DQdt4WXNKQ6o6zBhurzoSK-jrf2fHO5PlaGBSVTpx71WYa4ZYk72YRlI2pDpqlobSX7qsMgPV_Y562GfiVY6sArjGeHHKSt5ZraCoP2f0Eclb7sT-0BuyraSpiTYNvfsnpOr8kyH-kSXm_i2dvrQOBmS49lW3ZiHUk6sm0MbbyzB07YeEmfvNVxpBHWNyaQpnWUFqpk2nTWFMT0DX86xqKdzHyNigKaD0yl35g29bI-2KeMNrYVouZfsLbtRpjCBIl0hYtizmclEB5o0xmRCYCbFcDGXcCsbm77-zufkRtygTFJm0h531EKjG3JTLNHsevt6w3ViW-hPwRvdQzJCLVdTRwcpSmZjHNLgNuVIuv_MExdG0f54Vh0S_WoBZENwgVPlKjuzd4DtMa4kQdGgspI8rdvLrauYU_cil44lEcUGlEO8NFsfqgoA8tLNPt-ZTDLG0lJZl8eHZIlgbdbFiUyzlTV57PmO7kIjyuWj7T3q_vD5_o4s3V13UuL-rCmNBCmCRKtUQqTgWdYlsO1v2U0CUVfoWetWfyPY7QXxEo7xPHV8weckNFo
+          summary: []
+          status: completed
+        - type: message
+          id: rs_218bdb3a-a6c6-496e-a93b-559d641dbe62
+          role: assistant
+          content:
+          - type: output_text
+            text: I'll search the web for the 2024 host city.
+            annotations: []
+            logprobs: []
+          phase: commentary
+          status: completed
+        - type: web_search_call
+          id: ws_call_a19c4a78-f123-41a0-8e7d-d0553eff13b0
+          status: failed
+          action:
+            type: search
+            query: what city hosted the 2024 Summer Olympics
+        - type: reasoning
+          id: rs_6acd7a287d3cba5afc8a45f0:rs_86b0f898-3d5d-4139-9671-a06cd2a37961
+          encrypted_content: >-
+            Q-PaDgEPZ9yvniJY9f14qSw3jj0vrJ0NSrqO20m5ndnyW6cRH3j33hQxb6cEgYshpvI5irJX5oP8_e13UGyhrWfp8IcklGno6x3n7V0A11hxgA52TGyWu_yYIoA6xaubNqXSL81z-SZgDLiYvcLVMVCIilKvk7MHcXrrskto5_sMDmXvijYj7OzX47QUaBhFSyXTW3zV2TmKuwOj5lLDofKN8vmKWOvyvKP-6fqSEwtdRU2yxHXzZxI0oo6ndOjAI9YYB1P7xPnBq4a0DapbnmQ1O_bN3dBS4lzzRVNawaxIIFQKWWX2U9M0DOh8QYTj5cGBlIiAwqNzG0c4cfRbSYJZFd-_oFBttNO-hvhBiKeiwRjcxoIIz4SRhnrTPFNspbqvG469cBI2-XDC-MVh7nJfuArf_khprXDp1thXuWUse0h1XKutN1tJ5cJ3M5OD6tn1HhNGkvjGxYfEw-eU6NvEL2LB84MmcMy4Awgj1lJMhjZNMm6w2fdK522yXXGW8iiP4rGWjLKzZ1lEZYqx6G7KwU0rLFWZYnkNY0wgiQUwtC_P0qbRXxbpynSBuDEMJOZZMEGmGOMgdIlKXcBYIRyC4Bj9tx8xS7_rogNnxWazGT-Nn-6A7CVdMRho5bSXpFRPtZLswtu0b5NwmYlj-YikVsJtWxo_374xQ78LU0yJgnAUOMC9phe23hfjabAWxO8tLHwmhcH-nIKmT6gHjWl_wYmCo8pjsthwz7PQO76agRV66K_k1z02ckvb8YPpuSXmSeTgQekVrJz3TLm60i5JYZxE5-nYphMeYl10OGArQCiJk5PENKJDL8azR577qE03_pvYQLPCidEjuy-g2DxCsrrM0U-y3VLt1RKyqWQheCfEQmQePQqbBmVY916kqwU-2eE4Spsc66PaZrtN5NZd-jSTXTlEmR0WplHf6k-F0aByEcPeC59CiEEInrRsxMbUfT3uPrKViVbD5ybL2wZ6oI3wLCbtpqE1qgoEqzxT59k2QRLnggUt0EkGGQmxdwE80q3dRp4wqh0wdN7iD9wmW4YDM8wr97xBPjldyIfQuiF0RcpkoSQtfz9rQ9PPxTOwmraQNRr5kIeBj2KgxaXZFzRo1VBSXFidpLdICHBmsAJ06-oq7euXq_8igf112q1NKAvHIgLQZLyJjPejKacb07ss3UX1-lHYTCH1MIqBMnKwlIm4Hsj_L5ByatlC4jvOIRoPnVDvWVZlGCtMrFQklAqXYUjk3yML7nOgoj4Ib_HQB6CKb2g-hA094vZ6VMtiI4OiCfbb7Z4ynkmzQdGKbuNu6zgYXesWlK6RnB2MiDPIZjHXGMVn8kJb8KJ4J9JlNZao5oLUv30hQ7Dlt9TjwhHrMvfeDYgBAm9dhMYBODKzIaYXoCIupBeqjKU8djLVWAhPH-PelDz4VA
+          summary: []
+          status: completed
+        - type: message
+          id: rs_8d69c09a-ca91-4ef4-8c1b-c0953b9fb5ea
+          role: assistant
+          content:
+          - type: output_text
+            text: That search failed, so I'll try again.
+            annotations: []
+            logprobs: []
+          phase: commentary
+          status: completed
+        - type: web_search_call
+          id: ws_call_263f4b97-28f7-487f-87f8-c11b8e630143
+          status: failed
+          action:
+            type: search
+            query: 2024 Summer Olympics host city
+        - type: reasoning
+          id: rs_6acd7a287d3cba5afc8a45f0:rs_f316d4fa-ca57-48bd-9587-0248d58cbd9d
+          encrypted_content: >-
+            Q-PaDgFxC868SXsE-n66rfLk94bC0V5v_oF8JKwqQorGoPb3881QWpenmsQT7740CBmEK7-Nyp8oLG_SLlfSRTYnbKTm6ZU5wFZPEm0a6Fp4P7Kg2aJy8U1Vj25z39eD7ZWdZTj7V3POmbShxe93ftv7DIzhTOuwEyY2q5_OAu75iTOvCXZQYO7sLlyUeKiE6e_umuDnfPSajyJP8LkdPEatOAqWiGF7Y0Dg_cFYlU6IR2Td4QdJbvZ2b01Iw4462kgYA00J-Mb_xpI1NTxYyrnLOLCR3nukN4xknhqWhfNsDAsUA6FK58NzpTgzgf1IvLItrmRwy2O4BrPQs4elSdNii3WRRHORqCfoLPg4HDaUhoL8nk4TIOpxyoc1nqeDF1c3hdwhOk5JDkQilH0_6qFVOJ_dns0AKKnhFwCaUsKPfQePqIKrLlCB6Ac8KwAocsvuF8wlyYstna9uwaS-g-0RYWGT9A0IicEgPE3tkehdAty7S-_h_M_h-tR7pBahiiVMEbp2WoaZRi2YYbXvCEl_bDACsJ2b83a5UvQDRH-oYpOm4vomhABCm3Q-LEBXQJVG8CTrWPpjBYPBf6Gh12h8dnHJqE2MIB39EgrNjTq0dMJNzP40gfDaa6h920GK_B5nCJid1fCsHF7ebbE-0hLaqCvyhu0dxbWpsOXHe7I6TnUj5Ga9m8VEtB9uHkTTzMROx51vcbI3sYGqhf-Xkw4dX4zia5zIK69ejXgAtWQOnpJZioPthXvLi_BD_T2xyA2-voqaOgslj-rNEdturXpRZdm6VqgHKXRXwrI_ZS0a11i1mkl9DvHOjSo4cDja9nPrxpAGtCQGFmmf8MfyBD7juqUKjNvRtZwVOckuGJARW3F0KIjExtc5SIFwPvSJswuuShU8V4dFw-LFL64d-IpkhqKnNmrcER2xAE7DwQyjs6Vyyk3gWEZi5YwLrcXBDZz6QBCfB-43gJu4ZFlVlaUThBoOlM20lFUYbAOWrrb5gvbX9K6XxxNtdG-g22u6ni8wUiJ4IHzgF5BZ5WotmF-mUv4Rgyrmmi3295ju743WV9y1LsBSRfC0A4d75JtWf2xGIPkxlDztIqVhsAeHN5PCNB31-4Hpok1Jv1lTIjVUHTWnCaCFK_Z6wln3gqMbRw3t0bAh4zgmm_U3pWqDwR1fFN-kHHdyIniJ-ll3pYbTClaf7sZisU9vV2VNN1aapPrw3lFpY9Qx5-GSS47MFqikTqBnogJb5ZGWdKMGUe_jXIVFHQws7lm0UmyrG4GL0z4vW3uni9auCxPwOwH_dB51Yr4xA3GTub69LGrsPqdrpZjLaGX8m9cPYySGg33f0x3eA2B1RGwtdoYrlOUJzCuelCssda-qA2QgVeSyA0bKiCft69b-Ww6-hwKBtCNz67-1xbbr4Z9Z6hvPcA
+          summary: []
+          status: completed
+        - type: message
+          id: rs_36c4b127-5bf1-4950-b6bb-e42692b96777
+          role: assistant
+          content:
+          - type: output_text
+            text: Web search isn't working, so I'll try opening the Olympics page directly.
+            annotations: []
+            logprobs: []
+          phase: commentary
+          status: completed
+        - type: web_search_call
+          id: ws_call_8289ee51-bd5d-416e-8e9e-8123d93d41a8
+          status: completed
+          action:
+            type: open_page
+            url: https://olympics.com/en/paris-2024
+        - type: reasoning
+          id: rs_6acd7a287d3cba5afc8a45f0:rs_98e89494-e281-4bb1-8f11-454aa8ddc06c
+          encrypted_content: >-
+            Q-PaDgFU_66QzlXhXIHITuS4N2Pgnmm8lWemRmhRCOsxkRERXyKeG4yv8_0WCutePWxy88O-SkOEPN2AYfKUk0ifux1P-Y7ZHpDebAccSPDe3h_L1r4qytDfh9iK_jZBDdaoj8Bd7Fx6R8mElDNQe2T6BiakUiWpOhOvCLzJ2SGPr-wR4dhBsk8NpPxWaP0qZI9MJL8Kz-wU6kwJpXHtmuPcYpmfTw33HtMV9XfR08rS4QpryLM-la4F7GGvhOXJ7t-5Tp_DN_G-nBaiOiwkO29QN0Ft5-em9Gi19sZbDATlD2MEV8rdJwyYCZwD8pGYHP7aNtkoVVHLmv7UVD2g8lpqYfAESt78LCd3rQ_zg1GT8pbQ1aXp3RA35Qjh_t5ShgrRZufgQbM5TGrsYFas4SvvF8fL6TgP_UK3LYrCyvqWykjWxFw8Q8L59DbopRFTn3JhwRTTfi3FkUgEZiawCGMjVj0IdDoxIB1NO9wLTZC9nccgyNxfEqLouwO3rGeKsGfO4Ak3BR2VcejfvPgez5XmHOhwQpDw9EX1Ltd1VUazCbZqk1aTx3BPjSJ_1tx7ig_0pYaIE3s2U0y87YXjQIMfBZRZo4qxp1qnwK90izGlHO64wz1hY1xqxAKxUkcaUxi7CNynuUrI27GFCfNA0KuD3n1ml1Eonh6yAy78szjDHtN1MFj4aoDFK2a9HRoKa4tuGyoggIbqHQXbNYdJM6Hv0o4uUVjZAGz_kI7-sJ9df1tf-CHsCsEMzrQsNEitA0MNkQrvkjRnmrqKCWGkx-b7sNVuLPmSvH9CXVOsYOHugdhpWmXQgG6BNIBAC9l2wzU1eA-582mcIDaFbJtMkRzPN7uGs94IgUU7wZt9ikKQv1iMqAHyAfR5TuZhzgyz9olpZ1V7FV-nmP2IYlwzemDjwRz8u1xeJCl7H3PVAGEasgiJ_cEWQEewGJ0ntnHpITvIfdxRBbUKS0AS8mCZBGyU5t9ZvU0T_0eTiB4_8T0jD4w9kV0A1yfbNiBgVvS0ksWxGP1gBnsYFLw_TyPf5UPG1gh_2GkOebvU2PDtPcLObQfjCRVblRokRPLpOsoI7VVLyQwPWpik2YniKnuUDeVN29kb9M8sBVBM6nQHBCYhYaCW6QSeFsd58xhZH9hBaqvuM1l8lMhK8Z6S8C9SolUAsc5TeDRBAuzYg5yzbMX1z66B2xqyTXzSkabpmqmQ3-BC4Gi98Raw5OdJN79LOoixBwx_7EjqC5n-265pzBvge9qN_OGWL3Q3pvBSVkuPMPQPlKB02CiLyvknhkhcslKDe3-xJVOBnCIY1MW3_pz4k4hi3XzC5G1Bq3K5KrNmhE3URuBp-6VcBhTnE1KuYFkeyT8wgMb7Nv2GWCYMZRVX9GGHpukKEGXUUnNQ7JJ4OaFq5FfLiRSbAC29ii6R_LpbReQ0FgEQhej7ohOCmHxsDtaj8Mj8c7Frb0WDz7W66BPQN5pmC_SGKk4xQVheq-fIJKnb0LObsxRT_KV2EXZIBs3B_aHoZSOf6lweLCyxXDIEPsQq2Wkh4FqOupfnbdDbxRmv76AQjQrUI5aH4A81VsEQN9HI9epy_AYdqdhHrpdO82TY_KFx_4E9gZDICsI6P2MOyts1Mjq8H_kBkbbeP6QjwB9sqbxHsPHQMrEMnQZ4UTWfdnqHNLEXDK8PF-oeiKuJh31o59ANC1ugP5_cJIYKKW7s1b-tsDu_A8KSpfbFAW4QwBcNXVEYWq7DM26LDSe5YhQ64qSux-LbRHzfgmxDcEpRGcl9rpFiIAPFjzD_qg_IDt7Vx7V2Od5jC3TiZBnD-byyFT8gyhg8x28YWJeVku72NBEor19-_wmWZP_3DUaiyXQ1HJTJJvK3DZI_ATnj1wGCIZnT5ntBT08NbGOwB6l1a-YVCRB_8pt45ygroaOZgvb_QeIbjWdL1lZeFsQ0PdXnIiSI6Pja3Ro0A11ZyYGWhEzSsYf7Q_H0TRDLIY7nHp4yxk2TsqMXnYggtf766J3lVseqfF9BSB7nbLdDX8dNHAPdrpejMwNyxAEyCc2cSZ-exIvL70jBcY-tFgyN9PF8J3jzsdAJd_Y0aWP07ioXq7WgdgO7UQmbi2dLP8UWPNbZuaW0YW5_VImR137lGhmVh0o0YwQhegtwDJUJSzSzfFRbAXlezm7C2GflyV5RVpGfUzeaTmoEFF3lxvD8ks9yThX503Ehbe5qkFx1SL-ObFRj13q29lMd-oKiAv_hDjtK7ZKHprihxAFKg56Ut9A5hKUiu0hYj3bfdO2C0mVjrahVP-dayx0zTCrG8RyYWLyRSOAsNT5Ra3Df2HxsrRkUwtdcGjWl3KrgRV3gCSB3bwd0VRvyJwfJTubNYt2TNFrmMEp3nzgWdejmhiJDphJXLv-dDTKyY6RLsqtV33ZQCbuWJKmP948BnSYkdFrz3BU4WAxveld9zGpM6mpXLKoWnudZ9QhSbhFsXxJf85kEH82iCD6AZuIZ_vf_VmVuwireDQBB128ny9iiZVd01tmuG9LytcbwqO9an209FXNzsGZ-y5NT9w2kSOSBvi4NllKEjjMyeoIMl7PsS61XO_PqPElTCWTdx_1ndwe4ph0yKv1taQ7IpBBKW6yeMCHPZl8UvMJ4wljVsR2lk_lPPiI2VjQr4tZ0164o0xBCnJxQN0zL_Lv9e-lUqh3MSkI9pctab_8Dvs8HxP6MQ_j9OcctrYOhTBiIn8uhlfYGmCsyTb8J8PBM60uw6KO1l59W9mtDu4nbIIhN-ZeZ15eU-y6cN3SAFiE
+          summary: []
+          status: completed
+        - type: message
+          id: msg_8ab5ec34-96cc-48ad-9eb9-7d6b543a2da6
+          role: assistant
+          content:
+          - type: output_text
+            text: Paris
+            annotations:
+            - type: url_citation
+              url: https://olympics.com/en/paris-2024
+              start_index: 0
+              end_index: 5
+              title: Paris 2024 Olympics - Latest News, Schedules & Results
+            logprobs: []
+          status: completed
+        instructions: null
+        usage:
+          input_tokens: 2925
+          input_tokens_details:
+            cached_tokens: 0
+          output_tokens: 866
+          output_tokens_details:
+            reasoning_tokens: 596
+          total_tokens: 3791
+        parallel_tool_calls: true
+        store: true
+  recorded_at: 2026-10-13T00:24:23.752603+00:00

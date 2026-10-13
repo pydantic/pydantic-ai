@@ -190,6 +190,7 @@ Need deterministic, fast tests?
 | Heroku | `heroku:` | `heroku:claude-sonnet-4-6` |
 | Snowflake Cortex | `snowflake:` | `snowflake:claude-sonnet-4-6` |
 | Crusoe | `crusoe:` | `crusoe:zai/GLM-5.2` |
+| Meta | `meta:` (Responses API) | `meta:muse-spark-1.3` |
 
 **Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For any other OpenAI-compatible endpoint, point `OpenAIChatModel` at it with `provider=OpenAIProvider(base_url=..., api_key=...)`. For anything that isn't OpenAI-compatible, subclass `Model`. For a backend that answers typed yes/no, pick-one and rubric questions rather than writing text, like TypeSafe's Jev, subclass `DecisionModel` from `pydantic_ai.models.decision` and implement `decide`; see the [Decision models guide](https://pydantic.dev/docs/ai/models/decision/).
 
