@@ -151,12 +151,38 @@ class TestInputGuardrail:
         assert guard_calls == ['initial', 'background answer']
 
         history_guard_calls: list[str] = []
+        history_model_prompts: list[object] = []
+
+        def guard_history(prompt: str) -> GuardrailResult:
+            history_guard_calls.append(prompt)
+            return GuardrailResult.replace('[redacted]')
+
+        def respond_to_history(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            history_model_prompts.extend(
+                part.content for message in messages for part in message.parts if isinstance(part, UserPromptPart)
+            )
+            return ModelResponse(parts=[TextPart('done')])
+
+        class PromptlessInputGuardrail(InputGuardrail[object]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[object],
+                *,
+                request_context: ModelRequestContext,
+                handler: WrapModelRequestHandler,
+            ) -> ModelResponse:
+                ctx.prompt = None
+                return await super().wrap_model_request(ctx, request_context=request_context, handler=handler)
+
         history_agent = Agent(
-            TestModel(custom_output_text='done'),
-            capabilities=[InputGuardrail(guard=lambda prompt: history_guard_calls.append(prompt) or True)],
+            FunctionModel(respond_to_history),
+            capabilities=[PromptlessInputGuardrail(guard=guard_history)],
         )
         await history_agent.run(None, message_history=[ModelRequest(parts=[UserPromptPart(content=[completion])])])
         assert history_guard_calls == ['background answer']
+        assert history_model_prompts == [
+            [TextContent('[redacted]', metadata={'origin': 'background_tool_result', 'tool_call_id': 'task-1'})]
+        ]
 
     async def test_guard_result_allow(self):
         agent = Agent(
@@ -304,8 +330,6 @@ class TestInputGuardrailRedaction:
             if completions:
                 model_completions.append((completions[-1].content, completions[-1].metadata))
                 return ModelResponse(parts=[TextPart('done')])
-            if any(isinstance(part, ToolCallPart) for message in messages for part in message.parts):
-                return ModelResponse(parts=[TextPart('waiting')])
             return ModelResponse(parts=[ToolCallPart('lookup', '{}', tool_call_id='tool-1')])
 
         agent = Agent(FunctionModel(respond), capabilities=[BackgroundTools(), InputGuardrail(guard=guard)])
