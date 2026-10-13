@@ -34,7 +34,7 @@ pydantic-monty = false
 termflow-md = "2026-10-02T15:05:25Z"
 anthropic = "2026-10-08T03:42:01.588842Z"
 openai = "2026-10-06T21:31:20Z"
-google-genai = "2026-09-22T17:23:02Z"
+google-genai = "2026-10-13T00:38:20Z"
 
 [manifest]
 requirements = [
@@ -1232,8 +1232,8 @@ requires-dist = [
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "fastmcp-tasks", marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "genai-prices", specifier = ">=0.1.10" },
-    { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.25.0" },
-    { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.25.0" },
+    { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.30.0" },
+    { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.30.0" },
     { name = "griffelib", specifier = ">=2.0" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },
     { name = "hf-xet", marker = "(platform_machine == 'AMD64' and extra == 'huggingface') or (platform_machine == 'aarch64' and extra == 'huggingface') or (platform_machine == 'amd64' and extra == 'huggingface') or (platform_machine == 'arm64' and extra == 'huggingface') or (platform_machine == 'x86_64' and extra == 'huggingface')", specifier = "<1.5.0" },

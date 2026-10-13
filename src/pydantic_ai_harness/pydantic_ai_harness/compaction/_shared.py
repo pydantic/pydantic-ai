@@ -34,6 +34,7 @@ from pydantic_ai.messages import (
     is_multi_modal_content,
 )
 from pydantic_ai.models import AbstractModel, Model
+from pydantic_ai.models._continuation import context_input_tokens
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
@@ -271,7 +272,9 @@ def estimate_context_tokens(
     `input_tokens` measured everything the provider was actually sent for that request --
     instructions, tool definitions, and every prior message -- and its `output_tokens` measured
     the response's own parts, so their sum is ground truth for the history up to and including
-    that response. Only the messages after the anchor are estimated with the character
+    that response. A response a provider SDK continued across several requests (Google long
+    decode) sums their usage, re-counting earlier output as input, so it anchors on the first
+    request's input tokens instead. Only the messages after the anchor are estimated with the character
     heuristic (or *tokenizer*), without re-counting instructions, which the anchor already
     covers; when the instructions changed since the anchor, the estimate swaps the old set for
     the new one rather than adding the new set on top. Tool schemas named by availability
@@ -293,7 +296,7 @@ def estimate_context_tokens(
     """
     if anchor := _latest_usage_anchor(messages):
         index, message = anchor
-        anchored = message.usage.input_tokens + message.usage.output_tokens
+        anchored = context_input_tokens(message) + message.usage.output_tokens
         segments = [
             *_collect_message_text(messages[index + 1 :]),
             *_revealed_tool_schema_text(messages[index + 1 :], model_request_parameters),
@@ -358,7 +361,7 @@ def _estimate_segments(segments: Sequence[str], tokenizer: Callable[[str], int] 
 
 def _reported_input_tokens(message: ModelMessage) -> int:
     """The provider-reported input tokens of a response, or 0 for a request or a response without usage."""
-    return message.usage.input_tokens if isinstance(message, ModelResponse) else 0
+    return context_input_tokens(message) if isinstance(message, ModelResponse) else 0
 
 
 def _has_reported_usage(messages: Sequence[ModelMessage]) -> bool:

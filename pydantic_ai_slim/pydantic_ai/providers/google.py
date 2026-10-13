@@ -2,7 +2,10 @@ from __future__ import annotations as _annotations
 
 import os
 from abc import ABC, abstractmethod
+from functools import partial
 from typing import TYPE_CHECKING, Literal, overload
+
+import httpx2
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import (
@@ -26,6 +29,13 @@ except ImportError as _import_error:
         'Please install the `google-genai` package to use the Google provider, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
+
+_GOOGLE_HTTP_TIMEOUT = 1200
+"""Default HTTP timeout in seconds for the clients the Google providers create, instead of `DEFAULT_HTTP_TIMEOUT`.
+
+Google recommends 15 to 20 minutes for long-decode models: a request can wait up to Google's 10-minute server
+limit before its first byte arrives.
+"""
 
 
 class BaseGoogleProvider(Provider[Client], ABC):
@@ -70,9 +80,12 @@ class BaseGoogleProvider(Provider[Client], ABC):
         ownership wiring consistent.
         """
         if http_client is None:
-            http_client = create_async_httpx2_client()
+            http_client_factory = partial(
+                create_async_httpx2_client, timeout=httpx2.Timeout(_GOOGLE_HTTP_TIMEOUT, connect=5)
+            )
+            http_client = http_client_factory()
             self._own_http_client = http_client
-            self._http_client_factory = create_async_httpx2_client
+            self._http_client_factory = http_client_factory
         else:
             # 3 frames up from the helper: this method, the provider `__init__` calling it, and the
             # user's `GoogleProvider(...)` call, which is where the warning should land.

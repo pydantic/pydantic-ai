@@ -74,7 +74,9 @@ logfire = ["logfire[httpx]>=4.39.0", "opentelemetry-instrumentation-httpx>=0.65b
 # Models
 openai = ["openai>=3.26.0", "tiktoken>=0.12.0"]
 cohere = ["cohere>=5.20.6; platform_system != 'Emscripten'"]
-google = ["google-genai>=2.25.0"]
+# `google-genai>=2.30.0` continues a long decode past the per-request output cap itself (`automatic_continuation`)
+# and reports the first request's prompt size (`initial_prompt_token_count`).
+google = ["google-genai>=2.30.0"]
 # `anthropic>=1` is built on `httpx2` and drops legacy HTTPX entirely; it also removes
 # `temperature`/`top_p`/`top_k` from `messages.create()`, which the model sends via `extra_body`.
 anthropic = ["anthropic>=1.12.1"]

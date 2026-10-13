@@ -26,6 +26,7 @@ from ._output import (
 from ._run_context import AgentDepsT, RunContext, dispatch_event_stream, recorded_workspace_ref
 from ._sync_stream import SyncStreamBridge
 from .messages import AgentStreamEvent, ModelResponseStreamEvent
+from .models._continuation import context_input_tokens
 from .output import (
     OutputDataT,
     ToolOutput,
@@ -439,7 +440,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 self._model_events(),
                 self._usage_limits,
                 lambda: self._initial_run_ctx_usage + self._raw_stream_response.usage,
-                lambda: self._raw_stream_response.usage.input_tokens,
+                lambda: context_input_tokens(self._raw_stream_response.get()),
             )
             # Wrap once, so a capability's `wrap_run_event_stream` sees each event exactly once no
             # matter how many times this stream is iterated (e.g. `stream_text()` then a drain).

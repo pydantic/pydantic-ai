@@ -30,6 +30,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserContent, UserPromptPart
 from pydantic_ai.models import Model, ModelResolutionContext, infer_model
+from pydantic_ai.models._continuation import context_input_tokens
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
@@ -751,7 +752,7 @@ class Session(Generic[DepsT, OutputT]):
                 if self.on_context_usage is not None:
                     for message in reversed(ctx.messages):
                         if isinstance(message, ModelResponse) and message.usage.input_tokens:
-                            self.on_context_usage(message.usage.total_tokens)
+                            self.on_context_usage(context_input_tokens(message) + message.usage.output_tokens)
                             break
                 if self.on_stream_event is not None:
                     await self.on_stream_event(event)

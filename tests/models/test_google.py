@@ -5971,17 +5971,28 @@ async def test_google_stream_safety_filter(
     assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_HATE_SPEECH'
 
 
-def test_google_provider_sets_http_options_timeout(google_provider: GoogleProvider):
-    """Test that GoogleProvider sets HttpOptions.timeout to prevent requests hanging indefinitely.
+@pytest.mark.parametrize('cloud', [False, True])
+def test_google_provider_sets_http_options_timeout(cloud: bool, gemini_api_key: str):
+    """Test that the Google providers set HttpOptions.timeout to prevent requests hanging indefinitely.
 
     The google-genai SDK's HttpOptions.timeout defaults to None, which causes the SDK to
     explicitly pass timeout=None to httpx, overriding any timeout configured on the httpx
     client. This would cause requests to hang indefinitely.
 
+    The client a Google provider creates waits 20 minutes rather than `DEFAULT_HTTP_TIMEOUT`, as Google
+    recommends for long decode, and so does a client recreated after it is closed.
+
     See https://github.com/pydantic/pydantic-ai/issues/4031
     """
-    http_options = google_provider._client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
-    assert http_options.timeout == DEFAULT_HTTP_TIMEOUT * 1000
+    provider = GoogleCloudProvider(project='test-project') if cloud else GoogleProvider(api_key=gemini_api_key)
+    http_options = provider._client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
+    assert http_options.timeout == 20 * 60 * 1000
+    assert DEFAULT_HTTP_TIMEOUT == 600
+    factory = provider._http_client_factory  # pyright: ignore[reportPrivateUsage]
+    assert factory is not None
+    recreated = factory()
+    assert recreated.timeout.read == 20 * 60
+    assert recreated.timeout.connect == 5
 
 
 def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str):

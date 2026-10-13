@@ -48,6 +48,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models._continuation import mark_initial_input_tokens
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -295,6 +296,14 @@ class TestEstimateContextTokens:
         ]
         assert estimate_context_tokens(msgs, tokenizer=lambda s: len(s.split())) == 50_503
 
+    def test_long_decode_anchors_on_its_first_request(self):
+        # A provider SDK that continued the response in a second request (Google long decode) summed both
+        # requests' input, which re-counts the first one's 500 output tokens; the context is the first request's.
+        response = _assistant_with_usage('long', 50_000 + 50_500, 1_000)
+        mark_initial_input_tokens(response, 50_000)
+        msgs: list[ModelMessage] = [_user('x' * 40), response]
+        assert estimate_context_tokens(msgs) == 51_000
+
 
 # ---------------------------------------------------------------------------
 # _is_safe_cutoff
@@ -457,6 +466,18 @@ class TestEstimateMessageTokens:
             _user('w' * 80),  # after the last reported response: estimated
         ]
         assert estimate_message_tokens(msgs) == [10, 751, 250, 200, 10, 50, 20]
+
+    def test_long_decode_input_is_its_first_request(self):
+        """A response continued across requests counts its first request's input, not their sum."""
+        # Its second request's input re-counted the first one's 500 output tokens.
+        long_decode = _reported(input_tokens=1000 + 1500, output_tokens=600)
+        mark_initial_input_tokens(long_decode, 1000)
+        msgs: list[ModelMessage] = [
+            long_decode,
+            _user('y' * 400),  # with the response above, shares 1900 - 1000 in proportion 600:100
+            _reported(input_tokens=1900, output_tokens=200),
+        ]
+        assert estimate_message_tokens(msgs) == [772, 128, 200]
 
     def test_unchanged_input_between_responses_keeps_estimates(self):
         """Equal input usage says nothing about the messages between, so it does not zero them."""
