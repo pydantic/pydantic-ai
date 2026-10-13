@@ -23,7 +23,7 @@ from pydantic_ai.exceptions import (
     ToolRetryError,
     UserError,
 )
-from pydantic_ai.messages import ModelRequest, ToolCallPart, ToolReturn, ToolReturnPart, UserContent, UserPromptPart
+from pydantic_ai.messages import TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -69,14 +69,14 @@ def _with_run_in_background(tool_def: ToolDefinition) -> ToolDefinition:
     return replace(tool_def, parameters_json_schema=schema)
 
 
-_Outcome = ModelRequest | BaseException
+_Outcome = tuple[UserContent, ...] | BaseException
 """What a finished background task hands to the run: the follow-up to deliver, or the error that ends the run."""
 
 
 def _deliver(ctx: RunContext[Any], outcome: _Outcome) -> None:
     if isinstance(outcome, BaseException):
         raise outcome
-    ctx.enqueue(outcome)
+    ctx.enqueue(*outcome)
 
 
 def _format_background_error(error: ApprovalRequired | CallDeferred | ToolRetryError | ToolFailedError) -> str:
@@ -260,7 +260,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         tool_name = call.tool_name
 
         async def _run() -> None:
-            outcome: tuple[UserContent, ...] | BaseException
+            outcome: _Outcome
             try:
                 # A task the run cancelled before it got to start must not run the tool.
                 await anyio.lowlevel.checkpoint_if_cancelled()
@@ -279,21 +279,14 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                     outcome = e
                 else:
                     outcome = _format_background_result(tool_name, task_id, result)
-                if isinstance(outcome, BaseException):
-                    self._send.send_nowait(outcome)
-                else:
-                    self._send.send_nowait(
-                        ModelRequest(
-                            parts=[
-                                UserPromptPart(
-                                    content=outcome[0]
-                                    if len(outcome) == 1 and isinstance(outcome[0], str)
-                                    else list(outcome)
-                                )
-                            ],
-                            metadata={'origin': 'background_tool', 'tool_call_id': task_id},
-                        )
+                if not isinstance(outcome, BaseException):
+                    # Both success and handled failure messages start with completion text.
+                    assert isinstance(outcome[0], str)
+                    outcome = (
+                        TextContent(outcome[0], metadata={'origin': 'background_tool', 'tool_call_id': task_id}),
+                        *outcome[1:],
                     )
+                self._send.send_nowait(outcome)
             finally:
                 self._live -= 1
                 # Core counts a successful call when the tool body returns, replacing this reservation.

@@ -30,6 +30,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    TextContent,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -70,9 +71,9 @@ def _follow_up_seen(messages: list[ModelMessage], needle: str) -> bool:
     return any(
         isinstance(part, UserPromptPart)
         and any(
-            needle in item
+            needle in (item.content if isinstance(item, TextContent) else item)
             for item in ([part.content] if isinstance(part.content, str) else part.content)
-            if isinstance(item, str)
+            if isinstance(item, str | TextContent)
         )
         for msg in messages
         if isinstance(msg, ModelRequest)
@@ -181,17 +182,19 @@ class TestBackgroundTools:
             'Do not repeat or poll it; its result will arrive automatically. '
             'Continue independent work, or end your response.'
         )
-        follow_up_message, follow_up = next(
-            (message, part)
+        follow_up = next(
+            part
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, UserPromptPart) and isinstance(part.content, str) and 'Background tool' in part.content
+            if isinstance(part, UserPromptPart) and isinstance(part.content, list)
         )
-        assert follow_up.content == (
-            f"Background tool 'slow_research' (task {match['task_id']}) completed.\nResult: researched topic"
-        )
-        assert follow_up_message.metadata == {'origin': 'background_tool', 'tool_call_id': match['task_id']}
+        assert follow_up.content == [
+            TextContent(
+                f"Background tool 'slow_research' (task {match['task_id']}) completed.\nResult: researched topic",
+                metadata={'origin': 'background_tool', 'tool_call_id': match['task_id']},
+            )
+        ]
 
     async def test_realtime_session_keeps_native_tool_path_and_instructions(self) -> None:
         image = BinaryContent(data=b'image bytes', media_type='image/png')
@@ -262,7 +265,10 @@ class TestBackgroundTools:
             part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)
         )
         follow_up = next(message for message in reversed(result.all_messages()) if isinstance(message, ModelRequest))
-        assert follow_up.metadata == {'origin': 'background_tool', 'tool_call_id': call.tool_call_id}
+        part = follow_up.parts[0]
+        assert isinstance(part, UserPromptPart) and isinstance(part.content, list)
+        assert isinstance(part.content[0], TextContent)
+        assert part.content[0].metadata == {'origin': 'background_tool', 'tool_call_id': call.tool_call_id}
         if private_detail is not None:
             assert not _follow_up_seen(result.all_messages(), private_detail)
 
@@ -450,8 +456,14 @@ class TestBackgroundTools:
                     delivered_messages.extend(event.messages)
 
         assert output == 'done'
-        assert [message.metadata for message in delivered_messages] == [
-            {'origin': 'background_tool', 'tool_call_id': 'call-1'}
+        assert len(delivered_messages) == 1
+        part = delivered_messages[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == [
+            TextContent(
+                "Background tool 'slow' (task call-1) completed.\nResult: value",
+                metadata={'origin': 'background_tool', 'tool_call_id': 'call-1'},
+            )
         ]
 
     async def test_iter_delivers_background_result(self) -> None:
@@ -642,18 +654,17 @@ class TestBackgroundTools:
         )
         assert isinstance(follow_up.content, list)
         assert len(follow_up.content) == 3
-        assert isinstance(follow_up.content[0], str)
-        assert follow_up.content[0].startswith("Background tool 'structured' (task ")
-        assert follow_up.content[0].endswith(') completed.\nResult: public answer')
+        assert isinstance(follow_up.content[0], TextContent)
+        assert follow_up.content[0].content.startswith("Background tool 'structured' (task ")
+        assert follow_up.content[0].content.endswith(') completed.\nResult: public answer')
         assert follow_up.content[1:] == ['supporting image', image]
         assert 'secret application metadata' not in str(follow_up.content)
         assert 'deferred_tool' not in str(follow_up.content)
         call = next(
             part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)
         )
-        assert follow_up_message.metadata == {'origin': 'background_tool', 'tool_call_id': call.tool_call_id}
+        assert follow_up.content[0].metadata == {'origin': 'background_tool', 'tool_call_id': call.tool_call_id}
         restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([follow_up_message]))
-        assert restored[0].metadata == follow_up_message.metadata
         restored_part = restored[0].parts[0]
         assert isinstance(restored_part, UserPromptPart)
         assert isinstance(restored_part.content, list)
@@ -662,6 +673,20 @@ class TestBackgroundTools:
         assert isinstance(restored_image, BinaryContent)
         assert restored_image.data == image.data
         assert restored_image.media_type == image.media_type
+
+        def resumed_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert len(messages) == 1
+            assert messages[0].parts == [steering, restored_part]
+            part = messages[0].parts[1]
+            assert isinstance(part, UserPromptPart) and isinstance(part.content, list)
+            assert isinstance(part.content[0], TextContent)
+            assert part.content[0].metadata == {'origin': 'background_tool', 'tool_call_id': call.tool_call_id}
+            return ModelResponse(parts=[TextPart('done')])
+
+        steering = UserPromptPart('steering')
+        await Agent(FunctionModel(resumed_model)).run(
+            message_history=[ModelRequest(parts=[steering]), *restored],
+        )
 
     async def test_tool_return_preserves_string_content(self) -> None:
         agent = Agent(_model_calling('structured'), capabilities=[BackgroundTools()])

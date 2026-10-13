@@ -101,12 +101,13 @@ agent = Agent(
 The model first receives a message saying that the tool has started. The message includes a task ID.
 When the tool finishes, the model receives the result with the same task ID.
 
-Each follow-up is a [`ModelRequest`][pydantic_ai.messages.ModelRequest] with
+Each follow-up is a [`ModelRequest`][pydantic_ai.messages.ModelRequest] containing a
+[`UserPromptPart`][pydantic_ai.messages.UserPromptPart] whose first content item is
+[`TextContent`][pydantic_ai.messages.TextContent] with
 `metadata={'origin': 'background_tool', 'tool_call_id': original_tool_call_id}`, including handled
-failure notifications. This metadata is not sent to the model; it is available on delivered messages
-and their serialized copies. Later history normalization may merge requests and discard per-message
-metadata, so persist it from
-[`EnqueuedMessagesEvent.messages`][pydantic_ai.messages.EnqueuedMessagesEvent.messages] when you need to retain it.
+failure notifications. This identifies the entire completion part, including any files and extra
+content. The metadata is not sent to the model and survives native message serialization and merging
+consecutive requests. UI adapters that convert content to plain text may discard it.
 
 Text and files returned by the tool are sent to the model. `ToolReturn.metadata` is discarded.
 `ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text. Any
