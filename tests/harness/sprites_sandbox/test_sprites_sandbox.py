@@ -831,6 +831,26 @@ class TestSpritesSandbox:
         with pytest.raises(WorkspaceUnavailableError, match=sprite.name):
             await backend.run(['echo', 'ok'])
 
+    async def test_deletion_check_ends_by_the_command_deadline(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Longer than the command's timeout, so only the command's deadline can bound the lookup.
+        monkeypatch.setattr('pydantic_ai_harness.sprites_sandbox._backend._DELETION_CHECK_TIMEOUT', 3600)
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        deadlines: list[float] = []
+        get = transport.get
+
+        async def observed_get(*args: Any, **kwargs: Any) -> Any:
+            deadlines.append(anyio.current_effective_deadline())
+            return await get(*args, **kwargs)
+
+        monkeypatch.setattr(transport, 'get', observed_get)
+
+        assert (await backend.run(['echo', 'ok'], timeout=60)).stdout == 'ok\n'
+        assert len(deadlines) == 1
+        assert deadlines[0] < anyio.current_time() + 60
+
     async def test_sigkill_with_live_sprite_returns_exit(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()
         transport.exit_override = 137
