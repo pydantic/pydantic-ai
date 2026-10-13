@@ -487,13 +487,15 @@ When the agent calls a tool that names a UI resource, the call returns a [`ToolR
 
 The [AG-UI](../ui/ag-ui.md#mcp-apps) and [Vercel AI](../ui/vercel-ai.md#mcp-apps) adapters forward this data to the frontend. Your application is the host: it fetches the page with [`read_resource_contents`][pydantic_ai.mcp.MCPToolset.read_resource_contents], whose `_meta.ui` holds the Content Security Policy and permissions the server asks for, renders it in a sandboxed iframe, and passes the tool input and result in.
 
-The page can't reach the server itself, so it sends requests such as calling a tool to your frontend, which forwards them to an endpoint of yours. Pass the JSON-RPC `method` and `params` to [`handle_app_request`][pydantic_ai.mcp.MCPToolset.handle_app_request] and return its result to the page as is. It supports `tools/call` and `resources/read`, and only calls tools on this server that are visible to apps: `_meta.ui.visibility` includes `"app"`, or is omitted. Tool results come back in full, including `isError` results. Other failures raise [`MCPError`][pydantic_ai.mcp.MCPError], whose `code`, `message` and `data` you send back to the page as the JSON-RPC error. These calls don't go through [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call]. Keep the toolset entered (`async with weather:`) while pages are open, so each request doesn't reconnect. Check that the request comes from the user who owns the conversation, as you would for any other endpoint.
+The page can't reach the server itself, so it sends its `tools/call` and `resources/read` requests to your frontend, which forwards them to an endpoint of yours. Pass them to [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] and [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app], and return the result to the page as is. `call_tool_for_app` only calls tools on this server that are visible to apps: `_meta.ui.visibility` includes `"app"`, or is omitted. Tool results come back in full, including `isError` results. Other failures raise [`MCPError`][pydantic_ai.mcp.MCPError], whose `code`, `message` and `data` you send back to the page as the JSON-RPC error. These calls don't go through [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call]. Keep the toolset entered (`async with weather:`) while pages are open, so each request doesn't reconnect. Check that the request comes from the user who owns the conversation, as you would for any other endpoint. A page may only reach the server that served it, so use one `MCPToolset` per server, as [`load_mcp_toolsets`][pydantic_ai.mcp.load_mcp_toolsets] does, rather than one FastMCP client configured with several servers.
 
 ```python {title="mcp_apps.py"}
 from typing import Any
 
+from mcp.types import METHOD_NOT_FOUND
+
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.mcp import MCPError, MCPToolset
 
 weather = MCPToolset('http://localhost:8000/mcp', id='weather')
 agent = Agent('openai:gpt-5.2', toolsets=[weather])
@@ -508,7 +510,13 @@ async def app_page(resource_uri: str) -> tuple[str, dict[str, Any]]:
 
 async def app_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
     """Send a request the page made to the server it came from."""
-    return await weather.handle_app_request(method, params)
+    match method, params:
+        case 'tools/call', {'name': str(name), **rest}:
+            return await weather.call_tool_for_app(name, rest.get('arguments'))
+        case 'resources/read', {'uri': str(uri)}:
+            return await weather.read_resource_for_app(uri)
+        case _:
+            raise MCPError(message=f'Method {method!r} is not supported', code=METHOD_NOT_FOUND)
 ```
 
 Some servers only offer app tools to clients that say they support MCP Apps, through the `io.modelcontextprotocol/ui` client extension. `MCPToolset` doesn't send it by default. With FastMCP 4, pass a client that does:

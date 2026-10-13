@@ -1733,56 +1733,58 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """
         return [ResourceContents.from_mcp_sdk(c) for c in await self._read_resource(uri)]
 
-    async def handle_app_request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Send a request from an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) view to the server.
+    async def call_tool_for_app(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Call a tool for an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) page.
 
-        An MCP Apps view runs in the browser and can't reach the server, so the host relays its requests.
-        Call this from the endpoint your frontend forwards them to, with the JSON-RPC `method` and `params`
-        the view sent, and return the result to the view as is. Supported methods are `tools/call` and
-        `resources/read`.
+        An MCP Apps page runs in the browser and can't reach the server, so the host relays its `tools/call`
+        requests. Call this from the endpoint your frontend forwards them to, and send the result back to the
+        page as is.
 
-        A `tools/call` is only sent for a tool on this server whose `_meta.ui.visibility` includes `"app"`
-        (the default when it's omitted). Its result is the server's full `CallToolResult`, including
-        `isError` results, which are not raised. The view's `_meta` isn't forwarded, and
-        [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call] doesn't apply to these calls.
+        Only tools on this server that are visible to apps can be called: `_meta.ui.visibility` includes `"app"`,
+        or is omitted. `isError` results are returned rather than raised, and
+        [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call] doesn't apply.
 
         Args:
-            method: The JSON-RPC method the view sent.
-            params: The JSON-RPC params the view sent.
+            name: The name of the tool the page called.
+            arguments: The arguments the page passed.
 
         Returns:
-            The result in MCP wire format.
+            The MCP `CallToolResult` in wire format (camelCase keys): `content`, `structuredContent` and `_meta`
+            when the server sent them, and `isError`.
 
         Raises:
-            MCPError: If the method isn't supported, the params are malformed, the tool isn't available
-                to apps, or the server returns an error. Send its `code`, `message` and `data` to the view
-                as the JSON-RPC error.
+            MCPError: If the tool isn't available to apps (code `INVALID_PARAMS`), or the server returns a protocol
+                error. Send its `code`, `message` and `data` to the page as the JSON-RPC error.
+        """
+        async with self:
+            tool = next((t for t in await self.list_tools() if t.name == name), None)
+            if tool is None or not _visible_to(tool, 'app'):
+                raise MCPError(message=f'Tool {name!r} is not available to apps', code=mcp_types.INVALID_PARAMS)
+            try:
+                result = await self.client.call_tool(name=name, arguments=arguments or {}, raise_on_error=False)
+            except McpError as e:
+                raise MCPError.from_mcp_sdk(e) from e
+        return _call_tool_result_to_wire(result)
+
+    async def read_resource_for_app(self, uri: str) -> dict[str, Any]:
+        """Read a resource for an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) page.
+
+        The counterpart of [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] for the page's
+        `resources/read` requests. Send the result back to the page as is.
+
+        Args:
+            uri: The URI of the resource the page asked for.
+
+        Returns:
+            The MCP `ReadResourceResult` in wire format (camelCase keys), with its `contents`.
+
+        Raises:
+            MCPError: If the server returns an error. Send its `code`, `message` and `data` to the page as the
+                JSON-RPC error.
         """
         async with self:
             try:
-                match method, params or {}:
-                    case 'tools/call', {'name': str(name), **rest} if _utils.is_str_dict(
-                        arguments := rest.get('arguments', {})
-                    ):
-                        tool = next((t for t in await self.list_tools() if t.name == name), None)
-                        if tool is None or not _visible_to(tool, 'app'):
-                            raise MCPError(
-                                message=f'Tool {name!r} is not available to apps', code=mcp_types.INVALID_PARAMS
-                            )
-                        result = await self.client.call_tool_mcp(name, arguments)
-                    case 'tools/call', _:
-                        raise MCPError(
-                            message='`tools/call` needs a string `name` and object `arguments`',
-                            code=mcp_types.INVALID_PARAMS,
-                        )
-                    case 'resources/read', {'uri': str(uri)}:
-                        result = await self.client.read_resource_mcp(uri)
-                    case 'resources/read', _:
-                        raise MCPError(message='`resources/read` needs a string `uri`', code=mcp_types.INVALID_PARAMS)
-                    case _:
-                        raise MCPError(
-                            message=f'Method {method!r} is not supported for MCP Apps', code=mcp_types.METHOD_NOT_FOUND
-                        )
+                result = await self.client.read_resource_mcp(uri)
             except McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
         return result.model_dump(mode='json', by_alias=True, exclude_none=True)
