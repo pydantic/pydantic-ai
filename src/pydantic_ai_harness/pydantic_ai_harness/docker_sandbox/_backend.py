@@ -1,0 +1,362 @@
+"""A [workspace backend][pydantic_ai.workspaces.WorkspaceBackend] in a local Docker (or Podman) container."""
+
+from __future__ import annotations as _annotations
+
+import os
+import posixpath
+import re
+import secrets
+from collections.abc import Mapping, Sequence
+from typing import Literal
+
+import anyio
+
+from pydantic_ai.workspaces import (
+    CommandResult,
+    LocalWorkspaceBackend,
+    SupportsCommands,
+    WorkspaceBackend,
+    WorkspaceCommand,
+    WorkspaceError,
+    WorkspaceOutputLimitError,
+    WorkspaceRef,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
+from pydantic_ai_harness._workspace_provider import check_timeout, command_argv
+
+__all__ = ('DockerSandboxBackend', 'remove_container')
+
+PROVIDER = 'docker'
+
+_READY = '__pydantic_ai_docker_ready__\n'
+"""Printed on stderr before the command starts; anything before it is the `docker` client's own error."""
+_DONE = re.compile(r'\n__pydantic_ai_docker_done__([0-9a-f]+):(\d+)\n')
+"""Carries the command's exit status, so a container that dies mid-command isn't read as a result."""
+
+_PID_DIR = '/tmp'
+"""Where each command records its process ID, so a second `docker exec` can stop it on a timeout."""
+
+_WRAPPER = f"""tag=$1
+pidfile={_PID_DIR}/.pydantic-ai-$tag.pid
+stopped={_PID_DIR}/.pydantic-ai-$tag.stopped
+shift
+for old in {_PID_DIR}/.pydantic-ai-*.pid; do
+    read -r pid 2> /dev/null < "$old" || continue
+    [ -z "$pid" ] || kill -0 "$pid" 2> /dev/null || kill -0 "-$pid" 2> /dev/null || rm -f "$old"
+done
+if ! echo $$ 2> /dev/null > "$pidfile"; then
+    echo "cannot write $pidfile, which stops the command on a timeout: {_PID_DIR} must be writable" >&2
+    exit 1
+fi
+if [ -e "$stopped" ]; then
+    rm -f "$pidfile" "$stopped"
+    exit 143
+fi
+printf '%s' '{_READY}' >&2
+(exec "$@")
+status=$?
+printf '\\n__pydantic_ai_docker_done__%s:%d\\n' "$tag" "$status" >&2
+exit "$status"
+"""
+"""Runs as `sh -c WRAPPER sh <tag> <argv...>`: records its PID, marks the start, and reports the exit status.
+
+The PID file outlives the command: background children that hold its output open keep its process group, and
+`docker exec`, going, so a timeout still has a group to stop. Each wrapper first removes the files whose process
+and group are both gone. An empty file is one another wrapper is still writing.
+
+A subshell `exec` runs the program itself, never a builtin, and exits 127 when it's missing.
+"""
+
+_STOP = f"""pidfile={_PID_DIR}/.pydantic-ai-$1.pid
+stopped={_PID_DIR}/.pydantic-ai-$1.stopped
+: > "$stopped"
+pid=$(cat "$pidfile" 2> /dev/null)
+[ -n "$pid" ] || exit 0
+rm -f "$pidfile" "$stopped"
+kill -TERM "-$pid" "$pid" 2> /dev/null
+(sleep 1; kill -KILL "-$pid" "$pid" 2> /dev/null) < /dev/null > /dev/null 2>&1 &
+exit 0"""
+"""Stop the command recorded under the tag `$1`, and its process group.
+
+A timeout can come before the wrapper has recorded its PID, even before it starts. So the stop first leaves a
+`.stopped` marker, which a wrapper that records its PID afterwards finds before it starts the command: whichever
+of the two comes second sees the other's file. A marker for a command that already finished stays behind, empty.
+
+A `docker exec` process leads a session of its own in both runc and crun, so its group is the command's; a
+command that started a session of its own (the harness `Shell`'s jobs) is in another group and keeps running.
+Groups are signalled as `kill -SIGNAL -PGID`, without `--`, which BusyBox's `kill` rejects, as does dash's after `-0`.
+"""
+
+_STOP_TIMEOUT = 2.0
+"""Bounds how late a stopped command's timeout or cancellation is raised when the daemon stops answering."""
+
+_LABEL = 'ai.pydantic.workspace'
+"""Marks the containers this capability created; only those can be attached to or removed through a ref."""
+
+_KEEPALIVE = 'while :; do sleep 86400; done'
+"""The container's main process: it only has to outlive every command, and `--init` reaps their orphans."""
+
+_ENV_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
+_CLIENT_ENV = (
+    'DOCKER_HOST',
+    'DOCKER_CONTEXT',
+    'DOCKER_CONFIG',
+    'DOCKER_CERT_PATH',
+    'DOCKER_TLS_VERIFY',
+    'CONTAINER_HOST',
+    'CONTAINERS_CONF',
+    'XDG_RUNTIME_DIR',
+)
+"""Passed to the local `docker` client, on top of `LocalWorkspaceBackend`'s, so it finds the daemon it's configured for."""
+
+
+def _after_ready(stderr: str) -> str:
+    return stderr.partition(_READY)[2]
+
+
+def _checked_env(env: Mapping[str, str]) -> dict[str, str]:
+    for name in env:
+        if not _ENV_NAME.fullmatch(name):
+            raise ValueError(f'invalid environment variable name: {name!r}')
+    return dict(env)
+
+
+def _runner() -> LocalWorkspaceBackend:
+    """A local subprocess runner: it owns timeouts, output limits and killing `docker` on cancellation."""
+    return LocalWorkspaceBackend('/', env={name: os.environ[name] for name in _CLIENT_ENV if name in os.environ})
+
+
+def _is_missing(result: CommandResult) -> bool:
+    return 'no such container' in result.stderr.lower()
+
+
+async def _owned_state(
+    runner: LocalWorkspaceBackend, executable: str, name: str, error: type[WorkspaceError]
+) -> Literal['running', 'stopped', 'missing']:
+    """The state of the container `name`, raising `error` unless this capability created it.
+
+    A ref can come from message history, and the daemon serves every container on the machine: without this
+    check, a crafted ref could run commands in, or remove, an unrelated container.
+    """
+    template = f'{{{{index .Config.Labels "{_LABEL}"}}}} {{{{.State.Running}}}}'
+    result = await runner.run([executable, 'inspect', '--type', 'container', '--format', template, '--', name])
+    if result.exit_code != 0:
+        if _is_missing(result):
+            return 'missing'
+        raise error(f'could not inspect container {name}: {result.stderr.strip()}')
+    label, _, running = result.stdout.strip().rpartition(' ')
+    if label != 'true':
+        raise error(f'container {name} was not created by `DockerSandbox`: it lacks the label {_LABEL}=true')
+    return 'running' if running == 'true' else 'stopped'
+
+
+async def remove_container(name: str, *, executable: str = 'docker') -> None:
+    """Remove a container this capability created, with its anonymous volumes; a missing one is fine."""
+    runner = _runner()
+    if await _owned_state(runner, executable, name, WorkspaceError) == 'missing':
+        return
+    result = await runner.run([executable, 'rm', '--force', '--volumes', '--', name])
+    if result.exit_code != 0 and not _is_missing(result):
+        raise WorkspaceError(f'could not remove container {name}: {result.stderr.strip()}')
+
+
+class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
+    """Run commands in a local Docker container, created on first use, through the `docker` CLI.
+
+    The container runs `sh` as its entrypoint under `--init`, so the image needs a POSIX `sh` and the usual
+    file utilities: file operations run as shell commands in the container (see [Writing a
+    backend](https://pydantic.dev/docs/ai/core-concepts/workspace/#writing-a-backend)). A `podman` binary
+    works too, through `executable`.
+
+    Built without a ref, the first operation creates a container; built with one, it starts that container
+    if it is stopped and raises [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError]
+    if it is gone. The backend never removes the container: call
+    [`DockerSandbox.destroy`][pydantic_ai_harness.docker_sandbox.DockerSandbox.destroy] with its ref.
+
+    Args:
+        image: The image for a new container; ignored when attaching to `ref`.
+        ref: A `WorkspaceRef(provider='docker', id=<container name>)` to attach to instead of creating one.
+        working_dir: The absolute directory in the container where commands start and relative paths
+            resolve; created if the image doesn't have it.
+        env: Environment variables for every command, on top of the image's; the per-call `env` goes on top.
+        network: Whether a new container can reach the network; `False` runs it with `--network none`.
+        docker_args: Extra `docker run` arguments for a new container, such as `['--memory', '2g']` or
+            `['--volume', f'{project}:/workspace']`. They can override defaults like `--network`, but not the
+            container's name, workspace label, working directory or entrypoint, which the backend relies on.
+        executable: The container CLI to run, such as `'podman'`.
+    """
+
+    def __init__(
+        self,
+        image: str | None = None,
+        *,
+        ref: WorkspaceRef | None = None,
+        working_dir: str = '/workspace',
+        env: Mapping[str, str] | None = None,
+        network: bool = True,
+        docker_args: Sequence[str] = (),
+        executable: str = 'docker',
+    ):
+        if (image is None) == (ref is None):
+            raise ValueError('pass exactly one of `image`, to create a container, or `ref`, to attach to one')
+        if ref is not None and ref.provider != PROVIDER:
+            raise ValueError(f'unsupported workspace provider {ref.provider!r}; expected {PROVIDER!r}')
+        if image is not None and (not image or image.startswith('-')):
+            raise ValueError(f'image must be an image reference, got {image!r}')
+        if not posixpath.isabs(working_dir):
+            raise ValueError(f'working_dir must be an absolute path in the container, got {working_dir!r}')
+        if isinstance(docker_args, str):
+            raise TypeError('docker_args must be a sequence of arguments, not a string')
+        self._image = image
+        self._ref = ref
+        self._working_dir = posixpath.normpath(working_dir)
+        self._env = _checked_env(env or {})
+        self._network = network
+        self._docker_args = tuple(docker_args)
+        self._executable = executable
+        self._runner = _runner()
+        self._lock = anyio.Lock()
+        self._resolved_working_dir: str | None = None
+
+    @property
+    def ref(self) -> WorkspaceRef | None:
+        """`WorkspaceRef(provider='docker', id=<container name>)`, set once the container is created."""
+        return self._ref
+
+    async def working_dir(self) -> str:
+        return await self._acquire()
+
+    async def _acquire(self) -> str:
+        """Create or start the container once, however many first operations race, and return the working directory."""
+        async with self._lock:
+            if self._resolved_working_dir is None:
+                if self._ref is None:
+                    await self._create()
+                else:
+                    await self._start()
+                # `docker exec --workdir` fails before the command starts if the directory is missing.
+                result = await self._exec(['pwd', '-P'], env={}, timeout=None)
+                self._resolved_working_dir = result.stdout.removesuffix('\n')
+            return self._resolved_working_dir
+
+    @property
+    def _name(self) -> str:
+        assert self._ref is not None
+        return self._ref.id
+
+    async def _create(self) -> None:
+        assert self._image is not None
+        name = f'pydantic-ai-{secrets.token_hex(6)}'
+        argv = [
+            self._executable,
+            'run',
+            '--detach',
+            '--init',
+            *([] if self._network else ['--network', 'none']),
+            *self._docker_args,
+            # After `docker_args`, whose later values would otherwise win: the backend relies on these.
+            '--name',
+            name,
+            '--label',
+            f'{_LABEL}=true',
+            '--workdir',
+            self._working_dir,
+            '--entrypoint',
+            'sh',
+            '--',
+            self._image,
+            '-c',
+            _KEEPALIVE,
+        ]
+        try:
+            result = await self._runner.run(argv)
+        except BaseException:
+            # The daemon may have created the container before the client was stopped: keep its name so
+            # whoever holds the ref can remove it.
+            self._ref = WorkspaceRef(provider=PROVIDER, id=name)
+            raise
+        self._ref = WorkspaceRef(provider=PROVIDER, id=name)
+        if result.exit_code != 0:
+            raise WorkspaceUnavailableError(f'could not create a container from {self._image}: {result.stderr.strip()}')
+
+    async def _start(self) -> None:
+        state = await _owned_state(self._runner, self._executable, self._name, WorkspaceUnavailableError)
+        if state == 'missing':
+            raise WorkspaceUnavailableError(f'Docker workspace {self._name} is unavailable: no such container')
+        if state == 'running':
+            return
+        result = await self._runner.run([self._executable, 'start', '--', self._name])
+        if result.exit_code != 0:
+            raise WorkspaceUnavailableError(f'Docker workspace {self._name} is unavailable: {result.stderr.strip()}')
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        check_timeout(timeout)
+        argv = command_argv(command, shell)
+        merged_env = {**self._env, **_checked_env(env or {})}
+        # The first command also creates the container, which isn't bounded by the command's timeout:
+        # pulling an image can take minutes.
+        await self._acquire()
+        return await self._exec(argv, env=merged_env, timeout=timeout)
+
+    async def _exec(self, argv: Sequence[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        tag = secrets.token_hex(8)
+        env_args = [arg for name, value in env.items() for arg in ('--env', f'{name}={value}')]
+        # Once resolved, commands start where `working_dir()` says they do, even if a symlink on the way changes.
+        workdir = self._resolved_working_dir or self._working_dir
+        docker = [self._executable, 'exec', '--workdir', workdir, *env_args, self._name]
+        try:
+            result = await self._runner.run([*docker, 'sh', '-c', _WRAPPER, 'sh', tag, *argv], timeout=timeout)
+        except anyio.get_cancelled_exc_class():
+            await self._stop(tag)
+            raise
+        except WorkspaceTimeoutError as error:
+            await self._stop(tag)
+            raise WorkspaceTimeoutError(str(error), stdout=error.stdout, stderr=_after_ready(error.stderr)) from error
+        except WorkspaceOutputLimitError as error:
+            await self._stop(tag)
+            raise WorkspaceOutputLimitError(
+                "Docker workspace output exceeded its 10 MiB safety limit; redirect the command's output to a "
+                'file and read part of it instead',
+                limit=error.limit,
+                stdout=error.stdout,
+                stderr=_after_ready(error.stderr),
+            ) from error
+        before, ready, stderr = result.stderr.partition(_READY)
+        if not ready:
+            reason = before.strip() or f'`{self._executable} exec` exited with code {result.exit_code}'
+            raise WorkspaceUnavailableError(f'Docker workspace {self._name} is unavailable: {reason}')
+        # The command can learn its tag from the PID directory and print a marker of its own, so the wrapper's is
+        # the last one with the tag whose status is also `docker exec`'s exit code, which the wrapper exits with.
+        done = next(
+            (
+                marker
+                for marker in reversed(list(_DONE.finditer(stderr)))
+                if marker[1] == tag and int(marker[2]) == result.exit_code
+            ),
+            None,
+        )
+        if done is None:
+            raise WorkspaceUnavailableError(f'Docker workspace {self._name}: the container stopped during the command')
+        return CommandResult(
+            exit_code=int(done[2]), stdout=result.stdout, stderr=stderr[: done.start()] + stderr[done.end() :]
+        )
+
+    async def _stop(self, tag: str) -> None:
+        # Killing the local `docker exec` client leaves the command running in the container, so a second
+        # exec stops it. Best effort: a daemon that stalls now has nothing to report.
+        with anyio.CancelScope(shield=True):
+            try:
+                await self._runner.run(
+                    [self._executable, 'exec', '--workdir', '/', self._name, 'sh', '-c', _STOP, 'sh', tag],
+                    timeout=_STOP_TIMEOUT,
+                )
+            except WorkspaceError:
+                pass
