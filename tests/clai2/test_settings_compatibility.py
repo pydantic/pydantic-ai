@@ -158,6 +158,35 @@ async def test_logfire_ui_events_default_preserves_saved_overrides(
     assert recorder.exporters and all(exporter.closed for exporter in recorder.exporters)
 
 
+@pytest.mark.parametrize('include_content', [None, False, True])
+async def test_logfire_content_default_is_off_and_keeps_saved_opt_ins(
+    tmp_path: Path, recorder: Recorder, include_content: bool | None
+) -> None:
+    loader, store = observability_loader(tmp_path)
+    # Declarations that omitted the content flags were saved when they defaulted on; they now leave content out,
+    # deliberately, so an ambient `LOGFIRE_TOKEN` alone never exports prompts. An explicit choice is kept.
+    previous = PluginSettings(
+        id='observability', factory='pydantic_clai2.builtin_plugins.logfire', settings={'send_to_logfire': False}
+    )
+    if include_content is not None:
+        previous.settings['include_content'] = include_content
+        previous.settings['include_binary_content'] = include_content
+    store.save_plugin(previous)
+    expected = include_content is True
+    try:
+        await loader.load_all()
+        settings = _observability_host(loader).settings(LogfireSettings)
+        assert (settings.include_content, settings.include_binary_content) == (expected, expected)
+        assert store.plugins() == [previous]  # No migration or write on load.
+        source = LogfireSource(_observability_host(loader))
+        source.apply(next(row for row in source.rows() if row.key == 'service_name'), 'changed-project')
+        [saved] = store.plugins()
+        # Saved explicitly, so older builds, which defaulted content on, keep the same choice.
+        assert (saved.settings['include_content'], saved.settings['include_binary_content']) == (expected, expected)
+    finally:
+        await loader.close('exit')
+
+
 def _observability_host(loader: PluginLoader[None]) -> PluginHost[None]:
     loaded = loader.entries()[0].loaded
     assert loaded is not None

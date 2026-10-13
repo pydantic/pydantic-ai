@@ -411,7 +411,7 @@ with their exception and traceback, also without `ui_events`:
   `on_plugin_load_failed`), with the plugin's name.
 
 The exception message and traceback get Logfire's normal scrubbing. They can quote a prompt
-or a pasted secret, so with `include_content: false` these records, and startup load
+or a pasted secret, so with `include_content: false`, the default, these records, and startup load
 failures, keep only the exception's type in their `exception` event, as agent spans do.
 
 Credentials are read from `LOGFIRE_TOKEN` or the SDK's `logfire_credentials.json`
@@ -450,11 +450,13 @@ run uses it. Without a chosen project, that row notes whether `LOGFIRE_TOKEN` or
 credentials file was found. Scripts can replace the declaration instead:
 
 ```text
-/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": true, "include_binary_content": true}'
 ```
 
 Options are `service_name` (default `pydantic-clai2`), `include_content` and
-`include_binary_content` (both default `true`), `httpx` (default `false`), and `send_to_logfire` (default
+`include_binary_content` (both default `false`, so credentials alone never export
+prompts, results, or files; settings saved before that default that never set them
+also leave content out), `httpx` (default `false`), and `send_to_logfire` (default
 `"if-token-present"`, or `false`). The explicit plugin option takes precedence
 over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings;
 `token` takes only the name of a `/keys` entry (`{"name": "CLAI2_LOGFIRE_TOKEN"}`),
