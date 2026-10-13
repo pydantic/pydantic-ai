@@ -51,6 +51,7 @@ from ..realtime.ws_cassettes import (
 
 with try_import() as imports_successful:
     from openai import APIError, AsyncAzureOpenAI, AsyncOpenAI
+    from openai._base_client import platform_headers
     from openai.types.websocket_connection_options import WebSocketConnectionOptions
     from websockets.asyncio.client import connect as websocket_connect
     from websockets.datastructures import Headers
@@ -80,8 +81,18 @@ def anyio_backend() -> str:
 
 @pytest.fixture(autouse=True)
 def stable_platform_headers(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Avoid the SDK's macOS platform probe spawning a subprocess inside async tests."""
+    """Avoid the SDK's macOS platform probe spawning a subprocess inside async tests.
+
+    The SDK caches platform headers process-wide by the client's resolved platform, which is unset
+    until its first HTTP request. Pinning the key keeps headers computed before and after that
+    request equal, even when an earlier test cached the real platform for the unset key.
+    """
+
+    def unknown_platform_headers(version: str, *, platform: object) -> dict[str, str]:
+        return platform_headers(version, platform='Unknown')
+
     monkeypatch.setattr('openai._base_client.get_platform', lambda: 'Unknown')
+    monkeypatch.setattr('openai._base_client.platform_headers', unknown_platform_headers)
 
 
 @dataclass
