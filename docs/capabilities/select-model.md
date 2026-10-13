@@ -101,6 +101,6 @@ print(retry_states)
 #> [(0, 1), (1, 1)]
 ```
 
-The selector matches the validator's exact retry message in the current request, so retry prompts from other turns do not trigger this route. The response history shows both models in the same run, and the validator sees the single global output retry budget advance from `0` to `1`. With `retries={'output': 1}`, the backup gets one attempt; if that response also fails validation, the run raises `UnexpectedModelBehavior`.
+The selector matches the validator's exact retry message in the current request, so retry prompts from other turns do not trigger this route. The response history shows both models in the same run, and the validator sees the single global output retry budget advance from `0` to `1`. With `retries={'output': 1}`, the backup gets one attempt; if that response also fails validation, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
 
 This recipe uses text output and no function tools. The selector checks only the current request for the retry prompt. If the backup responds with a function call, the next step is selected from a request containing the tool result, so the selector returns to the primary model. Keep this pattern to agents without function tools.
