@@ -113,7 +113,10 @@ agent = Agent(
 ### What counts toward the fraction
 
 With a usage anchor, the provider-reported usage covers everything billed for the anchored request,
-including its instructions, tool definitions, and `FilePart` payloads. For the suffix after the
+including its instructions, tool definitions, and `FilePart` payloads. A response a provider
+continued across several requests ([Google long decode](../models/google.md#long-decode)) anchors on
+its first request's input tokens plus its output, since its billed input re-counts the earlier
+requests' output. For the suffix after the
 anchor, and for a whole history with no usage anchor, the estimator uses `tokenizer` when supplied
 or a ~4-characters-per-token heuristic. That estimated portion cannot see `FilePart` payloads, and
 counts a file inside a tool return as the `See file <identifier>.` reference that stands in for it.

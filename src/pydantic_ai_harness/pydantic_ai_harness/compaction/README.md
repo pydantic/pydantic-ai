@@ -168,7 +168,10 @@ agent = Agent(
 ### What counts toward the fraction
 
 With a usage anchor, everything the provider billed for the anchored request counts -- including
-tool definitions and `FilePart` payloads, which no character estimate can see. For the messages
+tool definitions and `FilePart` payloads, which no character estimate can see. A response a provider
+continued across several requests ([Google long decode](https://pydantic.dev/docs/ai/models/google/#long-decode))
+anchors on its first request's input tokens plus its output, since its billed input re-counts the
+earlier requests' output. For the messages
 after the anchor (and for whole histories with no reported usage), the estimator counts every part
 that is sent: prompts, system prompts, tool calls and their results, retry prompts,
 extended-thinking blocks, provider-side tool results, and the instructions, once. When the
