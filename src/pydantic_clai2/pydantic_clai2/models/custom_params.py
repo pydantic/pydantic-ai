@@ -4,6 +4,8 @@ from copy import deepcopy
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
+from pydantic_clai2.models.profiles import provider_of
+
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
@@ -36,3 +38,26 @@ def parse_pair(*, text: str) -> tuple[str, JsonValue]:
         value = raw
     expand_params(pairs={key: value})
     return key, value
+
+
+def custom_effort_override(
+    custom_params: dict[str, JsonValue], *, settings_as: str, key: str
+) -> tuple[str, JsonValue] | None:
+    """The custom body path and value replacing native effort, including scalar ancestors."""
+    if key == 'anthropic_effort':
+        path = ('output_config', 'effort')
+    elif key == 'glm_reasoning_effort' or provider_of(settings_as) in ('openai-chat', 'openrouter', 'vllm'):
+        path = ('reasoning_effort',)
+    else:
+        path = ('reasoning', 'effort')
+    value: JsonValue = expand_params(pairs=custom_params)
+    found: list[str] = []
+    for part in path:
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+        found.append(part)
+        # A scalar/null ancestor replaces the whole native reasoning/output_config object.
+        if not isinstance(value, dict):
+            break
+    return '.'.join(found), value

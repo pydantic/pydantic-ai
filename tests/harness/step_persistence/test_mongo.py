@@ -10,7 +10,7 @@ The store uses only the async collection surface `mongomock-motor` provides
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import anyio.to_thread
 import pytest
@@ -149,7 +149,7 @@ class TestMongoStepStoreProtocol:
 
     async def test_list_runs_chronological(self) -> None:
         store = MongoStepStore(client=_mock_client(), database='t', media_store=None)
-        base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2024, 1, 1, tzinfo=UTC)
         await store.register_run(RunRecord(run_id='r3', started_at=base + timedelta(seconds=3)))
         await store.register_run(RunRecord(run_id='r1', started_at=base + timedelta(seconds=1)))
         await store.register_run(RunRecord(run_id='r2', started_at=base + timedelta(seconds=2)))
@@ -174,7 +174,7 @@ class TestMongoStepStoreProtocol:
         """
         store = MongoStepStore(client=_mock_client(), database='t', media_store=None)
         early_instant = datetime(2024, 1, 1, 1, 0, 0, tzinfo=timezone(timedelta(hours=5)))  # 2023-12-31T20:00Z
-        late_instant = datetime(2024, 1, 1, 0, 30, 0, tzinfo=timezone.utc)
+        late_instant = datetime(2024, 1, 1, 0, 30, 0, tzinfo=UTC)
         await store.register_run(RunRecord(run_id='late', started_at=late_instant))
         await store.register_run(RunRecord(run_id='early', started_at=early_instant))
         assert [r.run_id for r in await store.list_runs()] == ['early', 'late']

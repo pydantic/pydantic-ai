@@ -122,7 +122,7 @@ _(This example is complete, it can be run "as is")_
 
 With Anthropic, the number of searches is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost].
 
-With Google, the number of Google Search grounding queries is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details], and the billed count as `web_searches` on [`RequestUsage`][pydantic_ai.usage.RequestUsage]: one per unique query on Gemini 3, and one per grounded request that returned a web source on Gemini 2.5 and older. Unlike Anthropic and OpenAI, this usage is not yet included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost].
+With Google, the number of Google Search grounding queries is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details], and the billed count as `web_searches` on [`RequestUsage`][pydantic_ai.usage.RequestUsage]: one per unique query on Gemini 3, and one per grounded request that returned a web source on Gemini 2.5 and older. The billed count is included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost], without deducting Google's free grounding allowance.
 
 With OpenAI, you must use their Responses API to access the web search tool. The number of searches is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost]. Pages the model opens or searches within don't count as searches.
 
@@ -1024,7 +1024,7 @@ The [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool] enables your age
 
 #### OpenAI Responses
 
-With OpenAI, you need to first [upload files to a vector store](https://platform.openai.com/docs/assistants/tools/file-search), then reference the vector store IDs when using the `FileSearchTool`.
+With OpenAI, you need to first [upload files to a vector store](https://developers.openai.com/api/docs/guides/tools-file-search), then reference the vector store IDs when using the `FileSearchTool`.
 
 ```py {title="file_search_openai_upload.py" test="skip"}
 import asyncio

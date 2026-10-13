@@ -3,10 +3,8 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Literal, cast, overload
-
-from typing_extensions import assert_never
+from datetime import UTC, datetime
+from typing import Any, Literal, assert_never, cast, overload
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
@@ -56,6 +54,7 @@ from . import (
 )
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from huggingface_hub import (
@@ -72,13 +71,17 @@ try:
         ChatCompletionStreamOutput,
         TextGenerationOutputFinishReason,
     )
-    from huggingface_hub.errors import HfHubHTTPError, TextGenerationError
+    from huggingface_hub.errors import HfHubHTTPError, InferenceTimeoutError, TextGenerationError
 
 except ImportError as _import_error:
     raise ImportError(
         'Please install `huggingface_hub` to use Hugging Face Inference Providers, '
         'you can use the `huggingface` optional group — `pip install "pydantic-ai-slim[huggingface]"`'
     ) from _import_error
+
+# Below the guard on purpose: `huggingface_hub` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
 
 
 @contextmanager
@@ -96,6 +99,9 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         # Raised for an error object inside a stream, after the HTTP 200 has already been received, so there is no
         # status code to report.
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
+    except (httpx.TransportError, InferenceTimeoutError) as e:
+        # `huggingface_hub` doesn't wrap connection errors and read timeouts in its own exceptions.
+        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
 
 
 __all__ = (
@@ -306,7 +312,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         raw_finish_reason = choice.finish_reason
         provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
         if response.created:  # pragma: no branch
-            provider_details['timestamp'] = datetime.fromtimestamp(response.created, tz=timezone.utc)
+            provider_details['timestamp'] = datetime.fromtimestamp(response.created, tz=UTC)
         finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
 
         return ModelResponse(
@@ -344,7 +350,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
-            _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
+            _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=UTC),
         )
 
     @staticmethod

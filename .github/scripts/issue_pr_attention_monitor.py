@@ -19,7 +19,7 @@ from pathlib import Path
 
 # The workflows install exactly one pinned third-party package for these
 # scripts: pydantic, the typed boundary in `triage_models`. The repo-wide ban
-# on `typing.TypedDict` exists for pydantic validation on Python 3.10/3.11;
+# on `typing.TypedDict` exists for pydantic validation on Python 3.11;
 # these scripts only run on the newer runner Python.
 from typing import Annotated, Any, Literal, TypedDict, cast  # noqa: TID251
 
@@ -2170,7 +2170,7 @@ def main() -> int:
         return 1
     client = GitHubClient(token)
     repo = os.environ.get('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     failures: list[str] = []
     if args.mode == 'snapshot':
         lines = write_snapshot(client, repo, args.snapshot_path, now=now)

@@ -9,12 +9,10 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any
 
 import httpx2
 import pytest
-import yaml
 
 from pydantic_ai.messages import (
     BaseToolCallPart,
@@ -29,6 +27,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 
+from ..cassette_utils import recorded_interactions
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -46,8 +45,6 @@ with try_import() as imports_successful:
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
-_TESTS_DIR = Path(__file__).parents[1]
-
 
 def _response_body(interaction: dict[str, Any]) -> str | None:
     body = interaction['response'].get('body', {})
@@ -57,15 +54,11 @@ def _response_body(interaction: dict[str, Any]) -> str | None:
 
 def _recorded_streams() -> dict[str, dict[str, Any]]:
     streams: dict[str, dict[str, Any]] = {}
-    for path in sorted(_TESTS_DIR.rglob('*.yaml')):
-        text = path.read_text()
-        if '"type":"response.' not in text:
-            continue
-        for index, interaction in enumerate(yaml.safe_load(text)['interactions']):
-            content = _response_body(interaction)
-            # Some providers send each event's `data:` line before its `event:` line.
-            if content is not None and content.startswith(('event:', 'data:')) and '"type":"response.' in content:
-                streams[f'{path.relative_to(_TESTS_DIR)}#{index}'] = interaction
+    for name, interaction in recorded_interactions('"type":"response.'):
+        content = _response_body(interaction)
+        # Some providers send each event's `data:` line before its `event:` line.
+        if content is not None and content.startswith(('event:', 'data:')) and '"type":"response.' in content:
+            streams[name] = interaction
     return streams
 
 

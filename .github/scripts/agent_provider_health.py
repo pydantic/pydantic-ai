@@ -9,26 +9,49 @@ import json
 import math
 import os
 import re
+import ssl
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
 API_ROOT = 'https://api.github.com'
-MINIMAX_PLAN_URL = 'https://api.minimax.io/v1/token_plan/remains'
-MINIMAX_BALANCE_URL = 'https://api.minimax.io/account/query_balance'
+ZAI_QUOTA_URL = 'https://api.z.ai/api/monitor/usage/quota/limit'
 MARKER_PREFIX = '<!-- pydantic-ai-provider-health:v1 '
 MARKER_RE = re.compile(r'<!-- pydantic-ai-provider-health:v1 (\{[^\n]*\}) -->')
 REQUIRED_LABELS = ('agentic-workflows', 'pydanty:meta')
 ASSIGNEE = 'dsfaccini'
+_RETIRED_PROVIDER_REASON = (
+    'Workflow passes retired `MINIMAX_API_KEY` instead of `ZAI_API_KEY`; update the workflow from `main`'
+)
 
 Scope = Literal['provider', 'workflow', 'task']
 QuotaStatus = Literal['healthy', 'exhausted', 'unknown']
-FailureKind = Literal['balance', 'authentication', 'rate_limit', 'request_limit', 'timeout', 'other']
+QuotaDiagnostic = Literal[
+    'missing_api_key',
+    'invalid_request',
+    'http_error',
+    'timeout',
+    'tls_error',
+    'network_error',
+    'invalid_encoding',
+    'invalid_json',
+    'invalid_response',
+    'invalid_response_code',
+    'unsuccessful_response',
+    'invalid_limits',
+    'invalid_limit_row',
+    'invalid_window_unit',
+    'invalid_window_number',
+    'duplicate_window',
+    'invalid_percentage',
+    'invalid_reset_time',
+    'missing_windows',
+]
+FailureKind = Literal['authentication', 'rate_limit', 'request_limit', 'time_limit', 'timeout', 'other']
 
 
 @dataclass(frozen=True)
@@ -41,8 +64,8 @@ class Quota:
     weekly_remaining_percent: float | None = None
     interval_reset_at: str | None = None
     weekly_reset_at: str | None = None
-    interval_unlimited: bool | None = None
-    weekly_unlimited: bool | None = None
+    diagnostic: QuotaDiagnostic | None = None
+    http_status: int | None = None
 
 
 @dataclass(frozen=True)
@@ -172,6 +195,22 @@ def _iso_time(value: object) -> str | None:
 
 
 def _write_health(path: Path, health: Health) -> None:
+    quota_data: dict[str, object] = {
+        'status': health.quota.status,
+        'reset_at': health.quota.reset_at,
+        'interval_remaining_percent': health.quota.interval_remaining_percent,
+        'weekly_remaining_percent': health.quota.weekly_remaining_percent,
+        'interval_reset_at': health.quota.interval_reset_at,
+        'weekly_reset_at': health.quota.weekly_reset_at,
+    }
+    if health.quota.status == 'unknown':
+        diagnostic_value = health.quota.diagnostic
+        diagnostic = _QUOTA_DIAGNOSTICS.get(diagnostic_value) if isinstance(diagnostic_value, str) else None
+        http_status = _safe_http_status(health.quota.http_status)
+        if diagnostic is not None:
+            quota_data['diagnostic'] = diagnostic
+        if http_status is not None:
+            quota_data['http_status'] = http_status
     payload: dict[str, object] = {
         'version': 1,
         'workflow': health.workflow,
@@ -181,16 +220,7 @@ def _write_health(path: Path, health: Health) -> None:
         'ready': health.ready,
         'reason': health.reason,
         'checked_at': health.checked_at,
-        'quota': {
-            'status': health.quota.status,
-            'reset_at': health.quota.reset_at,
-            'interval_remaining_percent': health.quota.interval_remaining_percent,
-            'weekly_remaining_percent': health.quota.weekly_remaining_percent,
-            'interval_reset_at': health.quota.interval_reset_at,
-            'weekly_reset_at': health.quota.weekly_reset_at,
-            'interval_unlimited': health.quota.interval_unlimited,
-            'weekly_unlimited': health.quota.weekly_unlimited,
-        },
+        'quota': quota_data,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
@@ -227,8 +257,12 @@ def _health_from_json(value: object) -> Health:
     )
     interval_percent = _validated_percent(quota_data.get('interval_remaining_percent'))
     weekly_percent = _validated_percent(quota_data.get('weekly_remaining_percent'))
-    interval_unlimited = quota_data.get('interval_unlimited')
-    weekly_unlimited = quota_data.get('weekly_unlimited')
+    diagnostic_value = quota_data.get('diagnostic')
+    diagnostic = _QUOTA_DIAGNOSTICS.get(diagnostic_value) if isinstance(diagnostic_value, str) else None
+    http_status = _safe_http_status(quota_data.get('http_status'))
+    if quota_status != 'unknown':
+        diagnostic = None
+        http_status = None
     if (
         workflow is None
         or task_key is None
@@ -240,8 +274,6 @@ def _health_from_json(value: object) -> Health:
         or (quota_data.get('reset_at') is not None and reset_at is None)
         or (quota_data.get('interval_reset_at') is not None and interval_reset_at is None)
         or (quota_data.get('weekly_reset_at') is not None and weekly_reset_at is None)
-        or (interval_unlimited is not None and not isinstance(interval_unlimited, bool))
-        or (weekly_unlimited is not None and not isinstance(weekly_unlimited, bool))
     ):
         raise ValueError('provider-health artifact is missing required validated fields')
     return Health(
@@ -259,32 +291,33 @@ def _health_from_json(value: object) -> Health:
             weekly_percent,
             interval_reset_at,
             weekly_reset_at,
-            interval_unlimited,
-            weekly_unlimited,
+            diagnostic,
+            http_status,
         ),
     )
 
 
-def _quota_window_status(status: object, percent: object, total: object) -> QuotaStatus:
-    """Classify one validated MiniMax quota window."""
-    if isinstance(status, bool) or not isinstance(status, int) or status not in (1, 2, 3):
-        return 'unknown'
-    if isinstance(total, bool) or not isinstance(total, (int, float)) or not math.isfinite(total) or total < 0:
-        return 'unknown'
-    if percent is not None and (
-        isinstance(percent, bool)
-        or not isinstance(percent, (int, float))
-        or not math.isfinite(percent)
-        or not 0 <= percent <= 100
-    ):
-        return 'unknown'
-    if status == 1 and percent is None:
-        return 'unknown'
-    if status == 2 or (status == 1 and isinstance(percent, (int, float)) and percent <= 0):
-        return 'exhausted'
-    if status == 3 or status == 1 or (isinstance(percent, (int, float)) and percent > 0):
-        return 'healthy'
-    return 'unknown'
+_QUOTA_DIAGNOSTICS: dict[str, QuotaDiagnostic] = {
+    'missing_api_key': 'missing_api_key',
+    'invalid_request': 'invalid_request',
+    'http_error': 'http_error',
+    'timeout': 'timeout',
+    'tls_error': 'tls_error',
+    'network_error': 'network_error',
+    'invalid_encoding': 'invalid_encoding',
+    'invalid_json': 'invalid_json',
+    'invalid_response': 'invalid_response',
+    'invalid_response_code': 'invalid_response_code',
+    'unsuccessful_response': 'unsuccessful_response',
+    'invalid_limits': 'invalid_limits',
+    'invalid_limit_row': 'invalid_limit_row',
+    'invalid_window_unit': 'invalid_window_unit',
+    'invalid_window_number': 'invalid_window_number',
+    'duplicate_window': 'duplicate_window',
+    'invalid_percentage': 'invalid_percentage',
+    'invalid_reset_time': 'invalid_reset_time',
+    'missing_windows': 'missing_windows',
+}
 
 
 def _validated_percent(value: object) -> float | None:
@@ -300,136 +333,136 @@ def _validated_percent(value: object) -> float | None:
     return float(value)
 
 
-def _quota_window(
-    status: object, percent: object, total: object, end: object
-) -> tuple[QuotaStatus, str, float | None, bool] | None:
-    if not isinstance(end, (int, float)) or isinstance(end, bool) or not math.isfinite(end):
-        return None
-    reset = _timestamp_from_millis(end)
-    quota_status = _quota_window_status(status, percent, total)
-    if reset is None or quota_status == 'unknown':
-        return None
-    remaining_percent = (
-        float(percent) if status != 3 and isinstance(percent, (int, float)) and not isinstance(percent, bool) else None
-    )
-    return quota_status, reset, remaining_percent, status == 3
+def _unknown_quota(diagnostic: QuotaDiagnostic, http_status: int | None = None) -> Quota:
+    return Quota('unknown', diagnostic=diagnostic, http_status=http_status)
 
 
-def _parse_plan_quota(value: object, resource: str | None) -> Quota:
-    if not resource:
-        return Quota('unknown')
+def _safe_http_status(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and 100 <= value <= 599:
+        return value
+    return None
+
+
+def _quota_diagnostic_suffix(quota: Quota) -> str:
+    diagnostic_value = quota.diagnostic
+    diagnostic = _QUOTA_DIAGNOSTICS.get(diagnostic_value) if isinstance(diagnostic_value, str) else None
+    http_status = _safe_http_status(quota.http_status)
+    if quota.status != 'unknown' or (diagnostic is None and http_status is None):
+        return ''
+    details: list[str] = []
+    if diagnostic is not None:
+        details.append(diagnostic)
+    if http_status is not None:
+        details.append(f'HTTP status {http_status}')
+    return f' (quota diagnostic: {"; ".join(details)})'
+
+
+def _parse_zai_quota(value: object) -> Quota:
     data = _mapping(value)
-    response = _mapping(data.get('base_resp')) if data else None
-    if response is not None:
-        status_code = response.get('status_code')
-        if isinstance(status_code, bool) or not isinstance(status_code, int) or status_code != 0:
-            return Quota('unknown')
-    remains = data.get('model_remains') if data else None
-    if not isinstance(remains, list) or not remains:
-        return Quota('unknown')
-    matching_rows = 0
-    exhausted = False
-    healthy = False
-    resets: list[str] = []
-    window_resets: list[str] = []
-    remaining_percent: list[float | None] = []
-    unlimited: list[bool] = []
-    quota_rows: list[object] = []
-    item: object
-    for item in remains:  # pyright: ignore[reportUnknownVariableType]
-        quota_rows.append(item)  # pyright: ignore[reportUnknownArgumentType]
+    response_code = data.get('code') if data is not None else None
+    success = data.get('success') if data is not None else None
+    if data is None or isinstance(response_code, bool) or not isinstance(response_code, int) or response_code != 200:
+        return _unknown_quota('invalid_response' if data is None else 'invalid_response_code')
+    if success is not True:
+        return _unknown_quota('unsuccessful_response')
+    quota_data = _mapping(data.get('data'))
+    limits = quota_data.get('limits') if quota_data is not None else None
+    if quota_data is None or not isinstance(limits, list):
+        return _unknown_quota('invalid_response' if quota_data is None else 'invalid_limits')
+
+    quota_rows: list[object] = limits  # pyright: ignore[reportUnknownVariableType]
+    windows: dict[int, tuple[float, str, int]] = {}
     for item in quota_rows:
         entry = _mapping(item)
         if entry is None:
-            return Quota('unknown')
-        if entry.get('model_name') != resource:
+            return _unknown_quota('invalid_limit_row')
+        if entry.get('type') != 'TOKENS_LIMIT':
             continue
-        matching_rows += 1
-        statuses = (entry.get('current_interval_status'), entry.get('current_weekly_status'))
-        percentages = (entry.get('current_interval_remaining_percent'), entry.get('current_weekly_remaining_percent'))
-        totals = (entry.get('current_interval_total_count'), entry.get('current_weekly_total_count'))
-        ends = (entry.get('end_time'), entry.get('weekly_end_time'))
-        if statuses == (3, 3) and totals == (0, 0):
-            return Quota('unknown')
-        for values in zip(statuses, percentages, totals, ends, strict=True):
-            window = _quota_window(*values)
-            if window is None:
-                return Quota('unknown')
-            window_status, window_reset, percent, is_unlimited = window
-            if window_status == 'exhausted':
-                exhausted = True
-                resets.append(window_reset)
-            else:
-                healthy = True
-            window_resets.append(window_reset)
-            remaining_percent.append(percent)
-            unlimited.append(is_unlimited)
-    if matching_rows != 1:
-        return Quota('unknown')
-    reset_at: str | None = None
-    if exhausted:
-        reset_at = min(resets) if resets else None
-        quota_status: QuotaStatus = 'exhausted'
-    else:
-        quota_status = 'healthy' if healthy else 'unknown'
+        unit = entry.get('unit')
+        if isinstance(unit, bool) or not isinstance(unit, int) or unit not in (3, 6):
+            return _unknown_quota('invalid_window_unit')
+        expected_number = 5 if unit == 3 else 1
+        number = entry.get('number')
+        if isinstance(number, bool) or not isinstance(number, int) or number != expected_number:
+            return _unknown_quota('invalid_window_number')
+        if unit in windows:
+            return _unknown_quota('duplicate_window')
+        consumed_value = entry.get('percentage')
+        if (
+            isinstance(consumed_value, bool)
+            or not isinstance(consumed_value, (int, float))
+            or (isinstance(consumed_value, float) and not math.isfinite(consumed_value))
+            or not 0 <= consumed_value <= 100
+        ):
+            return _unknown_quota('invalid_percentage')
+        reset_millis = entry.get('nextResetTime')
+        if isinstance(reset_millis, bool) or not isinstance(reset_millis, int):
+            return _unknown_quota('invalid_reset_time')
+        reset = _timestamp_from_millis(reset_millis)
+        if reset is None:
+            return _unknown_quota('invalid_reset_time')
+        windows[unit] = (100 - float(consumed_value), reset, reset_millis)
+
+    if set(windows) != {3, 6}:
+        return _unknown_quota('missing_windows')
+    interval_remaining, interval_reset, _ = windows[3]
+    weekly_remaining, weekly_reset, _ = windows[6]
+    exhausted_resets: list[tuple[int, str]] = [
+        (reset_millis, reset) for remaining, reset, reset_millis in (windows[3], windows[6]) if remaining == 0
+    ]
+    status: QuotaStatus = 'exhausted' if exhausted_resets else 'healthy'
+    reset_at = max(exhausted_resets)[1] if exhausted_resets else None
     return Quota(
-        quota_status,
+        status,
         reset_at,
-        remaining_percent[0],
-        remaining_percent[1],
-        window_resets[0],
-        window_resets[1],
-        unlimited[0],
-        unlimited[1],
+        interval_remaining,
+        weekly_remaining,
+        interval_reset,
+        weekly_reset,
     )
 
 
-def _parse_balance(value: object) -> Quota:
-    data = _mapping(value)
-    if data is None:
-        return Quota('unknown')
-    response = _mapping(data.get('base_resp'))
-    status_code = response.get('status_code') if response is not None else None
-    if isinstance(status_code, bool) or not isinstance(status_code, int) or status_code != 0:
-        return Quota('unknown')
-    balance = data.get('available_amount')
-    if isinstance(balance, str):
-        try:
-            amount = Decimal(balance)
-        except InvalidOperation:
-            return Quota('unknown')
-        if amount.is_finite():
-            return Quota('healthy' if amount > 0 else 'exhausted')
-    elif isinstance(balance, (int, float)) and not isinstance(balance, bool):
-        if math.isfinite(balance):
-            return Quota('healthy' if balance > 0 else 'exhausted')
-    return Quota('unknown')
-
-
-def _fetch_minimax_quota(api_key: str, resource: str | None = None) -> Quota:
-    url = MINIMAX_BALANCE_URL if api_key.startswith('sk-api-') else MINIMAX_PLAN_URL
-    headers: dict[str, str] = {'Authorization': f'Bearer {api_key}', 'Accept': 'application/json'}
-    request = urllib.request.Request(url, headers=headers, method='GET')
+def _fetch_zai_quota(api_key: str) -> Quota:
+    if not api_key:
+        return _unknown_quota('missing_api_key')
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            payload: object = json.loads(response.read())
-    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError):
-        return Quota('unknown')
-    if url == MINIMAX_PLAN_URL:
-        data = _mapping(payload)
-        plan_status = _mapping(data.get('base_resp')) if data else None
-        plan_code = plan_status.get('status_code') if plan_status is not None else None
-        if isinstance(plan_code, int) and not isinstance(plan_code, bool) and plan_code == 2062:
-            # MiniMax reported no active plan for this credential. Check its separate
-            # native account-balance endpoint before treating the provider as unknown.
-            balance_request = urllib.request.Request(MINIMAX_BALANCE_URL, headers=headers, method='GET')
+        headers: dict[str, str] = {'Authorization': api_key, 'Accept': 'application/json'}
+        request = urllib.request.Request(ZAI_QUOTA_URL, headers=headers, method='GET')
+        opener = urllib.request.OpenerDirector()
+        opener.add_handler(urllib.request.ProxyHandler())
+        opener.add_handler(urllib.request.HTTPHandler())
+        opener.add_handler(urllib.request.HTTPSHandler())
+        opener.add_handler(urllib.request.HTTPDefaultErrorHandler())
+        opener.add_handler(urllib.request.HTTPErrorProcessor())
+        with opener.open(request, timeout=20) as response:
+            status = response.status
+            if status != 200:
+                return _unknown_quota('invalid_response_code', _safe_http_status(status))
             try:
-                with urllib.request.urlopen(balance_request, timeout=20) as response:
-                    payload = json.loads(response.read())
-            except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError):
-                return Quota('unknown')
-            return _parse_balance(payload)
-    return _parse_balance(payload) if url == MINIMAX_BALANCE_URL else _parse_plan_quota(payload, resource)
+                payload: object = json.loads(response.read())
+            except UnicodeDecodeError:
+                return _unknown_quota('invalid_encoding', 200)
+            except ValueError:
+                return _unknown_quota('invalid_json', 200)
+    except urllib.error.HTTPError as exc:
+        return _unknown_quota('http_error', _safe_http_status(exc.code))
+    except ssl.SSLError:
+        return _unknown_quota('tls_error')
+    except TimeoutError:
+        return _unknown_quota('timeout')
+    except urllib.error.URLError as exc:
+        reason = exc.reason
+        if isinstance(reason, ssl.SSLError):
+            return _unknown_quota('tls_error')
+        if isinstance(reason, TimeoutError):
+            return _unknown_quota('timeout')
+        return _unknown_quota('network_error')
+    except OSError:
+        return _unknown_quota('network_error')
+    except ValueError:
+        return _unknown_quota('invalid_request')
+    quota = _parse_zai_quota(payload)
+    return replace(quota, http_status=200) if quota.status == 'unknown' else quota
 
 
 class GitHubClient:
@@ -530,7 +563,7 @@ def _matching_incident(health: Health, issues: list[Issue]) -> Issue | None:
         marker = _marker_from_body(issue.body)
         if marker is None:
             continue
-        if marker.scope == 'provider' and marker.key == 'minimax':
+        if marker.scope == 'provider' and marker.key == 'zai':
             return issue
         if marker.scope == 'workflow' and marker.key == health.workflow:
             return issue
@@ -553,9 +586,7 @@ def _health_decision(health: Health, issues: list[Issue]) -> Health:
             health.quota,
         )
     if health.quota.status != 'healthy':
-        message = (
-            'MiniMax quota is exhausted' if health.quota.status == 'exhausted' else 'MiniMax quota health is unknown'
-        )
+        message = 'Z.ai quota is exhausted' if health.quota.status == 'exhausted' else 'Z.ai quota health is unknown'
         return Health(
             health.workflow,
             health.task_key,
@@ -599,7 +630,7 @@ def _failure_from(value: object) -> Failure | None:
     if data is None:
         return None
     kind = data.get('kind')
-    if kind not in ('balance', 'authentication', 'rate_limit', 'request_limit', 'timeout', 'other'):
+    if kind not in ('authentication', 'rate_limit', 'request_limit', 'time_limit', 'timeout', 'other'):
         return None
     status = data.get('http_status')
     if status is not None and (isinstance(status, bool) or not isinstance(status, int) or not 100 <= status <= 599):
@@ -668,10 +699,10 @@ def _scope_for(result: RunResult) -> tuple[Scope, str, str]:
     failure = result.failure
     if failure is None:
         return 'workflow', result.workflow, 'execution'
-    if failure.kind in ('balance', 'authentication') or failure.http_status in (401, 403):
-        return 'provider', 'minimax', failure.kind
+    if failure.kind == 'authentication' or failure.http_status in (401, 403):
+        return 'provider', 'zai', failure.kind
     if failure.kind == 'rate_limit':
-        return 'provider', 'minimax', failure.kind
+        return 'provider', 'zai', failure.kind
     if result.trigger_event == 'schedule':
         return 'workflow', result.workflow, failure.kind
     return 'task', f'{result.workflow}:{result.task_key}', failure.kind
@@ -681,10 +712,10 @@ def _failure_reason(failure: Failure | None) -> str:
     if failure is None:
         return 'Agent execution failed before a typed provider result was available'
     reasons: dict[FailureKind, str] = {
-        'balance': 'MiniMax reported an insufficient balance',
-        'authentication': 'MiniMax rejected the configured credentials',
-        'rate_limit': 'MiniMax rate limits stopped the run',
+        'authentication': 'Z.ai rejected the configured credentials',
+        'rate_limit': 'Z.ai rate limits stopped the run',
         'request_limit': 'The agent reached its per-run request limit',
+        'time_limit': 'The agent reached its per-run time limit',
         'timeout': 'A provider request timed out',
         'other': 'The provider request failed with a typed error',
     }
@@ -702,11 +733,15 @@ def _incident_body(marker: IncidentMarker, workflow: str, task_key: str, run_id:
         'reset_at': marker.reset_at,
     }
     run_url = f'https://github.com/{repo}/actions/runs/{urllib.parse.quote(run_id)}'
+    check = (
+        'The run stopped at its own limit, not on a provider error. Find out why it needed more than the limit.'
+        if marker.kind in ('request_limit', 'time_limit')
+        else 'Confirm provider credentials, configuration, and quota health.'
+    )
     return (
         f'## Operational failure\n\n{reason}\n\n'
         f'- Workflow: `{workflow}`\n- Task: `{task_key}`\n- First failing run: {run_url}\n\n'
-        'Confirm provider credentials, configuration, and quota health. Close this incident after the cause is '
-        'fixed and the required recovery check passes.\n\n'
+        f'{check} Close this incident after the cause is fixed and the required recovery check passes.\n\n'
         f'{MARKER_PREFIX}{json.dumps(marker_data, separators=(",", ":"))} -->\n'
     )
 
@@ -720,6 +755,7 @@ def _create_or_reuse_incident(
     *,
     dry_run: bool,
     marker_override: IncidentMarker | None = None,
+    quota: Quota | None = None,
 ) -> Issue | None:
     scope, key, kind = _scope_for(result)
     marker = marker_override or IncidentMarker(
@@ -749,7 +785,8 @@ def _create_or_reuse_incident(
     else:
         existing = _matching_incident(matching_key, client.open_incidents())
     if existing is not None:
-        print(f'Reusing operational incident #{existing.number}: {existing.html_url}')
+        suffix = _quota_diagnostic_suffix(quota) if quota is not None else ''
+        print(f'Reusing operational incident #{existing.number}: {existing.html_url}{suffix}')
         return existing
     title = f'Agent workflow {marker.scope} failure: {result.workflow}'
     body = _incident_body(marker, result.workflow, result.task_key, run_id, repo, reason)
@@ -777,21 +814,34 @@ def _check_command(args: argparse.Namespace) -> int:
     task_key = os.environ.get('PYDANTIC_AI_TASK_KEY', '')
     trigger_event = os.environ.get('PYDANTIC_AI_TRIGGER_EVENT', '')
     run_attempt = _run_attempt_from_env()
-    api_key = os.environ.get('MINIMAX_API_KEY', '')
+    api_key = os.environ.get('ZAI_API_KEY', '')
     repo = os.environ.get('GITHUB_REPOSITORY', '')
     token = os.environ.get('GITHUB_TOKEN', '')
     if not repo or not token:
         raise ValueError('GITHUB_REPOSITORY and GITHUB_TOKEN are required')
-    quota = _fetch_minimax_quota(api_key, os.environ.get('MINIMAX_QUOTA_RESOURCE')) if api_key else Quota('unknown')
-    client = GitHubClient(repo, token)
-    health = check_health(
-        workflow or 'unknown',
-        task_key or 'unknown',
-        trigger_event or 'unknown',
-        run_attempt,
-        quota,
-        client.open_incidents(),
-    )
+    # Old compiled workflows fetch this controller from main but still pass MiniMax's environment.
+    if 'MINIMAX_API_KEY' in os.environ and 'ZAI_API_KEY' not in os.environ:
+        health = Health(
+            workflow or 'unknown',
+            task_key or 'unknown',
+            trigger_event or 'unknown',
+            run_attempt,
+            False,
+            _RETIRED_PROVIDER_REASON,
+            _timestamp(_now()),
+            Quota('unknown'),
+        )
+    else:
+        quota = _fetch_zai_quota(api_key) if api_key else _unknown_quota('missing_api_key')
+        client = GitHubClient(repo, token)
+        health = check_health(
+            workflow or 'unknown',
+            task_key or 'unknown',
+            trigger_event or 'unknown',
+            run_attempt,
+            quota,
+            client.open_incidents(),
+        )
     if not workflow or not task_key or not trigger_event:
         health = Health(
             health.workflow,
@@ -808,48 +858,32 @@ def _check_command(args: argparse.Namespace) -> int:
         with open(output, 'a', encoding='utf-8') as handle:
             handle.write(f'ready={str(health.ready).lower()}\nreason={health.reason}\n')
     summary = os.environ.get('GITHUB_STEP_SUMMARY')
+    displayed_reason = health.reason + _quota_diagnostic_suffix(health.quota)
     if summary:
         quota_detail = ''
-        if api_key.startswith('sk-api-'):
-            balance_state = (
-                'positive'
-                if health.quota.status == 'healthy'
-                else 'nonpositive'
-                if health.quota.status == 'exhausted'
-                else 'unknown'
-            )
-            quota_detail = f'\n\nPAYG balance status: {balance_state}.'
-        elif health.quota.interval_reset_at is not None and health.quota.weekly_reset_at is not None:
+        if health.quota.interval_reset_at is not None and health.quota.weekly_reset_at is not None:
             windows = (
                 (
                     'interval',
                     health.quota.interval_remaining_percent,
                     health.quota.interval_reset_at,
-                    health.quota.interval_unlimited,
                 ),
                 (
                     'weekly',
                     health.quota.weekly_remaining_percent,
                     health.quota.weekly_reset_at,
-                    health.quota.weekly_unlimited,
                 ),
             )
             details: list[str] = []
-            for name, percent, reset_at, is_unlimited in windows:
-                remaining = (
-                    'unlimited'
-                    if is_unlimited
-                    else f'{percent:g}% remaining'
-                    if percent is not None
-                    else 'remaining percentage unknown'
-                )
+            for name, percent, reset_at in windows:
+                remaining = f'{percent:g}% remaining' if percent is not None else 'remaining percentage unknown'
                 details.append(f'{name}: {remaining}; resets at {reset_at}')
             quota_detail = '\n\nPlan quota windows: ' + '; '.join(details) + '.'
         with open(summary, 'a', encoding='utf-8') as handle:
             handle.write(
-                f'### Provider health: {"ready" if health.ready else "blocked"}\n\n{health.reason}.{quota_detail}\n'
+                f'### Provider health: {"ready" if health.ready else "blocked"}\n\n{displayed_reason}.{quota_detail}\n'
             )
-    print(f'{"ready" if health.ready else "blocked"}: {health.reason}')
+    print(f'{"ready" if health.ready else "blocked"}: {displayed_reason}')
     return 0
 
 
@@ -869,6 +903,9 @@ def _monitor_command(args: argparse.Namespace) -> int:
     health = _health_from_artifact(args.health_artifact)
     if health.run_attempt != run_attempt:
         raise ValueError('provider-health artifact run attempt does not match the triggering workflow_run attempt')
+    if not health.ready and health.reason == _RETIRED_PROVIDER_REASON:
+        print(f'Skipping retired provider configuration: {health.workflow}')
+        return 0
     result = parse_run_result(args.agent_artifact) if args.agent_artifact is not None else None
     if result is not None and (
         result.workflow != health.workflow
@@ -889,13 +926,15 @@ def _monitor_command(args: argparse.Namespace) -> int:
     if result is None:
         if not health.ready:
             if health.reason.startswith('Open operational incident #'):
-                print(f'Activation was blocked by an existing incident: {health.reason}')
+                print(
+                    f'Activation was blocked by an existing incident: {health.reason}{_quota_diagnostic_suffix(health.quota)}'
+                )
                 return 0
             if health.quota.status == 'healthy':
                 print(f'Activation was blocked by existing state: {health.reason}')
                 return 0
             kind = 'quota_unknown' if health.quota.status == 'unknown' else 'quota_exhausted'
-            marker = IncidentMarker('provider', 'minimax', kind, str(args.run_id), health.quota.reset_at)
+            marker = IncidentMarker('provider', 'zai', kind, str(args.run_id), health.quota.reset_at)
             result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
             existing = next(
                 (issue for issue in client.open_incidents() if _marker_from_body(issue.body) == marker),
@@ -907,12 +946,16 @@ def _monitor_command(args: argparse.Namespace) -> int:
                     result,
                     str(args.run_id),
                     repo,
-                    health.reason,
+                    health.reason + _quota_diagnostic_suffix(health.quota),
                     dry_run=args.dry_run,
                     marker_override=marker,
+                    quota=health.quota,
                 )
             else:
-                print(f'Reusing operational incident #{existing.number}: {existing.html_url}')
+                print(
+                    f'Reusing operational incident #{existing.number}: {existing.html_url}'
+                    f'{_quota_diagnostic_suffix(health.quota)}'
+                )
             return 0
         result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
     reason = health.reason if not health.ready else _failure_reason(result.failure)
@@ -935,7 +978,10 @@ def _recover_issue(
     """Close one incident only when its configured recovery condition holds."""
     if quota.status != 'healthy':
         if not automatic:
-            print(f'Incident #{issue.number} remains open: provider health is {quota.status}')
+            print(
+                f'Incident #{issue.number} remains open: provider health is {quota.status}'
+                f'{_quota_diagnostic_suffix(quota)}'
+            )
         return False
     if marker.kind in ('rate_limit', 'quota_exhausted'):
         if marker.reset_at is None:
@@ -956,9 +1002,6 @@ def _recover_issue(
 
 
 def _reconcile_recovery(client: GitHubClient, args: argparse.Namespace) -> int:
-    api_key = os.environ.get('MINIMAX_API_KEY', '')
-    quota = _fetch_minimax_quota(api_key, os.environ.get('MINIMAX_QUOTA_RESOURCE')) if api_key else Quota('unknown')
-    now = _now()
     issues = client.open_incidents()
     if args.recover_issue is not None:
         issue = next((issue for issue in issues if issue.number == args.recover_issue), None)
@@ -967,12 +1010,20 @@ def _reconcile_recovery(client: GitHubClient, args: argparse.Namespace) -> int:
         marker = _marker_from_body(issue.body)
         if marker is None:
             raise ValueError(f'issue #{issue.number} is not a provider-health incident')
+        if marker.scope == 'provider' and marker.key != 'zai':
+            raise ValueError(f'issue #{issue.number} is not a Z.ai provider-health incident')
+        api_key = os.environ.get('ZAI_API_KEY', '')
+        quota = _fetch_zai_quota(api_key) if api_key else _unknown_quota('missing_api_key')
+        now = _now()
         _recover_issue(client, issue, marker, quota, now, dry_run=args.dry_run, automatic=False)
         return 0
+    api_key = os.environ.get('ZAI_API_KEY', '')
+    quota = _fetch_zai_quota(api_key) if api_key else _unknown_quota('missing_api_key')
+    now = _now()
     if quota.status != 'healthy':
         marker = IncidentMarker(
             'provider',
-            'minimax',
+            'zai',
             'quota_unknown' if quota.status == 'unknown' else 'quota_exhausted',
             None,
             quota.reset_at if quota.status == 'exhausted' else None,
@@ -995,23 +1046,32 @@ def _reconcile_recovery(client: GitHubClient, args: argparse.Namespace) -> int:
             None,
         )
         if existing is not None:
-            print(f'Provider quota remains {quota.status}; incident #{existing.number} is open')
+            print(
+                f'Provider quota remains {quota.status}; incident #{existing.number} is open{_quota_diagnostic_suffix(quota)}'
+            )
         elif not args.dry_run:
             _create_or_reuse_incident(
                 client,
                 result,
                 os.environ.get('GITHUB_RUN_ID', 'unknown'),
                 client.repo,
-                'MiniMax quota could not be confirmed healthy',
+                'Z.ai quota could not be confirmed healthy' + _quota_diagnostic_suffix(quota),
                 dry_run=False,
                 marker_override=marker,
+                quota=quota,
             )
+            print(f'Provider quota remains {quota.status}{_quota_diagnostic_suffix(quota)}')
         else:
-            print(f'DRY RUN: provider quota is {quota.status}; would open/reuse an incident')
+            print(
+                f'DRY RUN: provider quota is {quota.status}; would open/reuse an incident'
+                f'{_quota_diagnostic_suffix(quota)}'
+            )
         return 0
     for issue in issues:
         marker = _marker_from_body(issue.body)
         if marker is None or marker.scope != 'provider':
+            continue
+        if marker.key != 'zai':
             continue
         if marker.kind not in ('rate_limit', 'quota_exhausted') or marker.reset_at is None:
             continue

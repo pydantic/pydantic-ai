@@ -104,6 +104,17 @@ validation error -- the surface a UI can read to show what the agent has authore
 Capability names must be lowercase letters, digits, and underscores, starting with a
 letter; reusing a name replaces the previous capability of that name.
 
+## Durable execution
+
+Under [durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/), each authoring, listing, and disabling
+call to the store is recorded, so a recovered run reuses the result instead of
+writing the authored module and manifest again. Temporal and Prefect record
+each tool call in its own activity or task. DBOS runs function tools in
+workflow code, so there the store call runs as its own step.
+
+The records are named after the capability's `id`, which defaults to
+`capability_creation`, so durable execution needs no configuration.
+
 ## Trust boundary
 
 `CapabilityCreation` imports model-written Python into the agent's own process, on this
