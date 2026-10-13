@@ -35,7 +35,6 @@ from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
-from tests.temporal_utils import temporal_dev_server_cache_dir
 
 try:
     from temporalio import activity, workflow
@@ -430,12 +429,6 @@ class WrappedWorkflow:
 
 
 @pytest.fixture(scope='module')
-async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
-    async with await WorkflowEnvironment.start_time_skipping(download_dest_dir=temporal_dev_server_cache_dir()) as env:
-        yield env
-
-
-@pytest.fixture(scope='module')
 def client(temporal_env: WorkflowEnvironment) -> Client:
     config = temporal_env.client.config()
     config['plugins'] = [*config['plugins'], PydanticAIPlugin()]
@@ -534,7 +527,7 @@ async def test_registered_instrumented_batch_model(client: Client) -> None:
 
 
 async def test_cancellation_tombstones_respect_the_queue_byte_limit(
-    client: Client, temporal_env: WorkflowEnvironment, monkeypatch: pytest.MonkeyPatch
+    client: Client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 
     provider.group = 'cancel-capacity'
@@ -555,7 +548,7 @@ async def test_cancellation_tombstones_respect_the_queue_byte_limit(
         await manager.execute_update('cancel', 'unknown-item')  # pyright: ignore[reportUnknownMemberType]
     assert isinstance(exc_info.value.cause, ApplicationError) and exc_info.value.cause.type == 'BatchQueueFull'
     assert await manager.query('status', 'unknown-item') is None
-    with temporal_env.auto_time_skipping_disabled(), pytest.raises(WorkflowFailureError):
+    with pytest.raises(WorkflowFailureError):
         await handle.result()
 
 
@@ -613,9 +606,7 @@ async def test_batch_request_error_is_raised_as_the_model_error(client: Client) 
     assert 'status_code: 400' in cause.message
 
 
-async def test_cancelling_one_run_leaves_the_rest_of_its_batch_alone(
-    client: Client, temporal_env: WorkflowEnvironment
-) -> None:
+async def test_cancelling_one_run_leaves_the_rest_of_its_batch_alone(client: Client) -> None:
     provider.hold = True
     cancelled = await client.start_workflow(
         PairWorkflow.run, 'cancel me', id=f'batch-cancel-{uuid.uuid4()}', task_queue=TASK_QUEUE
@@ -625,9 +616,8 @@ async def test_cancelling_one_run_leaves_the_rest_of_its_batch_alone(
     )
     await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
     await cancelled.cancel()
-    with temporal_env.auto_time_skipping_disabled():
-        with pytest.raises(WorkflowFailureError):
-            await cancelled.result()
+    with pytest.raises(WorkflowFailureError):
+        await cancelled.result()
     provider.hold = False
     messages = await kept.result()
 
@@ -637,18 +627,15 @@ async def test_cancelling_one_run_leaves_the_rest_of_its_batch_alone(
     assert provider.canceled == []
 
 
-async def test_cancelling_every_run_of_a_batch_cancels_the_batch(
-    client: Client, temporal_env: WorkflowEnvironment
-) -> None:
+async def test_cancelling_every_run_of_a_batch_cancels_the_batch(client: Client) -> None:
     provider.hold = True
     handle: WorkflowHandle[DeadlineWorkflow, list[ModelMessage]] = await client.start_workflow(
         DeadlineWorkflow.run, 'abandoned', id=f'batch-abandon-{uuid.uuid4()}', task_queue=TASK_QUEUE
     )
     await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
     await handle.cancel()
-    with temporal_env.auto_time_skipping_disabled():
-        with pytest.raises(WorkflowFailureError):
-            await handle.result()
+    with pytest.raises(WorkflowFailureError):
+        await handle.result()
     await asyncio.wait_for(provider.cancelled_job.wait(), READINESS_WAIT_TIMEOUT)
 
     assert provider.canceled == provider.batch_ids('abandoned')
@@ -878,9 +865,7 @@ async def test_a_full_queue_does_not_submit_a_rejected_request(client: Client, m
     assert [name for _, name, _ in faults.updates] == ['enqueue']
 
 
-async def test_duplicate_enqueue_and_late_result_delivery_are_idempotent(
-    client: Client, temporal_env: WorkflowEnvironment
-) -> None:
+async def test_duplicate_enqueue_and_late_result_delivery_are_idempotent(client: Client) -> None:
 
     provider.hold = True
     faults.capture = True
@@ -899,9 +884,8 @@ async def test_duplicate_enqueue_and_late_result_delivery_are_idempotent(
     request['policy']['max_requests'] -= 1
     assert await manager.execute_update('enqueue', request) == accepted_at  # pyright: ignore[reportUnknownMemberType]
     await first.cancel()
-    with temporal_env.auto_time_skipping_disabled():
-        with pytest.raises(WorkflowFailureError):
-            await first.result()
+    with pytest.raises(WorkflowFailureError):
+        await first.result()
     with pytest.raises(WorkflowUpdateFailedError) as exc_info:
         await manager.execute_update('enqueue', request)  # pyright: ignore[reportUnknownMemberType]
     assert isinstance(exc_info.value.cause, ApplicationError) and exc_info.value.cause.type == 'BatchRequestCancelled'
@@ -968,9 +952,8 @@ async def test_cancellation_during_provider_submission_cancels_the_created_job(
     await temporal_env.sleep(timedelta(seconds=1))
     await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
     await handle.cancel()
-    with temporal_env.auto_time_skipping_disabled():
-        with pytest.raises(WorkflowFailureError):
-            await handle.result()
+    with pytest.raises(WorkflowFailureError):
+        await handle.result()
     provider.create_release.set()
     await temporal_env.sleep(timedelta(seconds=1))
     if uncertain:
@@ -1003,12 +986,10 @@ async def test_failed_provider_cancellation_does_not_leave_a_run_waiting(
     async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
         while (await manager.query('status', item_id))['state'] != 'submitted':
             pass
-    # The time-skipping server can corrupt cancellation history while activity retries are pending.
-    with temporal_env.auto_time_skipping_disabled():
-        await handle.cancel()
-        with pytest.raises(WorkflowFailureError):
-            await handle.result()
-        await asyncio.wait_for(provider.failed_cancellations_finished.wait(), READINESS_WAIT_TIMEOUT)
+    await handle.cancel()
+    with pytest.raises(WorkflowFailureError):
+        await handle.result()
+    await asyncio.wait_for(provider.failed_cancellations_finished.wait(), READINESS_WAIT_TIMEOUT)
     assert len(provider.canceled) == 3
 
 
@@ -1096,14 +1077,14 @@ async def test_missing_queue_record_is_reported(client: Client, temporal_env: Wo
 
 @pytest.mark.parametrize('update_failure', [False, True])
 async def test_uncertain_enqueue_is_withdrawn_and_its_tombstone_expires(
-    client: Client, temporal_env: WorkflowEnvironment, monkeypatch: pytest.MonkeyPatch, update_failure: bool
+    client: Client, monkeypatch: pytest.MonkeyPatch, update_failure: bool
 ) -> None:
     monkeypatch.setattr('pydantic_ai.durable_exec.temporal._batch_queue._RETENTION', timedelta(seconds=2))
     provider.group = 'uncertain-enqueue'
     failure = RPCError('Injected enqueue failure', RPCStatusCode.UNAVAILABLE, b'')
     faults.enqueue_error = WorkflowUpdateFailedError(failure) if update_failure else failure
     faults.capture = True
-    with temporal_env.auto_time_skipping_disabled(), pytest.raises(WorkflowFailureError):
+    with pytest.raises(WorkflowFailureError):
         await client.execute_workflow(
             DeadlineWorkflow.run, 'uncertain-enqueue', id=f'uncertain-enqueue-{uuid.uuid4()}', task_queue=TASK_QUEUE
         )
@@ -1163,14 +1144,13 @@ class BoundedWaitWorkflow:
 
 
 async def test_exhausting_wait_rounds_cancels_the_pending_batch(
-    client: Client, temporal_env: WorkflowEnvironment, monkeypatch: pytest.MonkeyPatch
+    client: Client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     provider.hold = True
     monkeypatch.setattr('pydantic_ai.durable_exec._base.MAX_BACKGROUND_POLLS', 1)
     queue = 'batch-bounded-wait-queue'
     async with Worker(client, task_queue=queue, workflows=[BoundedWaitWorkflow], plugins=[AgentPlugin(deadline_agent)]):
-        # Older test servers can corrupt cancellation updates during automatic time skipping.
-        with temporal_env.auto_time_skipping_disabled(), pytest.raises(WorkflowFailureError) as exc_info:
+        with pytest.raises(WorkflowFailureError) as exc_info:
             await asyncio.wait_for(
                 client.execute_workflow(BoundedWaitWorkflow.run, id=f'bounded-wait-{uuid.uuid4()}', task_queue=queue),
                 READINESS_WAIT_TIMEOUT,
