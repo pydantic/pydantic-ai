@@ -542,6 +542,61 @@ def test_openai_single_item_tuple_normalization_preserves_prefix_metadata_and_de
 
 
 @pytest.mark.parametrize(
+    'tail_schema',
+    [
+        pytest.param({'type': 'array'}, id='untyped-array'),
+        pytest.param(
+            {
+                'type': 'array',
+                'prefixItems': [{'type': 'integer'}, {'type': 'string'}],
+                'maxItems': 2,
+            },
+            id='nested-two-item-tuple',
+        ),
+        pytest.param({'type': 'string', 'pattern': '(?=x)'}, id='strict-incompatible-pattern'),
+        pytest.param({'type': 'string', 'default': 'x'}, id='defaulted-tail'),
+    ],
+)
+@pytest.mark.parametrize('strict', [None, True, False], ids=['inferred', 'explicit-true', 'explicit-false'])
+def test_openai_single_item_tuple_normalizes_before_visiting_dead_tail(
+    tail_schema: dict[str, JsonValue], strict: bool | None
+):
+    """A dead tail cannot affect the eligible tuple's strict compatibility or error behavior."""
+    profile = OpenAIProvider.model_profile('gpt-4o')
+    assert profile is not None
+    transformer_type = profile.get('json_schema_transformer')
+    assert transformer_type is not None
+
+    array_schema: dict[str, JsonValue] = {
+        'type': 'array',
+        'prefixItems': [{'type': 'integer'}],
+        'items': tail_schema,
+        'minItems': 1,
+        'maxItems': 1,
+    }
+    schema: dict[str, JsonValue] = {
+        'type': 'object',
+        'properties': {'values': array_schema},
+        'required': ['values'],
+    }
+    transformer = transformer_type(schema, strict=strict)
+
+    result = transformer.walk()
+    values_schema = result['properties']['values']
+    if strict is False:
+        assert values_schema == array_schema
+    else:
+        assert values_schema == {
+            'type': 'array',
+            'items': {'type': 'integer'},
+            'minItems': 1,
+            'maxItems': 1,
+        }
+        if strict is None:
+            assert transformer.is_strict_compatible
+
+
+@pytest.mark.parametrize(
     'array_schema',
     [
         pytest.param({'type': 'array', 'prefixItems': [{'type': 'integer'}]}, id='missing-max-items'),

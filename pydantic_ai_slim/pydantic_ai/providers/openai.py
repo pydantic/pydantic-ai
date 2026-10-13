@@ -53,16 +53,7 @@ class _OpenAIJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
             self.is_strict_compatible = transformer.is_strict_compatible
         return result
 
-    def transform(self, schema: JsonSchema) -> JsonSchema:
-        if schema_ref := schema.get('$ref'):
-            if schema_ref != self.root_ref and isinstance(schema_ref, str) and schema_ref.startswith('#/'):
-                ref_parts = schema_ref.split('/')
-                is_top_level_definition_ref = (
-                    len(ref_parts) == 3 and ref_parts[1] in ('$defs', 'definitions') and bool(ref_parts[2])
-                )
-                if not is_top_level_definition_ref:
-                    self._has_non_top_level_local_ref = True
-
+    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
         prefix_items: list[JsonSchema | bool] | None = schema.get('prefixItems')
         if (
             self.strict is not False
@@ -75,6 +66,17 @@ class _OpenAIJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
             schema['items'] = prefix_items[0]
             del schema['prefixItems']
             self._normalized_single_item_tuple = True
+        return super()._handle_array(schema)
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        if schema_ref := schema.get('$ref'):
+            if schema_ref != self.root_ref and isinstance(schema_ref, str) and schema_ref.startswith('#/'):
+                ref_parts = schema_ref.split('/')
+                is_top_level_definition_ref = (
+                    len(ref_parts) == 3 and ref_parts[1] in ('$defs', 'definitions') and bool(ref_parts[2])
+                )
+                if not is_top_level_definition_ref:
+                    self._has_non_top_level_local_ref = True
 
         return super().transform(schema)
 
