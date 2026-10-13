@@ -35,8 +35,8 @@ class PGTaskDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by checkpointing its I/O into pgtask steps.
 
     Run the agent inside a pgtask task handler: every model request, MCP call, and function tool call
-    becomes a step, so a retried task resumes from the last completed step. Outside a task the
-    capability is transparent.
+    becomes a step, so a retried task resumes from the last completed step. Outside a task nothing is
+    saved, but tool calls still follow `parallel_execution_mode`.
 
     Example:
         ```python {test="skip"}

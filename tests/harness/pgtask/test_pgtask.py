@@ -43,6 +43,7 @@ from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ExternalToolset, FunctionToolset
 from pydantic_ai_harness.pgtask import CheckpointDecodeError, PGTaskDurability
+from pydantic_ai_harness.pgtask._context import _occurrences  # pyright: ignore[reportPrivateUsage]
 from tests.durable_exec.counting_mcp import counting_mcp_server
 
 from ...conftest import try_import
@@ -376,23 +377,27 @@ class TestReplay:
 
 
 class TestTaskLifetime:
-    async def test_finished_task_is_released(self, pgtask_db: PGTaskDatabase) -> None:
-        # A finished task holds its worker's connection pool, so the occurrence counters must not
-        # keep it alive once pgtask lets go of it.
+    async def test_counters_are_dropped_with_their_task(self, pgtask_db: PGTaskDatabase) -> None:
+        # Counters are keyed by `id(task)`, and Python reuses the id of a freed task for a later one, so
+        # a counter left behind would make the later task's steps start past occurrence 0.
         agent = Agent(_make_model(), name='a', capabilities=[PGTaskDurability()])
         tasks: list[weakref.ref[Task]] = []
+        keys: list[int] = []
 
         async def body(attempt: int) -> None:
             task = get_current_task()
             assert task is not None
             tasks.append(weakref.ref(task))
             await agent.run('hi')
+            assert id(task) in _occurrences
+            keys.append(id(task))
 
         await run_in_task(pgtask_db, body, attempts=2)
         gc.collect()
 
         assert len(tasks) == 2
         assert [ref() for ref in tasks] == [None, None]
+        assert [key in _occurrences for key in keys] == [False, False]
 
 
 class TestRuntimeToolsets:
