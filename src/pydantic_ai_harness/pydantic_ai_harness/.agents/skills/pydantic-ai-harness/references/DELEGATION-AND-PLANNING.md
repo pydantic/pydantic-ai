@@ -293,7 +293,7 @@ Selected tools start, return a "running in background (task id)" message immedia
 result as a follow-up message when done.
 
 Each follow-up is a `ModelRequest` containing a `UserPromptPart` whose first content item is
-`TextContent` with `metadata={'origin': 'background_tool', 'tool_call_id': original_tool_call_id}`,
+`TextContent` with `metadata={'origin': 'background_tool_result', 'tool_call_id': original_tool_call_id}`,
 including handled failure notifications. This identifies the entire completion part, including any
 files and extra content. The metadata is not sent to the model and survives native message
 serialization and merging consecutive requests. UI adapters that convert content to plain text may

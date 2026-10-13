@@ -192,7 +192,7 @@ class TestBackgroundTools:
         assert follow_up.content == [
             TextContent(
                 f"Background tool 'slow_research' (task {match['task_id']}) completed.\nResult: researched topic",
-                metadata={'origin': 'background_tool', 'tool_call_id': match['task_id']},
+                metadata={'origin': 'background_tool_result', 'tool_call_id': match['task_id']},
             )
         ]
 
@@ -268,7 +268,7 @@ class TestBackgroundTools:
         part = follow_up.parts[0]
         assert isinstance(part, UserPromptPart) and isinstance(part.content, list)
         assert isinstance(part.content[0], TextContent)
-        assert part.content[0].metadata == {'origin': 'background_tool', 'tool_call_id': call.tool_call_id}
+        assert part.content[0].metadata == {'origin': 'background_tool_result', 'tool_call_id': call.tool_call_id}
         if private_detail is not None:
             assert not _follow_up_seen(result.all_messages(), private_detail)
 
@@ -462,7 +462,7 @@ class TestBackgroundTools:
         assert part.content == [
             TextContent(
                 "Background tool 'slow' (task call-1) completed.\nResult: value",
-                metadata={'origin': 'background_tool', 'tool_call_id': 'call-1'},
+                metadata={'origin': 'background_tool_result', 'tool_call_id': 'call-1'},
             )
         ]
 
@@ -663,7 +663,7 @@ class TestBackgroundTools:
         call = next(
             part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)
         )
-        assert follow_up.content[0].metadata == {'origin': 'background_tool', 'tool_call_id': call.tool_call_id}
+        assert follow_up.content[0].metadata == {'origin': 'background_tool_result', 'tool_call_id': call.tool_call_id}
         restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([follow_up_message]))
         restored_part = restored[0].parts[0]
         assert isinstance(restored_part, UserPromptPart)
@@ -680,7 +680,7 @@ class TestBackgroundTools:
             part = messages[0].parts[1]
             assert isinstance(part, UserPromptPart) and isinstance(part.content, list)
             assert isinstance(part.content[0], TextContent)
-            assert part.content[0].metadata == {'origin': 'background_tool', 'tool_call_id': call.tool_call_id}
+            assert part.content[0].metadata == {'origin': 'background_tool_result', 'tool_call_id': call.tool_call_id}
             return ModelResponse(parts=[TextPart('done')])
 
         steering = UserPromptPart('steering')

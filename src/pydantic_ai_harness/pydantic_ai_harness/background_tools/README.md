@@ -104,7 +104,7 @@ The model first receives a message saying that the tool has started. The message
 When the tool finishes, the model receives the result with the same task ID.
 
 Each follow-up is a `ModelRequest` containing a `UserPromptPart` whose first content item is
-`TextContent` with `metadata={'origin': 'background_tool', 'tool_call_id': original_tool_call_id}`,
+`TextContent` with `metadata={'origin': 'background_tool_result', 'tool_call_id': original_tool_call_id}`,
 including handled failure notifications. This identifies the entire completion part, including any
 files and extra content. The metadata is not sent to the model and survives native message
 serialization and merging consecutive requests. UI adapters that convert content to plain text may

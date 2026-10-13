@@ -283,7 +283,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                     # Both success and handled failure messages start with completion text.
                     assert isinstance(outcome[0], str)
                     outcome = (
-                        TextContent(outcome[0], metadata={'origin': 'background_tool', 'tool_call_id': task_id}),
+                        TextContent(outcome[0], metadata={'origin': 'background_tool_result', 'tool_call_id': task_id}),
                         *outcome[1:],
                     )
                 self._send.send_nowait(outcome)
