@@ -4,7 +4,7 @@ import asyncio
 import io
 import signal
 import sys
-from collections.abc import AsyncGenerator, Callable, Iterator
+from collections.abc import AsyncGenerator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Event as ThreadEvent
@@ -28,7 +28,7 @@ from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
-from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptWakeup
+from pydantic_clai2.ui.prompt.live_prompt import IDLE_REPAINT, LivePrompt, PromptWakeup
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, MODES_ON, WHEEL_ROWS
 from pydantic_clai2.ui.rendering import theme
@@ -36,7 +36,13 @@ from tests.clai2.surface_terminal import SurfaceTerminal
 
 
 @asynccontextmanager
-async def editor(*, output: io.StringIO | None = None) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
+async def editor(
+    *,
+    output: io.StringIO | None = None,
+    toolbar: Callable[[], list[tuple[str, str]]] = lambda: [('', 'ready')],
+    clock: Callable[[], float] = lambda: 0,
+    panel: Callable[[str], Sequence[str]] = lambda _: (),
+) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
     output = output if output is not None else io.StringIO()
     console = Console(file=output, force_terminal=True, width=80, height=24)
     commands = Commands()
@@ -48,8 +54,9 @@ async def editor(*, output: io.StringIO | None = None) -> AsyncGenerator[tuple[L
             history=InMemoryHistory(),
             images=ImageInput(),
             interrupts=Interrupts(),
-            toolbar=lambda: [('', 'ready')],
-            clock=lambda: 0,
+            toolbar=toolbar,
+            clock=clock,
+            panel=panel,
         )
         async with live.opened():
             yield live, pipe, output
@@ -817,3 +824,47 @@ async def test_steering_returns_the_transcript_to_the_newest_output() -> None:
         assert live.output.view.anchor is not None
         assert await live.read() == '/help'
     assert steered == ['steer the draft', 'steer the queue']
+
+
+class FrameClock:
+    """A settable clock, and the times at which the editor built a frame (it reads the toolbar once per frame)."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.built: list[float] = []
+
+    def __call__(self) -> float:
+        return self.now
+
+    def toolbar(self) -> list[tuple[str, str]]:
+        self.built.append(self.now)
+        return [('', 'ready')]
+
+    def run(self, live: LivePrompt, *, until: float, step: float = 0.25) -> list[float]:
+        """Tick the editor every `step` seconds of simulated time and return the frames it built meanwhile."""
+        self.built.clear()
+        while self.now < until:
+            self.now += step
+            live.tick()
+        return self.built
+
+
+async def test_an_idle_editor_rebuilds_its_frame_once_a_second_not_ten_times() -> None:
+    clock = FrameClock()
+    async with editor(toolbar=clock.toolbar, clock=clock) as (live, _, _):
+        assert IDLE_REPAINT == 1
+        assert clock.run(live, until=3) == [1.0, 2.0, 3.0]
+        live.feed('x')
+        assert clock.built[-1] == 3.0, 'a key paints at once'
+        assert clock.run(live, until=5) == [4.0, 5.0], 'and the idle count restarts from it'
+        async with live.suspended():
+            assert clock.run(live, until=7) == [], 'a menu owns the screen'
+
+
+async def test_running_forks_animate_every_tick_until_a_second_after_they_settle() -> None:
+    clock = FrameClock()
+    forks = ['FORK #1 running']
+    async with editor(toolbar=clock.toolbar, clock=clock, panel=lambda _: forks) as (live, _, _):
+        assert clock.run(live, until=1) == [0.25, 0.5, 0.75, 1.0]
+        forks.clear()
+        assert clock.run(live, until=3) == [1.25, 1.5, 1.75, 2.0, 3.0]

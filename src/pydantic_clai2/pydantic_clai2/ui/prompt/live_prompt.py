@@ -1,6 +1,7 @@
 """Pinned editor and scrollback ownership, without a PromptSession renderer."""
 
 import asyncio
+import math
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
@@ -32,6 +33,13 @@ from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
+
+IDLE_REPAINT = 1.0
+"""Seconds between timed repaints of an idle editor, and how long it keeps repainting fast after animating.
+
+Timed repaints pick up status that no key, output, or resize announces, such as a plugin's status
+segment. They run ten times a second while a turn runs or the panel shows forks or tasks.
+"""
 
 
 @dataclass(eq=False)
@@ -123,6 +131,9 @@ class LivePrompt:
         self._completion_worker = CompletionWorker()
         self._completion_error = ''
         self._opened = False
+        self._panel_shown = False
+        self._animated_at = -math.inf
+        self._painted_at = -math.inf
 
     @property
     def queued_messages(self) -> tuple[str, ...]:
@@ -512,6 +523,7 @@ class LivePrompt:
         room = height - 6
         limit = max(1, height // 6)
         panel = [truncate(row, width) + reset for row in self.panel(self.spinner().frame(self.clock()))]
+        self._panel_shown = bool(panel)
         rows = _capped(panel, limit=limit, room=room, more=muted + '+{} more' + reset)
         queued = [
             muted
@@ -574,6 +586,23 @@ class LivePrompt:
         """Draw only when the editor owns the terminal."""
         if self._opened and not self._suspended:
             self.output.paint(self.frame())
+            self._painted_at = self.clock()
+
+    def tick(self) -> float:
+        """Repaint for status changes when due, returning the seconds until the next tick.
+
+        Ten times a second while a turn runs, the panel shows forks or tasks, or for `IDLE_REPAINT`
+        after either; every `IDLE_REPAINT` seconds otherwise. A spinner faster than that gets a
+        repaint per frame, but only while it shows.
+        """
+        now = self.clock()
+        if self.interrupts.active or self._panel_shown:
+            self._animated_at = now
+        if self._suspended:
+            self.output.refresh()
+        elif now - self._animated_at < IDLE_REPAINT or now - self._painted_at >= IDLE_REPAINT:
+            self.paint()
+        return min(0.1, self.spinner().interval) if self.interrupts.active else 0.1
 
     @asynccontextmanager
     async def suspended(self) -> AsyncGenerator[None]:
@@ -604,12 +633,7 @@ class LivePrompt:
 
         async def refresh() -> None:
             while True:
-                if self._suspended:
-                    self.output.refresh()
-                else:
-                    self.paint()
-                # A spinner faster than the status poll gets a repaint per frame, but only while it shows.
-                await anyio.sleep(min(0.1, self.spinner().interval) if self.interrupts.active else 0.1)
+                await anyio.sleep(self.tick())
 
         loop = asyncio.get_running_loop()
 
