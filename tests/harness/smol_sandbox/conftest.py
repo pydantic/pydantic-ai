@@ -28,6 +28,10 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     pytest.skip('requires PYDANTIC_AI_HARNESS_SMOL_LIVE=1 on a host that can run smolvm VMs')
 
 
+_SMOL_MODULES = ('pydantic_ai_harness.smol_sandbox._backend', 'pydantic_ai_harness.smol_sandbox._capability')
+"""The modules that call the smol SDK, each patched to the fake."""
+
+
 class _PoisonedSmol(types.ModuleType):
     """A `smol` stand-in that fails loudly on any attribute access.
 
@@ -48,7 +52,9 @@ def _no_real_smol(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatc
     if 'smol_live' in request.keywords:  # pragma: no cover - live tier runs without coverage
         yield
         return
-    monkeypatch.setattr('pydantic_ai_harness.smol_sandbox._backend.smol', _PoisonedSmol('smol'))
+    poisoned = _PoisonedSmol('smol')
+    for module in _SMOL_MODULES:
+        monkeypatch.setattr(f'{module}.smol', poisoned)
     yield
 
 
@@ -59,5 +65,6 @@ if _HAS_SMOL:  # pragma: no branch - the fixture cannot be defined without its S
         """Inject a fake `smol` module, whose VMs run in `tmp_path`, and yield its control surface."""
         # Resolved so the directory `pwd -P` reports matches on hosts whose temp directory is a symlink.
         control = FakeSmol(tmp_path.resolve())
-        monkeypatch.setattr('pydantic_ai_harness.smol_sandbox._backend.smol', control.module)
+        for module in _SMOL_MODULES:
+            monkeypatch.setattr(f'{module}.smol', control.module)
         yield control

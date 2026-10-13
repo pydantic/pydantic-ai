@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+
+import smol
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
+from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir, running_on_asyncio
 from pydantic_ai_harness.smol_sandbox import _backend
 from pydantic_ai_harness.smol_sandbox._backend import SmolSandboxBackend
 
@@ -60,9 +63,15 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Delete a VM by ref; one that is already gone returns quietly.
 
-        A boot of it still in progress in this process finishes first, and a stopped VM boots briefly.
+        A boot of it still in progress in this process finishes first, and the deletion isn't abandoned
+        when the caller is cancelled. The SDK has no delete by ID for a local VM, so this attaches first,
+        which boots a stopped VM briefly.
         """
-        await _backend.delete_machine(ref)
+        _backend.check_ref(ref)
+        if not running_on_asyncio():
+            raise UserError(_backend.ASYNCIO_ONLY)
+        previous = _backend.lifecycle.get(ref.id)
+        await _backend.settled(_backend.start_lifecycle(ref.id, _delete(ref.id, previous)))
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it boots or attaches on first use."""
@@ -78,3 +87,16 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
         )
+
+
+async def _delete(machine_id: str, previous: asyncio.Task[object] | None) -> None:
+    if previous is not None:
+        # Deleting a VM that is still booting would find nothing, and the boot would then leave it behind.
+        await asyncio.wait([previous])
+    try:
+        machine = await smol.AsyncMachine.connect(machine_id, _backend.local_target())
+    except smol.SmolError as error:
+        if error.code == 'NOT_FOUND':
+            return
+        raise
+    await machine.delete()

@@ -77,7 +77,7 @@ _SETUP_TIMEOUT = 60.0
 _ENGINE_TIMEOUT_GRACE = 5.0
 """Seconds past a command's timeout before smolvm kills it itself, in case this event loop can't."""
 
-_lifecycle: dict[str, asyncio.Task[object]] = {}
+lifecycle: dict[str, asyncio.Task[object]] = {}
 """This process's latest unfinished creation, attachment or deletion of each VM, by name.
 
 A deletion waits for the creation it races, and neither stops when its callers are cancelled.
@@ -96,10 +96,10 @@ _EXEC = ('/bin/sh', '-c', 'exec "$@" </dev/null', 'sh')
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_CHARS = 64 * 1024
 
-_ASYNCIO_ONLY = '`SmolSandbox` needs the asyncio event loop: the smol SDK runs its calls on asyncio threads.'
+ASYNCIO_ONLY = '`SmolSandbox` needs the asyncio event loop: the smol SDK runs its calls on asyncio threads.'
 
 
-def _local() -> smol.ConnectOptions:
+def local_target() -> smol.ConnectOptions:
     # Pinned, so a `SMOL_CLOUD_TOKEN` in the environment can't move the workspace to Smol Cloud.
     return smol.ConnectOptions(target='local')
 
@@ -124,18 +124,18 @@ def check_ref(ref: WorkspaceRef) -> None:
         )
 
 
-def _start(machine_id: str, work: Coroutine[object, object, _T]) -> asyncio.Task[_T]:
-    """Run `work` on `machine_id` in a task its callers' cancellation doesn't stop, recorded in `_lifecycle`."""
+def start_lifecycle(machine_id: str, work: Coroutine[object, object, _T]) -> asyncio.Task[_T]:
+    """Run `work` on `machine_id` in a task its callers' cancellation doesn't stop, recorded in `lifecycle`."""
     task = asyncio.create_task(work, name=f'smol-sandbox-{machine_id}')
     # Waiting callers still get the failure; this only stops asyncio reporting it as never retrieved
     # when every caller was cancelled first.
     task.add_done_callback(lambda done: done.cancelled() or done.exception())
-    _lifecycle[machine_id] = task
-    task.add_done_callback(lambda done: _lifecycle.pop(machine_id) if _lifecycle.get(machine_id) is done else None)
+    lifecycle[machine_id] = task
+    task.add_done_callback(lambda done: lifecycle.pop(machine_id) if lifecycle.get(machine_id) is done else None)
     return task
 
 
-async def _settled(task: asyncio.Task[_T]) -> _T:
+async def settled(task: asyncio.Task[_T]) -> _T:
     # `asyncio.wait`, not `asyncio.shield`: on 3.14 a shield cancelled before its task fails reports
     # that failure to the loop exception handler even though it is retrieved here.
     await asyncio.wait([task])
@@ -252,7 +252,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         create a replacement.
         """
         if not running_on_asyncio():
-            raise UserError(_ASYNCIO_ONLY)
+            raise UserError(ASYNCIO_ONLY)
         if self._machine is not None:
             return self._machine
         task = self._acquisition
@@ -262,11 +262,11 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
                 # Named and recorded before the boot starts, so cleanup has the ref whatever ends the run.
                 ref = self._ref = WorkspaceRef(provider='smol', id=f'{_NAME_PREFIX}{uuid.uuid4().hex}')
                 logger.info('Creating smol VM %s', ref.id)
-                task = _start(ref.id, self._acquire(ref.id, create=True))
+                task = start_lifecycle(ref.id, self._acquire(ref.id, create=True))
             else:
-                task = _start(ref.id, self._acquire(ref.id, create=False))
+                task = start_lifecycle(ref.id, self._acquire(ref.id, create=False))
             self._acquisition = task
-        return await _settled(task)
+        return await settled(task)
 
     async def _acquire(self, machine_id: str, *, create: bool) -> smol.AsyncMachine:
         try:
@@ -275,9 +275,9 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
                     config = smol.MachineConfig(
                         name=machine_id, image=self._image, resources=self._resources, persistent=True
                     )
-                    machine = await smol.AsyncMachine.create(config, _local())
+                    machine = await smol.AsyncMachine.create(config, local_target())
                 else:
-                    machine = await smol.AsyncMachine.connect(machine_id, _local())
+                    machine = await smol.AsyncMachine.connect(machine_id, local_target())
             except smol.SmolError as error:
                 if create:
                     # The SDK reported the boot failed, so a retry boots a VM under a new name.
@@ -404,29 +404,3 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
 
 def _gone_message(machine_id: str) -> str:
     return f"The smol VM {machine_id!r} no longer exists. Pass `workspace='new'` to start a fresh VM."
-
-
-async def delete_machine(ref: WorkspaceRef) -> None:
-    """Delete the VM `ref` names; one that is already gone returns quietly.
-
-    A boot of it still in progress in this process finishes first, and the deletion isn't abandoned
-    when the caller is cancelled. The SDK has no delete by ID for a local VM, so this attaches first,
-    which boots a stopped VM.
-    """
-    check_ref(ref)
-    if not running_on_asyncio():
-        raise UserError(_ASYNCIO_ONLY)
-    await _settled(_start(ref.id, _delete(ref.id, _lifecycle.get(ref.id))))
-
-
-async def _delete(machine_id: str, previous: asyncio.Task[object] | None) -> None:
-    if previous is not None:
-        # Deleting a VM that is still booting would find nothing, and the boot would then leave it behind.
-        await asyncio.wait([previous])
-    try:
-        machine = await smol.AsyncMachine.connect(machine_id, _local())
-    except smol.SmolError as error:
-        if error.code == 'NOT_FOUND':
-            return
-        raise
-    await machine.delete()
