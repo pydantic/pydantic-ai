@@ -26,7 +26,7 @@ StepKey = tuple[str, int]
 
 @dataclass(frozen=True)
 class PGTaskDatabase:
-    """A migrated pgtask database, and one client shared by every test so connections are not leaked."""
+    """A migrated pgtask database and a client on it."""
 
     dsn: str
     client: Client

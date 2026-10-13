@@ -13,7 +13,9 @@ Without it the tests skip. With it but no reachable server they also skip, unles
 
 from __future__ import annotations
 
+import asyncio
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -26,23 +28,37 @@ with try_import() as imports_successful:
     from ._task import PGTaskDatabase
 
 
+def _migrate(dsn: str) -> None:
+    async def migrate() -> None:
+        await (await Client.connect(dsn, max_query_connections=1)).migrate()
+
+    # On a thread of its own, so its event loop never becomes the tests' current one.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(asyncio.run, migrate()).result()
+
+
 @pytest.fixture(scope='session')
-async def pgtask_db() -> PGTaskDatabase:
+def pgtask_dsn() -> str:
     """Migrate pgtask's schema, once, in the database named by `PGTASK_TEST_DATABASE_URL`."""
     dsn = os.environ.get('PGTASK_TEST_DATABASE_URL')
     if not dsn:
         pytest.skip('PGTASK_TEST_DATABASE_URL is not set')
     try:
-        async with await psycopg.AsyncConnection.connect(dsn, autocommit=True, connect_timeout=5) as conn:
+        with psycopg.connect(dsn, autocommit=True, connect_timeout=5) as conn:
             # xdist workers share the database, so they take turns migrating it.
-            await conn.execute('SELECT pg_advisory_lock(8127)')
-            client = await Client.connect(dsn, max_query_connections=2)
-            await client.migrate()
-            await conn.execute('SELECT pg_advisory_unlock(8127)')
+            conn.execute('SELECT pg_advisory_lock(8127)')
+            _migrate(dsn)
+            conn.execute('SELECT pg_advisory_unlock(8127)')
     # Only when the configured server is unreachable, which CI never is.
     except psycopg.OperationalError as exc:  # pragma: no cover
         message = f'PostgreSQL is unreachable at PGTASK_TEST_DATABASE_URL: {exc}'
         if os.environ.get('PGTASK_REQUIRE_LIVE', '').lower() in {'1', 'true', 'yes'}:
             pytest.fail(message)
         pytest.skip(message)
-    return PGTaskDatabase(dsn, client)
+    return dsn
+
+
+@pytest.fixture
+async def pgtask_db(pgtask_dsn: str) -> PGTaskDatabase:
+    """A pgtask client on the migrated database, for one test."""
+    return PGTaskDatabase(pgtask_dsn, await Client.connect(pgtask_dsn, max_query_connections=1))

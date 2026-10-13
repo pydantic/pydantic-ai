@@ -128,6 +128,12 @@ Import `PGTaskDurability`, `PGTaskParallelExecutionMode`, and `CheckpointDecodeE
 [`pydantic-ai-pgtask`](https://github.com/Kludex/pydantic-ai-pgtask) 0.0.3, so tasks in flight during
 the switch resume without repeating work. `DurableTaskContext` and `current_context` are not ported.
 
+## Telemetry
+
+`PGTaskDurability` emits no spans of its own: core's agent run, model request, and tool spans cover
+the work. pgtask carries the OpenTelemetry context from `enqueue` to the worker, so the run's spans
+join the trace that enqueued the task.
+
 ## Relation to Step Persistence
 
 `PGTaskDurability` resumes a single run after a crash. [Step Persistence](step-persistence.md)
