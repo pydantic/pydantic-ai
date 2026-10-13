@@ -138,7 +138,6 @@ async def test_tool_continuation(allow_model_requests: None, recorded_responses:
     settings: OpenAIResponsesModelSettings = {
         'openai_previous_response_id': 'auto',
         'openai_store': False,
-        'openai_responses_service_tier': 'ultrafast',
         'openai_reasoning_effort': 'low',
     }
     agent = Agent(
@@ -174,7 +173,7 @@ async def test_tool_continuation(allow_model_requests: None, recorded_responses:
     assert 'previous_response_id' not in sent[0]
     assert sent[1]['previous_response_id'] == responses[0].provider_response_id
     assert sent[1]['input'] == [{'type': 'function_call_output', 'call_id': tool_call.tool_call_id, 'output': '18'}]
-    assert all(frame['service_tier'] == 'ultrafast' and frame['store'] is False for frame in sent)
+    assert all(frame['store'] is False for frame in sent)
     assert all(
         frame['type'] == 'response.create' and 'stream' not in frame and 'background' not in frame for frame in sent
     )
@@ -740,17 +739,12 @@ async def test_independent_lifetimes(
             provider = OpenAIProvider(api_key='test')
         else:
             provider = OpenAIProvider(api_key='test', http_client=http_client)
-        source = OpenAIResponsesModel(
-            'gpt-4o',
-            provider=provider,
-            settings=OpenAIResponsesModelSettings(openai_responses_service_tier='ultrafast'),
-        )
+        source = OpenAIResponsesModel('gpt-4o', provider=provider)
         async with source.connect() as connected, source.connect() as independent:
             assert connected is not source and independent is not connected
             # A direct request avoids output validation: the HTTP stub only needs a complete response.
             await source.request([ModelRequest(parts=[UserPromptPart('hello')])], None, ModelRequestParameters())
             assert requests[0].url.path == '/v1/responses'
-            assert FRAME_ADAPTER.validate_json(requests[0].content)['service_tier'] == 'ultrafast'
             async with Agent(WrapperModel(connected)) as agent:
                 assert (await agent.run('hello')).output == 'ready'
             assert sockets.opened[0].close_count == 0
@@ -1344,12 +1338,8 @@ async def test_client_default_headers(
         assert len(sockets.opened[0].sent) == 1
 
 
-@pytest.mark.parametrize('responses_tier', ['ultrafast', None], ids=['ultrafast', 'reset'])
-async def test_request_settings(
-    allow_model_requests: None, sockets: SocketHarness, responses_tier: Literal['ultrafast'] | None
-):
+async def test_request_settings(allow_model_requests: None, sockets: SocketHarness):
     settings: OpenAIResponsesModelSettings = {
-        'openai_responses_service_tier': responses_tier,
         'openai_service_tier': 'priority',
         'service_tier': 'flex',
         'openai_store': False,
@@ -1367,7 +1357,7 @@ async def test_request_settings(
     assert sockets.urls == ['wss://api.openai.com/v1/responses']
     assert source.settings == settings
     sent = sockets.opened[0].sent[0]
-    assert sent['service_tier'] == (responses_tier or 'priority')
+    assert sent['service_tier'] == 'priority'
     assert sent['store'] is False
     assert sent['temperature'] == 0.3
     assert sent['metadata'] == {'test': 'websocket'}

@@ -644,7 +644,7 @@ class _ResponsesCreateParams(TypedDict):
     max_output_tokens: int | Omit
     temperature: float | Omit
     top_p: float | Omit
-    service_tier: Literal['auto', 'default', 'flex', 'priority', 'ultrafast'] | Omit
+    service_tier: Literal['auto', 'default', 'flex', 'priority'] | Omit
     conversation: str | Omit
     top_logprobs: int | Omit
     store: bool | Omit | None
@@ -936,16 +936,6 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Settings used for an OpenAI Responses model request.
 
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
-
-    openai_responses_service_tier: Literal['auto', 'default', 'flex', 'priority', 'ultrafast'] | None
-    """The service tier for this Responses request, overriding `openai_service_tier` and `service_tier`.
-
-    Set to `None` to use `openai_service_tier` or `service_tier` instead.
-    If neither is set, the tier is omitted from the request.
-
-    `ultrafast` is available on supported models over HTTP and WebSocket. It carries a price premium;
-    see [OpenAI's Ultrafast guide](https://developers.openai.com/api/docs/guides/ultrafast-mode/).
     """
 
     openai_native_tools: Sequence[FileSearchToolParam | WebSearchToolParam | ComputerToolParam]
@@ -3392,8 +3382,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             max_output_tokens=model_settings.get('max_tokens', OMIT),
             temperature=model_settings.get('temperature', OMIT),
             top_p=model_settings.get('top_p', OMIT),
-            service_tier=model_settings.get('openai_responses_service_tier')
-            or _resolve_openai_service_tier(model_settings),
+            service_tier=_resolve_openai_service_tier(model_settings),
             conversation=request_params.conversation,
             top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
             store=store,

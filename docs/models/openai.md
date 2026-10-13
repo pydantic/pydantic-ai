@@ -374,21 +374,6 @@ The warmup input is sent directly to the model and is not added to Pydantic AI m
 
 Direct model connections leave the source model's HTTP client with its existing owner; manage that source model or provider separately when token counting or standalone compaction is needed. An agent connection owns the provider client of a temporary model created for the connection. Existing model instances and agent tools retain their lifetimes.
 
-#### Ultrafast
-
-Select [`openai_responses_service_tier='ultrafast'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_responses_service_tier] on supported models when the lower latency justifies its price premium:
-
-```python
-from pydantic_ai.models.openai import OpenAIResponsesModelSettings
-
-settings = OpenAIResponsesModelSettings(
-    openai_responses_service_tier='ultrafast',
-    openai_previous_response_id='auto',
-)
-```
-
-The setting overrides `openai_service_tier` and `service_tier` for Responses requests. It is sent on every model request over either HTTP or WebSocket. Check [OpenAI's Ultrafast guide](https://developers.openai.com/api/docs/guides/ultrafast-mode/) for supported models and availability.
-
 ### Reasoning mode
 
 The GPT-5.6 and GPT-6 families can use OpenAI's [`standard` and `pro` reasoning modes](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode). `standard` is the default; `pro` performs more model work to improve reliability on difficult tasks, at the cost of higher latency and token usage. The mode is independent of the reasoning effort: any combination of mode and effort is valid, and the unified [`thinking`](../capabilities/thinking.md) setting only ever influences the effort, so `pro` is used only when you set it explicitly.
