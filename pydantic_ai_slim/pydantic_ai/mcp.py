@@ -880,15 +880,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     used.
     """
 
-    include_app_data: bool
-    """Whether to keep what a UI needs to render an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) for a tool call.
-
-    Defaults to `False`. When `True`, an agent's call to a tool whose `_meta.ui.resourceUri` names a UI
-    resource returns a [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose `metadata` holds an
-    [`MCPAppToolResult`][pydantic_ai.mcp.MCPAppToolResult] under the `'mcp_app'` key. The model sees the
-    same content either way, and [`direct_call_tool`][pydantic_ai.mcp.MCPToolset.direct_call_tool] is unchanged.
-    """
-
     process_tool_call: ProcessToolCallback | None
     """Hook to wrap tool calls — useful for adding request-level metadata, custom retry policies,
     or telemetry. See [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback].
@@ -944,7 +935,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         cache_prompts: bool = True,
         include_instructions: bool = False,
         include_return_schema: bool | None = None,
-        include_app_data: bool = False,
         # Sampling — high-level shortcut and low-level escape hatch
         sampling_model: models.Model | None = None,
         sampling_handler: SamplingHandler[Any, Any] | None = None,
@@ -993,8 +983,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 [`MCPToolset.include_instructions`][pydantic_ai.mcp.MCPToolset.include_instructions].
             include_return_schema: Whether to include return schemas in tool definitions. See
                 [`MCPToolset.include_return_schema`][pydantic_ai.mcp.MCPToolset.include_return_schema].
-            include_app_data: Whether to keep MCP Apps data on tool returns. See
-                [`MCPToolset.include_app_data`][pydantic_ai.mcp.MCPToolset.include_app_data].
             sampling_model: A Pydantic AI model the server may sample from. Mutually exclusive with
                 `sampling_handler`.
             sampling_handler: A FastMCP-shaped sampling handler. Use for full control over the
@@ -1130,7 +1118,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self.cache_prompts = cache_prompts
         self.include_instructions = include_instructions
         self.include_return_schema = include_return_schema
-        self.include_app_data = include_app_data
         self.sampling_model = sampling_model
         self.log_level = log_level
 
@@ -1561,7 +1548,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # `get_tools()` resolves the server's `execution.taskSupport` and the client's
         # `prefer_tasks` preference into the effective task path for this tool.
         use_task = bool((tool.tool_def.metadata or {}).get('task'))
-        resource_uri = _app_resource_uri(tool.tool_def) if self.include_app_data else None
+        resource_uri = _app_resource_uri(tool.tool_def)
         if resource_uri is None:
             if self.process_tool_call is not None:
                 return await self.process_tool_call(

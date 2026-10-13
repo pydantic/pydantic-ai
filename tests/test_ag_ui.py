@@ -9027,7 +9027,7 @@ _MCP_APP_TOOL_RESULT = {
     },
     'toolset_id': 'weather',
 }
-"""What `MCPToolset(include_app_data=True)` attaches under `ToolReturnPart.metadata['mcp_app']`."""
+"""What `MCPToolset` attaches to an MCP Apps tool call under `ToolReturnPart.metadata['mcp_app']`."""
 
 
 def _mcp_app_agent() -> Agent[None, str]:

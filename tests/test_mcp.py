@@ -840,68 +840,47 @@ class TestMCPToolsetIntegration:
 
         return server
 
-    @pytest.mark.parametrize(
-        ('include_app_data', 'expected'),
-        [
-            pytest.param(
-                False,
-                snapshot(
-                    {
-                        'get_forecast': ({'city': 'a', 'temp_c': 14}, None),
-                        'legacy_forecast': ('a: 14C', None),
-                        'plain': ('a', None),
-                    }
-                ),
-                id='off',
-            ),
-            pytest.param(
-                True,
-                {
-                    'get_forecast': (
-                        {'city': 'a', 'temp_c': 14},
-                        {
-                            'mcp_app': {
-                                'resource_uri': 'ui://weather/forecast',
-                                'tool_input': {'city': 'a'},
-                                'result': {
-                                    'content': [{'type': 'text', 'text': 'a: 14C'}],
-                                    'structuredContent': {'city': 'a', 'temp_c': 14},
-                                    '_meta': {'selectedDay': 'tuesday', **_APPS_SERVER_INFO},
-                                },
-                                'toolset_id': 'weather',
-                            }
-                        },
-                    ),
-                    'legacy_forecast': (
-                        'a: 14C',
-                        {
-                            'mcp_app': {
-                                'resource_uri': 'ui://weather/forecast',
-                                'tool_input': {'city': 'a'},
-                                'result': {
-                                    'content': [{'type': 'text', 'text': 'a: 14C'}],
-                                    **({'_meta': _APPS_SERVER_INFO} if _APPS_SERVER_INFO else {}),
-                                },
-                                'toolset_id': 'weather',
-                            }
-                        },
-                    ),
-                    'plain': ('a', None),
-                },
-                id='on',
-            ),
-        ],
-    )
-    async def test_include_app_data(self, include_app_data: bool, expected: dict[str, Any]):
-        """`include_app_data` keeps the full result of MCP Apps tools for the UI, without changing what the model sees."""
-        toolset = MCPToolset(self._mcp_apps_server(), id='weather', include_app_data=include_app_data)
+    async def test_app_tool_returns_carry_app_data(self):
+        """Calls to MCP Apps tools keep the full result for the UI, without changing what the model sees."""
+        toolset = MCPToolset(self._mcp_apps_server(), id='weather')
         agent = Agent(TestModel(call_tools=['get_forecast', 'legacy_forecast', 'plain']), toolsets=[toolset])
         result = await agent.run('Forecast?')
         returns = {
             part.tool_name: (part.content, part.metadata)
             for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
         }
-        assert returns == expected
+        assert returns == {
+            'get_forecast': (
+                {'city': 'a', 'temp_c': 14},
+                {
+                    'mcp_app': {
+                        'resource_uri': 'ui://weather/forecast',
+                        'tool_input': {'city': 'a'},
+                        'result': {
+                            'content': [{'type': 'text', 'text': 'a: 14C'}],
+                            'structuredContent': {'city': 'a', 'temp_c': 14},
+                            '_meta': {'selectedDay': 'tuesday', **self._APPS_SERVER_INFO},
+                        },
+                        'toolset_id': 'weather',
+                    }
+                },
+            ),
+            'legacy_forecast': (
+                'a: 14C',
+                {
+                    'mcp_app': {
+                        'resource_uri': 'ui://weather/forecast',
+                        'tool_input': {'city': 'a'},
+                        'result': {
+                            'content': [{'type': 'text', 'text': 'a: 14C'}],
+                            **({'_meta': self._APPS_SERVER_INFO} if self._APPS_SERVER_INFO else {}),
+                        },
+                        'toolset_id': 'weather',
+                    }
+                },
+            ),
+            'plain': ('a', None),
+        }
 
     @pytest.mark.parametrize(
         ('hook_kind', 'expected_return', 'expected_app'),
@@ -925,7 +904,7 @@ class TestMCPToolsetIntegration:
             pytest.param('other-tool', 'a', None, id='other-tool'),
         ],
     )
-    async def test_include_app_data_with_process_tool_call(
+    async def test_app_data_with_process_tool_call(
         self,
         run_context: RunContext,
         hook_kind: Literal['passthrough', 'rewrite', 'other-tool'],
@@ -946,7 +925,7 @@ class TestMCPToolsetIntegration:
                 return {'temp_c': result['temp_c']}
             return result
 
-        toolset = MCPToolset(self._mcp_apps_server(), include_app_data=True, process_tool_call=hook)
+        toolset = MCPToolset(self._mcp_apps_server(), process_tool_call=hook)
         async with toolset:
             tools = await toolset.get_tools(run_context)
             returned = await toolset.call_tool('get_forecast', {'city': 'a'}, run_context, tools['get_forecast'])
