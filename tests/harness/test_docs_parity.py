@@ -137,6 +137,7 @@ _CAPABILITY_PAGE_META = {
     'ask-user.md': ('ask_user', 'Ask User'),
     'aws-lambda.md': ('aws_lambda', 'AWS Lambda Durability'),
     'absurd.md': ('absurd', 'Absurd Durability'),
+    'pgtask.md': ('pgtask', 'pgtask Durability'),
     'background-tools.md': ('background_tools', 'Background Tools'),
     'code-mode.md': ('code_mode', 'Code Mode'),
     'coder.md': ('coder', 'Coder'),
