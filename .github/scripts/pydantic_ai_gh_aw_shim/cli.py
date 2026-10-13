@@ -37,6 +37,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import math
 import os
 import pathlib
 import sys
@@ -333,6 +334,38 @@ def _run_timeout_secs() -> int:
 
 SUBAGENT_TIMEOUT_SECS = 15 * 60  # 15 min per Task sub-agent
 COMPACTION_TIMEOUT_SECS = 120  # 2 min for the compaction summariser call
+
+# The run's last minutes belong to the parent: sub-agents are cut off before they start,
+# and the parent is then told to emit its safe output. Successful `CI Review` runs need
+# up to about 4 min between their last sub-agent returning and their posted review.
+RUN_TIME_RESERVE_SECS = 5 * 60
+TIME_BUDGET_NOTICE = (
+    '## Time budget nearly spent\n\n'
+    f'This run has under {RUN_TIME_RESERVE_SECS // 60} minutes of wall-clock time left, and reaching '
+    'the limit stops it with nothing posted. Stop investigating. Emit the safe output your '
+    'task ends with now, from what you have already found.'
+)
+
+# Monotonic time at which `_run_with_timeout` cancels the run; `None` outside a run.
+_run_deadline: float | None = None
+
+
+def _run_seconds_left() -> float | None:
+    """Wall-clock seconds before the run is cancelled, or `None` when no run budget applies."""
+    return None if _run_deadline is None else _run_deadline - time.monotonic()
+
+
+def time_budget_notice() -> str | None:
+    """Warn the model once the run's remaining wall-clock time falls inside the parent's reserve."""
+    seconds_left = _run_seconds_left()
+    if seconds_left is None or seconds_left > RUN_TIME_RESERVE_SECS:
+        return None
+    return TIME_BUDGET_NOTICE
+
+
+class RunTimeLimitExceeded(Exception):
+    """The run used its whole wall-clock budget, which is not a provider timeout."""
+
 
 # Static prefix for `Agent(instructions=[INSTRUCTIONS, prompt])`. Sequence
 # form lets Anthropic's prompt-prefix cache hit `INSTRUCTIONS` across runs.
@@ -933,6 +966,8 @@ def _failure_details(error: BaseException | None) -> dict[str, object]:
     http_status: int | None = None
     if isinstance(error, UsageLimitExceeded):
         kind = 'request_limit'
+    elif isinstance(error, RunTimeLimitExceeded):
+        kind = 'time_limit'
     elif isinstance(error, (asyncio.TimeoutError, TimeoutError)):
         kind = 'timeout'
     elif isinstance(error, ModelHTTPError):
@@ -1051,6 +1086,15 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     if sub_request_limit <= 0:
         logger.info('Task refused, request budget nearly spent: %s', description[:120])
         return 'error: the request budget is nearly spent; finish the task from what you already have'
+    seconds_left = _run_seconds_left()
+    timeout = (
+        SUBAGENT_TIMEOUT_SECS
+        if seconds_left is None
+        else min(SUBAGENT_TIMEOUT_SECS, seconds_left - RUN_TIME_RESERVE_SECS)
+    )
+    if timeout <= 0:
+        logger.info('Task refused, time budget nearly spent: %s', description[:120])
+        return 'error: the time budget is nearly spent; finish the task from what you already have'
     logger.info('Task spawn: %s', description[:120])
     # Fresh dedupe set per sub-agent — otherwise inheriting the parent's
     # `seen` AGENTS.md set would silently hide context the sub-agent needs.
@@ -1077,14 +1121,14 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     try:
         result = await asyncio.wait_for(
             sub.run(RUN_TRIGGER, usage_limits=UsageLimits(request_limit=sub_request_limit), usage=sub_usage),
-            timeout=SUBAGENT_TIMEOUT_SECS,
+            timeout=timeout,
         )
     except TimeoutError:
         # A bare `TimeoutError` stringifies to '' — without an explicit message
         # the model (and the log) would see `sub-agent failed:` with no payload.
         ctx.usage.incr(sub_usage)
-        logger.error('sub-agent timed out after %.0f min: %s', SUBAGENT_TIMEOUT_SECS / 60, description[:120])
-        return f'error: sub-agent timed out after {SUBAGENT_TIMEOUT_SECS // 60}min'
+        logger.error('sub-agent timed out after %.0f min: %s', timeout / 60, description[:120])
+        return f'error: sub-agent timed out after {math.ceil(timeout / 60)}min'
     except Exception as exc:
         # The parent agent reacts to the returned string, but a sub-agent can hit
         # the same nested `ExceptionGroup`/`McpError` as the main run — log the
@@ -1108,7 +1152,9 @@ async def _run_with_timeout(
     session_id: str,
 ) -> int:
     """Wrap `run()` with the global wall-clock cap and emit a clean result on timeout."""
+    global _run_deadline
     budget = _run_timeout_secs()
+    _run_deadline = time.monotonic() + budget
     usage = RunUsage()
     try:
         async with AsyncExitStack() as stack:
@@ -1126,7 +1172,7 @@ async def _run_with_timeout(
             session_id=session_id,
             is_error=True,
             num_turns=usage.requests,
-            error=TimeoutError(),
+            error=RunTimeLimitExceeded(),
         )
         return 1
     except Exception as exc:
@@ -1140,6 +1186,8 @@ async def _run_with_timeout(
             error=exc,
         )
         return 1
+    finally:
+        _run_deadline = None
 
 
 async def run(
@@ -1156,7 +1204,7 @@ async def run(
     run_usage = usage or RunUsage()
     agent: Agent[object, str] = Agent(
         model,
-        instructions=[INSTRUCTIONS, prompt, request_budget_notice],
+        instructions=[INSTRUCTIONS, prompt, request_budget_notice, time_budget_notice],
         retries={'output': NO_SAFE_OUTPUT_RETRIES},
         toolsets=[claude_code_toolset, *mcp_servers],
         capabilities=[

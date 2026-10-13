@@ -1,14 +1,17 @@
 from __future__ import annotations as _annotations
 
+import importlib
 import inspect
 import subprocess
 import sys
 from importlib.metadata import requires
+from types import ModuleType
 
 import httpx2
 import pytest
 from packaging.requirements import Requirement
 
+import pydantic_ai
 from pydantic_ai._http import create_async_httpx2_client
 
 from .conftest import try_import
@@ -262,6 +265,33 @@ async def test_httpx2_client_constructs_without_blocking() -> None:
     """
     async with create_async_httpx2_client() as client:
         assert isinstance(client, httpx2.AsyncClient)
+
+
+def _fresh_http_module_without_httpcore2(monkeypatch: pytest.MonkeyPatch, platform: str) -> ModuleType:
+    """Run `_http.py` again with `httpcore2` unimportable, as it is on Pyodide, and `sys.platform` set to `platform`.
+
+    Only that one module body sees the fake platform: everything it imports is already loaded, and monkeypatch
+    puts the original module back in `sys.modules` and on the `pydantic_ai` package afterwards.
+    """
+    original = sys.modules['pydantic_ai._http']
+    monkeypatch.setitem(sys.modules, 'httpcore2', None)
+    monkeypatch.delitem(sys.modules, 'pydantic_ai._http')
+    monkeypatch.setattr(pydantic_ai, '_http', original)
+    monkeypatch.setattr(sys, 'platform', platform)
+    return importlib.import_module('pydantic_ai._http')
+
+
+def test_http_module_imports_on_emscripten_without_httpcore2(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On Pyodide httpx2 sends requests through `fetch` and doesn't install `httpcore2`, so `_http.py` must not import it."""
+    module = _fresh_http_module_without_httpcore2(monkeypatch, 'emscripten')
+    assert module.DEFAULT_HTTP_TIMEOUT == 600
+
+
+@pytest.mark.parametrize('platform', ['linux', 'darwin', 'win32'])
+def test_http_module_still_requires_httpcore2_elsewhere(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
+    """Skipping the preload is limited to Emscripten: a missing `httpcore2` anywhere else is a broken install."""
+    with pytest.raises(ModuleNotFoundError, match='httpcore2'):
+        _fresh_http_module_without_httpcore2(monkeypatch, platform)
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
