@@ -1575,9 +1575,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
         extra_capabilities = self._bind_run_capabilities(extra_capabilities)
-        # `connect()` replaces only the configured model selection: run, spec, and run capability models still win.
-        if model is None and (not extra_capabilities or CombinedCapability(extra_capabilities).get_model() is None):
-            model = self._connected_model.get()
+        # `connect()` replaces the agent's own model selection (its `model` and root capability). What the
+        # run brings (`model=`, a spec, run capabilities and their selectors) still selects over it.
+        connected_model = self._connected_model.get() if model is None else None
         model_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
         bootstrap_capability: AbstractCapability[AgentDepsT]
         if len(model_layers) > 1:
@@ -1590,10 +1590,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # contribution selects the initial model needed to construct RunContext and resolve
         # `for_run()`; dynamic contributions are evaluated again for later request steps.
         model_is_explicit = model is not None or self._override_model.get() is not None
-        model_contribution = None if model_is_explicit else bootstrap_capability.get_model()
+        if model_is_explicit:
+            model_contribution = None
+        elif connected_model is not None:
+            model_contribution = CombinedCapability(extra_capabilities).get_model()
+        else:
+            model_contribution = bootstrap_capability.get_model()
         self._check_dynamic_model_resume(model_contribution, message_history)
 
-        has_default_model = self._has_model(model)
+        default_selection = model if model is not None else connected_model
+        has_default_model = self._has_model(default_selection)
 
         # The string the run's model was selected from, if any — carried through to
         # `ModelRequestContext.model_id` so durable-execution capabilities can round-trip
@@ -1603,7 +1609,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         default_model_id: str | None = None
         default_model: models.Model | None = None
         if has_default_model:
-            raw_model = self._pick_raw_model(model)
+            raw_model = self._pick_raw_model(default_selection)
             model_id = raw_model if isinstance(raw_model, str) else None
             default_model_id = model_id
             default_model = await self._resolve_model_selection(
@@ -1951,7 +1957,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
 
-        run_model_contribution = None if model_is_explicit else run_capability.get_model()
+        if model_is_explicit:
+            run_model_contribution = None
+        elif connected_model is not None:
+            run_layer = resolved_caps.run_layer
+            run_model_contribution = run_layer.get_model() if run_layer is not None else None
+        else:
+            run_model_contribution = run_capability.get_model()
         self._check_dynamic_model_resume(run_model_contribution, message_history)
         model_selector: ModelSelector[AgentDepsT] | None
         model_selected_for_step: int | None

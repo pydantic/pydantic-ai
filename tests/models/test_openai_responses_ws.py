@@ -18,13 +18,22 @@ from httpx import Timeout
 from pydantic import BaseModel, JsonValue, TypeAdapter
 from typing_extensions import Unpack
 
-from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    ModelRequest,
+    ModelResponse,
+    RunContext,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Hooks, SelectModel
 from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelMessagesTypeAdapter
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -269,6 +278,18 @@ class RunModelCapability(AbstractCapability[object]):
         return TestModel(custom_output_text='run capability model')
 
 
+class ForRunModelCapability(AbstractCapability[object]):
+    """Contributes a model only through `for_run()`."""
+
+    async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+        return RunModelCapability()
+
+
+def lower_precedence_model(ctx: ModelSelectionContext[object]) -> Model:
+    assert ctx.model is not None
+    return ctx.model
+
+
 @dataclass
 class ScriptedSocket:
     """Control interruptions and concurrency beneath the real SDK event parser."""
@@ -463,25 +484,49 @@ async def test_agent_connection_replaces_only_configured_model(
     """Runs that select no model use the connection; run models, run capability models, and overrides win."""
     monkeypatch.setenv('OPENAI_API_KEY', 'test')
     socket = sockets.pending[0]
-    socket.responses.append(text_events('connected again', 'resp_again'))
+    socket.responses.extend([text_events('no model', 'resp_no_model'), text_events('connected again', 'resp_again')])
     if selection == 'configured':
         agent = Agent(OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test')))
     else:
         agent = Agent(capabilities=[StaticModelCapability()], deps_type=type(None))
+    run_model_capabilities: list[AgentCapability[object]] = [
+        RunModelCapability(),
+        lambda ctx: RunModelCapability(),
+        ForRunModelCapability(),
+    ]
 
     async with agent.connect():
         explicit_result = await agent.run('inside', model=TestModel(custom_output_text='explicit run model'))
         assert explicit_result.output == 'explicit run model'
+        for capability in run_model_capabilities:
+            capability_result = await agent.run('capability', capabilities=[capability])
+            assert capability_result.output == 'run capability model'
         assert socket.sent == []
-        capability_result = await agent.run('capability', capabilities=[RunModelCapability()])
-        assert capability_result.output == 'run capability model'
-        assert socket.sent == []
-        assert (await agent.run('connected')).output == 'ready'
+        # A run selector's lower-precedence model is the connection, not the configured HTTP model.
+        selected_result = await agent.run('selected', capabilities=[SelectModel(lower_precedence_model)])
+        assert selected_result.output == 'ready'
+        no_model_result = await agent.run('no model', capabilities=[lambda ctx: Hooks()])
+        assert no_model_result.output == 'no model'
         with agent.override(model=TestModel(custom_output_text='override model')):
             assert (await agent.run('overridden')).output == 'override model'
         assert (await agent.run('connected again')).output == 'connected again'
 
-    assert len(socket.sent) == 2
+    assert len(socket.sent) == 3
+    assert socket.close_count == 1
+
+
+async def test_agent_connection_replaces_agent_capability_for_run_model(
+    allow_model_requests: None, sockets: SocketHarness
+):
+    """An agent capability's `for_run()` model is part of the agent's selection, which the connection replaces."""
+    socket = sockets.pending[0]
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    agent = Agent(source, capabilities=[ForRunModelCapability()])
+
+    assert (await agent.run('outside')).output == 'run capability model'
+    async with agent.connect():
+        assert (await agent.run('inside')).output == 'ready'
+    assert len(socket.sent) == 1
     assert socket.close_count == 1
 
 
