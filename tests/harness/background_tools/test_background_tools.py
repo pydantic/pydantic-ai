@@ -849,7 +849,10 @@ class TestBackgroundTools:
                 release['fast_bg'].set()
                 return ModelResponse(parts=[TextPart(content='waiting')])
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='fast_bg', args='{}'), ToolCallPart(tool_name='slow_bg', args='{}')]
+                parts=[
+                    ToolCallPart(tool_name='fast_bg', args='{}', tool_call_id='fast-call'),
+                    ToolCallPart(tool_name='slow_bg', args='{}', tool_call_id='slow-call'),
+                ]
             )
 
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
@@ -867,8 +870,26 @@ class TestBackgroundTools:
         result = await asyncio.wait_for(agent.run('go'), timeout=5)
 
         assert result.output == 'done'
-        assert _follow_up_seen(result.all_messages(), 'completed.\nResult: fast value')
-        assert _follow_up_seen(result.all_messages(), 'completed.\nResult: slow value')
+        delivered_results = [
+            item
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for prompt in message.parts
+            if isinstance(prompt, UserPromptPart) and isinstance(prompt.content, list)
+            for item in prompt.content
+            if isinstance(item, TextContent)
+            and ('completed.\nResult: fast value' in item.content or 'completed.\nResult: slow value' in item.content)
+        ]
+        assert delivered_results == [
+            TextContent(
+                "Background tool 'fast_bg' (task fast-call) completed.\nResult: fast value",
+                metadata={'origin': 'background_tool_result', 'tool_call_id': 'fast-call'},
+            ),
+            TextContent(
+                "Background tool 'slow_bg' (task slow-call) completed.\nResult: slow value",
+                metadata={'origin': 'background_tool_result', 'tool_call_id': 'slow-call'},
+            ),
+        ]
 
     async def test_failed_background_tool_cancels_its_sibling(self) -> None:
         slow_started = asyncio.Event()

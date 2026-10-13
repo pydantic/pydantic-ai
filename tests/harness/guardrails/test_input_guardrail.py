@@ -26,7 +26,9 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartEndEvent,
     PartStartEvent,
+    TextContent,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -107,6 +109,54 @@ class TestInputGuardrail:
 
         assert result.output == 'ok'
         assert calls == ['hello']
+
+    async def test_extracts_singleton_textcontent_from_resumed_prompt(self):
+        guard_calls: list[str] = []
+        model_prompts: list[list[object]] = []
+        model_calls = 0
+        completion = TextContent(
+            'background answer', metadata={'origin': 'background_tool_result', 'tool_call_id': 'task-1'}
+        )
+
+        def guard(prompt: str) -> bool:
+            guard_calls.append(prompt)
+            return True
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal model_calls
+            model_calls += 1
+            model_prompts.append(
+                [part.content for message in messages for part in message.parts if isinstance(part, UserPromptPart)]
+            )
+            if model_calls == 1:
+                return ModelResponse(parts=[ToolCallPart('queue_completion', '{}', tool_call_id='tc1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(respond), capabilities=[InputGuardrail(guard=guard)])
+
+        @agent.tool
+        def queue_completion(ctx: RunContext[object]) -> str:
+            ctx.enqueue(completion)
+            return 'queued'
+
+        first = await agent.run('initial')
+        assert guard_calls == ['initial']
+
+        resumed = await agent.run(None, message_history=first.all_messages()[:-1])
+        assert resumed.output == 'done'
+        assert guard_calls == ['initial', 'background answer']
+        assert model_prompts[1] == ['initial', [completion]]
+
+        await agent.run(None, message_history=first.all_messages())
+        assert guard_calls == ['initial', 'background answer']
+
+        history_guard_calls: list[str] = []
+        history_agent = Agent(
+            TestModel(custom_output_text='done'),
+            capabilities=[InputGuardrail(guard=lambda prompt: history_guard_calls.append(prompt) or True)],
+        )
+        await history_agent.run(None, message_history=[ModelRequest(parts=[UserPromptPart(content=[completion])])])
+        assert history_guard_calls == ['background answer']
 
     async def test_guard_result_allow(self):
         agent = Agent(

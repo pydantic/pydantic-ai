@@ -38,7 +38,7 @@ import anyio
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation, WrapModelRequestHandler
 from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextContent, TextPart, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import (
@@ -101,10 +101,18 @@ def _extract_prompt(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage
     so that sub-agent calls or resumed runs without a fresh prompt still work.
     """
     if ctx.prompt is not None:
+        if isinstance(ctx.prompt, Sequence) and len(ctx.prompt) == 1 and isinstance(ctx.prompt[0], TextContent):
+            return ctx.prompt[0].content
         return ctx.prompt if isinstance(ctx.prompt, str) else str(ctx.prompt)
     for message in reversed(messages):
         for part in reversed(message.parts):
             if isinstance(part, UserPromptPart):
+                if (
+                    isinstance(part.content, Sequence)
+                    and len(part.content) == 1
+                    and isinstance(part.content[0], TextContent)
+                ):
+                    return part.content[0].content
                 return part.content if isinstance(part.content, str) else str(part.content)
     return None
 
