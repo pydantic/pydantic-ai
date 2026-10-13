@@ -638,7 +638,7 @@ Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelRespon
 
 #### Rejecting Responses Without Actionable Output
 
-A response handler can reject a successful response that contains no text or tool call, such as an empty or thinking-only response. This predicate is for a text-output agent; if your output type accepts other response parts, include those parts in the predicate. Include [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] in the handler list so API errors still fall back; see [Combining Handlers](#combining-handlers).
+A response handler can reject a successful response that contains no text or tool call, such as an empty or thinking-only response. This predicate is for a text-output agent; if your output type accepts other response parts, include those parts in the predicate. Include [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] in the handler list so API errors still fall back; see [Combining Handlers](#combining-handlers). Empty responses marked `finish_reason='content_filter'` are left for the agent to raise [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] instead of routing them to a backup.
 
 ```python {title="fallback_on_empty_response.py"}
 from pydantic_ai import (
@@ -650,6 +650,7 @@ from pydantic_ai import (
     TextPart,
     ToolCallPart,
 )
+from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -663,7 +664,7 @@ def answer(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
 
 
 def has_no_actionable_output(response: ModelResponse) -> bool:
-    return not any(
+    return response.finish_reason != 'content_filter' and not any(
         (isinstance(part, TextPart) and part.has_content())
         or isinstance(part, (ToolCallPart, NativeToolCallPart))
         for part in response.parts
@@ -682,6 +683,25 @@ agent = Agent(
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
+
+
+def filtered(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[], finish_reason='content_filter')
+
+
+filtered_agent = Agent(
+    FallbackModel(
+        FunctionModel(filtered, model_name='filtered'),
+        FunctionModel(answer, model_name='backup'),
+        fallback_on=[ModelAPIError, has_no_actionable_output],
+    ),
+    output_type=str,
+)
+try:
+    filtered_agent.run_sync('What is the capital of France?')
+except ContentFilterError:
+    print('The content-filtered response was rejected.')
+    #> The content-filtered response was rejected.
 ```
 
 #### Combining Handlers
