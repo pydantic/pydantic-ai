@@ -29,6 +29,7 @@ from pydantic import StringConstraints, TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_clai2.config import UpdateChannel
+from pydantic_clai2.ui.stderr_relay import terminal_stderr
 
 if TYPE_CHECKING:
     import httpx
@@ -235,10 +236,12 @@ class Relaunch(SystemExit):
     A `SystemExit`, so a caller other than the CLI exits as it did before CLAI restarted itself.
     """
 
-    def __init__(self, *, executable: str, session_id: str | None) -> None:
+    def __init__(self, *, executable: str, session_id: str | None, new_session_id: str | None = None) -> None:
+        """Resume `session_id` when set, or else start the new conversation under `new_session_id`."""
         super().__init__(0)
         self.executable = executable
         self.session_id = session_id
+        self.new_session_id = new_session_id
 
 
 async def tool_executable(uv: str) -> str | None:
@@ -253,8 +256,8 @@ def _in_thread(work: Callable[[], None]) -> None:
 
 
 async def _run_uv(command: Sequence[str]) -> int:
-    # Inherit the terminal so uv's progress shows; slash commands run with the editor suspended.
-    result = await run_process(command, stdout=None, stderr=None, check=False)
+    # Use the terminal so uv's progress shows; slash commands run with the editor suspended.
+    result = await run_process(command, stdout=None, stderr=terminal_stderr(), check=False)
     return result.returncode
 
 

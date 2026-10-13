@@ -34,6 +34,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
     "Intended Audience :: System Administrators",
@@ -64,7 +65,7 @@ dependencies = [
     "pydantic-graph=={{ version }}",
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
-    "genai-prices>=0.1.9",
+    "genai-prices>=0.1.10",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -76,7 +77,7 @@ cohere = ["cohere>=5.20.6; platform_system != 'Emscripten'"]
 google = ["google-genai>=2.25.0"]
 # `anthropic>=1` is built on `httpx2` and drops legacy HTTPX entirely; it also removes
 # `temperature`/`top_p`/`top_k` from `messages.create()`, which the model sends via `extra_body`.
-anthropic = ["anthropic>=1.9.0"]
+anthropic = ["anthropic>=1.12.1"]
 # `xai-sdk>=1.16.0` adds the `image_file_id`/`image_file_ids` arguments to `image.sample()` and
 # `image.sample_batch()`, which carry `UploadedFile` reference images to the image generation API.
 xai = ["xai-sdk>=1.16.0"]

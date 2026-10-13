@@ -16,12 +16,17 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 # `output_type` must include `DeferredToolRequests` so the run can pause on a pending approval
 # instead of erroring when the model proposes a `requires_approval=True` tool.
-agent = Agent('openai:gpt-5-mini', output_type=[str, DeferredToolRequests])
+agent = Agent(
+    'openai:gpt-5-mini',
+    output_type=[str, DeferredToolRequests],
+    capabilities=[Caching()],
+)
 
 
 @agent.tool_plain(requires_approval=True)

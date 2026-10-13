@@ -19,12 +19,12 @@ except ImportError as e:
     ) from e
 
 # Models with adjustable reasoning via `reasoning_effort` (opt-in, unlike always-on `magistral`):
-# the Mistral Small 4 and Medium 3.5 families. Older `mistral-small-*` / `mistral-medium-*`
+# the Mistral Large 4, Small 4, and Medium 3.5 families. Older `mistral-small-*` / `mistral-medium-*`
 # snapshots (e.g. `mistral-small-2506`, `mistral-medium-2505`) don't support reasoning and are
-# deliberately excluded; keep this set in sync with the Small/Medium family ids reporting
-# `capabilities.reasoning` on the Mistral `/v1/models` API. The alias ids (`-latest`,
-# `mistral-medium`, `mistral-medium-3`) resolve to a reasoning model on the public API; on
-# private deployments they may point to an older non-reasoning snapshot.
+# deliberately excluded, as is `mistral-large-latest` until Mistral repoints it; keep this set in
+# sync with the supported model ids reporting `capabilities.reasoning` on the Mistral `/v1/models`
+# API. The alias ids (`-latest`, `mistral-medium`, `mistral-medium-3`) resolve to a reasoning model
+# on the public API; on private deployments they may point to an older non-reasoning snapshot.
 # See https://docs.mistral.ai/capabilities/reasoning/.
 #
 # This lives on the provider, not the shared `mistral_model_profile`, because the set is validated
@@ -33,6 +33,8 @@ except ImportError as e:
 # values ('medium', 'low') these models reject, so they must keep ignoring `thinking`.
 _ADJUSTABLE_REASONING_MODELS = frozenset(
     {
+        'mistral-large-4',
+        'mistral-large-4-0',
         'mistral-small-latest',
         'mistral-small-2603',
         'mistral-medium-latest',

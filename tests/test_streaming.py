@@ -738,6 +738,7 @@ def test_sync_stream_bridge_rejects_iterator_resume_from_another_thread():
     assert cleanup_thread_id == owner_thread_id
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_defers_iterator_gc_from_another_thread(monkeypatch: pytest.MonkeyPatch):
     """Foreign-thread iterator GC queues cleanup without emitting an unraisable exception.
 
@@ -746,10 +747,6 @@ def test_sync_stream_bridge_defers_iterator_gc_from_another_thread(monkeypatch: 
     owner_thread_id = threading.get_ident()
     cleanup_thread_id: int | None = None
     unraisable: list[object] = []
-    # Flush any garbage a sibling test leaked into this xdist worker before arming the hook, so its
-    # finalizer warnings (e.g. an unclosed socket) run under the default hook instead of polluting
-    # our capture list and failing `assert not unraisable`.
-    gc.collect()
     monkeypatch.setattr(sys, 'unraisablehook', unraisable.append)
 
     @asynccontextmanager
@@ -788,6 +785,7 @@ def test_sync_stream_bridge_defers_iterator_gc_from_another_thread(monkeypatch: 
     bridge.shutdown()
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_closes_iterator_gc_after_shutdown(monkeypatch: pytest.MonkeyPatch):
     """Foreign-thread iterator GC closes its receive stream after wrapper shutdown.
 
@@ -798,10 +796,6 @@ def test_sync_stream_bridge_closes_iterator_gc_after_shutdown(monkeypatch: pytes
     asyncio.set_event_loop(loop)
     cleanup_thread_id: int | None = None
     unraisable: list[object] = []
-    # Flush any garbage a sibling test leaked into this xdist worker before arming the hook, so its
-    # finalizer warnings (e.g. an unclosed socket) run under the default hook instead of polluting
-    # our capture list and failing `assert not unraisable`.
-    gc.collect()
     monkeypatch.setattr(sys, 'unraisablehook', unraisable.append)
 
     @asynccontextmanager
@@ -1059,6 +1053,7 @@ def test_sync_stream_bridge_shutdown_accepts_prior_exit_request():
     assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_finalizes_while_owner_loop_is_running():
     """The non-context-manager fallback can request cleanup from its running owner loop.
 
@@ -1084,6 +1079,7 @@ def test_sync_stream_bridge_finalizes_while_owner_loop_is_running():
     assert owner_task.done()
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_finalizes_with_unclosed_iterator():
     """Dropping an active iterator releases its pump before the wrapper's GC cleanup runs.
 
@@ -1164,6 +1160,7 @@ def test_sync_stream_bridge_gc_request_retrieves_owner_exit_error():
     asyncio.run(run())
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_finalizes_while_another_loop_is_running():
     """The non-context-manager fallback requests cleanup if another event loop is active.
 
@@ -1191,6 +1188,7 @@ def test_sync_stream_bridge_finalizes_while_another_loop_is_running():
     assert owner_task.done()
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_finalizes_on_another_thread():
     """The GC fallback never moves the stopped caller-owned loop to the finalizer thread.
 
@@ -1272,6 +1270,7 @@ def test_run_stream_sync_keyboard_interrupt_closes_open_stream(monkeypatch: pyte
     assert stream_closed.wait(timeout=5)
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_run_stream_sync_keyboard_interrupt_mid_iteration_closes_receive_stream(monkeypatch: pytest.MonkeyPatch):
     """A Ctrl-C *while iterating* a sync stream closes its receive stream too, leaking nothing (#5975).
 
@@ -6530,35 +6529,39 @@ async def test_run_stream_cancel_guard_suppresses_transport_error():
     )
 
 
+@dataclass
+class _TransportErrorStream(models.StreamedResponse):
+    """Streams one text delta, then raises `error` as an unwrapped transport error would."""
+
+    error: Exception
+
+    async def _get_event_iterator(self) -> AsyncIterator[Any]:
+        for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='x'):
+            yield event
+        raise self.error
+
+    async def close_stream(self) -> None:
+        pass
+
+    @property
+    def model_name(self) -> str:
+        return 'httpx2'
+
+    @property
+    def provider_name(self) -> str:
+        return 'httpx2'
+
+    @property
+    def provider_url(self) -> str | None:
+        return None
+
+    @property
+    def timestamp(self) -> _datetime:
+        return _datetime.now(tz=datetime.UTC)
+
+
 async def test_stream_cancel_guard_suppresses_httpx2_transport_error():
-    @dataclass
-    class _HTTPX2Stream(models.StreamedResponse):
-        async def _get_event_iterator(self) -> AsyncIterator[Any]:
-            for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='x'):
-                yield event
-            assert self.cancelled
-            raise httpx2.StreamClosed()
-
-        async def close_stream(self) -> None:
-            pass
-
-        @property
-        def model_name(self) -> str:
-            return 'httpx2'
-
-        @property
-        def provider_name(self) -> str:
-            return 'httpx2'
-
-        @property
-        def provider_url(self) -> str | None:
-            return None
-
-        @property
-        def timestamp(self) -> _datetime:
-            return _datetime.now(tz=datetime.UTC)
-
-    stream = _HTTPX2Stream(models.ModelRequestParameters())
+    stream = _TransportErrorStream(models.ModelRequestParameters(), httpx2.StreamClosed())
     iterator = stream.__aiter__()
     await iterator.__anext__()
     await stream.cancel()
@@ -6566,6 +6569,14 @@ async def test_stream_cancel_guard_suppresses_httpx2_transport_error():
         pass
 
     assert stream.get().state == 'interrupted'
+
+
+async def test_stream_cancel_guard_reraises_transport_error_when_not_cancelled():
+    """A transport error the adapter didn't wrap still propagates when the stream wasn't cancelled."""
+    stream = _TransportErrorStream(models.ModelRequestParameters(), httpx2.ReadError('connection reset'))
+    with pytest.raises(httpx2.ReadError):
+        async for _ in stream:
+            pass
 
 
 async def test_run_stream_cancel_after_complete():
@@ -7201,6 +7212,7 @@ async def test_run_stream_events_first_iteration_starts_background_task():
         assert producer_started.is_set()
 
 
+@pytest.mark.usefixtures('young_gc')
 async def test_run_stream_events_break_on_final_result_retrieves_late_producer_error():
     """Breaking on the documented final-result event must still retrieve background task errors."""
     producer_finished = asyncio.Event()

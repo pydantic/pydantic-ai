@@ -142,8 +142,8 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 # `openai.OpenAIError`; raise our own `UserError` instead so the message is consistent with
                 # other providers and points newcomers to the keyless test model.
                 raise missing_api_key_error(
-                    'Set the `OPENAI_API_KEY` environment variable or pass it via `OpenAIProvider(api_key=...)`'
-                    ' to use the OpenAI provider.'
+                    'Set the `OPENAI_API_KEY` environment variable or pass it via '
+                    f'`{type(self).__name__}(api_key=...)` to use the OpenAI provider.'
                 )
             else:
                 # This is a workaround for the OpenAI client requiring an API key, whilst locally served,

@@ -655,7 +655,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     '`stream_text()`, `stream_response()` or `get_output()` first.'
                 )
             output, output_tool_name = self._stream_response._settled_output()  # pyright: ignore[reportPrivateUsage]
-            return AgentRunResult(
+            result = AgentRunResult(
                 output=output,
                 _output_tool_name=output_tool_name,
                 _state=GraphAgentState(
@@ -668,6 +668,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 _new_message_index=self._new_message_index,
                 _traceparent_value=self._traceparent_value,
             )
+            # As in AgentRun.result, this isn't a dataclass field because a live workspace can't be serialized.
+            result.__dict__['_workspace'] = self.workspace
+            return result
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
