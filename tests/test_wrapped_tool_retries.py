@@ -20,7 +20,14 @@ from pydantic_ai.capabilities import AbstractCapability, PrefixTools, Toolset
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset, PrefixedToolset, ToolsetTool
+from pydantic_ai.toolsets import (
+    AbstractToolset,
+    DynamicToolset,
+    FunctionToolset,
+    PrefixedToolset,
+    ToolsetTool,
+    WrapperToolset,
+)
 
 
 def calling(exposed: str) -> FunctionModel:
@@ -342,6 +349,32 @@ async def test_prepared_under_prefix_lists_another_toolset_with_its_own_counts()
     assert visible == [['h'], ['fb_backup'], ['fb_backup'], ['fb_backup']]
 
 
+async def test_custom_get_tools_under_prefix_lists_another_toolset_under_the_prefix():
+    """Documented limit: a custom toolset's own `get_tools` under a built-in wrapper receives the wrapper's layers.
+
+    Listing an unrelated toolset with that context hands the layers on, so `h` reads the count of
+    `fb_h` instead of its own, stays listed after it failed, and `backup` is never offered. A
+    `.prepared()` callback gets a context without the layers instead (see the test above).
+    """
+    helpers = helpers_toolset()
+    fallback = FunctionToolset[object]()
+
+    @fallback.tool_plain
+    def backup() -> str:
+        return 'backup ok'  # pragma: no cover
+
+    class OfferWhenHelpersAreDown(WrapperToolset[object]):
+        async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
+            tools = await super().get_tools(ctx)
+            return {} if 'h' in await helpers.get_tools(ctx) else tools
+
+    model, visible = scripted([['h'], ['fb_backup']])
+
+    await Agent(model, toolsets=[helpers, OfferWhenHelpersAreDown(fallback).prefixed('fb')]).run('Go.')
+
+    assert visible == [['h'], []]
+
+
 async def test_self_renaming_wrapped_tool_reads_count_of_tool_named_like_its_original():
     """Documented limit: `prepare` reads the count under the name the wrappers would give the tool's key.
 
@@ -376,14 +409,16 @@ async def test_self_renaming_wrapped_tool_reads_count_of_tool_named_like_its_ori
     )
 
 
-@pytest.mark.parametrize('position', ['inside_built_in', 'outside_built_in'])
-async def test_renaming_wrapper_that_pushes_no_layer_reads_count_of_tool_named_by_built_in_layers(position: str):
+@pytest.mark.parametrize('case', ['inside_built_in', 'outside_built_in', 'calls_super_inside_built_in'])
+async def test_renaming_wrapper_that_pushes_no_layer_reads_count_of_tool_named_by_built_in_layers(case: str):
     """Documented limit: only the built-in wrappers tell the leaf how they rename its tools.
 
-    A `PrefixedToolset` subclass whose `get_tools` doesn't call `super()` renames without pushing a
-    layer. Combined with a built-in `.prefixed()`, the tool is exposed as `o_i_fail`, but the leaf
-    only learns of the built-in prefix and reads the count of `o_fail` or `i_fail`: an unrelated
-    tool that keeps failing.
+    A user wrapper that renames tools outside the built-in wrappers, whether or not it calls
+    `super().get_tools()`, leaves the leaf reading the count of the name the built-in wrappers
+    alone would give: here `o_fail` or `i_fail`, an unrelated tool that keeps failing. A
+    `PrefixedToolset` subclass that skips `super()` exposes the tool as `o_i_fail` next to a
+    built-in `.prefixed()` on either side; a `WrapperToolset` that calls `super()` and then adds a
+    suffix exposes it as `o_fail_v2`.
     """
 
     class OwnPrefixed(PrefixedToolset[object]):
@@ -393,6 +428,13 @@ async def test_renaming_wrapper_that_pushes_no_layer_reads_count_of_tool_named_b
                     tool, toolset=self, tool_def=replace(tool.tool_def, name=f'{self.prefix}_{name}')
                 )
                 for name, tool in (await self.wrapped.get_tools(ctx)).items()
+            }
+
+    class Suffixed(WrapperToolset[object]):
+        async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
+            return {
+                f'{name}_v2': replace(tool, toolset=self, tool_def=replace(tool.tool_def, name=f'{name}_v2'))
+                for name, tool in (await super().get_tools(ctx)).items()
             }
 
     seen: list[int] = []
@@ -406,10 +448,12 @@ async def test_renaming_wrapper_that_pushes_no_layer_reads_count_of_tool_named_b
     async def fail(ctx: RunContext[object]) -> str:
         return 'inner ok'  # pragma: no cover
 
-    if position == 'inside_built_in':
-        wrapped, colliding = OwnPrefixed(inner, prefix='i').prefixed('o'), 'o_fail'
+    if case == 'inside_built_in':
+        wrapped, exposed, colliding = OwnPrefixed(inner, prefix='i').prefixed('o'), 'o_i_fail', 'o_fail'
+    elif case == 'outside_built_in':
+        wrapped, exposed, colliding = OwnPrefixed(inner.prefixed('i'), prefix='o'), 'o_i_fail', 'i_fail'
     else:
-        wrapped, colliding = OwnPrefixed(inner.prefixed('i'), prefix='o'), 'i_fail'
+        wrapped, exposed, colliding = Suffixed(inner).prefixed('o'), 'o_fail_v2', 'o_fail'
     outside = FunctionToolset[object]()
 
     @outside.tool(name=colliding, retries=5)
@@ -421,4 +465,4 @@ async def test_renaming_wrapper_that_pushes_no_layer_reads_count_of_tool_named_b
     await Agent(model, toolsets=[outside, wrapped]).run('Call the outside tool.')
 
     assert seen == [0, 1, 2]
-    assert visible == [sorted([colliding, 'o_i_fail']), [colliding], [colliding]]
+    assert visible == [sorted([colliding, exposed]), [colliding], [colliding]]

@@ -465,8 +465,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     `without_tool_name_path`): a tool's `prepare`, `.prepared()` and `.filtered()` callbacks,
     `DynamicToolset` factories, durable tool validators and bodies, and a dynamic toolset's
     instructions during durable discovery. That keeps a context handed to an unrelated toolset from
-    attributing its counts to the wrong names; a custom toolset's own `get_tools` under a wrapper
-    still receives it. Excluded from equality because it is listing bookkeeping, not run state.
+    attributing its counts to the wrong names. A custom toolset's own `get_tools` under a wrapper
+    still receives it, so an unrelated toolset it lists with that context reads its tools' counts
+    under the wrapper's names. Excluded from equality because it is listing bookkeeping, not run
+    state.
     """
 
     @property
