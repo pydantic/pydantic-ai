@@ -2021,7 +2021,13 @@ def test_litellm_mistral_small_latest():
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_fireworks_llama():
     profile = FireworksProvider.model_profile('accounts/fireworks/models/llama-v3p3-70b-instruct')
-    assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+        }
+    )
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
