@@ -78,8 +78,8 @@ A URL or question that returns no content, a rate limit, or a transient API or
 network failure surfaces to the model as a
 [`ModelRetry`](../tools-advanced.md#tool-retries) rather than a
 hard error: the run continues and the model can correct the URL, rephrase, or
-try again. Authentication failures (401/403) are configuration errors and
-propagate.
+try again. Authentication failures (401/403) and payment-required errors (402)
+are configuration or account errors and propagate.
 
 ## Deep search
 
