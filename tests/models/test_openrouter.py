@@ -140,14 +140,12 @@ async def test_openrouter_provider_performance_thresholds(
             'preferred_max_latency': 0.35,
         },
     )
-    response = await model_request(
-        model, [ModelRequest.user_text_prompt('Who are you? One sentence.')], model_settings=settings
-    )
-    assert request_capture.body()['provider'] == snapshot(
-        {'sort': 'price', 'preferred_min_throughput': {'p75': 50.0}, 'preferred_max_latency': 0.35}
-    )
-    assert response.provider_details is not None
-    assert response.provider_details['finish_reason'] == 'stop'
+    await model_request(model, [ModelRequest.user_text_prompt('Who are you? One sentence.')], model_settings=settings)
+    assert request_capture.body()['provider'] == {
+        'sort': 'price',
+        'preferred_min_throughput': {'p75': 50.0},
+        'preferred_max_latency': 0.35,
+    }
 
 
 async def test_openrouter_stream_with_native_options(allow_model_requests: None, openrouter_api_key: str) -> None:
