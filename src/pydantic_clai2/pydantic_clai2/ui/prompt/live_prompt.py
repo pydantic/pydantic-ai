@@ -13,7 +13,7 @@ import anyio
 from PIL import Image
 from prompt_toolkit.application.current import get_app_session
 from prompt_toolkit.history import History
-from rich.console import Console
+from rich.console import Console, ConsoleDimensions
 from termflow.ansi.utils import visible_length
 from termflow.tui.completion import CompleteEvent, Completion, Document
 from termflow.tui.layout import truncate
@@ -134,6 +134,7 @@ class LivePrompt:
         self._panel_shown = False
         self._animated_at = -math.inf
         self._painted_at = -math.inf
+        self._painted_size: ConsoleDimensions | None = None
 
     @property
     def queued_messages(self) -> tuple[str, ...]:
@@ -589,6 +590,7 @@ class LivePrompt:
         if self._opened and not self._suspended:
             self.output.paint(self.frame())
             self._painted_at = self.clock()
+            self._painted_size = self.console.size
 
     def tick(self) -> float:
         """Repaint for status changes when due, returning the seconds until the next tick.
@@ -600,7 +602,12 @@ class LivePrompt:
         now = self.clock()
         if self.interrupts.active or self._panel_shown:
             self._animated_at = now
-        if not self._suspended and (now - self._animated_at < IDLE_REPAINT or now - self._painted_at >= IDLE_REPAINT):
+        if not self._suspended and (
+            now - self._animated_at < IDLE_REPAINT
+            or now - self._painted_at >= IDLE_REPAINT
+            # Hosts without SIGWINCH find a resize only here.
+            or self.console.size != self._painted_size
+        ):
             self.paint()
         else:
             # Output written too soon after the last frame waits for this, idle or not.

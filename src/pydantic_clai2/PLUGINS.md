@@ -2558,10 +2558,11 @@ class Where(Plugin):
 
 The row is repainted about ten times a second while CLAI works and once a second
 while the editor sits idle, so `fn` runs that often: keep it cheap, synchronous,
-and free of blocking IO. Return `''` to contribute nothing for a frame. Fragments are truncated from the right on a narrow terminal and are
-readable text only; the colours in the row belong to CLAI. A fragment that raises
-shows its error name in the row instead, so one broken plugin cannot take the
-footer down.
+and free of blocking IO. Return `''` to contribute nothing for a frame.
+Fragments are truncated from the right on a narrow terminal and are readable
+text only; the colours in the row belong to CLAI. A fragment that raises shows
+its error name in the row instead, so one broken plugin cannot take the footer
+down.
 
 ### Offer a spinner: `get_spinners()`
 

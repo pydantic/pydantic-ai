@@ -491,9 +491,9 @@ The fragment is appended after the built-in figures and painted muted. The row
 repaints about ten times a second while CLAI works and once a second while idle,
 so it runs that often: no blocking IO, no awaits, no printing. Return an empty
 string to contribute nothing that frame. Fragments are truncated from the right
-on narrow terminals and cannot set their
-own colours. get_status_segments adds to the row; replacing the row, prompt
-editor, splash, or adding custom palettes is still a CLAI source change.
+on narrow terminals and cannot set their own colours. get_status_segments adds
+to the row; replacing the row, prompt editor, splash, or adding custom palettes
+is still a CLAI source change.
 
 Offer a working animation with get_spinners; the user selects it with /spinner:
 

@@ -863,6 +863,8 @@ async def test_an_idle_editor_rebuilds_its_frame_once_a_second_not_ten_times(mon
         live.feed('x')
         assert clock.built[-1] == 3.0, 'a key paints at once'
         assert clock.run(live, until=5) == [4.0, 5.0], 'and the idle count restarts from it'
+        live.console.size = (60, 20)
+        assert clock.run(live, until=5.25) == [5.25], 'a resize without SIGWINCH paints on the next tick'
         async with live.suspended():
             assert clock.run(live, until=7) == [], 'a menu owns the screen'
 
