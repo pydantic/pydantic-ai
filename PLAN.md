@@ -1,6 +1,6 @@
 # Plan: Batch API support for durable agent runs
 
-Tracking issue: [#1771](https://github.com/pydantic/pydantic-ai/issues/1771). This PR only adds this plan so you can review it inline. It does not close the issue. Provider coverage determines when the tracking issue can be closed.
+Tracking issue: [#1771](https://github.com/pydantic/pydantic-ai/issues/1771). This PR only adds this plan so you can review it inline. It does not close the issue. Anthropic and OpenAI coverage determines when the tracking issue can be closed.
 
 ## Goal
 
@@ -38,7 +38,7 @@ Attach the existing Temporal durability integration and register its worker hand
 
 ```mermaid
 flowchart LR
-  A[agent.run model turn] -->|durably enqueue request ID| M[Batch manager]
+  A[agent.run model turn] -->|durably enqueue request and ID| M[Batch manager]
   A -->|checkpoint and wait| D[Durable engine]
   M -->|automatic submission| P[Provider batch API]
   P -->|results keyed by request ID| M
@@ -51,18 +51,18 @@ The manager owns aggregation and provider jobs. The durable engine owns continua
 
 ## Durable binding
 
-Batch support is an **optional** binding next to the existing `DurableOperationBackend` in [`durable_exec/_operation_backend.py`](pydantic_ai_slim/pydantic_ai/durable_exec/_operation_backend.py). Engines that don't support it add no new abstract methods. The capability selects the default from the active durability integration ([`durable_exec/_base.py`](pydantic_ai_slim/pydantic_ai/durable_exec/_base.py)). If there is no supported context, the run fails before anything is enqueued.
+Batch support is an **optional** binding next to the existing `DurableOperationBackend` in [`durable_exec/_operation_backend.py`](pydantic_ai_slim/pydantic_ai/durable_exec/_operation_backend.py). Engines that don't support it add no new abstract methods. The durability capability selects the binding from the active integration ([`durable_exec/_base.py`](pydantic_ai_slim/pydantic_ai/durable_exec/_base.py)). It detects `BatchModel` in the registered model chain and routes workflow-side `request_segment` through enqueue/wait instead of the ordinary model activity. Direct `BatchModel.request` calls outside this route raise `UserError` before enqueue. Bind operations and register the manager only for batch-enabled agents; pin unchanged registrations for ordinary agents.
 
 Proposed shape (method names and module are a maintainer decision):
 
 - `enqueue(request, item_id) -> ticket`
-- `wait(ticket) -> outcome`, normalized as success, error, expired or cancelled
+- `wait(ticket) -> outcome`, normalized as success, error, expired or cancelled. A keyed notification wakes the workflow; a durable timer re-reads the outcome if notification is lost.
 - `cancel(item_id)`, including an item whose enqueue acknowledgement has not arrived
 - Engine-owned manager registrations. Extend worker setup to include manager workflows and activities; keep the existing activity registration contract intact.
 
 ## Agent loop integration
 
-`wrap_model_request` spans the logical model turn; `after_model_request` sees its final response. The durable binding checkpoints the request and ticket, waits in workflow code, and returns the decoded response through the existing agent loop. Short activities enqueue, submit, poll and collect; none waits for the full provider job.
+`wrap_model_request` spans the logical model turn; `after_model_request` sees its final response. The durable binding checkpoints the request and ticket, waits in workflow code, and returns the decoded response through the existing agent loop. The agent workflow enqueues and waits, with short activities for enqueue, cancellation and outcome retrieval. The manager submits and polls provider jobs. No activity waits for the full job.
 
 - Capture messages, model settings, tool definitions and output schema at the model-call boundary. Recovery uses the captured request, not recomputed inputs.
 - Use a stable ID per model request/attempt, not only a run ID. One tool-using run can require several batch rounds.
@@ -76,14 +76,14 @@ The deferred-tools analogy is useful internally: persist pending work and inject
 - The flush timer starts when the oldest item is **durably** accepted. New arrivals don't reset it.
 - Submit at `max_requests`, the oldest item's `max_wait` deadline, or provider byte/request limits, whichever comes first.
 - Propose defaults of 100 requests and 30 seconds. Reject non-positive values. Provider limits cap the configured size; queue age excludes provider processing time.
-- Groups are stable. The key is the registered agent and model identity, plus everything that has to match within one batch: model, endpoint, provider options, beta flags, headers, credential reference and tenant.
+- Groups are stable and isolated by registered agent/model identity to keep settings and deployment ownership explicit. The adapter adds required compatibility fields: endpoint, provider options, headers/betas, credential reference and tenant; model equality is provider-dependent. Cross-agent aggregation is outside the initial scope.
 - A policy change is rejected or explicitly versioned. Groups are never split silently.
 - If two workers are deployed with conflicting settings for the same group, that is detected and raised as an error.
 - Item IDs stay the same across activity retries and worker restarts. A new model attempt gets a new ID.
 
 ## Manager ownership and storage
 
-The first manager may be an engine-native Temporal workflow. Conceptually it stays separate from the agent workflow. The worker integration registers it automatically, and the docs spell out the deployment setup it needs.
+The first manager may be an engine-native Temporal workflow. Conceptually it stays separate from the agent workflow. Worker setup registers it; enqueue starts it automatically with update-with-start on a stable group-derived workflow ID. The binding installs a request-keyed signal handler on the agent workflow. The docs spell out deployment setup.
 
 - A request and its validated group policy are persisted before enqueue is acknowledged. Duplicate IDs are idempotent. Bound the queue and use recoverable backpressure when capacity is exhausted.
 - Provider handles and outcomes are recoverable and keyed. Outcomes can arrive in any order.
@@ -160,6 +160,7 @@ When the feature ships, update the provider docs, [the durable backends guide](d
 ## Decisions for maintainers
 
 - Module and API shape: where `BatchModel`, `BatchSettings` and the binding live, and the exact method names.
+- Durable-only scope versus the in-process `BatchModel` suggested in [#1771](https://github.com/pydantic/pydantic-ai/issues/1771): this proposal requires restart recovery for long provider jobs.
 - Manager ownership: core or engine.
 - Large-payload strategy.
 - Pricing source: `genai-prices` or adapter cost.
