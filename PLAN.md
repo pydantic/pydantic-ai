@@ -76,7 +76,7 @@ The deferred-tools analogy is useful internally: persist pending work and inject
 - The flush timer starts when the oldest item is **durably** accepted. New arrivals don't reset it.
 - Submit at `max_requests`, the oldest item's `max_wait` deadline, or provider byte/request limits, whichever comes first.
 - Propose defaults of 100 requests and 30 seconds. Reject non-positive values. Provider limits cap the configured size; queue age excludes provider processing time.
-- Groups are stable and isolated by registered agent/model identity to keep settings and deployment ownership explicit. The adapter adds required compatibility fields: endpoint, provider options, headers/betas, credential reference and tenant; model equality is provider-dependent. Cross-agent aggregation is outside the initial scope.
+- Groups are stable and isolated by registered agent and durable model name to keep settings and deployment ownership explicit. The adapter adds required compatibility fields: endpoint, provider options, headers/betas, credential reference and tenant, plus provider model equality where required. Cross-agent aggregation is outside the initial scope.
 - A policy change is rejected or explicitly versioned. Groups are never split silently.
 - If two workers are deployed with conflicting settings for the same group, that is detected and raised as an error.
 - Item IDs stay the same across activity retries and worker restarts. A new model attempt gets a new ID.
