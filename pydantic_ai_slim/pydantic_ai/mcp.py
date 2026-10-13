@@ -1993,7 +1993,7 @@ def _visible_to(tool: mcp_types.Tool, audience: Literal['model', 'app']) -> bool
 
 
 def _call_tool_result_to_wire(result: CallToolResult) -> dict[str, Any]:
-    """Rebuild the MCP wire form of a successful `CallToolResult`, which MCP Apps hand to the app as is."""
+    """Rebuild the MCP wire form of a `CallToolResult`, which MCP Apps hand to the app as is."""
     wire: dict[str, Any] = {
         'content': [block.model_dump(mode='json', by_alias=True, exclude_none=True) for block in result.content]
     }
@@ -2001,6 +2001,7 @@ def _call_tool_result_to_wire(result: CallToolResult) -> dict[str, Any]:
         wire['structuredContent'] = result.structured_content
     if result.meta is not None:
         wire['_meta'] = result.meta
+    wire['isError'] = result.is_error
     return wire
 
 

@@ -860,6 +860,7 @@ class TestMCPToolsetIntegration:
                             'content': [{'type': 'text', 'text': 'a: 14C'}],
                             'structuredContent': {'city': 'a', 'temp_c': 14},
                             '_meta': {'selectedDay': 'tuesday', **self._APPS_SERVER_INFO},
+                            'isError': False,
                         },
                         'toolset_id': 'weather',
                     }
@@ -874,6 +875,7 @@ class TestMCPToolsetIntegration:
                         'result': {
                             'content': [{'type': 'text', 'text': 'a: 14C'}],
                             **({'_meta': self._APPS_SERVER_INFO} if self._APPS_SERVER_INFO else {}),
+                            'isError': False,
                         },
                         'toolset_id': 'weather',
                     }
@@ -895,6 +897,7 @@ class TestMCPToolsetIntegration:
                         'content': [{'type': 'text', 'text': 'a: 14C'}],
                         'structuredContent': {'city': 'a', 'temp_c': 14},
                         '_meta': {'selectedDay': 'tuesday', **_APPS_SERVER_INFO},
+                        'isError': False,
                     },
                     'toolset_id': None,
                 },
