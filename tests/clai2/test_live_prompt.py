@@ -39,6 +39,7 @@ from tests.clai2.surface_terminal import SurfaceTerminal
 async def editor(
     *,
     output: io.StringIO | None = None,
+    toolbar: Callable[[], list[tuple[str, str]]] = lambda: [('', 'ready')],
     clock: Callable[[], float] = lambda: 0,
     panel: Callable[[str], Sequence[str]] = lambda _: (),
 ) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
@@ -53,7 +54,7 @@ async def editor(
             history=InMemoryHistory(),
             images=ImageInput(),
             interrupts=Interrupts(),
-            toolbar=lambda: [('', 'ready')],
+            toolbar=toolbar,
             clock=clock,
             panel=panel,
         )
@@ -884,3 +885,27 @@ async def test_a_panel_too_small_to_show_stops_animating(monkeypatch: pytest.Mon
         clock.watch(live, monkeypatch)
         live.console.size = (5, 5)
         assert clock.run(live, until=3) == [0.25, 0.5, 0.75, 1.0, 2.0, 3.0]
+
+
+async def test_idle_output_too_soon_after_a_frame_paints_on_the_next_tick() -> None:
+    clock = FrameClock()
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal, clock=clock) as (live, _, _):
+        live.output.clock = clock
+        live.feed('x')
+        live.console.print('Input cleared.')
+        assert 'Input cleared.' not in terminal.lines(), 'within a frame of the key'
+        clock.now += 0.1
+        live.tick()
+        assert 'Input cleared.' in terminal.lines()
+
+
+async def test_reading_shows_the_status_the_shell_set_before_it() -> None:
+    model = ['old-model']
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal, toolbar=lambda: [('', model[0])]) as (live, _, _):
+        model[0] = 'new-model'
+        live.wake()
+        with pytest.raises(PromptWakeup):
+            await live.read()
+        assert terminal.lines()[-1].strip() == 'new-model'

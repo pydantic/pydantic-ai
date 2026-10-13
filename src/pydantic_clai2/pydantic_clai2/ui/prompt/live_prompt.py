@@ -163,7 +163,8 @@ class LivePrompt:
             self._submitted.clear()
 
     async def read(self) -> str:
-        """Consume queued submissions in order."""
+        """Consume queued submissions in order, first showing the status the shell set up for this read."""
+        self.paint()
         await self._submitted.wait()
         if not self._submissions:
             self._wake_pending = False
@@ -599,10 +600,11 @@ class LivePrompt:
         now = self.clock()
         if self.interrupts.active or self._panel_shown:
             self._animated_at = now
-        if self._suspended:
-            self.output.refresh()
-        elif now - self._animated_at < IDLE_REPAINT or now - self._painted_at >= IDLE_REPAINT:
+        if not self._suspended and (now - self._animated_at < IDLE_REPAINT or now - self._painted_at >= IDLE_REPAINT):
             self.paint()
+        else:
+            # Output written too soon after the last frame waits for this, idle or not.
+            self.output.refresh()
         return min(0.1, self.spinner().interval) if self.interrupts.active else 0.1
 
     @asynccontextmanager
