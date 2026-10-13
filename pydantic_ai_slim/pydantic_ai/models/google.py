@@ -1533,6 +1533,11 @@ class GeminiStreamedResponse(StreamedResponse):
         # `response_id`. The first text or thinking of a new request starts a new part, as in the unary response, which
         # the SDK merges from each request's parts.
         new_request_vendor_part_id: UUID | None = None
+        # A continuation token checkpoints the output up to and including its chunk. When a stream drops after a
+        # checkpoint, google-genai resumes from that token without retracting the chunks it already yielded after it,
+        # so the resumed request would repeat them. Live Argon streams carry a token on every chunk from the first
+        # checkpoint on (2026-10-12), so this hasn't been seen.
+        uncheckpointed_output = False
         try:
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name, errors.UnknownApiResponseError):
                 self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage)
@@ -1588,8 +1593,18 @@ class GeminiStreamedResponse(StreamedResponse):
 
                 if chunk.response_id:  # pragma: no branch
                     if self.provider_response_id not in (None, chunk.response_id):
+                        if uncheckpointed_output:
+                            raise ModelAPIError(
+                                self._model_name,
+                                'The stream was interrupted after output that no continuation token covers, '
+                                'and google-genai resumed it, which would repeat that output.',
+                            )
                         new_request_vendor_part_id = uuid4()
                     self.provider_response_id = chunk.response_id
+                if candidate.continuation_token:
+                    uncheckpointed_output = False
+                elif candidate.content and candidate.content.parts:
+                    uncheckpointed_output = True
 
                 raw_finish_reason = candidate.finish_reason
                 if raw_finish_reason and not self._has_content_filter:

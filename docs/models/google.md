@@ -149,8 +149,8 @@ agent = Agent(model)
 ```
 
 The client the Google providers create, including through the [Gateway](../gateway.md), has a 20-minute timeout, which
-[long decode](#long-decode) needs. A client you pass keeps its own timeout, so give it at least that much for
-long-decode models.
+[long decode](#long-decode) needs. For a client you pass, google-genai applies the client's read timeout to every phase
+of each request, so give it a read timeout of at least 20 minutes for long-decode models.
 
 The Google providers also accept a legacy `httpx.AsyncClient` during Pydantic AI v2, but emit a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.
 
@@ -495,6 +495,8 @@ decode is one model request:
   already billed. A streamed run keeps what it streamed as a response with
   [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] that carries the finished requests' usage, which
   [`capture_run_messages()`][pydantic_ai.capture_run_messages] returns.
+- The SDK resumes a dropped stream from its last continuation token. If output was streamed after that token, the
+  model request fails as above instead, since the resumed request would repeat that output.
 - On [Temporal](../durable_execution/temporal.md#activity-configuration), the whole long decode runs in one model
   request activity, so its `start_to_close_timeout` must cover every request. A retried activity starts the response
   over. The merged response is the activity's one result, so a very long output can exceed Temporal's

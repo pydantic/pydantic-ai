@@ -13,6 +13,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -20,7 +21,7 @@ import httpx2
 import pytest
 
 from pydantic_ai import Agent, capture_run_messages
-from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
     FinalResultEvent,
     ModelRequest,
@@ -526,3 +527,76 @@ async def test_failed_continuation_request_raises(stream: bool, allow_model_requ
         )
     else:
         assert messages[1:] == []
+
+
+class _DroppedStream(httpx2.AsyncByteStream):
+    """A streamed response that sends `chunks` and then loses its connection."""
+
+    def __init__(self, *chunks: dict[str, object]):
+        self._chunks = chunks
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self._chunks:
+            yield f'data: {json.dumps(chunk)}\r\n\r\n'.encode()
+        raise httpx2.ReadError('Connection lost.')
+
+
+def _dropped_after(*chunks: dict[str, object]) -> list[httpx2.Response]:
+    """A stream that drops after `chunks`, and the request google-genai resumes it with."""
+    resumed = _sse(
+        _chunk({'text': '2\n3\n'}, response_id='request-2', usage=_usage(None, 4)),
+        _chunk({'text': ''}, response_id='request-2', usage=_usage(12, 4), finish_reason='STOP'),
+    )
+    return [
+        httpx2.Response(200, headers={'content-type': 'text/event-stream'}, stream=_DroppedStream(*chunks)),
+        resumed,
+    ]
+
+
+_CHECKPOINT = _chunk({'text': '1\n'}, response_id='request-1', usage=_usage(None, 2), continuation_token=b'checkpoint')
+
+
+async def test_stream_drop_resumes_from_the_last_checkpoint(allow_model_requests: None):
+    """google-genai resumes a stream that drops right after a continuation token from that token.
+
+    Live Argon streams carry a token on every chunk from the first checkpoint on, so this is how they resume.
+    """
+    requests: list[dict[str, object]] = []
+    agent = Agent(_model(_dropped_after(_CHECKPOINT), requests), model_settings={'max_tokens': 100_000})
+
+    output, _ = await _run(agent, stream=True)
+
+    assert output == '1\n2\n3\n'
+    first, second = requests
+    assert second.pop('continuationToken') == _b64(b'checkpoint')
+    assert second == first
+
+
+async def test_stream_drop_that_would_repeat_output_raises(allow_model_requests: None):
+    """A stream that drops after output no continuation token covers fails instead of resuming.
+
+    google-genai resumes it from the last token, and the resumed request repeats what was streamed after it. The run
+    keeps what was streamed as an interrupted response, whose usage counts the resumed request's first chunk.
+    """
+    uncheckpointed = _chunk({'text': '2\n'}, response_id='request-1', usage=_usage(None, 4))
+    agent = Agent(_model(_dropped_after(_CHECKPOINT, uncheckpointed), []), model_settings={'max_tokens': 100_000})
+
+    with capture_run_messages() as messages, pytest.raises(ModelAPIError, match='would repeat that output'):
+        await _run(agent, stream=True)
+
+    assert messages[1:] == snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='1\n2\n')],
+                usage=RequestUsage(output_tokens=8),
+                model_name='gemini-4-argon',
+                timestamp=IsDatetime(),
+                provider_name='google',
+                provider_url='https://generativelanguage.googleapis.com/',
+                provider_response_id='request-1',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            )
+        ]
+    )
