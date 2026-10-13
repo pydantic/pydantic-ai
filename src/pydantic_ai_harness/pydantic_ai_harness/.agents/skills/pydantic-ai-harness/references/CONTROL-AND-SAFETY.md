@@ -316,6 +316,10 @@ Gotchas:
 
 - It only approves. It never denies or runs a call, and calls that do not need approval are not
   reviewed. Add `ToolCallJudge` to block calls; the judge still runs on a call the reviewer approved.
+- A decision model such as `'typesafe:jev-latest'` works as the reviewer model, and its confidence lands
+  on `ApprovalReview.confidence`. A `no` still approves however unsure it was: to send unsure reviews to a
+  language model, pass `FallbackModel('typesafe:jev-latest', <language model>, fallback_on=[ModelAPIError,
+  unsure])`, where `unsure(response)` checks `response.provider_details['confidence']` against a bar.
 - It is implemented with the `handle_deferred_tool_calls` hook and ordered before
   `HandleDeferredToolCalls`, so a human handler only receives what the reviewer left. Without a
   handler, the rest surface as `DeferredToolRequests` output.

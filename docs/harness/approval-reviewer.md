@@ -166,6 +166,43 @@ agent = Agent(
 )
 ```
 
+## Using a decision model
+
+Whether a call is risky is a classification, which is what a [decision model](../models/decision.md) such as [TypeSafe's Jev](../models/typesafe.md) answers, cheaper and faster than a language model. Pass one as the reviewer's model and nothing else changes: the review is one pick-one question over `yes`, `no`, and `unsure`, worded by your `question` and the reviewer instructions, about the `<tool_call>` block. The decision model's confidence in its answer is recorded on `ApprovalReview.confidence` and the `approval_reviewer.confidence` span attribute.
+
+For the models in the example below, install their provider extras and set API keys:
+
+```bash
+pip/uv-add pydantic-ai-harness "pydantic-ai-slim[anthropic,typesafe]"
+```
+
+```bash
+export TYPESAFE_API_KEY='your-typesafe-api-key'
+export ANTHROPIC_API_KEY='your-anthropic-api-key'
+```
+
+A `no` approves the call however unsure the model was of it. To have a language model decide the reviews the decision model was unsure of, put the decision model in front of one in a [`FallbackModel`](../models/overview.md#fallback-model) that [falls back on low confidence](../models/decision.md#falling-back-on-low-confidence):
+
+```python {names="defined"}
+from pydantic_ai import ModelAPIError, ModelResponse
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
+
+
+def unsure(response: ModelResponse) -> bool:
+    confidence = (response.provider_details or {}).get('confidence', {})
+    return any(value < 0.8 for value in confidence.values())
+
+
+reviewer = ApprovalReviewer(
+    FallbackModel('typesafe:jev-latest', 'anthropic:claude-haiku-5-5', fallback_on=[ModelAPIError, unsure]),
+    tools=['run_shell'],
+    question='Could this command delete or overwrite data, reach the network, or expose secrets?',
+)
+```
+
+The handler runs on every model in the chain, and a language model reports no `confidence`, so Haiku's answer stands. Tune the bar on labelled calls of your own, as in [tuning a threshold on your own data](../models/decision.md#tuning-a-threshold-on-your-own-data), and once you have, pin the Jev version you tuned it against (`typesafe:jev-1.13.0`) rather than `jev-latest`. Jev treats the text it judges as data rather than as hostile, so arguments written to steer its answer can move it ([what Jev answers badly](../models/typesafe.md#what-jev-answers-badly)): keep the [safety boundary](#safety-boundary) in place, as with any reviewer.
+
 ## Composition
 
 Calls in one batch are reviewed one at a time, in the order the model made them, so a batch of approval requests adds one review per selected call to the run step's latency.

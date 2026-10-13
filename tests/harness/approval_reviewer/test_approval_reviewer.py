@@ -13,7 +13,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from pydantic_ai import Agent, AgentSpec, DeferredToolRequests
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelAPIError, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -23,6 +23,16 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.decision import (
+    ChoiceAnswer,
+    ChoiceQuestion,
+    DecisionAnswer,
+    DecisionModel,
+    DecisionModelSettings,
+    DecisionRequest,
+    DecisionResponse,
+)
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -71,6 +81,40 @@ def _reviewer_model(
         )
 
     return FunctionModel(respond)
+
+
+class _DecisionReviewer(DecisionModel[None]):
+    """A decision model that picks `answer` with `confidence`, recording each request it is sent."""
+
+    def __init__(self, answer: Answer, confidence: float) -> None:
+        super().__init__()
+        self.answer: Answer = answer
+        self.confidence = confidence
+        self.requests: list[DecisionRequest] = []
+
+    @property
+    def model_name(self) -> str:
+        return 'decision-reviewer'
+
+    @property
+    def system(self) -> str:
+        return 'test'
+
+    @property
+    def base_url(self) -> str:
+        return 'https://decisions.example.com'
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        self.requests.append(request)
+        answers: dict[str, DecisionAnswer] = {
+            name: ChoiceAnswer(
+                choice=self.answer,
+                confidence=self.confidence,
+                probabilities={option: float(option == self.answer) for option in ('yes', 'no', 'unsure')},
+            )
+            for name in request.questions
+        }
+        return DecisionResponse(answers=answers, model_name=self.model_name)
 
 
 def _error_model() -> FunctionModel:
@@ -340,6 +384,51 @@ class TestDecisions:
         assert prompts == ['<tool_call>\n{"tool_name": "danger", "arguments": {"x": 1}}\n</tool_call>']
         assert instructions[0].startswith('Could this cause harm?')
         assert 'untrusted' in instructions[0]
+
+
+class TestDecisionModel:
+    async def test_a_decision_model_answers_the_review_as_one_pick_with_its_confidence(
+        self, allow_model_requests: None
+    ) -> None:
+        ran: list[str] = []
+        reviews: list[ApprovalReview] = []
+        model = _DecisionReviewer('no', confidence=0.93)
+        reviewer = ApprovalReviewer[None](model, question='Could this cause harm?', on_review=reviews.append)
+        agent = _agent(reviewer, outer=_outer_model(_danger()), ran=ran)
+        result = await agent.run('go')
+        assert result.output == 'done'
+        assert ran == ['danger:1']
+        assert reviews == [
+            ApprovalReview(tool_name='danger', tool_call_id='call-1', decision='approve', answer='no', confidence=0.93)
+        ]
+        [request] = model.requests
+        assert request.state == '<tool_call>\n{"tool_name": "danger", "arguments": {"x": 1}}\n</tool_call>'
+        [question] = request.questions.values()
+        assert isinstance(question, ChoiceQuestion)
+        assert list(question.criteria) == ['yes', 'no', 'unsure']
+        assert isinstance(question.instructions, str)
+        assert question.instructions.startswith('Could this cause harm?\n\n')
+
+    async def test_a_fallback_on_low_confidence_hands_an_unsure_review_to_a_language_model(
+        self, allow_model_requests: None
+    ) -> None:
+        def unsure(response: ModelResponse) -> bool:
+            confidence = (response.provider_details or {}).get('confidence', {})
+            return any(value < 0.8 for value in confidence.values())
+
+        ran: list[str] = []
+        reviews: list[ApprovalReview] = []
+        model = FallbackModel(
+            _DecisionReviewer('no', confidence=0.4), _reviewer_model('yes'), fallback_on=[ModelAPIError, unsure]
+        )
+        reviewer = ApprovalReviewer[None](model, question='Could this cause harm?', on_review=reviews.append)
+        agent = _agent(reviewer, outer=_outer_model(_danger()), ran=ran)
+        result = await agent.run('go')
+        assert isinstance(result.output, DeferredToolRequests)
+        assert ran == []
+        assert reviews == [
+            ApprovalReview(tool_name='danger', tool_call_id='call-1', decision='ask', answer='yes', confidence=None)
+        ]
 
 
 class TestToolSelection:
