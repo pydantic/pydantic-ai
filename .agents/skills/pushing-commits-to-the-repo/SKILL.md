@@ -143,10 +143,11 @@ before handing the PR back or requesting merge:
 
 Run this final metadata check after CI, comments, and any selected `douwebot` review have settled:
 
-1. Dispatch a fresh subagent that has not worked on the PR.
+1. Dispatch a fresh subagent that has not worked on the PR. Run it on your harness's latest light model, or on the
+   session's model when the harness has only one. The check compares text against written rules.
 2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, title, body, labels, and complete catalog.
 3. Ask it to check only the title, body, and labels against this skill and the root `AGENTS.md`.
 4. Require either `current` or exact corrections: replacement title/body and label additions/removals.
-5. Apply every correction. Committed changes restart the post-push loop; GitHub metadata-only changes do not.
-6. After a replacement, repeat the check with another fresh subagent.
-7. Hand the PR back only after the check reports `current`.
+5. Verify each correction against the rule or source it cites. Apply only the corrections that hold.
+   Committed changes restart the post-push loop; GitHub metadata-only changes do not.
+6. Hand the PR back after you apply the verified corrections.
