@@ -3412,7 +3412,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 key.lower(): value for key, value in model_settings.get('extra_headers', {}).items()
             }
             request_headers.setdefault('user-agent', get_user_agent())
-            effective_headers = self._websocket.effective_headers(self.client, request_headers)
+            effective_headers = self._websocket.effective_headers(
+                self._websocket.auth_headers, self.client, request_headers
+            )
             if effective_headers != self._websocket.headers:
                 differing_headers = ', '.join(
                     f'`{name}`'

@@ -1365,3 +1365,23 @@ async def test_request_settings(
     assert sent['store'] is False
     assert sent['temperature'] == 0.3
     assert sent['metadata'] == {'test': 'websocket'}
+
+
+async def test_refreshed_shared_client_credentials_keep_open_connection_usable(
+    allow_model_requests: None, sockets: SocketHarness
+):
+    """A shared client's credential refresh for a new socket is not a request header change on an open one."""
+    token = 'old-token'
+
+    async def api_key() -> str:
+        return token
+
+    sockets.pending.append(ScriptedSocket())
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=AsyncOpenAI(api_key=api_key)))
+    async with source.connect() as first:
+        token = 'refreshed-token'
+        async with source.connect() as second:
+            assert (await Agent(second).run('hello')).output == 'ready'
+            assert (await Agent(first).run('hello')).output == 'ready'
+    assert sockets.authorization_headers == ['Bearer old-token', 'Bearer refreshed-token']
+    assert [len(socket.sent) for socket in sockets.opened] == [1, 1]
