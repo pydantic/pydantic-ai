@@ -30,7 +30,7 @@ from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
-from pydantic_ai.capabilities import Instrumentation, ProcessEventStream
+from pydantic_ai.capabilities import ProcessEventStream
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
@@ -51,7 +51,6 @@ from pydantic_ai.models import (
     ModelResolutionContext,
     infer_model,
 )
-from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
@@ -133,7 +132,14 @@ from ._toolset import (
     validate_dynamic_tool_args,
     wrap_tool_call_result,
 )
-from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, managed_model_scope, unwrap_model
+from ._utils import (
+    DurableModel,
+    StreamedActivityResult,
+    agent_instrumentation_settings,
+    capture_event_stream,
+    managed_model_scope,
+    unwrap_model,
+)
 from ._workspace import (
     WORKSPACE_OPERATION_ID,
     DurableWorkspace,
@@ -1037,7 +1043,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if open_request_policy() is not None:
             yield
             return
-        settings = self._instrumentation_settings()
+        assert self._agent is not None, 'a model unit only runs for a bound agent'
+        settings = agent_instrumentation_settings(self._agent)
         span = get_current_span()
         policy = (
             ContentPolicy(span, settings.include_content and ctx.trace_include_content, settings.tracer)
@@ -1046,19 +1053,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         )
         with request_policy_scope(policy):
             yield
-
-    def _instrumentation_settings(self) -> InstrumentationSettings | None:
-        """The instrumentation the bound agent's runs open `chat` with, as the run resolves it.
-
-        An `Instrumentation` capability on the agent wins, as it does in the run, over `Agent.instrument_all()` and
-        `agent.instrument`. What a single run adds, such as an `Instrumentation` passed to `run()`, isn't visible here.
-        """
-        agent = self._agent
-        assert agent is not None, 'a model unit only runs for a bound agent'
-        explicit = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Instrumentation)]
-        if explicit:
-            return explicit[-1].settings
-        return agent._resolve_instrumentation_settings() if isinstance(agent, Agent) else None  # pyright: ignore[reportPrivateUsage]
 
     def _build_resolve_tool_config(self, base_config: Any) -> Callable[[ToolsetTool[Any] | None, str], ToolConfig]:
         """Build the per-tool config resolver from declarative fields (metadata key + polarity)."""
