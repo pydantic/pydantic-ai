@@ -8,10 +8,10 @@ Public capability behavior remains covered by the integration test suite.
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
+from typing import Self
 
 import pytest
 from inline_snapshot import snapshot
-from typing_extensions import Self
 
 from pydantic_ai.capabilities._lifecycle import SKIP_LIFECYCLE_ENTRY, LifecycleStack, SkipLifecycleEntry
 from pydantic_ai.messages import ToolCallPart
