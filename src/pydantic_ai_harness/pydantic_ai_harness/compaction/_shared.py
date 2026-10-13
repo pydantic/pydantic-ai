@@ -227,7 +227,11 @@ def estimate_token_count(
         tokenizer: Optional callable that returns the token count for a string.
             When `None`, falls back to a ~4 characters-per-token heuristic.
     """
-    segments = _collect_text(messages)
+    return _count_segment_tokens(_collect_text(messages), tokenizer)
+
+
+def _count_segment_tokens(segments: list[str], tokenizer: Callable[[str], int] | None) -> int:
+    """Count *segments* with *tokenizer*, or the heuristic over their combined length."""
     if tokenizer is not None:
         return sum(tokenizer(s) for s in segments)
     return sum(len(s) for s in segments) // _CHARS_PER_TOKEN
@@ -670,7 +674,9 @@ def _include_tool_dependencies(messages: list[ModelMessage], cutoff: int) -> int
                     calls[part.tool_call_id] = index
         else:
             for part in message.parts:
-                if isinstance(part, ToolReturnPart) or isinstance(part, RetryPromptPart) and part.tool_name is not None:
+                if isinstance(part, ToolReturnPart) or (
+                    isinstance(part, RetryPromptPart) and part.tool_name is not None
+                ):
                     earliest = min(earliest, calls.get(part.tool_call_id, index))
         dependencies.append(earliest)
 
@@ -696,13 +702,7 @@ def find_token_cutoff(
         lo, hi = 0, len(messages)
         while lo < hi:
             mid = (lo + hi) // 2
-            segments = _collect_message_text(messages[mid:])
-            tokens = (
-                sum(tokenizer(text) for text in segments)
-                if tokenizer is not None
-                else sum(len(text) for text in segments) // _CHARS_PER_TOKEN
-            )
-            if tokens >= target_tokens:
+            if _count_segment_tokens(_collect_message_text(messages[mid:]), tokenizer) >= target_tokens:
                 lo = mid + 1
             else:
                 hi = mid
