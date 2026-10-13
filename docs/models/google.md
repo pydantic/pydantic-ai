@@ -506,8 +506,8 @@ decode is one model request:
 Without `max_tokens`, Google's default output limit applies, and a response that reaches it ends with
 `finish_reason='length'`.
 
-On [Google Cloud](google-cloud.md), `gemini-4-argon` is served on the `global` location and the `us` multi-region, not
-in single regions such as the default `us-central1`: pass one of those as the provider's
+On [Google Cloud](google-cloud.md), `gemini-4-argon` is served on the `global` location and the `us` and `eu`
+multi-regions, not in single regions such as the default `us-central1`: pass one of those as the provider's
 [`location`](google-cloud.md#customizing-location-or-project).
 
 ## Streaming cancellation
