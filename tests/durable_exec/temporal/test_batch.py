@@ -949,7 +949,6 @@ async def test_cancellation_during_provider_submission_cancels_the_created_job(
     handle = await client.start_workflow(
         DeadlineWorkflow.run, 'cancel-submit', id=f'cancel-submit-{uuid.uuid4()}', task_queue=TASK_QUEUE
     )
-    await temporal_env.sleep(timedelta(seconds=1))
     await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
     await handle.cancel()
     with pytest.raises(WorkflowFailureError):
@@ -967,9 +966,7 @@ async def test_cancellation_during_provider_submission_cancels_the_created_job(
         assert provider.canceled == provider.batch_ids('cancel-submit')
 
 
-async def test_failed_provider_cancellation_does_not_leave_a_run_waiting(
-    client: Client, temporal_env: WorkflowEnvironment
-) -> None:
+async def test_failed_provider_cancellation_does_not_leave_a_run_waiting(client: Client) -> None:
     provider.hold = True
     provider.group = 'cancel-failure'
     provider.cancel_failures = 3
@@ -977,7 +974,6 @@ async def test_failed_provider_cancellation_does_not_leave_a_run_waiting(
     handle = await client.start_workflow(
         DeadlineWorkflow.run, 'cancel-failure', id=f'cancel-failure-{uuid.uuid4()}', task_queue=TASK_QUEUE
     )
-    await temporal_env.sleep(timedelta(seconds=1))
     await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
 
     queue_id, _, params = next(update for update in faults.updates if update[1] == 'enqueue')
@@ -1031,7 +1027,6 @@ async def test_pending_collection_keeps_waiting(client: Client, temporal_env: Wo
     handle = await client.start_workflow(
         DeadlineWorkflow.run, 'still-pending', id=f'pending-{uuid.uuid4()}', task_queue=TASK_QUEUE
     )
-    await temporal_env.sleep(timedelta(seconds=1))
     await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
     await temporal_env.sleep(timedelta(seconds=2))
     provider.hold = False
@@ -1061,13 +1056,12 @@ async def test_external_cancellation_of_a_queued_item_is_reported(client: Client
     assert provider.batch_ids('external-cancel') == []
 
 
-async def test_missing_queue_record_is_reported(client: Client, temporal_env: WorkflowEnvironment) -> None:
+async def test_missing_queue_record_is_reported(client: Client) -> None:
     provider.group = 'missing-record'
     provider.hold = True
     handle = await client.start_workflow(
         DeadlineWorkflow.run, 'missing-record', id=f'missing-record-{uuid.uuid4()}', task_queue=TASK_QUEUE
     )
-    await temporal_env.sleep(timedelta(seconds=1))
     await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
     faults.missing_status = True
     with pytest.raises(WorkflowFailureError) as exc_info:
