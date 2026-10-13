@@ -37,17 +37,17 @@ class _OpenAIJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
 
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict)
-        self._has_non_top_level_local_ref = False
+        self._has_non_definition_ref = False
         self._normalized_single_item_tuple = False
 
     def walk(self) -> JsonSchema:
-        self._has_non_top_level_local_ref = False
+        self._has_non_definition_ref = False
         self._normalized_single_item_tuple = False
         result = super().walk()
-        if self._normalized_single_item_tuple and self._has_non_top_level_local_ref:
-            # This walk has no path context, so a non-top-level pointer might target a changed `items` or removed
-            # `prefixItems` node. Wait until the full walk to catch pointers before or after the array, then rerun
-            # the shared transformer on the original schema to preserve its reference behavior.
+        if self._normalized_single_item_tuple and self._has_non_definition_ref:
+            # This walk has no path context, so a non-definition ref might target a changed `items` or removed
+            # `prefixItems` node. Wait until the full walk to catch refs before or after the array, then rerun the
+            # shared transformer on the original schema to preserve its reference behavior.
             transformer = OpenAIJsonSchemaTransformer(self.schema, strict=self.strict)
             result = transformer.walk()
             self.is_strict_compatible = transformer.is_strict_compatible
@@ -69,14 +69,20 @@ class _OpenAIJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
         return super()._handle_array(schema)
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
-        if schema_ref := schema.get('$ref'):
-            if schema_ref != self.root_ref and isinstance(schema_ref, str) and schema_ref.startswith('#/'):
-                ref_parts = schema_ref.split('/')
-                is_top_level_definition_ref = (
-                    len(ref_parts) == 3 and ref_parts[1] in ('$defs', 'definitions') and bool(ref_parts[2])
-                )
-                if not is_top_level_definition_ref:
-                    self._has_non_top_level_local_ref = True
+        if '$dynamicRef' in schema:
+            self._has_non_definition_ref = True
+
+        schema_ref = schema.get('$ref')
+        if isinstance(schema_ref, str) and schema_ref not in ('#', self.root_ref):
+            ref_parts = schema_ref.split('/')
+            is_top_level_definition_ref = (
+                len(ref_parts) == 3
+                and ref_parts[0] == '#'
+                and ref_parts[1] in ('$defs', 'definitions')
+                and bool(ref_parts[2])
+            )
+            if not is_top_level_definition_ref:
+                self._has_non_definition_ref = True
 
         return super().transform(schema)
 

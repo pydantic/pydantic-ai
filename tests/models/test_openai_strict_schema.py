@@ -683,6 +683,63 @@ def test_openai_single_item_tuple_normalization_keeps_referenced_nodes(
         assert not transformer.is_strict_compatible
 
 
+@pytest.mark.parametrize(
+    ('anchor_keyword', 'reference_keyword', 'ref', 'root_id'),
+    [
+        pytest.param('$anchor', '$ref', '#tail', None, id='anchor-fragment'),
+        pytest.param(
+            '$anchor', '$ref', 'https://example.com/schema#tail', 'https://example.com/schema', id='anchor-absolute-uri'
+        ),
+        pytest.param('$dynamicAnchor', '$dynamicRef', '#tail', None, id='dynamic-anchor-fragment'),
+        pytest.param(
+            '$dynamicAnchor',
+            '$dynamicRef',
+            'https://example.com/schema#tail',
+            'https://example.com/schema',
+            id='dynamic-anchor-absolute-uri',
+        ),
+    ],
+)
+@pytest.mark.parametrize('field_order', ['ref-first', 'candidate-first'])
+@pytest.mark.parametrize('strict', [None, True], ids=['inferred', 'explicit-true'])
+def test_openai_single_item_tuple_normalization_preserves_anchor_references(
+    anchor_keyword: str, reference_keyword: str, ref: str, root_id: str | None, field_order: str, strict: bool | None
+):
+    """Static and dynamic anchor refs into an overwritten tail keep the conservative tuple behavior."""
+    profile = OpenAIProvider.model_profile('gpt-4o')
+    assert profile is not None
+    transformer_type = profile.get('json_schema_transformer')
+    assert transformer_type is not None
+
+    array_schema: dict[str, JsonValue] = {
+        'type': 'array',
+        'prefixItems': [{'type': 'integer'}],
+        'items': {'type': 'string', anchor_keyword: 'tail'},
+        'minItems': 1,
+        'maxItems': 1,
+    }
+    ref_schema: dict[str, JsonValue] = {reference_keyword: ref}
+    properties: dict[str, JsonValue] = (
+        {'alias': ref_schema, 'values': array_schema}
+        if field_order == 'ref-first'
+        else {'values': array_schema, 'alias': ref_schema}
+    )
+    schema: dict[str, JsonValue] = {'type': 'object', 'properties': properties, 'required': list(properties)}
+    if root_id is not None:
+        schema['$id'] = root_id
+    transformer = transformer_type(schema, strict=strict)
+
+    if strict is True:
+        with pytest.raises(UserError, match='cannot use this tuple schema with `prefixItems` in OpenAI strict mode'):
+            transformer.walk()
+    else:
+        result = transformer.walk()
+        assert result['properties']['values'] == array_schema
+        assert result['properties']['alias'] == ref_schema
+        assert result.get('$id') == root_id
+        assert not transformer.is_strict_compatible
+
+
 def test_openai_single_item_tuple_without_conversion_keeps_length_support_with_local_ref():
     """A non-candidate local ref does not disable the private length-constraint profile."""
     profile = OpenAIProvider.model_profile('gpt-4o')
