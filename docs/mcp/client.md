@@ -318,7 +318,9 @@ async def echo_deps(ctx: Context) -> dict[str, Any]:
     """
     await ctx.info('This is an info message')
 
-    deps: Any = getattr(ctx.request_context.meta, 'deps')
+    request_context = ctx.request_context
+    assert request_context is not None  # set while the server handles a request
+    deps: Any = getattr(request_context.meta, 'deps')
     return {'echo': 'This is an echo message', 'deps': deps}
 
 
@@ -388,15 +390,17 @@ Tools with an [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overvie
 
 FastMCP 4 uses the newer MCP [Tasks extension](https://tasks.extensions.modelcontextprotocol.io/seps/2663-tasks-extension) (SEP-2663), where the server directs task creation. The `task` metadata and `prefer_tasks` client preference above therefore apply to FastMCP 3, not FastMCP 4. An ordinary call drives a task-only tool to completion with nothing extra installed; explicitly selecting the tasks extension with `use_task=True` requires the separate `fastmcp-tasks` package, available via the `mcp-tasks` optional group: `pip install "pydantic-ai-slim[mcp-tasks]"`.
 
-For [FastMCP 3](https://gofastmcp.com/v3/servers/tasks) servers, install the tasks extra with
-`pip install "fastmcp[tasks]>=3,<4"` and declare task support per tool with
-`task=TaskConfig(mode=...)`:
+To declare task support per tool with `task=TaskConfig(mode=...)`, install fastmcp's tasks extra with
+`pip install "fastmcp[tasks]"`. `TaskConfig` lives in `fastmcp.utilities.tasks` from FastMCP 4 on, and in
+`fastmcp.server.tasks` on [FastMCP 3](https://gofastmcp.com/v3/servers/tasks):
 
 ```python {title="background_task_server.py" dunder_name="not_main"}
 from fastmcp import FastMCP
-from fastmcp.server.tasks import TaskConfig
+from fastmcp.utilities.tasks import TaskConfig
+from fastmcp_tasks import TasksExtension
 
 mcp = FastMCP('long_running_server')
+mcp.add_extension(TasksExtension())  # (1)!
 
 
 @mcp.tool(task=TaskConfig(mode='optional'))
@@ -409,6 +413,9 @@ async def deep_research(topic: str) -> str:
 if __name__ == '__main__':
     mcp.run(transport='streamable-http')
 ```
+
+1. FastMCP 4 refuses to start a server that declares task tools without the tasks extension registered. On
+   FastMCP 3, drop this line and the `fastmcp_tasks` import: that generation serves task-augmented tools itself.
 
 By default, [`MCPToolset`][pydantic_ai.mcp.MCPToolset] uses task-augmented execution when a tool supports it. A client that prefers normal calls for tools where task support is optional can set [`prefer_tasks=False`][pydantic_ai.mcp.MCPToolset.prefer_tasks]. This setting does not affect tools where task support is required:
 
@@ -737,7 +744,7 @@ class BookingDetails(BaseModel):
 async def book_table(ctx: Context) -> str:
     """Book a restaurant table with user input."""
     # Ask user for booking details using Pydantic schema
-    result = await ctx.elicit(message='Please provide your booking details:', schema=BookingDetails)
+    result = await ctx.elicit('Please provide your booking details:', response_type=BookingDetails)
 
     if result.action == 'accept' and result.data:
         booking = result.data
@@ -775,12 +782,12 @@ async def handle_elicitation(
     """Handle elicitation requests from MCP server."""
     print(f'\n{message}')
 
-    if not isinstance(params, ElicitRequestFormParams) or not params.requestedSchema:
+    if not isinstance(params, ElicitRequestFormParams) or not params.requested_schema:
         response = input('Response: ')
         return ElicitResult(action='accept', content={'response': response})
 
     # Collect data for each field
-    properties = params.requestedSchema['properties']
+    properties = params.requested_schema['properties']
     data: dict[str, Any] = {}
 
     for field, info in properties.items():

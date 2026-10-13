@@ -109,11 +109,10 @@ The simplest way to support sampling in an MCP client is to [use](./client.md#mc
 
 ```py {title="mcp_client_sampling.py" requires="mcp_server_sampling.py"}
 import asyncio
-from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
+from mcp.client.session import ClientRequestContext
 from mcp.client.stdio import stdio_client
-from mcp.shared.context import RequestContext
 from mcp.types import (
     CreateMessageRequestParams,
     CreateMessageResult,
@@ -123,9 +122,9 @@ from mcp.types import (
 
 
 async def sampling_callback(
-    context: RequestContext[ClientSession, Any], params: CreateMessageRequestParams
+    context: ClientRequestContext, params: CreateMessageRequestParams
 ) -> CreateMessageResult | ErrorData:
-    print('sampling system prompt:', params.systemPrompt)
+    print('sampling system prompt:', params.system_prompt)
     #> sampling system prompt: always reply in rhyme
     print('sampling messages:', params.messages)
     """

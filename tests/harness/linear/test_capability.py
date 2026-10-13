@@ -5,11 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar
 
-import httpx
+import httpx2
 import pytest
 from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
-from mcp.types import ToolAnnotations
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -21,18 +20,18 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.linear import Linear
 
-from .._mcp_server import MCPServer
+from .._mcp_server import NOT_READ_ONLY, READ_ONLY, MCPServer
 
 
 @pytest.fixture
 def server() -> MCPServer:
     server = MCPServer('provider', instructions='Provider instructions.')
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    @server.tool(annotations=READ_ONLY)
     def read_resource() -> str:
         return 'read'
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=False))
+    @server.tool(annotations=NOT_READ_ONLY)
     def write_resource() -> str:
         return 'written'
 
@@ -79,7 +78,7 @@ def token_from_deps(ctx: RunContext[str | None]) -> str | None:
 def bearer(toolset: AbstractToolset[DepsT]) -> str:
     auth = transport(toolset).auth
     assert auth is not None
-    request = next(auth.auth_flow(httpx.Request('POST', 'https://example.com/mcp')))
+    request = next(auth.auth_flow(httpx2.Request('POST', 'https://example.com/mcp')))
     return request.headers['Authorization']
 
 

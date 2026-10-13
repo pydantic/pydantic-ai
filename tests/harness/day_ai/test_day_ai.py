@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar
 
-import httpx
+import httpx2
 import pytest
 from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
@@ -35,7 +35,7 @@ def _http_transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
 def bearer(toolset: AbstractToolset[DepsT]) -> str:
     auth = _http_transport(toolset).auth
     assert auth is not None
-    request = next(auth.auth_flow(httpx.Request('POST', 'https://example.com/mcp')))
+    request = next(auth.auth_flow(httpx2.Request('POST', 'https://example.com/mcp')))
     return request.headers['Authorization']
 
 

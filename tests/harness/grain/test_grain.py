@@ -5,11 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar
 
-import httpx
+import httpx2
 import pytest
 from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
-from mcp.types import ToolAnnotations
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -21,7 +20,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.grain import Grain
 
-from .._mcp_server import MCPServer
+from .._mcp_server import NOT_READ_ONLY, READ_ONLY, MCPServer
 
 DepsT = TypeVar('DepsT')
 
@@ -36,7 +35,7 @@ def _http_transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
 def bearer(toolset: AbstractToolset[DepsT]) -> str:
     auth = _http_transport(toolset).auth
     assert auth is not None
-    request = next(auth.auth_flow(httpx.Request('POST', 'https://example.com/mcp')))
+    request = next(auth.auth_flow(httpx2.Request('POST', 'https://example.com/mcp')))
     return request.headers['Authorization']
 
 
@@ -67,11 +66,11 @@ class TestGrain:
     async def test_read_only_keeps_only_read_only_tools(self, read_only: bool, expected: str) -> None:
         server = MCPServer('grain-fake')
 
-        @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+        @server.tool(annotations=READ_ONLY)
         def read() -> str:
             return 'read'
 
-        @server.tool(annotations=ToolAnnotations(readOnlyHint=False))
+        @server.tool(annotations=NOT_READ_ONLY)
         def write() -> str:
             return 'written'
 

@@ -99,9 +99,9 @@ async def test_http_client_is_the_httpx_fastmcp_drives(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(mcp_settings, 'create_mcp_http_client', fastmcp_4_client)
     sign_in = httpx2.BasicAuth('user', 'password')
-    async with http_client(auth=cast(httpx.Auth, sign_in), follow_redirects=True) as client:
+    async with http_client(auth=sign_in, follow_redirects=True) as client:
         assert isinstance(client, httpx2.AsyncClient)
-        assert client.auth is cast(httpx.Auth, sign_in)
+        assert client.auth is sign_in
         assert not client.follow_redirects
 
 

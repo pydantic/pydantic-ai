@@ -3,23 +3,22 @@
 from __future__ import annotations
 
 import pytest
-from mcp.types import ToolAnnotations
 
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.tools import AgentDepsT
 
-from .._mcp_server import MCPServer
+from .._mcp_server import NOT_READ_ONLY, READ_ONLY, MCPServer
 
 
 @pytest.fixture
 def connections(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str | None]]:
     server = MCPServer('google', instructions='Google instructions.')
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    @server.tool(annotations=READ_ONLY)
     def read_item() -> str:
         return 'read'
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=False))
+    @server.tool(annotations=NOT_READ_ONLY)
     def write_item() -> str:
         return 'written'
 

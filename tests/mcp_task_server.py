@@ -2,15 +2,17 @@ from typing import TYPE_CHECKING, Any
 
 from fastmcp.server import Context, FastMCP
 
-try:
-    from fastmcp.server.tasks import TaskConfig
-except ImportError:
-    # FastMCP 4 moved `TaskConfig`.
+if TYPE_CHECKING:
     from fastmcp.utilities.tasks import TaskConfig
+else:
+    try:
+        from fastmcp.utilities.tasks import TaskConfig
+    except ImportError:  # FastMCP 3 keeps `TaskConfig` in its server package.
+        from fastmcp.server.tasks import TaskConfig
 
-# `fastmcp_tasks` is never installed in the typecheck environment, so pyright only gets a
-# declaration. It needs a value rather than a bare annotation: this module registers the extension
-# at import, and an annotation alone leaves the name unbound at that use.
+# `fastmcp_tasks` is FastMCP 4's tasks extension, which the FastMCP 3 CI job doesn't install, so
+# pyright gets a declaration that allows `None`. It needs a value rather than a bare annotation:
+# this module registers the extension at import, and an annotation alone leaves the name unbound.
 if TYPE_CHECKING:
     TasksExtension: Any = None
 else:

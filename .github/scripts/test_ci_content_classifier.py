@@ -309,7 +309,7 @@ def test_harness_only_tier(tmp_path: Path, changed_files: list[tuple[str, str]],
 def test_harness_only_tier_skips_only_jobs_outside_the_harness():
     jobs = _workflow()['jobs']
     harness_skip = "needs.classify.outputs.harness_only != 'true'"
-    for name in ('mypy', 'test-temporal-latest', 'test-examples', 'test-fastmcp-4'):
+    for name in ('mypy', 'test-temporal-latest', 'test-examples', 'test-fastmcp-3'):
         assert harness_skip in CONDITIONAL_JOB_ADAPTER.validate_python(jobs[name])['if']
     for name in (
         'quality',
@@ -432,7 +432,7 @@ def test_python_test_jobs_use_content_only_output():
         'test-lowest-versions',
         'test-temporal-latest',
         'test-examples',
-        'test-fastmcp-4',
+        'test-fastmcp-3',
         'test-harness-browser-use',
         'test-clai2-clipboard',
         'coverage',

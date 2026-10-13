@@ -64,28 +64,29 @@ except ImportError as _import_error:
     ) from _import_error
 
 # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
-# SDK v2 renamed `McpError` to `MCPError`; fastmcp re-exports whichever the installed SDK has,
-# but doesn't mark the re-export as public, so pyright must be told to allow the import.
-from fastmcp.exceptions import McpError  # pyright: ignore[reportPrivateImportUsage]
+# SDK v2 renamed `McpError` to `MCPError`; fastmcp re-exports whichever the installed SDK has.
+from fastmcp.exceptions import McpError
 from mcp import types as mcp_types
 
-# In-process MCP servers (`FastMCP` / `FastMCP1Server`) live in the *server* halves of fastmcp /
+# In-process MCP servers (`FastMCP` / `MCPSDKServer`) live in the *server* halves of fastmcp /
 # the MCP SDK respectively. The lightweight `[mcp]` install (`fastmcp-slim[client]`) does NOT ship
 # them, so guard those imports separately — `MCPToolsetClient` widens to `Any` for the missing
 # names, and code that takes an in-process server is unreachable in that environment.
+# `MCPSDKServer` is the MCP SDK's own server: `mcp.server.mcpserver.MCPServer` in SDK v2, which is
+# what it's type-checked as, and `mcp.server.fastmcp.FastMCP` in SDK v1.
 if TYPE_CHECKING:
     from fastmcp.client.client import CallToolResult
     from fastmcp.server import FastMCP
-    from mcp.server.fastmcp import FastMCP as FastMCP1Server
+    from mcp.server.mcpserver import MCPServer as MCPSDKServer
 else:
     try:
         from fastmcp.server import FastMCP
     except ImportError:  # pragma: no cover
         FastMCP = Any
     try:
-        from mcp.server.fastmcp import FastMCP as FastMCP1Server
+        from mcp.server.fastmcp import FastMCP as MCPSDKServer
     except ImportError:
-        FastMCP1Server = Any
+        MCPSDKServer = Any
 
 
 # after mcp imports so any import error maps to this file, not _mcp.py
@@ -108,7 +109,7 @@ _CallToolTask = Callable[..., Awaitable[_ToolTask]]
 def _load_call_tool_task() -> _CallToolTask | None:
     """Load FastMCP's task extension when an `MCPToolset` is constructed."""
     try:
-        import fastmcp_tasks  # pyright: ignore[reportMissingImports]
+        import fastmcp_tasks
     except ImportError:
         return None
     return cast(_CallToolTask, fastmcp_tasks.call_tool_task)  # pyright: ignore[reportUnknownMemberType]
@@ -709,7 +710,7 @@ metadata.
 """
 
 
-MCPToolsetClient: TypeAlias = FastMCPClient[Any] | ClientTransport | FastMCP | FastMCP1Server | AnyUrl | Path | str
+MCPToolsetClient: TypeAlias = FastMCPClient[Any] | ClientTransport | FastMCP | MCPSDKServer | AnyUrl | Path | str
 """Anything `MCPToolset` accepts as its `client` argument — a pre-built `fastmcp.Client`, a FastMCP
 `ClientTransport`, an in-process `FastMCP` server, an `AnyUrl`/URL string, a script `Path`, or a
 URL/path/script string.
@@ -1260,7 +1261,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                                     message='The logging capability is deprecated.*',
                                     category=Warning,
                                 )
-                                await self.client.session.set_logging_level(self.log_level)
+                                await self.client.session.set_logging_level(self.log_level)  # pyright: ignore[reportDeprecated]
                     self._exit_stack = exit_stack.pop_all()
                     self._server_info = server_info
                     self._server_capabilities = server_capabilities
@@ -1387,7 +1388,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 self.client, name=name, arguments=args, meta=metadata, raise_on_error=raise_on_error
             )
         else:
-            tool_task = await self.client.call_tool(
+            # FastMCP 3's client-requested tasks (SEP-1686); FastMCP 4's `call_tool` has no `task` parameter.
+            tool_task: _ToolTask = await cast(Any, self.client).call_tool(
                 name=name, arguments=args, task=True, meta=metadata, raise_on_error=raise_on_error
             )
         return await tool_task.result()

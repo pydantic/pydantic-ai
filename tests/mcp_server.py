@@ -8,7 +8,7 @@ this module imports under either. The in-process counterpart is the `fastmcp_ser
 
 import base64
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 # `fastmcp.prompts` reaches back into `fastmcp.server` on FastMCP 3.3, so the server package has to
 # be initialized first — importing prompts first resolves that against a half-built module and fails
@@ -27,7 +27,6 @@ from mcp.types import (
     TextContent,
     TextResourceContents,
 )
-from pydantic import AnyUrl
 
 mcp: FastMCP[None] = FastMCP('Pydantic AI MCP Server', instructions='Be a helpful assistant.')
 
@@ -59,16 +58,18 @@ async def get_weather_forecast(location: str) -> str:
 
 
 # SDK v2 retypes every `uri` from `AnyUrl` to `str` and rejects an `AnyUrl` instance, so the URIs
-# here are plain strings, cast to satisfy the v1 annotation these tests type-check against.
+# here are plain strings, which SDK v1 validates into `AnyUrl`.
 @mcp.tool()
 async def get_image_resource() -> EmbeddedResource:
     data = Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
     return EmbeddedResource(
         type='resource',
-        resource=BlobResourceContents(
-            uri=cast(AnyUrl, 'resource://kiwi.jpg'),
-            blob=base64.b64encode(data).decode('utf-8'),
-            mimeType='image/jpeg',
+        resource=BlobResourceContents.model_validate(
+            {
+                'uri': 'resource://kiwi.jpg',
+                'blob': base64.b64encode(data).decode('utf-8'),
+                'mimeType': 'image/jpeg',
+            }
         ),
     )
 
@@ -77,7 +78,7 @@ async def get_image_resource() -> EmbeddedResource:
 async def get_image_resource_link() -> ResourceLink:
     return ResourceLink(
         type='resource_link',
-        uri=cast(AnyUrl, 'resource://kiwi.jpg'),
+        uri='resource://kiwi.jpg',
         name='kiwi.jpeg',
     )
 
@@ -92,10 +93,12 @@ async def get_audio_resource() -> EmbeddedResource:
     data = Path(__file__).parent.joinpath('assets/marcelo.mp3').read_bytes()
     return EmbeddedResource(
         type='resource',
-        resource=BlobResourceContents(
-            uri=cast(AnyUrl, 'resource://marcelo.mp3'),
-            blob=base64.b64encode(data).decode('utf-8'),
-            mimeType='audio/mpeg',
+        resource=BlobResourceContents.model_validate(
+            {
+                'uri': 'resource://marcelo.mp3',
+                'blob': base64.b64encode(data).decode('utf-8'),
+                'mimeType': 'audio/mpeg',
+            }
         ),
     )
 
@@ -104,7 +107,7 @@ async def get_audio_resource() -> EmbeddedResource:
 async def get_audio_resource_link() -> ResourceLink:
     return ResourceLink(
         type='resource_link',
-        uri=cast(AnyUrl, 'resource://marcelo.mp3'),
+        uri='resource://marcelo.mp3',
         name='marcelo.mp3',
     )
 
@@ -119,7 +122,7 @@ async def get_product_name() -> EmbeddedResource:
     return EmbeddedResource(
         type='resource',
         resource=TextResourceContents(
-            uri=cast(AnyUrl, 'resource://product_name.txt'),
+            uri='resource://product_name.txt',
             text='Pydantic AI',
         ),
     )
@@ -129,7 +132,7 @@ async def get_product_name() -> EmbeddedResource:
 async def get_product_name_link() -> ResourceLink:
     return ResourceLink(
         type='resource_link',
-        uri=cast(AnyUrl, 'resource://product_name.txt'),
+        uri='resource://product_name.txt',
         name='product_name.txt',
     )
 
@@ -226,11 +229,13 @@ def image_prompt() -> list[Message]:
     """A prompt template with image content."""
     return [
         Message(
-            content=ImageContent(
-                type='image',
-                data=base64.b64encode(b'image-bytes').decode('utf-8'),
-                mimeType='image/jpeg',
-                annotations=Annotations(audience=['user'], priority=0.8),
+            content=ImageContent.model_validate(
+                {
+                    'type': 'image',
+                    'data': base64.b64encode(b'image-bytes').decode('utf-8'),
+                    'mimeType': 'image/jpeg',
+                    'annotations': Annotations(audience=['user'], priority=0.8),
+                }
             )
         )
     ]
@@ -241,11 +246,13 @@ def audio_prompt() -> list[Message]:
     """A prompt template with audio content."""
     return [
         Message(
-            content=AudioContent(
-                type='audio',
-                data=base64.b64encode(b'audio-bytes').decode('utf-8'),
-                mimeType='audio/mpeg',
-                annotations=Annotations(audience=['assistant'], priority=0.3),
+            content=AudioContent.model_validate(
+                {
+                    'type': 'audio',
+                    'data': base64.b64encode(b'audio-bytes').decode('utf-8'),
+                    'mimeType': 'audio/mpeg',
+                    'annotations': Annotations(audience=['assistant'], priority=0.3),
+                }
             )
         )
     ]
@@ -258,10 +265,12 @@ def embedded_resource_prompt() -> list[Message]:
         Message(
             content=EmbeddedResource(
                 type='resource',
-                resource=TextResourceContents(
-                    uri=cast(AnyUrl, 'resource://product_name.txt'),
-                    text='Pydantic AI',
-                    mimeType='text/plain',
+                resource=TextResourceContents.model_validate(
+                    {
+                        'uri': 'resource://product_name.txt',
+                        'text': 'Pydantic AI',
+                        'mimeType': 'text/plain',
+                    }
                 ),
                 annotations=Annotations(audience=['user'], priority=0.5),
             )
@@ -274,13 +283,15 @@ def resource_link_prompt() -> list[Message]:
     """A prompt template with a resource link."""
     return [
         Message(
-            content=ResourceLink(
-                type='resource_link',
-                uri=cast(AnyUrl, 'resource://kiwi.jpg'),
-                name='kiwi-image',
-                title='Kiwi Image',
-                description='A photo of a kiwi fruit',
-                mimeType='image/jpeg',
+            content=ResourceLink.model_validate(
+                {
+                    'type': 'resource_link',
+                    'uri': 'resource://kiwi.jpg',
+                    'name': 'kiwi-image',
+                    'title': 'Kiwi Image',
+                    'description': 'A photo of a kiwi fruit',
+                    'mimeType': 'image/jpeg',
+                }
             )
         )
     ]

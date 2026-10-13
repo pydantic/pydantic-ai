@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from mcp.types import ToolAnnotations
+
 if TYPE_CHECKING:
     # Type-checked against the SDK generation the workspace lock installs.
-    from mcp.server.fastmcp import FastMCP as MCPServer
+    from mcp.server.mcpserver import MCPServer
 else:
     try:
         from mcp.server.mcpserver import MCPServer
@@ -23,4 +25,8 @@ else:
         # warnings policy escalates.
         Settings.model_rebuild()
 
-__all__ = ['MCPServer']
+# Built from the wire key, which both SDK generations validate: SDK v2 renamed the field to `read_only_hint`.
+READ_ONLY = ToolAnnotations.model_validate({'readOnlyHint': True})
+NOT_READ_ONLY = ToolAnnotations.model_validate({'readOnlyHint': False})
+
+__all__ = ['NOT_READ_ONLY', 'READ_ONLY', 'MCPServer']
