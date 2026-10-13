@@ -212,6 +212,7 @@ class ScriptedBatchProvider:
     batches: dict[str, list[BatchRequest]] = field(default_factory=dict[str, list[BatchRequest]])
     canceled: list[str] = field(default_factory=list[str])
     created: asyncio.Event = field(default_factory=asyncio.Event)
+    pending_collection: asyncio.Event = field(default_factory=asyncio.Event)
     cancelled_job: asyncio.Event = field(default_factory=asyncio.Event)
     failed_cancellations_finished: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -255,6 +256,7 @@ class ScriptedBatchProvider:
             self.poll_failures -= 1
             raise ModelAPIError('scripted', 'Transient result fetch failure')
         if await self.status(batch_id, group=group) != 'ended':
+            self.pending_collection.set()
             return None
         results: list[BatchResult] = []
         if self.omit_results:
@@ -478,7 +480,7 @@ async def workers(client: Client, other_client: Client) -> AsyncIterator[None]:
 
 @pytest.fixture(autouse=True)
 def reset_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._batch._WAIT_ROUND', timedelta(seconds=1))
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._batch._WAIT_ROUND', timedelta(milliseconds=100))
     faults.missing_status = False
     faults.conflicting_policy = False
     faults.enqueue_error = None
@@ -504,6 +506,7 @@ def reset_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     provider.oversized_results = False
     provider.errored_prompts.clear()
     provider.created.clear()
+    provider.pending_collection.clear()
     provider.cancelled_job.clear()
     provider.failed_cancellations_finished.clear()
     provider.canceled.clear()
@@ -940,9 +943,7 @@ async def test_repeated_poll_failures_terminate_the_wait(client: Client, monkeyp
 
 
 @pytest.mark.parametrize('uncertain', [False, True])
-async def test_cancellation_during_provider_submission_cancels_the_created_job(
-    client: Client, temporal_env: WorkflowEnvironment, uncertain: bool
-) -> None:
+async def test_cancellation_during_provider_submission_cancels_the_created_job(client: Client, uncertain: bool) -> None:
     provider.group = f'cancel-submit-{uncertain}'
     provider.ambiguous_create = uncertain
     faults.capture = True
@@ -955,11 +956,26 @@ async def test_cancellation_during_provider_submission_cancels_the_created_job(
     with pytest.raises(WorkflowFailureError):
         await handle.result()
     provider.create_release.set()
-    await temporal_env.sleep(timedelta(seconds=1))
     if uncertain:
         queue_id, _, params = next(update for update in faults.updates if update[1] == 'enqueue')
         item_id = json.loads(to_json(params))['consumer']['item_id']
-        status = await client.get_workflow_handle(queue_id).query('status', item_id)
+        manager = client.get_workflow_handle(queue_id)
+        processed = False
+        async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+            while not processed:
+                events = (await manager.fetch_history()).events
+                failed = next(
+                    (
+                        index
+                        for index, event in enumerate(events)
+                        if event.HasField('activity_task_failed_event_attributes')
+                    ),
+                    None,
+                )
+                processed = failed is not None and any(
+                    event.HasField('workflow_task_completed_event_attributes') for event in events[failed + 1 :]
+                )
+        status = await manager.query('status', item_id)
         assert status['state'] == 'canceled'
         assert provider.canceled == []
     else:
@@ -1022,14 +1038,14 @@ async def test_worker_shutdown_finishes_an_inflight_submission(client: Client, o
     assert len(provider.batch_ids('shutdown-submit')) == 1
 
 
-async def test_pending_collection_keeps_waiting(client: Client, temporal_env: WorkflowEnvironment) -> None:
+async def test_pending_collection_keeps_waiting(client: Client) -> None:
     provider.group = 'pending-collection'
     provider.hold = True
     handle = await client.start_workflow(
         DeadlineWorkflow.run, 'still-pending', id=f'pending-{uuid.uuid4()}', task_queue=TASK_QUEUE
     )
     await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
-    await temporal_env.sleep(timedelta(seconds=2))
+    await asyncio.wait_for(provider.pending_collection.wait(), READINESS_WAIT_TIMEOUT)
     provider.hold = False
     messages = await handle.result()
     assert isinstance(messages[-1], ModelResponse) and messages[-1].text == 'Echo: still-pending'
@@ -1074,7 +1090,7 @@ async def test_missing_queue_record_is_reported(client: Client) -> None:
 async def test_uncertain_enqueue_is_withdrawn_and_its_tombstone_expires(
     client: Client, monkeypatch: pytest.MonkeyPatch, update_failure: bool
 ) -> None:
-    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._batch_queue._RETENTION', timedelta(seconds=2))
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._batch_queue._RETENTION', timedelta(milliseconds=500))
     provider.group = 'uncertain-enqueue'
     failure = RPCError('Injected enqueue failure', RPCStatusCode.UNAVAILABLE, b'')
     faults.enqueue_error = WorkflowUpdateFailedError(failure) if update_failure else failure

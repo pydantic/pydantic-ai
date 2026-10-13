@@ -99,24 +99,28 @@ class BatchModel(WrapperModel):
     or in `models=`, since the queue rebuilds it on the worker from its registered name.
     """
 
-    batch_settings: BatchSettings
-    """When the queue submits a batch, with defaults resolved at construction."""
+    max_requests: int
+    """The resolved number of requests that triggers submission."""
+
+    max_wait: timedelta
+    """The resolved maximum age of the oldest queued request before submission."""
+
+    poll_interval: timedelta
+    """The resolved interval between checks for provider results."""
 
     def __init__(self, wrapped: Model, *, batch_settings: BatchSettings | None = None) -> None:
         super().__init__(wrapped)
         if self.wrapped.batch_max_requests is None:
             raise UserError(f'{type(self.wrapped).__name__} {self.wrapped.model_name!r} has no batch API.')
         settings: BatchSettings = batch_settings or {}
-        self.batch_settings = {
-            'max_requests': settings.get('max_requests', 100),
-            'max_wait': settings.get('max_wait', timedelta(seconds=30)),
-            'poll_interval': settings.get('poll_interval', timedelta(minutes=1)),
-        }
-        if self.batch_settings['max_requests'] <= 0:
+        self.max_requests = settings.get('max_requests', 100)
+        self.max_wait = settings.get('max_wait', timedelta(seconds=30))
+        self.poll_interval = settings.get('poll_interval', timedelta(minutes=1))
+        if self.max_requests <= 0:
             raise UserError('`BatchSettings.max_requests` must be positive.')
-        if self.batch_settings['max_wait'] <= timedelta(0):
+        if self.max_wait <= timedelta(0):
             raise UserError('`BatchSettings.max_wait` must be positive.')
-        if self.batch_settings['poll_interval'] <= timedelta(0):
+        if self.poll_interval <= timedelta(0):
             raise UserError('`BatchSettings.poll_interval` must be positive.')
 
     async def request(

@@ -21,7 +21,6 @@ settings: ModelSettings = {'max_tokens': 100}
 
 
 async def main() -> None:
-    assert model.batch_max_requests is not None
     batch_id = os.environ.get('BATCH_ID')
     if batch_id is None:
         requests = [
@@ -40,12 +39,10 @@ async def main() -> None:
         logfire.info('Submitted batch {batch_id}', batch_id=batch_id)
         return
 
-    status = await model.batch_status(batch_id)
-    logfire.info('Batch {batch_id}: {status}', batch_id=batch_id, status=status)
-    if status != 'ended':
-        return
     results = await model.batch_results(batch_id)
-    assert results is not None
+    if results is None:
+        logfire.info('Batch {batch_id} is still processing', batch_id=batch_id)
+        return
     for result in results:
         response = model.batch_decode(result, settings, parameters)
         logfire.info('Request {request_id}: {text}', request_id=result.custom_id, text=response.text)
@@ -79,7 +76,7 @@ see [Automatic Batching](../durable_execution/batching.md).
 Persist batch IDs and each request's ID, settings and parameters before collecting results.
 Use the same settings and parameters for encoding and decoding. Match results by `custom_id`, not order.
 `ended` includes mixed successful, failed, expired and canceled requests; handle decode errors per item
-when you want to keep successful results. Status checks and result retrieval are separate provider calls.
+when you want to keep successful results. Result retrieval checks the status before downloading results.
 Anthropic responses record their discounted cost in `response.usage.cost`.
 `response.cost()` continues to estimate standard synchronous pricing.
 

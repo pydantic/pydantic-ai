@@ -1094,9 +1094,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def batch_max_requests(self) -> int | None:
         if isinstance(self.client, _BATCH_UNSUPPORTED_CLIENTS):
             return None
-        from ._anthropic_batch import batch_max_requests
-
-        return batch_max_requests(self)
+        return 100_000
 
     async def batch_encode(
         self,

@@ -38,9 +38,6 @@ from .batch import BatchRequest, BatchResult, BatchStatus
 
 _BATCH_PRICE_MULTIPLIER = Decimal('0.5')
 
-_MAX_REQUESTS = 100_000
-"""Anthropic's limit on requests in one Message Batch."""
-
 _ERROR_STATUS_CODES = {
     'invalid_request_error': 400,
     'authentication_error': 401,
@@ -64,20 +61,14 @@ class _Group(TypedDict):
 _GROUP_ADAPTER = TypeAdapter(_Group)
 
 
-def batch_max_requests(model: AnthropicModel) -> int:
-    _batch_client(model)
-    return _MAX_REQUESTS
-
-
 async def batch_encode(
-    self: AnthropicModel,
+    model: AnthropicModel,
     messages: list[ModelMessage],
     model_settings: ModelSettings | None,
     model_request_parameters: ModelRequestParameters,
     *,
     custom_id: str,
 ) -> BatchRequest:
-    model = self
     prepared_settings, model_request_parameters = model.prepare_request(model_settings, model_request_parameters)
     settings = cast(AnthropicModelSettings, prepared_settings or {})
     if 'timeout' in settings:
@@ -101,23 +92,23 @@ async def batch_encode(
     if 'speed' in body or body.get('stream') is True or body.get('max_tokens') == 0:
         raise UserError('Anthropic Message Batches do not support `speed`, `stream=True`, or `max_tokens=0`.')
     return BatchRequest(
-        custom_id=custom_id, group=_batch_group(self, prepared.initial_betas), body=to_json(body).decode()
+        custom_id=custom_id, group=_batch_group(model, prepared.initial_betas), body=to_json(body).decode()
     )
 
 
-async def batch_create(self: AnthropicModel, requests: Sequence[BatchRequest]) -> str:
+async def batch_create(model: AnthropicModel, requests: Sequence[BatchRequest]) -> str:
     check_allow_model_requests()
     if not requests:
         raise UserError('A provider batch must contain at least one request.')
     group = _GROUP_ADAPTER.validate_json(requests[0].group)
     if any(request.group != requests[0].group for request in requests):
         raise UserError(
-            'The Anthropic client does not match the batch request group. Use the same client configuration for every request in a batch.'
+            'Requests in one Anthropic batch must share a `group`; these came from different client configurations or beta flags.'
         )
-    _validate_batch_group(self, requests[0].group)
-    with _map_api_errors(self.model_name):
+    _validate_batch_group(model, requests[0].group)
+    with _map_api_errors(model.model_name):
         batch = (
-            await _batch_client(self)
+            await _batch_client(model)
             .with_options(max_retries=0)
             .beta.messages.batches.create(
                 requests=[
@@ -135,42 +126,41 @@ async def batch_create(self: AnthropicModel, requests: Sequence[BatchRequest]) -
     return batch.id
 
 
-async def batch_status(self: AnthropicModel, batch_id: str, *, group: str | None = None) -> BatchStatus:
+async def batch_status(model: AnthropicModel, batch_id: str, *, group: str | None = None) -> BatchStatus:
     check_allow_model_requests()
     if group is not None:
-        _validate_batch_group(self, group)
-    with _map_api_errors(self.model_name):
-        batch = await _batch_client(self).beta.messages.batches.retrieve(batch_id)
+        _validate_batch_group(model, group)
+    with _map_api_errors(model.model_name):
+        batch = await _batch_client(model).beta.messages.batches.retrieve(batch_id)
     return batch.processing_status
 
 
-async def batch_results(self: AnthropicModel, batch_id: str, *, group: str | None = None) -> list[BatchResult] | None:
-    if await batch_status(self, batch_id, group=group) != 'ended':
+async def batch_results(model: AnthropicModel, batch_id: str, *, group: str | None = None) -> list[BatchResult] | None:
+    if await batch_status(model, batch_id, group=group) != 'ended':
         return None
-    with _map_api_errors(self.model_name):
+    with _map_api_errors(model.model_name):
         results: list[BatchResult] = []
-        async for item in await _batch_client(self).beta.messages.batches.results(batch_id):
+        async for item in await _batch_client(model).beta.messages.batches.results(batch_id):
             result = item.result
             body = result.model_dump_json() if result.type in ('succeeded', 'errored') else None
             results.append(BatchResult(custom_id=item.custom_id, status=result.type, body=body))
     return results
 
 
-async def batch_cancel(self: AnthropicModel, batch_id: str, *, group: str | None = None) -> None:
+async def batch_cancel(model: AnthropicModel, batch_id: str, *, group: str | None = None) -> None:
     check_allow_model_requests()
     if group is not None:
-        _validate_batch_group(self, group)
-    with _map_api_errors(self.model_name):
-        await _batch_client(self).beta.messages.batches.cancel(batch_id)
+        _validate_batch_group(model, group)
+    with _map_api_errors(model.model_name):
+        await _batch_client(model).beta.messages.batches.cancel(batch_id)
 
 
 def batch_decode(
-    self: AnthropicModel,
+    model: AnthropicModel,
     result: BatchResult,
     model_settings: ModelSettings | None,
     model_request_parameters: ModelRequestParameters,
 ) -> ModelResponse:
-    model = self
     if result.status == 'succeeded':
         assert result.body is not None
         message = BetaMessageBatchSucceededResult.model_validate_json(result.body).message
@@ -209,20 +199,20 @@ def batch_decode(
     raise ModelAPIError(model.model_name, f'The batch request was {result.status} before the model ran it.')
 
 
-def _batch_group(self: AnthropicModel, betas: Iterable[str]) -> str:
+def _batch_group(model: AnthropicModel, betas: Iterable[str]) -> str:
     group: _Group = {
-        'endpoint': hashlib.sha256(str(_batch_client(self).base_url).encode()).hexdigest(),
+        'endpoint': hashlib.sha256(str(_batch_client(model).base_url).encode()).hexdigest(),
         'credential': hashlib.sha256(
             to_json(
                 {
                     'headers': {
                         name: value
-                        for name, value in _batch_client(self).default_headers.items()
+                        for name, value in _batch_client(model).default_headers.items()
                         if isinstance(value, str)
                         and name.lower() != 'user-agent'
                         and not name.lower().startswith('x-stainless-')
                     },
-                    'query': _batch_client(self).default_query,
+                    'query': _batch_client(model).default_query,
                 }
             )
         ).hexdigest(),
@@ -231,9 +221,9 @@ def _batch_group(self: AnthropicModel, betas: Iterable[str]) -> str:
     return json.dumps(group, sort_keys=True)
 
 
-def _validate_batch_group(self: AnthropicModel, group: str) -> None:
+def _validate_batch_group(model: AnthropicModel, group: str) -> None:
     expected = _GROUP_ADAPTER.validate_json(group)
-    if group != _batch_group(self, expected['betas']):
+    if group != _batch_group(model, expected['betas']):
         raise UserError(
             'The Anthropic client does not match the batch request group. Use the same client configuration for every request in a batch.'
         )

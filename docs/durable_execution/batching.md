@@ -69,6 +69,7 @@ The workflow waits for its individual result, then continues through output vali
 ## Submission Settings
 
 [`BatchSettings`][pydantic_ai.models.batch.BatchSettings] controls the wait before submission.
+`BatchModel` resolves these settings at construction as `max_requests`, `max_wait` and `poll_interval` attributes.
 
 | Setting | Default | Behavior |
 | --- | --- | --- |

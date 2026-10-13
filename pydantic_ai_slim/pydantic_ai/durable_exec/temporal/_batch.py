@@ -245,20 +245,15 @@ class TemporalBatchBinding:
     # --- Activities ---
 
     def _policy(self, model_id: str | None, model: BatchModel, group: str) -> QueuePolicy:
-        settings = model.batch_settings
-        max_requests = settings.get('max_requests')
-        max_wait = settings.get('max_wait')
-        poll_interval = settings.get('poll_interval')
-        assert max_requests is not None and max_wait is not None and poll_interval is not None, 'resolved by BatchModel'
         provider_limit = model.wrapped.batch_max_requests
         assert provider_limit is not None, 'checked by BatchModel'
         return QueuePolicy(
             agent_name=self._agent_name,
             group=group,
             model_id=model_id,
-            max_requests=min(max_requests, provider_limit),
-            max_wait=max_wait,
-            poll_interval=poll_interval,
+            max_requests=min(model.max_requests, provider_limit),
+            max_wait=model.max_wait,
+            poll_interval=model.poll_interval,
         )
 
     async def _enqueue_activity(self, params: EnqueueParams) -> BatchTicket:

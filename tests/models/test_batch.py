@@ -18,6 +18,7 @@ from pydantic_ai.capabilities import ResolveModelId
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.batch import BatchModel, BatchResult, BatchSettings
+from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -55,6 +56,34 @@ def test_batch_settings_reject_non_positive_values(settings: dict[str, object]) 
 def test_batch_model_needs_a_model_with_a_batch_api() -> None:
     with pytest.raises(UserError, match=r"TestModel 'test' has no batch API."):
         BatchModel(TestModel())
+
+
+@pytest.mark.parametrize('wrapper', [WrapperModel, InstrumentedModel])
+def test_batch_model_preserves_wrapped_model_support(wrapper: type[WrapperModel]) -> None:
+    model = BatchModel(wrapper(BatchCapableTestModel()))
+    assert model.batch_max_requests == 100_000
+    assert (model.max_requests, model.max_wait, model.poll_interval) == (
+        100,
+        timedelta(seconds=30),
+        timedelta(minutes=1),
+    )
+
+
+async def test_direct_batch_methods_describe_unsupported_models() -> None:
+    model = TestModel()
+    parameters = ModelRequestParameters()
+    with pytest.raises(NotImplementedError, match='Batch requests are not supported by TestModel'):
+        await model.batch_encode([], None, parameters, custom_id='item')
+    with pytest.raises(NotImplementedError, match='Batch requests are not supported by TestModel'):
+        await model.batch_create([])
+    with pytest.raises(NotImplementedError, match='Batch requests are not supported by TestModel'):
+        await model.batch_status('batch')
+    with pytest.raises(NotImplementedError, match='Batch requests are not supported by TestModel'):
+        await model.batch_results('batch')
+    with pytest.raises(NotImplementedError, match='Batch requests are not supported by TestModel'):
+        await model.batch_cancel('batch')
+    with pytest.raises(NotImplementedError, match='Batch requests are not supported by TestModel'):
+        model.batch_decode(BatchResult(custom_id='item', status='canceled'), None, parameters)
 
 
 async def test_batch_model_fails_outside_a_durable_context_before_queueing() -> None:
@@ -179,7 +208,7 @@ async def test_anthropic_batch_refuses_a_different_registered_client(allow_model
     other = await second.batch_encode(
         [ModelRequest(parts=[UserPromptPart('hello')])], None, ModelRequestParameters(), custom_id='other'
     )
-    with pytest.raises(UserError, match='does not match the batch request group'):
+    with pytest.raises(UserError, match='must share a `group`'):
         await first.batch_create([request, other])
     with pytest.raises(UserError, match='at least one request'):
         await first.batch_create([])
@@ -233,10 +262,13 @@ async def test_anthropic_batch_preserves_supported_settings() -> None:
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-def test_anthropic_batch_requires_static_credentials() -> None:
+async def test_anthropic_batch_requires_static_credentials() -> None:
     client = AsyncAnthropic(api_key='')
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+    assert model.batch_max_requests == 100_000
+    BatchModel(model)
     with pytest.raises(UserError, match='require static Anthropic API credentials'):
-        BatchModel(AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client)))
+        await model.batch_encode([], None, ModelRequestParameters(), custom_id='item')
 
 
 async def test_wrapped_non_batch_model_keeps_durable_execution() -> None:

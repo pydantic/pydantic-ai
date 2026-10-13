@@ -559,11 +559,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         custom_id: str,
     ) -> BatchRequest:
         """Encode a model request the way the model would send it on its own."""
-        raise NotImplementedError
+        raise NotImplementedError(f'Batch requests are not supported by {self.__class__.__name__}.')
 
     async def batch_create(self, requests: Sequence[BatchRequest]) -> str:
         """Submit requests that share a `group` as one batch, and return its ID."""
-        raise NotImplementedError
+        raise NotImplementedError(f'Batch requests are not supported by {self.__class__.__name__}.')
 
     async def batch_status(self, batch_id: str, *, group: str | None = None) -> BatchStatus:
         """Retrieve the job state without downloading its results.
@@ -571,15 +571,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `ended` means processing finished, including failed, expired or canceled requests.
         The caller owns scheduling and persistence when using this API directly.
         """
-        raise NotImplementedError
+        raise NotImplementedError(f'Batch requests are not supported by {self.__class__.__name__}.')
 
     async def batch_results(self, batch_id: str, *, group: str | None = None) -> list[BatchResult] | None:
         """Return the batch's results once it has ended, or `None` while it is still processing."""
-        raise NotImplementedError
+        raise NotImplementedError(f'Batch requests are not supported by {self.__class__.__name__}.')
 
     async def batch_cancel(self, batch_id: str, *, group: str | None = None) -> None:
         """Cancel a batch that is still processing."""
-        raise NotImplementedError
+        raise NotImplementedError(f'Batch requests are not supported by {self.__class__.__name__}.')
 
     def batch_decode(
         self,
@@ -588,7 +588,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         """Turn a result into a response, or raise the model error the request would have raised on its own."""
-        raise NotImplementedError
+        raise NotImplementedError(f'Batch requests are not supported by {self.__class__.__name__}.')
 
     async def __aenter__(self) -> Self:
         """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""
