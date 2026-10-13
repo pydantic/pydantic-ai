@@ -1038,25 +1038,29 @@ async def test_worker_shutdown_finishes_an_inflight_submission(client: Client, o
 async def test_pending_collection_keeps_waiting(client: Client) -> None:
     provider.group = 'pending-collection'
     provider.hold = True
+    faults.capture = True
     handle = await client.start_workflow(
         DeadlineWorkflow.run, 'still-pending', id=f'pending-{uuid.uuid4()}', task_queue=TASK_QUEUE
     )
     await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
-    collected = False
-    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
-        while not collected:
-            events = (await handle.fetch_history()).events
-            scheduled = {
-                event.event_id
-                for event in events
-                if event.HasField('activity_task_scheduled_event_attributes')
-                and event.activity_task_scheduled_event_attributes.activity_type.name.endswith('__batch_collect')
-            }
-            collected = any(
-                event.HasField('activity_task_completed_event_attributes')
-                and event.activity_task_completed_event_attributes.scheduled_event_id in scheduled
-                for event in events
-            )
+    queue_id = next(queue_id for queue_id, name, _ in faults.updates if name == 'enqueue')
+    manager = client.get_workflow_handle(queue_id)
+    for workflow_handle, activity_suffix in ((handle, '__batch_collect'), (manager, '__batch_poll')):
+        completed = False
+        async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+            while not completed:
+                events = (await workflow_handle.fetch_history()).events
+                scheduled = {
+                    event.event_id
+                    for event in events
+                    if event.HasField('activity_task_scheduled_event_attributes')
+                    and event.activity_task_scheduled_event_attributes.activity_type.name.endswith(activity_suffix)
+                }
+                completed = any(
+                    event.HasField('activity_task_completed_event_attributes')
+                    and event.activity_task_completed_event_attributes.scheduled_event_id in scheduled
+                    for event in events
+                )
     provider.hold = False
     messages = await handle.result()
     assert isinstance(messages[-1], ModelResponse) and messages[-1].text == 'Echo: still-pending'
