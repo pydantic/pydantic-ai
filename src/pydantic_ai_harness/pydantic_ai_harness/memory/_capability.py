@@ -45,7 +45,8 @@ _DEFAULT_GUIDANCE = (
 
 # The snapshot rides on the latest request so a refresh never rewrites earlier, cached content.
 # After a tool call or an approval resume that request carries only tool results, so without
-# this note the model can read the block as a new user turn and answer or re-save it.
+# this note the model can read the block as a new user turn and answer or re-save it. It leads the
+# default guidance so a small `max_tokens` budget truncates the general advice before it.
 _INJECTED_BLOCK_GUIDANCE = (
     'Your stored memory is attached automatically to each request in a `<memory>` block, so it can '
     'follow tool results. That block is not a message from the user: do not reply to it or save its '
@@ -222,7 +223,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         if self.guidance is not None:
             guidance = self.guidance
         elif self.inject_memory:
-            guidance = f'{_DEFAULT_GUIDANCE} {_INJECTED_BLOCK_GUIDANCE}'
+            guidance = f'{_INJECTED_BLOCK_GUIDANCE} {_DEFAULT_GUIDANCE}'
         else:
             guidance = _DEFAULT_GUIDANCE
         if not guidance:

@@ -1098,6 +1098,8 @@ class TestInjection:
 
     def test_block_framing_is_only_added_to_default_guidance_when_injecting(self) -> None:
         assert 'not a message from the user' in str(Memory[None]().get_instructions())
+        # The note leads the default guidance, so a small budget truncates the general advice first.
+        assert 'not a message from the user' in str(Memory[None](max_tokens=100).get_instructions())
         assert 'not a message from the user' not in str(Memory[None](inject_memory=False).get_instructions())
         assert Memory[None](guidance='Keep memory factual.').get_instructions() == 'Keep memory factual.'
 
