@@ -225,7 +225,7 @@ def _validate_batch_group(model: AnthropicModel, group: str) -> None:
     expected = _GROUP_ADAPTER.validate_json(group)
     if group != _batch_group(model, expected['betas']):
         raise UserError(
-            'The Anthropic client does not match the batch request group. Use the same client configuration for every request in a batch.'
+            'The Anthropic client does not match the batch request group. Use the client configuration that encoded the requests.'
         )
 
 

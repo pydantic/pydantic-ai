@@ -212,7 +212,6 @@ class ScriptedBatchProvider:
     batches: dict[str, list[BatchRequest]] = field(default_factory=dict[str, list[BatchRequest]])
     canceled: list[str] = field(default_factory=list[str])
     created: asyncio.Event = field(default_factory=asyncio.Event)
-    pending_collection: asyncio.Event = field(default_factory=asyncio.Event)
     cancelled_job: asyncio.Event = field(default_factory=asyncio.Event)
     failed_cancellations_finished: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -256,7 +255,6 @@ class ScriptedBatchProvider:
             self.poll_failures -= 1
             raise ModelAPIError('scripted', 'Transient result fetch failure')
         if await self.status(batch_id, group=group) != 'ended':
-            self.pending_collection.set()
             return None
         results: list[BatchResult] = []
         if self.omit_results:
@@ -506,7 +504,6 @@ def reset_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     provider.oversized_results = False
     provider.errored_prompts.clear()
     provider.created.clear()
-    provider.pending_collection.clear()
     provider.cancelled_job.clear()
     provider.failed_cancellations_finished.clear()
     provider.canceled.clear()
@@ -1045,7 +1042,21 @@ async def test_pending_collection_keeps_waiting(client: Client) -> None:
         DeadlineWorkflow.run, 'still-pending', id=f'pending-{uuid.uuid4()}', task_queue=TASK_QUEUE
     )
     await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
-    await asyncio.wait_for(provider.pending_collection.wait(), READINESS_WAIT_TIMEOUT)
+    collected = False
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        while not collected:
+            events = (await handle.fetch_history()).events
+            scheduled = {
+                event.event_id
+                for event in events
+                if event.HasField('activity_task_scheduled_event_attributes')
+                and event.activity_task_scheduled_event_attributes.activity_type.name.endswith('__batch_collect')
+            }
+            collected = any(
+                event.HasField('activity_task_completed_event_attributes')
+                and event.activity_task_completed_event_attributes.scheduled_event_id in scheduled
+                for event in events
+            )
     provider.hold = False
     messages = await handle.result()
     assert isinstance(messages[-1], ModelResponse) and messages[-1].text == 'Echo: still-pending'
