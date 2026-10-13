@@ -638,7 +638,7 @@ Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelRespon
 
 #### Rejecting Responses Without Actionable Output
 
-A response handler can reject a successful response that contains no text or tool call, such as an empty or thinking-only response. This predicate is for a text-output agent; if your output type accepts other response parts, include those parts in the predicate. When combining it with exception fallback, include [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] in the handler list: a response handler on its own replaces the default exception fallback.
+A response handler can reject a successful response that contains no text or tool call, such as an empty or thinking-only response. This predicate is for a text-output agent; if your output type accepts other response parts, include those parts in the predicate. Include [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] in the handler list so API errors still fall back; see [Combining Handlers](#combining-handlers).
 
 ```python {title="fallback_on_empty_response.py"}
 from pydantic_ai import (
@@ -662,6 +662,7 @@ def answer(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('The capital of France is Paris.')])
 
 
+# These deterministic models simulate an empty primary response and a backup answer.
 def has_no_actionable_output(response: ModelResponse) -> bool:
     return not any(
         (isinstance(part, TextPart) and part.has_content())
