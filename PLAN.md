@@ -59,7 +59,7 @@ Proposed shape (method names and module are a maintainer decision):
 
 `wrap_model_request` spans the logical turn; `after_model_request` sees its final response. Usage is recorded once. Reuse the suspended `ModelResponse` loop in [`_agent_graph.py`](pydantic_ai_slim/pydantic_ai/_agent_graph.py), which runs in workflow code. Activities enqueue, submit, poll or collect; the workflow owns the long wait.
 
-- In `_build_durable_model()`'s workflow-side `request_segment`, detect batch-ticket continuations and call `binding.wait(ticket)`. It owns the keyed notification wait and durable timeout/collection fallback. Batch continuations skip the existing duration-only sleep to avoid waiting twice; ordinary model segments keep their current path.
+- In `_build_durable_model()`'s workflow-side `request_segment`, detect batch-ticket continuations and call `binding.wait(ticket)`. It owns the keyed notification wait and durable timeout/collection fallback. When this wait is active, `BatchModel.continuation_delay` returns `None` for batch tickets so the graph does not sleep first. Ordinary model segments keep their current path.
 - A poll-only prototype can first use `BatchModel.continuation_delay` and short collection activities. The target adds the binding's notification wait; the existing sleep hook cannot provide keyed wakeups itself.
 - Pending responses have empty parts, zero usage and a stable pending-job ID in `provider_response_id`. Repeated pending polls retain that ID, selecting `replace-same-id` and its 1,000-poll ceiling. Choose a polling schedule that covers the provider window, including queue time, without raising shared limits.
 - Completion preserves the actual provider response ID and batch/item provenance in `provider_details`. Test merging the empty placeholder with that response and distinguish batch tickets from provider-native suspended turns such as Anthropic `pause_turn`. Ordinary continuation classification stays unchanged.
@@ -92,7 +92,7 @@ Storage is real, and the backend owns it. [Temporal Cloud limits](https://docs.t
 | Item error from the provider | Goes through the existing model retry and error handling. No extra free retries |
 | Expired | Normalized outcome, handled as a model error |
 | Cancelled before submission | Tombstoned. Unrelated items in the batch are not affected |
-| Cancelled during enqueue | Allocate the item ID before dispatch; cancellation tombstones it even without a returned ticket. The manager rejects a late enqueue |
+| Cancelled during enqueue | `request_segment` allocates the item ID deterministically before dispatch and calls `binding.cancel(item_id)` on failed or cancelled enqueue, using engine-safe shielded cleanup. The manager rejects late enqueue. After receipt, existing suspended-response cancellation handles teardown |
 | Cancelled after submission | Abandon that item. Cancel the provider job only when all its items are abandoned; submitted items may still be billed |
 | Crash between submit and checkpoint | Either verified provider idempotency, or a durable intent record plus reconciliation. No claim of exactly-once |
 | Tool side effects | The engine's existing guarantees apply. Batching doesn't make tools exactly-once |
@@ -132,7 +132,7 @@ Test through public APIs with real `cassetter` recordings, reviewed for secrets 
 | Contract | Engine-independent contract and provider codec, tested against recordings |
 | Temporal | Workflow tests with time skipping, replay, and compatibility pins as in [`test_durable_exec_compat.py`](tests/durable_exec/test_durable_exec_compat.py) |
 | Aggregation | Two workers feeding one group. Threshold, deadline and byte flushes |
-| Durability | Retries of durable accepts, early and duplicate wakes, process restart, crash after submit with reconciliation |
+| Durability | Retries of durable accepts, early and duplicate wakes, no pre-wait timer with keyed waiting, process restart, crash after submit with reconciliation |
 | Outcomes | Unordered, mixed success, error, expiry and cancel. Cancellation races |
 | Agent loop | Structured output retry, tool turn, next batch round |
 | Budgets | Usage, pricing and spend limits |
