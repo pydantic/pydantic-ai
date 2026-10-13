@@ -6556,9 +6556,9 @@ async def test_unconsumed_session_queue_keeps_a_restarted_part_whole(monkeypatch
 
 
 async def test_late_transcript_yields_its_turn_again_in_stream_transcripts() -> None:
-    """A model turn whose transcript grows after it ended is yielded again, with the transcript so far.
+    """Text arriving for an ended part while a later item streams re-yields that turn, with the transcript so far.
 
-    `delta=True` carries the turn's `index`, so a caption UI replaces that turn rather than adding one. Not a VCR
+    `delta=True` carries the part's `index`, so a caption UI replaces that turn rather than adding one. Not a VCR
     test: a recording can't produce the late order on demand.
     """
     events: list[RealtimeCodecEvent] = [
