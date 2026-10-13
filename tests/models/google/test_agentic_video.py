@@ -172,7 +172,7 @@ async def test_agentic_video_processing(
     assert replayed_text_part['text'] == final_text.content
     replayed_signature = replayed_text_part['thoughtSignature']
     assert isinstance(replayed_signature, str)
-    assert base64.urlsafe_b64decode(replayed_signature) == base64.urlsafe_b64decode(final_signature)
+    assert base64.urlsafe_b64decode(replayed_signature) == base64.b64decode(final_signature, validate=True)
 
 
 def test_typed_media_processing_parts_map_to_the_same_tool() -> None:
@@ -452,7 +452,7 @@ async def test_agentic_video_processing_vertex(
     assert replayed_text_part['text'] == final_text.content
     replayed_signature = replayed_text_part['thoughtSignature']
     assert isinstance(replayed_signature, str)
-    assert base64.urlsafe_b64decode(replayed_signature) == base64.urlsafe_b64decode(final_signature)
+    assert base64.urlsafe_b64decode(replayed_signature) == base64.b64decode(final_signature, validate=True)
 
 
 @pytest.mark.vcr
