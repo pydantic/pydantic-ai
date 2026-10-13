@@ -205,6 +205,12 @@ from .toolsets import (
     ToolsetTool,
     WrapperToolset,
 )
+from .transcription import (
+    Transcriber,
+    TranscriptionModel,
+    TranscriptionResult,
+    TranscriptionSettings,
+)
 from .usage import RequestUsage, RunUsage, UsageLimits
 
 __all__ = (
@@ -233,6 +239,11 @@ __all__ = (
     'ImageGenerationSettings',
     'ImageGenerationResult',
     'GeneratedImage',
+    # transcription
+    'Transcriber',
+    'TranscriptionModel',
+    'TranscriptionSettings',
+    'TranscriptionResult',
     # concurrency
     'AbstractConcurrencyLimiter',
     'AnyConcurrencyLimit',
