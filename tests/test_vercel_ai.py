@@ -5061,7 +5061,7 @@ async def test_adapter_dump_messages_omits_unset_optional_fields(tiny_image: Bin
         (part['type'], key) for msg in dumped for part in msg['parts'] for key, value in part.items() if value is None
     ]
     assert null_keys == snapshot([('tool-noop', 'output')])
-    # A `metadataSchema` passed to `validateUIMessages` rejects `null` message metadata too.
+    # An optional `metadataSchema` passed to `validateUIMessages` rejects `null` message metadata.
     assert 'metadata' not in dumped[0]
 
     reloaded = VercelAIAdapter.load_messages([UIMessage.model_validate(msg) for msg in dumped])
@@ -5069,6 +5069,28 @@ async def test_adapter_dump_messages_omits_unset_optional_fields(tiny_image: Bin
         part for part in iter_message_parts(reloaded, ModelRequest, ToolReturnPart) if part.tool_call_id == 'call_2'
     )
     assert noop_return.content is None
+
+
+async def test_adapter_dump_messages_system_only_request_keeps_metadata():
+    """A request with only system parts carries its metadata on the system message, and it survives a reload."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='Be brief.')], metadata={'tenant': 'acme'}),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assert [msg.model_dump(by_alias=True) for msg in ui_messages] == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'system',
+                'metadata': {'tenant': 'acme'},
+                'parts': [{'type': 'text', 'text': 'Be brief.', 'state': 'done'}],
+            }
+        ]
+    )
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    assert reloaded[0].metadata == snapshot({'tenant': 'acme', '__pydantic_ai__': {'ui_message_id': IsStr()}})
 
 
 def test_client_message_serializes_as_sent():
