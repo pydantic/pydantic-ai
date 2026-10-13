@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 DISTRIBUTION = 'pydantic-clai2'
 PACKAGES = (
     'pydantic-clai2',
-    'pydantic-ai-harness[coder]',
+    'pydantic-ai-harness[coder,skills]',
     'pydantic-ai-slim[anthropic,mcp,openai]',
     'pydantic-graph',
 )
