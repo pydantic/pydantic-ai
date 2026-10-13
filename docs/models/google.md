@@ -148,8 +148,9 @@ agent = Agent(model)
 ...
 ```
 
-The client the Google providers create has a 20-minute timeout, which [long decode](#long-decode) needs. A client you
-pass keeps its own timeout, so give it at least that much for long-decode models.
+The client the Google providers create, including through the [Gateway](../gateway.md), has a 20-minute timeout, which
+[long decode](#long-decode) needs. A client you pass keeps its own timeout, so give it at least that much for
+long-decode models.
 
 The Google providers also accept a legacy `httpx.AsyncClient` during Pydantic AI v2, but emit a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.
 
@@ -465,7 +466,8 @@ agent = Agent(GoogleModel('gemini-3.7-flash'), model_settings=model_settings)
 
 ## Long decode
 
-Google documents a per-request output cap for `gemini-4-argon`: 32K tokens, or 64K when streaming. When
+`gemini-4-argon` caps the output of each request; Google's
+[long decode docs](https://ai.google.dev/gemini-api/docs/generate-content/long-decode) give the caps and defaults. When
 [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] is above the cap, a request that reaches it returns a
 continuation token, and the `google-genai` SDK continues the response from it in another request, until the response
 is done or `max_tokens` is spent:
@@ -487,13 +489,15 @@ decode is one model request:
   limits once every request is done: `max_tokens` is what bounds a long decode.
   [`per_request_input_tokens_limit`][pydantic_ai.usage.UsageLimits.per_request_input_tokens_limit] is checked against
   the input tokens of the first request.
-- Timeouts apply to each request. One request can take up to 10 minutes, which is why the Google providers create
-  their client with a 20-minute timeout.
+- Timeouts apply to each request. The Google providers create their client with the 20-minute read timeout Google
+  recommends.
+- If a later request fails, the whole model request fails, and the output of the earlier requests, already billed, is
+  lost.
 - On [Temporal](../durable_execution/temporal.md#activity-configuration), the whole long decode runs in one model
   request activity, so its `start_to_close_timeout` must cover every request. A retried activity starts the response
   over.
 
-Without `max_tokens`, Gemini's default applies, which is the per-request cap: the response ends there with
+Without `max_tokens`, Google's default output limit applies, and a response that reaches it ends with
 `finish_reason='length'`.
 
 On [Google Cloud](google-cloud.md), `gemini-4-argon` is served on the `global` location and the `us` multi-region, not
