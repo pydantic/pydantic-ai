@@ -1003,11 +1003,12 @@ async def test_failed_provider_cancellation_does_not_leave_a_run_waiting(
     async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
         while (await manager.query('status', item_id))['state'] != 'submitted':
             pass
-    await handle.cancel()
+    # The time-skipping server can corrupt cancellation history while activity retries are pending.
     with temporal_env.auto_time_skipping_disabled():
+        await handle.cancel()
         with pytest.raises(WorkflowFailureError):
             await handle.result()
-    await asyncio.wait_for(provider.failed_cancellations_finished.wait(), READINESS_WAIT_TIMEOUT)
+        await asyncio.wait_for(provider.failed_cancellations_finished.wait(), READINESS_WAIT_TIMEOUT)
     assert len(provider.canceled) == 3
 
 
