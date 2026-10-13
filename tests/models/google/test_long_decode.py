@@ -556,13 +556,27 @@ def _dropped_after(*chunks: dict[str, object]) -> list[httpx2.Response]:
 _CHECKPOINT = _chunk({'text': '1\n'}, response_id='request-1', usage=_usage(None, 2), continuation_token=b'checkpoint')
 
 
-async def test_stream_drop_resumes_from_the_last_checkpoint(allow_model_requests: None):
-    """google-genai resumes a stream that drops right after a continuation token from that token.
+@pytest.mark.parametrize(
+    'after_checkpoint',
+    [
+        pytest.param([], id='nothing'),
+        pytest.param(
+            [{'candidates': [{'index': 0}], 'usageMetadata': _usage(None, 2), 'responseId': 'request-1'}],
+            id='no-output',
+        ),
+    ],
+)
+async def test_stream_drop_resumes_from_the_last_checkpoint(
+    after_checkpoint: list[dict[str, object]], allow_model_requests: None
+):
+    """google-genai resumes a stream that drops with no output after its last continuation token from that token.
 
     Live Argon streams carry a token on every chunk from the first checkpoint on, so this is how they resume.
     """
     requests: list[dict[str, object]] = []
-    agent = Agent(_model(_dropped_after(_CHECKPOINT), requests), model_settings={'max_tokens': 100_000})
+    agent = Agent(
+        _model(_dropped_after(_CHECKPOINT, *after_checkpoint), requests), model_settings={'max_tokens': 100_000}
+    )
 
     output, _ = await _run(agent, stream=True)
 

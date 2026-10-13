@@ -149,8 +149,9 @@ agent = Agent(model)
 ```
 
 The client the Google providers create, including through the [Gateway](../gateway.md), has a 20-minute timeout, which
-[long decode](#long-decode) needs. For a client you pass, google-genai applies the client's read timeout to every phase
-of each request, so give it a read timeout of at least 20 minutes for long-decode models.
+[long decode](#long-decode) needs. For a client you pass, `google-genai` applies the client's read timeout, or 600
+seconds if it has none, to every phase of each request, so give it a read timeout of at least 20 minutes for long-decode
+models.
 
 The Google providers also accept a legacy `httpx.AsyncClient` during Pydantic AI v2, but emit a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.
 

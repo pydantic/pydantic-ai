@@ -1536,7 +1536,7 @@ class GeminiStreamedResponse(StreamedResponse):
         # A continuation token checkpoints the output up to and including its chunk. When a stream drops after a
         # checkpoint, google-genai resumes from that token without retracting the chunks it already yielded after it,
         # so the resumed request would repeat them. Live Argon streams carry a token on every chunk from the first
-        # checkpoint on (2026-10-12), so this hasn't been seen.
+        # checkpoint on, except a request's final `STOP` chunk (2026-10-09), so this hasn't been seen.
         uncheckpointed_output = False
         try:
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name, errors.UnknownApiResponseError):
@@ -1597,7 +1597,7 @@ class GeminiStreamedResponse(StreamedResponse):
                             raise ModelAPIError(
                                 self._model_name,
                                 'The stream was interrupted after output that no continuation token covers, '
-                                'and google-genai resumed it, which would repeat that output.',
+                                'and `google-genai` resumed it, which would repeat that output.',
                             )
                         new_request_vendor_part_id = uuid4()
                     self.provider_response_id = chunk.response_id
