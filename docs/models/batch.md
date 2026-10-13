@@ -61,7 +61,7 @@ Save the returned batch ID. Run it again with `BATCH_ID` to check completion and
 Install `pydantic-ai[anthropic,logfire]` to run this example.
 
 [`Model.batch_max_requests`][pydantic_ai.models.Model.batch_max_requests] returns a
-[`Model`][pydantic_ai.models.batch.Model] or `None` when unsupported.
+provider's per-batch request limit, or `None` when the model has no batch API.
 Anthropic's direct API supports this interface. This API does not require a durable engine.
 You own persistence, scheduling and recovery; it does not run an agent, tools or output validators.
 For automatic durable agent batching, use [`BatchModel`](../durable_execution/batching.md).

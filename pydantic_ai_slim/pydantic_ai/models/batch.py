@@ -26,6 +26,10 @@ __all__ = (
     'BatchStatus',
 )
 
+_DEFAULT_MAX_REQUESTS = 100
+_DEFAULT_MAX_WAIT = timedelta(seconds=30)
+_DEFAULT_POLL_INTERVAL = timedelta(minutes=1)
+
 BatchStatus: TypeAlias = Literal['in_progress', 'canceling', 'ended']
 """The job's processing state; an ended job can contain mixed per-request outcomes."""
 
@@ -107,16 +111,12 @@ class BatchModel(WrapperModel):
         if self.wrapped.batch_max_requests is None:
             raise UserError(f'{type(self.wrapped).__name__} {self.wrapped.model_name!r} has no batch API.')
         self.batch_settings = batch_settings.copy() if batch_settings is not None else {}
-        if self.batch_settings.get('max_requests', 100) <= 0:
+        if self.batch_settings.get('max_requests', _DEFAULT_MAX_REQUESTS) <= 0:
             raise UserError('`BatchSettings.max_requests` must be positive.')
-        if self.batch_settings.get('max_wait', timedelta(seconds=30)) <= timedelta(0):
+        if self.batch_settings.get('max_wait', _DEFAULT_MAX_WAIT) <= timedelta(0):
             raise UserError('`BatchSettings.max_wait` must be positive.')
-        if self.batch_settings.get('poll_interval', timedelta(minutes=1)) <= timedelta(0):
+        if self.batch_settings.get('poll_interval', _DEFAULT_POLL_INTERVAL) <= timedelta(0):
             raise UserError('`BatchSettings.poll_interval` must be positive.')
-
-    @property
-    def batch_max_requests(self) -> int | None:
-        return self.wrapped.batch_max_requests
 
     async def request(
         self,

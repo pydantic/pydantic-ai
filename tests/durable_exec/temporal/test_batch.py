@@ -841,16 +841,19 @@ async def test_queue_rejects_an_oversized_request_before_submission(
         )
     assert any('over the 100-byte limit' in str(error) for error in failure_causes(exc_info.value))
     assert provider.batch_ids('too-large') == []
+    assert faults.updates == []
 
 
 async def test_a_full_queue_does_not_submit_a_rejected_request(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr('pydantic_ai.durable_exec.temporal._batch_queue._MAX_QUEUE_BYTES', 100)
+    faults.capture = True
     with pytest.raises(WorkflowFailureError) as exc_info:
         await client.execute_workflow(
             DeadlineWorkflow.run, 'queue-full', id=f'batch-full-{uuid.uuid4()}', task_queue=TASK_QUEUE
         )
     assert any('batch queue is full' in str(error) for error in failure_causes(exc_info.value))
     assert provider.batch_ids('queue-full') == []
+    assert [name for _, name, _ in faults.updates] == ['enqueue']
 
 
 async def test_duplicate_enqueue_and_late_result_delivery_are_idempotent(
@@ -926,7 +929,6 @@ async def test_repeated_poll_failures_terminate_the_wait(client: Client, monkeyp
             DeadlineWorkflow.run, 'poll-failure', id=f'poll-failure-{uuid.uuid4()}', task_queue=TASK_QUEUE
         )
     assert any('Collecting batch' in str(error) for error in failure_causes(exc_info.value))
-    assert faults.updates == []
 
 
 @pytest.mark.parametrize('uncertain', [False, True])
@@ -1073,8 +1075,9 @@ async def test_missing_queue_record_is_reported(client: Client, temporal_env: Wo
 
 
 async def test_uncertain_enqueue_is_withdrawn_and_its_tombstone_expires(
-    client: Client, temporal_env: WorkflowEnvironment
+    client: Client, temporal_env: WorkflowEnvironment, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._batch_queue._RETENTION', timedelta(seconds=2))
     provider.group = 'uncertain-enqueue'
     faults.enqueue_error = True
     faults.capture = True
@@ -1086,4 +1089,45 @@ async def test_uncertain_enqueue_is_withdrawn_and_its_tombstone_expires(
     queue_id, _, item_id = faults.updates[-1]
     manager = client.get_workflow_handle(queue_id)
     assert (await manager.query('status', item_id))['state'] == 'canceled'
-    assert await manager.result() is None
+    run_id = (await manager.describe()).run_id
+    assert await client.get_workflow_handle(queue_id, run_id=run_id).result() is None
+
+
+registry_model = ScriptedModel()
+registry_agent = Agent(
+    registry_model,
+    name='batch_registry_agent',
+    capabilities=[
+        TemporalDurability(
+            models={
+                'batch': InstrumentedModel(
+                    BatchModel(ScriptedModel(), batch_settings=BatchSettings(max_requests=1, poll_interval=FAST_POLL))
+                )
+            },
+            activity_config=ACTIVITY_CONFIG,
+        )
+    ],
+)
+
+
+@workflow.defn(failure_exception_types=[ModelAPIError, UserError])
+class RegistryWorkflow:
+    @workflow.run
+    async def run(self, registered: bool) -> str:
+        model = 'batch' if registered else BatchModel(registry_model)
+        return (await registry_agent.run('registry', model=model)).output
+
+
+@pytest.mark.parametrize('registered', [False, True])
+async def test_registered_batch_wrapper_uses_its_own_model_id(client: Client, registered: bool) -> None:
+    queue = 'batch-registry-queue'
+    async with Worker(client, task_queue=queue, workflows=[RegistryWorkflow], plugins=[AgentPlugin(registry_agent)]):
+        handle = await client.start_workflow(
+            RegistryWorkflow.run, registered, id=f'batch-registry-{uuid.uuid4()}', task_queue=queue
+        )
+        if registered:
+            assert await handle.result() == 'Echo: registry'
+        else:
+            with pytest.raises(WorkflowFailureError) as exc_info:
+                await handle.result()
+            assert any('must be registered' in str(error) for error in failure_causes(exc_info.value))

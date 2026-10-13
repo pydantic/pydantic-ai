@@ -1742,7 +1742,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         for model_id, registered in self._models_by_id.items():
             if isinstance(registered, InstrumentedModel) and registered.wrapped is model:
                 return binding, None if model_id == 'default' else model_id
-        return binding, self._find_model_id(model)
+        model_id = self._find_model_id(model)
+        if find_batch_model(self._models_by_id[model_id or 'default']) is not batch_model:
+            raise UserError(
+                'A `BatchModel` must be registered as the agent model or in `models=` before it can be queued.'
+            )
+        return binding, model_id
 
     async def _batch_request(self, binding: DurableBatchBinding, params: ModelRequestParams) -> ModelResponse:
         """Queue a request and wait for its durable result.

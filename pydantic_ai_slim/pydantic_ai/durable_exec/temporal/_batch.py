@@ -33,7 +33,12 @@ from pydantic_ai.durable_exec._operation import ModelRequestParams
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
-from pydantic_ai.models.batch import BatchModel
+from pydantic_ai.models.batch import (
+    _DEFAULT_MAX_REQUESTS,  # pyright: ignore[reportPrivateUsage]
+    _DEFAULT_MAX_WAIT,  # pyright: ignore[reportPrivateUsage]
+    _DEFAULT_POLL_INTERVAL,  # pyright: ignore[reportPrivateUsage]
+    BatchModel,
+)
 from pydantic_ai.settings import ModelSettings
 
 from ._activity_execution import execute_activity
@@ -199,7 +204,11 @@ class TemporalBatchBinding:
         except BaseException as error:
             _inbox().pending.discard(wire.item_id)
             _inbox().outcomes.pop(wire.item_id, None)
-            if not isinstance(error, UserError):
+            if not (
+                isinstance(error, ActivityError)
+                and isinstance(error.cause, ApplicationError)
+                and error.cause.type in ('UserError', 'BatchQueueFull')
+            ):
                 await _shielded(self._execute(self._withdraw, wire, bounded_enqueue=True))
             raise
 
@@ -248,9 +257,9 @@ class TemporalBatchBinding:
             agent_name=self._agent_name,
             group=group,
             model_id=model_id,
-            max_requests=min(settings.get('max_requests', 100), provider_limit),
-            max_wait=settings.get('max_wait', timedelta(seconds=30)),
-            poll_interval=settings.get('poll_interval', timedelta(minutes=1)),
+            max_requests=min(settings.get('max_requests', _DEFAULT_MAX_REQUESTS), provider_limit),
+            max_wait=settings.get('max_wait', _DEFAULT_MAX_WAIT),
+            poll_interval=settings.get('poll_interval', _DEFAULT_POLL_INTERVAL),
         )
 
     async def _enqueue_activity(self, params: EnqueueParams) -> BatchTicket:
@@ -287,8 +296,10 @@ class TemporalBatchBinding:
             )
         except WorkflowUpdateFailedError as error:
             cause = error.cause
-            if isinstance(cause, ApplicationError) and cause.non_retryable:
-                raise UserError(cause.message) from error
+            if isinstance(cause, ApplicationError):
+                if cause.non_retryable:
+                    raise UserError(cause.message) from error
+                raise ApplicationError(cause.message, type=cause.type) from error
             raise
         return BatchTicket(item_id=params.item_id, queue_id=queue_id, group=request.group, accepted_at=accepted_at)
 

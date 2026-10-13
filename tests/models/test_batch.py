@@ -80,7 +80,6 @@ def test_anthropic_batch_api_is_only_on_the_claude_api_client(monkeypatch: pytes
     )
 
     assert direct.batch_max_requests == 100_000
-    assert BatchModel(direct).batch_max_requests == 100_000
     assert bedrock.batch_max_requests is None
     with pytest.raises(UserError, match='has no batch API'):
         BatchModel(bedrock)

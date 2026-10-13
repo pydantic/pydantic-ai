@@ -552,7 +552,7 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 
 ## Batch API
 
-Use [`Model.batch_max_requests`][pydantic_ai.models.Model.batch_max_requests] to submit and collect batches directly.
+Use [`Model.batch_create`][pydantic_ai.models.Model.batch_create] and the other `batch_*` methods to submit and collect batches directly.
 See [Direct batch requests](batch.md) for a complete example.
 
 Wrap an `AnthropicModel` in [`BatchModel`][pydantic_ai.models.batch.BatchModel] to use Message Batches
