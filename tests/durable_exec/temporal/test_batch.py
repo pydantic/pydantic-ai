@@ -17,6 +17,7 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
+from pydantic_core import to_json
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
@@ -160,8 +161,6 @@ class FaultOutbound(OutboundInterceptor):
         self, input: StartWorkflowUpdateWithStartInput
     ) -> WorkflowUpdateHandle[Any]:
         if faults.conflicting_policy and input.update_workflow_input.update == 'enqueue':
-            from pydantic_core import to_json
-
             wire = json.loads(to_json(input.update_workflow_input.args[0]))
             wire['policy']['max_requests'] -= 1
             input.update_workflow_input.args = [wire]
@@ -519,7 +518,6 @@ async def test_registered_instrumented_batch_model(client: Client) -> None:
 async def test_cancellation_tombstones_respect_the_queue_byte_limit(
     client: Client, temporal_env: WorkflowEnvironment, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from pydantic_core import to_json
 
     provider.group = 'cancel-capacity'
     provider.hold = True
@@ -859,7 +857,6 @@ async def test_a_full_queue_does_not_submit_a_rejected_request(client: Client, m
 async def test_duplicate_enqueue_and_late_result_delivery_are_idempotent(
     client: Client, temporal_env: WorkflowEnvironment
 ) -> None:
-    from pydantic_core import to_json
 
     provider.hold = True
     faults.capture = True
@@ -951,8 +948,6 @@ async def test_cancellation_during_provider_submission_cancels_the_created_job(
     provider.create_release.set()
     await temporal_env.sleep(timedelta(seconds=1))
     if uncertain:
-        from pydantic_core import to_json
-
         queue_id, _, params = next(update for update in faults.updates if update[1] == 'enqueue')
         item_id = json.loads(to_json(params))['consumer']['item_id']
         status = await client.get_workflow_handle(queue_id).query('status', item_id)
@@ -975,7 +970,6 @@ async def test_failed_provider_cancellation_does_not_leave_a_run_waiting(
     )
     await temporal_env.sleep(timedelta(seconds=1))
     await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
-    from pydantic_core import to_json
 
     queue_id, _, params = next(update for update in faults.updates if update[1] == 'enqueue')
     item_id = json.loads(to_json(params))['consumer']['item_id']
@@ -1038,7 +1032,6 @@ async def test_pending_collection_keeps_waiting(client: Client, temporal_env: Wo
 
 
 async def test_external_cancellation_of_a_queued_item_is_reported(client: Client) -> None:
-    from pydantic_core import to_json
 
     provider.group = 'external-cancel'
     faults.capture = True
