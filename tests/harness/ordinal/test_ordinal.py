@@ -9,7 +9,6 @@ import httpx
 import pytest
 from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
-from mcp.server.fastmcp.server import FastMCP, Settings
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -21,9 +20,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ordinal import Ordinal
 
-# The MCP SDK leaves a settings annotation unresolved in some supported dependency
-# combinations. Rebuild it before warnings are escalated by the test suite.
-Settings.model_rebuild()
+from .._mcp_server import MCPServer
 
 DepsT = TypeVar('DepsT')
 
@@ -63,7 +60,7 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
 
 class TestOrdinal:
     async def test_agent_runs_with_ordinal_tools(self) -> None:
-        server = FastMCP('ordinal-fake')
+        server = MCPServer('ordinal-fake')
 
         @server.tool()
         def ordinal_get_workspace_context() -> dict[str, str]:
@@ -79,7 +76,7 @@ class TestOrdinal:
 
     @pytest.mark.parametrize('include', [True, False])
     async def test_server_instructions(self, include: bool) -> None:
-        server = FastMCP('ordinal-fake', instructions='Ordinal instructions.')
+        server = MCPServer('ordinal-fake', instructions='Ordinal instructions.')
         agent = Agent(TestModel(call_tools=[]), capabilities=[Ordinal(client=server, include_instructions=include)])
         request = (await agent.run('Hello')).all_messages()[0]
         assert isinstance(request, ModelRequest)

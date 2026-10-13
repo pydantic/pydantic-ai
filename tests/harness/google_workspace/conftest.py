@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import pytest
-from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.tools import AgentDepsT
 
+from .._mcp_server import MCPServer
+
 
 @pytest.fixture
 def connections(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str | None]]:
-    server = FastMCP('google', instructions='Google instructions.')
+    server = MCPServer('google', instructions='Google instructions.')
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
     def read_item() -> str:
