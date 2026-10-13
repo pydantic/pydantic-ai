@@ -185,6 +185,10 @@ derived from `root_path`, then a `window.PYDANTIC_AI_CHAT_CONFIG` that a custom
 [`html_source`](#custom-html-source) sets for itself, then `base_path` and `api_path`. So a custom
 HTML file keeps control of any path it configures unless you pass that path explicitly.
 
+The `window.PYDANTIC_AI_CHAT_CONFIG` global is read by `@pydantic/ai-chat-ui` 2.3.0 and later,
+which `to_web()` fetches by default. Older self-hosted HTML files ignore the injected paths;
+re-download the [offline artifact](#custom-html-source) before serving the UI below a prefix.
+
 `clai web` always serves at the origin root; to serve below a prefix, build the app with
 `agent.to_web()` and mount or proxy it yourself.
 
