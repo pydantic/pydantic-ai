@@ -39,7 +39,6 @@ from tests.clai2.surface_terminal import SurfaceTerminal
 async def editor(
     *,
     output: io.StringIO | None = None,
-    toolbar: Callable[[], list[tuple[str, str]]] = lambda: [('', 'ready')],
     clock: Callable[[], float] = lambda: 0,
     panel: Callable[[str], Sequence[str]] = lambda _: (),
 ) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
@@ -54,7 +53,7 @@ async def editor(
             history=InMemoryHistory(),
             images=ImageInput(),
             interrupts=Interrupts(),
-            toolbar=toolbar,
+            toolbar=lambda: [('', 'ready')],
             clock=clock,
             panel=panel,
         )
@@ -827,7 +826,7 @@ async def test_steering_returns_the_transcript_to_the_newest_output() -> None:
 
 
 class FrameClock:
-    """A settable clock, and the times at which the editor built a frame (it reads the toolbar once per frame)."""
+    """A settable clock that records the times at which the editor built a frame."""
 
     def __init__(self) -> None:
         self.now = 0.0
@@ -836,9 +835,14 @@ class FrameClock:
     def __call__(self) -> float:
         return self.now
 
-    def toolbar(self) -> list[tuple[str, str]]:
-        self.built.append(self.now)
-        return [('', 'ready')]
+    def watch(self, live: LivePrompt, monkeypatch: pytest.MonkeyPatch) -> None:
+        frame = live.frame
+
+        def recorded() -> tuple[str, ...]:
+            self.built.append(self.now)
+            return frame()
+
+        monkeypatch.setattr(live, 'frame', recorded)
 
     def run(self, live: LivePrompt, *, until: float, step: float = 0.25) -> list[float]:
         """Tick the editor every `step` seconds of simulated time and return the frames it built meanwhile."""
@@ -849,9 +853,10 @@ class FrameClock:
         return self.built
 
 
-async def test_an_idle_editor_rebuilds_its_frame_once_a_second_not_ten_times() -> None:
+async def test_an_idle_editor_rebuilds_its_frame_once_a_second_not_ten_times(monkeypatch: pytest.MonkeyPatch) -> None:
     clock = FrameClock()
-    async with editor(toolbar=clock.toolbar, clock=clock) as (live, _, _):
+    async with editor(clock=clock) as (live, _, _):
+        clock.watch(live, monkeypatch)
         assert IDLE_REPAINT == 1
         assert clock.run(live, until=3) == [1.0, 2.0, 3.0]
         live.feed('x')
@@ -861,10 +866,21 @@ async def test_an_idle_editor_rebuilds_its_frame_once_a_second_not_ten_times() -
             assert clock.run(live, until=7) == [], 'a menu owns the screen'
 
 
-async def test_running_forks_animate_every_tick_until_a_second_after_they_settle() -> None:
+async def test_running_forks_animate_every_tick_until_a_second_after_they_settle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     clock = FrameClock()
     forks = ['FORK #1 running']
-    async with editor(toolbar=clock.toolbar, clock=clock, panel=lambda _: forks) as (live, _, _):
+    async with editor(clock=clock, panel=lambda _: forks) as (live, _, _):
+        clock.watch(live, monkeypatch)
         assert clock.run(live, until=1) == [0.25, 0.5, 0.75, 1.0]
         forks.clear()
         assert clock.run(live, until=3) == [1.25, 1.5, 1.75, 2.0, 3.0]
+
+
+async def test_a_panel_too_small_to_show_stops_animating(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FrameClock()
+    async with editor(clock=clock, panel=lambda _: ['FORK #1 running']) as (live, _, _):
+        clock.watch(live, monkeypatch)
+        live.console.size = (5, 5)
+        assert clock.run(live, until=3) == [0.25, 0.5, 0.75, 1.0, 2.0, 3.0]

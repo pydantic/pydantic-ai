@@ -518,6 +518,7 @@ class LivePrompt:
         width, height = max(1, width), max(2, height)
         muted, reset = theme.sgr(theme.MUTED), '\x1b[0m'
         if width < 6 or height < 6:
+            self._panel_shown = False
             return tuple(self.buffer.rows(width=width, limit=1))
         # `paint` keeps `height - 2` rows; the title, one draft row, the rule, and the footer need four.
         room = height - 6
