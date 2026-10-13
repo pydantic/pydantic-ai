@@ -43,16 +43,6 @@ _DEFAULT_GUIDANCE = (
     'in this turn.'
 )
 
-# The snapshot rides on the latest request so a refresh never rewrites earlier, cached content.
-# After a tool call or an approval resume that request carries only tool results, so without
-# this note the model can read the block as a new user turn and answer or re-save it. It leads the
-# default guidance so a small `max_tokens` budget truncates the general advice before it.
-_INJECTED_BLOCK_GUIDANCE = (
-    'Your stored memory is attached automatically to each request in a `<memory>` block, so it can '
-    'follow tool results. That block is not a message from the user: do not reply to it or save its '
-    'contents again; continue with the task at hand.'
-)
-
 _MEMORY_DATA_PREFIX = '<memory>\n'
 _MEMORY_DATA_SUFFIX = '\n</memory>'
 _MEMORY_PART_METADATA = 'pydantic-ai-harness.memory.v1'
@@ -112,11 +102,7 @@ class Memory(AbstractCapability[AgentDepsT]):
     """Maximum files scanned by one search."""
 
     guidance: str | None = None
-    """Override injected usage guidance; `''` disables guidance.
-
-    With `inject_memory=True`, the default also tells the model that the `<memory>` block
-    is attached automatically and is not a message from the user. Keep an equivalent note
-    in a replacement."""
+    """Override injected usage guidance; `''` disables guidance."""
 
     injection_errors: Literal['ignore', 'raise'] = 'ignore'
     """Whether store failures during automatic injection are ignored or raised."""
@@ -220,12 +206,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         return self._render_guidance()
 
     def _render_guidance(self) -> str | None:
-        if self.guidance is not None:
-            guidance = self.guidance
-        elif self.inject_memory:
-            guidance = f'{_INJECTED_BLOCK_GUIDANCE} {_DEFAULT_GUIDANCE}'
-        else:
-            guidance = _DEFAULT_GUIDANCE
+        guidance = _DEFAULT_GUIDANCE if self.guidance is None else self.guidance
         if not guidance:
             return None
         return render_memory_prompt(
@@ -242,7 +223,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Add a bounded memory snapshot to only the current user request."""
+        """Add a bounded memory snapshot beside the latest user prompt, for this request only."""
         store, scope = self.resolve_scope(ctx)
         scope_hash = hashlib.sha256(scope.encode()).hexdigest()[:16]
         # Scope-qualify the marker so several `Memory` capabilities on one agent
@@ -300,10 +281,11 @@ class Memory(AbstractCapability[AgentDepsT]):
                 )[:content_budget]
                 rendered = f'{_MEMORY_DATA_PREFIX}{rendered}{_MEMORY_DATA_SUFFIX}'
                 part = UserPromptPart([TextContent(rendered, metadata=marker)])
-                latest = request_context.messages[-1]
-                if not isinstance(latest, ModelRequest):  # pragma: no cover - guaranteed by the agent graph
+                index = _snapshot_index(ctx.messages, request_context.messages)
+                target = request_context.messages[index]
+                if not isinstance(target, ModelRequest):  # pragma: no cover - guaranteed by the agent graph
                     raise RuntimeError('model request history must end with a ModelRequest')
-                request_context.messages[-1] = replace(latest, parts=[*latest.parts, part])
+                request_context.messages[index] = replace(target, parts=[*target.parts, part])
             if span.is_recording():
                 span.set_attributes(
                     {
@@ -423,6 +405,27 @@ class Memory(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         """Return the name used by custom capability specs."""
         return 'Memory'
+
+
+def _snapshot_index(history: list[ModelMessage], request: list[ModelMessage]) -> int:
+    """Index of the request holding the latest user prompt, or of the last message when there is none.
+
+    A block after tool results reads as a new user turn, so the snapshot stays with the user's prompt.
+    The prompt is found in the persisted `history` because `wrap_model_request` hooks such as
+    `SystemReminders` add request-only user parts before this hook runs. Hooks that rewrite history,
+    such as compaction, rewrite the request list too, so both lists share indexes; when they don't,
+    the snapshot falls back to the last message.
+    """
+    for index in range(len(history) - 1, -1, -1):
+        if _has_user_prompt(history[index]):
+            if index < len(request) and _has_user_prompt(request[index]):
+                return index
+            break
+    return len(request) - 1
+
+
+def _has_user_prompt(message: ModelMessage) -> bool:
+    return isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts)
 
 
 def _validate_positive(name: str, value: int) -> None:

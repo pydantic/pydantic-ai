@@ -18,7 +18,8 @@ demand). Only `Skills` needs an extra.
 Gives the model four tools: `write_memory(content, file='MEMORY.md', old_text=None)` (append, or
 replace one unique fragment), `read_memory(file)`, `delete_memory(file)` (`MEMORY.md` is
 protected), and `search_memory(query)`. By default a bounded excerpt of `MEMORY.md` plus the list
-of other files is injected into each request as a delimited user-role part.
+of other files is injected into each request as a delimited user-role part, attached to the request
+that holds the latest user prompt (not after tool results), or to the last request when there is none.
 
 ```python
 from pydantic_ai import Agent
@@ -122,9 +123,6 @@ I/O.
   for an indexed backend.
 - Other options: `agent_name='main'` (storage segment, never shown to the model), `heading=''`
   (labels the guidance and injected block), `guidance=None` (replace the default usage text).
-- The `<memory>` block is appended to the latest request, so after a tool call it sits next to tool
-  results. The default guidance tells the model it is not a user message; keep that note in a custom
-  `guidance`.
 
 ### Several memories on one agent
 
