@@ -550,6 +550,19 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 - Excess `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
 
+## Batch API
+
+Use [`Model.batch_provider`][pydantic_ai.models.Model.batch_provider] to submit and collect batches directly.
+See [Direct batch requests](batch.md) for a complete example.
+
+Wrap an `AnthropicModel` in [`BatchModel`][pydantic_ai.models.batch.BatchModel] to use Message Batches
+inside a supported durable agent run. Submission happens automatically by batch size or queue deadline.
+See [Automatic batching](../durable_execution/batching.md) for a complete Temporal workflow example,
+settings, cancellation behavior and payload limits.
+
+Anthropic charges batch usage at [50% of standard API prices](https://platform.claude.com/docs/en/build-with-claude/batch-processing#pricing).
+Batching and prompt-caching discounts can apply together.
+
 ## Mid-conversation system messages
 
 Adding an instruction to the agent's `system_prompt` partway through a long session rewrites the front of the prompt, which invalidates every cached prefix behind it. Anthropic avoids that by accepting a system message *inside* the conversation, at the instruction's own position in the history rather than ahead of it, so everything cached up to that point stays cached.

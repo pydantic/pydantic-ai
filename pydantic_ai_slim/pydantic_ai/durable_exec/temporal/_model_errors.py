@@ -84,11 +84,12 @@ def _decode(encoded: dict[str, Any]) -> ModelAPIError | None:
 
 
 @contextmanager
-def model_errors_as_application_errors() -> Generator[None]:
+def model_errors_as_application_errors(*, non_retryable: bool = False) -> Generator[None]:
     """In a model activity, raise a model error as an `ApplicationError` the workflow can rebuild it from.
 
     The `ApplicationError`'s `type` is the error's class name, which is what Temporal would have used
-    for the raw exception, so the activity's retry policy treats it exactly as before.
+    for the raw exception, so the activity's retry policy treats it exactly as before, unless
+    `non_retryable` says a retry would only reproduce it.
     """
     try:
         yield
@@ -101,7 +102,9 @@ def model_errors_as_application_errors() -> Generator[None]:
             encoded = None
         if encoded is None or _decode(encoded) is None:
             raise
-        raise ApplicationError(str(error), {_DETAILS_KEY: encoded}, type=type(error).__name__) from error
+        raise ApplicationError(
+            str(error), {_DETAILS_KEY: encoded}, type=type(error).__name__, non_retryable=non_retryable
+        ) from error
 
 
 @contextmanager

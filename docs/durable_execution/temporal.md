@@ -541,6 +541,13 @@ Whole-run cancellation (see [Cancelling a Run](../agent.md#cancelling-a-run)) fo
 
 [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for workflow code: it requires no running event loop and wraps `run_stream()`. Under [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], use the buffered async streaming APIs above or [`Agent.run()`][pydantic_ai.agent.Agent.run] with an event stream handler. Outside a workflow, an agent with `TemporalDurability` behaves like a normal agent, so `run_stream_sync()` works as usual. (Wrapper `TemporalAgent` forbids `run_stream` inside workflows — use `run` + event stream handler there.)
 
+### Automatic Batching
+
+Use [`BatchModel`][pydantic_ai.models.batch.BatchModel] with a registered Anthropic model to aggregate
+requests from durable agent runs automatically. The Temporal integration supplies the batch manager and
+registers its handlers through the existing worker plugins. The agent workflow keeps its progress while
+waiting for each result. See [Automatic batching](batching.md) for the complete example and settings.
+
 ### Suspended Turns and Background Mode
 
 Some providers can pause a model turn mid-flight (Anthropic `pause_turn`) or run it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)). Pydantic AI transparently continues such a suspended turn until it completes. Each segment runs in a separate model request activity, while the workflow checkpoints the suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and its background job ID between segments. The final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response resumes with that response passed to the first activity.

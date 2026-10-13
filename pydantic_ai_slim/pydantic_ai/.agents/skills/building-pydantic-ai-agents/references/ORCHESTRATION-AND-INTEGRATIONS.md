@@ -88,6 +88,14 @@ Temporal entry points:
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
+For background Anthropic work, wrap a registered `AnthropicModel` with `BatchModel` from
+`pydantic_ai.models.batch` and attach `TemporalDurability` at construction. `BatchSettings` controls
+automatic submission by request count or the oldest request's queue deadline. Use the existing Temporal
+worker plugins to register the batch manager. Call `await agent.run(...)` inside the workflow; do not
+write a submission or polling loop. Batch mode requires a supported durable binding and is non-streaming.
+Keep requests within the backend's inline payload limits. Each tool turn or validation retry can require
+another batch. Cancelled submitted items may still be billed.
+
 Capability hooks that must behave differently in deterministic workflow code check `ctx.in_durable_context`: `True` inside the durable workflow or flow, `False` in Temporal activities and DBOS steps (where tools run) and outside durable execution. Prefect tasks inherit their flow's context, so it is `True` there. Don't detect the engine by module or class name.
 
 Pass every executing toolset that needs durable wrapping to the agent constructor. In particular, construct a `DynamicToolset` with an explicit `id` and pass it to `Agent(toolsets=[...])`; the `@agent.toolset` decorator registers after the engine's durable units were created. Toolsets that arrive later — via the decorator, `run(toolsets=...)`, `override(toolsets=...)`, or a per-run capability — are never wrapped for durable execution. Inside a workflow or flow, Temporal and Prefect reject runtime `MCPToolset` and `DynamicToolset` leaves, plus `FunctionToolset` leaves unless every async tool opts out of durable wrapping with `metadata={'temporal': False}` or `metadata={'prefect': False}` respectively; DBOS accepts a `FunctionToolset`, whose tools it runs inline either way, but rejects `MCPToolset` and `DynamicToolset`. A custom executing `AbstractToolset` leaf is not recognized by this guard and runs unwrapped, so do not add one at run time. The deprecated wrapper agents don't run this check — inside a workflow or flow they run the toolset list frozen at wrap time, so a toolset registered that late is silently left out. A toolset added at run time also cannot reuse a construction-time toolset's `id`.
@@ -167,3 +175,5 @@ Extensibility entry points:
 - `AbstractCapability`
 
 Reach for these only when the built-in primitives are genuinely insufficient.
+
+For direct bulk requests, use `model.batch_provider` to encode, create, check status, retrieve results, cancel and decode. Persist batch IDs and request settings yourself; this API does not run tools or require a durable engine.

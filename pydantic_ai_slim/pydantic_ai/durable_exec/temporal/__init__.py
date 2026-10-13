@@ -219,6 +219,7 @@ class PydanticAIPlugin(SimplePlugin):
 
         workflows = list(config.get('workflows', []))  # type: ignore[reportUnknownMemberType]
         activities = list(config.get('activities', []))  # type: ignore[reportUnknownMemberType]
+        extra_workflows: list[type] = []
 
         for workflow_class in workflows:
             agents = getattr(workflow_class, '__pydantic_ai_agents__', None)
@@ -242,12 +243,15 @@ class PydanticAIPlugin(SimplePlugin):
                             '`TemporalDurability` capability; add one to `capabilities=[...]`.'
                         )
                     activities.extend(durability.temporal_activities)  # type: ignore[reportUnknownMemberType]
+                    extra_workflows.extend(durability.temporal_workflows)
                 else:
                     raise TypeError(  # pragma: no cover
                         f'__pydantic_ai_agents__ items must be TemporalAgent or AbstractAgent, got {type(agent)}'  # type: ignore[reportUnknownVariableType]
                     )
 
         config['activities'] = activities
+        if extra_workflows:
+            config['workflows'] = _with_workflows(workflows, extra_workflows)
 
         return config
 
@@ -263,6 +267,7 @@ class AgentPlugin(SimplePlugin):
     """
 
     def __init__(self, agent: AbstractAgent[Any, Any]):
+        workflows: list[type] = []
         if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
             activities = agent.temporal_activities
         else:
@@ -273,7 +278,14 @@ class AgentPlugin(SimplePlugin):
                     'add one to `capabilities=[...]` before constructing the plugin.'
                 )
             activities = durability.temporal_activities
+            workflows = durability.temporal_workflows
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='AgentPlugin',
             activities=activities,
+            # Several agents can share one queue workflow class, which a worker registers once.
+            workflows=(lambda existing: _with_workflows(existing or [], workflows)) if workflows else None,
         )
+
+
+def _with_workflows(existing: Sequence[type], extra: Sequence[type]) -> list[type]:
+    return [*existing, *(workflow_class for workflow_class in dict.fromkeys(extra) if workflow_class not in existing)]

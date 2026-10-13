@@ -106,6 +106,7 @@ if TYPE_CHECKING:
 
     from ..agent.abstract import AbstractAgent
     from ..usage import RunUsage
+    from .batch import BatchProvider
 else:
     # Legacy HTTPX is optional, so this module has to import without it. The annotation then degrades
     # to `object`, dropping static checking of what `create_async_http_client` hands back — the client
@@ -543,6 +544,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def provider(self) -> Provider[InterfaceClient] | None:
         """The provider for this model, if any."""
         return getattr(self, '_provider', None)
+
+    @property
+    def batch_provider(self) -> BatchProvider | None:
+        """The provider batch API this model's requests can go through, or `None` if it has none.
+
+        Read by [`BatchModel`][pydantic_ai.models.batch.BatchModel]. Model classes whose provider offers
+        a batch API override this.
+        """
+        return None
 
     async def __aenter__(self) -> Self:
         """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""

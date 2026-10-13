@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import uuid
 from abc import abstractmethod
@@ -41,7 +42,7 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.models import (
     KnownModelName,
@@ -51,6 +52,7 @@ from pydantic_ai.models import (
     ModelResolutionContext,
     infer_model,
 )
+from pydantic_ai.models._continuation import MAX_BACKGROUND_POLLS
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
@@ -62,6 +64,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai.workspaces.workspace import workspace_layers
 
 from .. import _usage_attribution
+from ._batch import DurableBatchBinding, find_batch_model
 from ._capability_operation import (
     CapabilityBoundOperation,
     CapabilityCacheIdentity,
@@ -408,6 +411,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         bound._bind_models(agent)
         bound._toolsets_by_id = {}
         bound._bind_to_agent(agent)
+        if bound.get_durable_batch_binding() is None and any(map(find_batch_model, bound._models_by_id.values())):
+            raise UserError(
+                f'`BatchModel` requests need a durable batch queue, which {self.engine_name} does not provide. '
+                'Use the wrapped model directly, or a durable execution engine with batch support, such as Temporal.'
+            )
         backend = bound.get_durable_operation_backend()
         # Registered engines need the complete registration set before a worker starts. Callable
         # engines bind per request because their durable unit names can depend on that request's
@@ -1660,19 +1668,23 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         operations = self._bound_model_operations or self._bind_model_operations(
             backend, model_id=model_id, model_name=model_name
         )
+        batch = self._batch_binding_for(request_context.model)
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
-            return await operations.request(
-                ModelRequestParams(
-                    model_id,
-                    messages=request.messages,
-                    model_settings=request.model_settings,
-                    model_request_parameters=request.model_request_parameters,
-                    run_context=ctx,
-                )
+            params = ModelRequestParams(
+                model_id,
+                messages=request.messages,
+                model_settings=request.model_settings,
+                model_request_parameters=request.model_request_parameters,
+                run_context=ctx,
             )
+            if batch is not None:
+                return await self._batch_request(batch[0], replace(params, model_id=batch[1]))
+            return await operations.request(params)
 
         async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
+            if batch is not None:
+                raise UserError('`BatchModel` does not support streaming: a batch result arrives all at once.')
             result = await operations.request_stream(
                 ModelRequestParams(
                     model_id,
@@ -1713,6 +1725,43 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self, result: object, model_request_parameters: ModelRequestParameters
     ) -> StreamedActivityResult:
         return cast(StreamedActivityResult, result)
+
+    def get_durable_batch_binding(self) -> DurableBatchBinding | None:
+        """The engine's durable batch queue for `BatchModel` requests, or `None` if the engine has none."""
+        return None
+
+    def _batch_binding_for(self, model: Model) -> tuple[DurableBatchBinding, str | None] | None:
+        """The batch queue a request to `model` goes through, or `None` for a model that isn't a `BatchModel`."""
+        batch_model = find_batch_model(model)
+        if batch_model is None:
+            return None
+        binding = self.get_durable_batch_binding()
+        registered, model_id = self._registered_model_id(batch_model)
+        if binding is None or not registered:
+            # The queue rebuilds the model on the worker, outside any run, so only the registry can supply it.
+            raise UserError(
+                f'A `BatchModel` used inside a {self.engine_name} {self.durable_container_noun} must be registered '
+                f"with `{type(self).__name__}`, as the agent's model or in `models=`."
+            )
+        return binding, model_id
+
+    async def _batch_request(self, binding: DurableBatchBinding, params: ModelRequestParams) -> ModelResponse:
+        """Queue a request and wait for its durable result.
+
+        The engine persists the ticket and each wait. Waiting does not consume model-generation
+        continuations, so a provider pause turn keeps the same budget as a non-batch request.
+        """
+        ticket = await binding.enqueue(params)
+        try:
+            for _ in range(MAX_BACKGROUND_POLLS):
+                response = await binding.wait(ticket, replace(params, messages=[]))
+                if response is not None:
+                    return response
+            raise UnexpectedModelBehavior('The batch request exceeded the maximum number of durable wait rounds.')
+        except BaseException as error:
+            if isinstance(error, (Exception, asyncio.CancelledError)):
+                await binding.cancel(ticket)
+            raise
 
     def _bind_model_operations(
         self, backend: DurableOperationBackend[Any], *, model_id: str | None, model_name: str
