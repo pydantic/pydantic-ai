@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._json_schema import JsonSchema
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import (
     OpenAIJsonSchemaTransformer,
@@ -33,6 +34,49 @@ from ._openai_compatible import (
 
 class _OpenAIJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
     _strict_supports_length_constraints = True
+
+    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+        super().__init__(schema, strict=strict)
+        self._has_non_top_level_local_ref = False
+        self._normalized_single_item_tuple = False
+
+    def walk(self) -> JsonSchema:
+        self._has_non_top_level_local_ref = False
+        self._normalized_single_item_tuple = False
+        result = super().walk()
+        if self._normalized_single_item_tuple and self._has_non_top_level_local_ref:
+            # This walk has no path context, so a non-top-level pointer might target a changed `items` or removed
+            # `prefixItems` node. Wait until the full walk to catch pointers before or after the array, then rerun
+            # the shared transformer on the original schema to preserve its reference behavior.
+            transformer = OpenAIJsonSchemaTransformer(self.schema, strict=self.strict)
+            result = transformer.walk()
+            self.is_strict_compatible = transformer.is_strict_compatible
+        return result
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        if schema_ref := schema.get('$ref'):
+            if schema_ref != self.root_ref and isinstance(schema_ref, str) and schema_ref.startswith('#/'):
+                ref_parts = schema_ref.split('/')
+                is_top_level_definition_ref = (
+                    len(ref_parts) == 3 and ref_parts[1] in ('$defs', 'definitions') and bool(ref_parts[2])
+                )
+                if not is_top_level_definition_ref:
+                    self._has_non_top_level_local_ref = True
+
+        prefix_items: list[JsonSchema | bool] | None = schema.get('prefixItems')
+        if (
+            self.strict is not False
+            and schema.get('type') == 'array'
+            and isinstance(prefix_items, list)
+            and len(prefix_items) == 1
+            and type(max_items := schema.get('maxItems')) is int
+            and max_items == 1
+        ):
+            schema['items'] = prefix_items[0]
+            del schema['prefixItems']
+            self._normalized_single_item_tuple = True
+
+        return super().transform(schema)
 
 
 class OpenAIProvider(_OpenAICompatibleProvider):

@@ -146,10 +146,11 @@ with a rate-limit error before anything generates. Complex prompts can take up t
 
 For non-fine-tuned models used with [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], string fields with
 `min_length` or `max_length` keep those bounds in strict structured outputs. Fine-tuned `ft:` models retain the
-conservative fallback. Fixed-length Pydantic tuple fields generate `prefixItems` without `items`, which OpenAI rejects
-as missing `items`; variadic tuples use typed `items`. The transformer conservatively treats all `prefixItems` schemas
-as incompatible, so inferred strictness falls back to non-strict mode; explicitly strict
-[`ToolOutput`][pydantic_ai.output.ToolOutput] or
+conservative fallback. A one-item tuple with `maxItems: 1` is converted from `prefixItems` to a typed `items` schema,
+which preserves its single allowed element while satisfying OpenAI's array requirements. Other fixed-length Pydantic
+tuples generate `prefixItems` without `items`, which OpenAI rejects as missing `items`; variadic tuples use typed
+`items`. Those other `prefixItems` schemas remain incompatible, so inferred strictness falls back to non-strict mode.
+Explicitly strict [`ToolOutput`][pydantic_ai.output.ToolOutput] or
 [`NativeOutput`][pydantic_ai.output.NativeOutput] raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
 ## Model settings
