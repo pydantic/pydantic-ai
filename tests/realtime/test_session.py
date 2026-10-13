@@ -6526,7 +6526,8 @@ async def test_unconsumed_session_queue_keeps_a_restarted_part_whole(monkeypatch
     """Evicting a part's start leaves alone a later start under the same index, which carries the part again.
 
     A late transcript streams its item's ended part again under the part's index, so the eviction of the first
-    start must stop at the restart rather than take its delta and end too.
+    start must stop at the restart rather than take its delta and end too. Not a VCR test: the queue bound is
+    internal, and a recording can't produce the late order on demand.
     """
     monkeypatch.setattr('pydantic_ai.realtime._session._SESSION_STRUCTURAL_QUEUE_SIZE', 5)
     events: list[RealtimeCodecEvent] = [
@@ -6557,7 +6558,8 @@ async def test_unconsumed_session_queue_keeps_a_restarted_part_whole(monkeypatch
 async def test_late_transcript_yields_its_turn_again_in_stream_transcripts() -> None:
     """A model turn whose transcript grows after it ended is yielded again, with the transcript so far.
 
-    `delta=True` carries the turn's `index`, so a caption UI replaces that turn rather than adding one.
+    `delta=True` carries the turn's `index`, so a caption UI replaces that turn rather than adding one. Not a VCR
+    test: a recording can't produce the late order on demand.
     """
     events: list[RealtimeCodecEvent] = [
         OutputTranscript('Hello', is_final=False, item_id='a'),

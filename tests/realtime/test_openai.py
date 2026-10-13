@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Literal, cast, get_args, get_origin
+from typing import Any, Literal, TypeAlias, cast, get_args, get_origin
 from unittest.mock import patch
 
 import anyio
@@ -5648,12 +5648,19 @@ def _two_item_response(
     return frames
 
 
+RecordedPart: TypeAlias = tuple[str, str | None, dict[str, Any] | None]
+"""A recorded part's type name, text, and provider details."""
+
+StreamStep: TypeAlias = tuple[Literal['start', 'delta', 'end'], int, str | None]
+"""A streamed part event's kind, index relative to the first streamed part, and text."""
+
+
 @dataclass(frozen=True)
 class LateTranscriptCase:
     id: str
     frames: list[dict[str, Any]]
-    history: list[tuple[str, str | None, dict[str, Any] | None]]
-    stream: list[tuple[str, int, str | None]]
+    history: list[RecordedPart]
+    stream: list[StreamStep]
 
 
 LATE_TRANSCRIPT_CASES = [
@@ -5904,12 +5911,12 @@ async def test_late_transcript_keeps_one_part_per_output_item(case: LateTranscri
         assert isinstance(part, SpeechPart)
         return part.transcript
 
-    def summarize(messages: list[ModelMessage]) -> list[tuple[str, str | None, dict[str, Any] | None]]:
+    def summarize(messages: list[ModelMessage]) -> list[RecordedPart]:
         (response,) = [message for message in messages if isinstance(message, ModelResponse)]
         return [(type(part).__name__, text_of(part), part.provider_details) for part in response.parts]
 
     first_index = stream[0].index
-    streamed: list[tuple[str, int, str | None]] = []
+    streamed: list[StreamStep] = []
     for event in stream:
         if isinstance(event, PartDeltaEvent):
             delta = event.delta
@@ -6003,10 +6010,14 @@ async def test_transcript_after_its_response_ended_changes_nothing_recorded() ->
                     ws.push({'type': 'error', 'error': {'message': 'marker', 'type': 'invalid_request_error'}})
                 elif isinstance(event, RealtimeSessionErrorEvent):
                     break
-        responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
-    assert [[part.transcript for part in response.parts if isinstance(part, SpeechPart)] for response in responses] == [
-        ['Hello', 'Bonjour.']
-    ]
+        own = session._own_messages()  # pyright: ignore[reportPrivateUsage]
+        recorded = session.all_messages()
+
+    def transcripts(messages: list[ModelMessage]) -> list[list[str | None]]:
+        responses = [message for message in messages if isinstance(message, ModelResponse)]
+        return [[part.transcript for part in response.parts if isinstance(part, SpeechPart)] for response in responses]
+
+    assert transcripts(recorded) == transcripts(own) == [['Hello', 'Bonjour.']]
 
 
 async def test_evicted_output_audio_is_released() -> None:
