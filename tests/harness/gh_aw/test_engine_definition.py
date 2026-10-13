@@ -983,6 +983,7 @@ async def test_native_tool_calls_and_returns_are_tool_events(
     invocation = launch(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'native_agent:agent'})
     event_output = io.StringIO()
     monkeypatch.setattr(sys, '__stdout__', event_output)
+    monkeypatch.delitem(sys.modules, 'native_agent', raising=False)
     module = import_generated_agent(invocation, monkeypatch)
     agent: Agent[None, str] = module.agent
     observed_call_counts: list[tuple[str, int]] = []
@@ -1070,6 +1071,7 @@ async def test_native_tool_part_replacement_is_recorded_once_per_response(
     invocation = launch(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'native_agent:agent'})
     event_output = io.StringIO()
     monkeypatch.setattr(sys, '__stdout__', event_output)
+    monkeypatch.delitem(sys.modules, 'native_agent', raising=False)
     module = import_generated_agent(invocation, monkeypatch)
     agent: Agent[None, str] = module.agent
 
