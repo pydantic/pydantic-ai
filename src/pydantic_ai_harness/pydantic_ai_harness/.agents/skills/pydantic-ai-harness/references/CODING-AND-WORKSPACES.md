@@ -306,6 +306,8 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   `git clone <url> .` fails on later turns (or use `git init` + `git fetch`).
 - For an existing native sandbox pass `workspace=ModalSandboxBackend(sandbox=...)` (same for E2B and
   Sprites); the capability's settings don't apply to it.
+- Sprites retains only the first 64 KiB of command stderr. Redirect stderr to your own file when
+  you need the complete output; truncation preserves the command's exit status.
 - On E2B and Sprites, a background child that inherits stdout/stderr keeps `run()` waiting: redirect
   its output (`start_command` already does).
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;

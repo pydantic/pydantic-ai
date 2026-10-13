@@ -128,6 +128,8 @@ class FakeExecSocket:
         frame = await self._frames.get()
         if frame is None:
             raise StopAsyncIteration
+        if frame[0] == _STDOUT:
+            self.sprite_transport.output_received.set()
         return frame
 
     async def send(self, message: bytes) -> None:
@@ -167,6 +169,7 @@ class SpriteTransport:
         self.clients: list[AsyncSpritesClient] = []
         self.execs: list[FakeExecSocket] = []
         self.exec_started = asyncio.Event()
+        self.output_received = asyncio.Event()
         self.get_error: Exception | None = None
         self.get_error_once: Exception | None = None
         self.create_error: Exception | None = None

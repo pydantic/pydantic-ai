@@ -4,8 +4,11 @@ import asyncio
 import importlib
 import inspect
 import json
+import os
 import signal
 import sys
+import time
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -49,7 +52,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend, _backend
 
 from .conftest import live_token
-from .fake_sprites import SpriteTransport
+from .fake_sprites import FakeExecSocket, SpriteTransport
 
 
 def context(conversation: str = 'chat') -> RunContext[None]:
@@ -1095,6 +1098,79 @@ class TestSpritesSandbox:
         # Unlike an unlinked mktemp file, the named capture must be removed during cancellation.
         assert not Path(socket.query['cmd'][4]).exists()
         assert (await backend.run('echo oops >&2', shell=True)).stderr == 'oops\n'
+
+    async def test_cancelled_capture_cleanup_gets_a_full_exec_deadline(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        budgets: list[float] = []
+        connect = transport.connect
+
+        async def observe_connect(url: str, **kwargs: object) -> FakeExecSocket:
+            budgets.append(anyio.current_effective_deadline() - anyio.current_time())
+            return await connect(url, **kwargs)
+
+        monkeypatch.setattr('sprites.websocket.connect', observe_connect)
+        backend = SpritesSandboxBackend()
+        async with anyio.create_task_group() as group:
+            group.start_soon(backend.run, ['sleep', '30'])
+            await transport.exec_started.wait()
+            group.cancel_scope.cancel()
+        assert len(budgets) == 2
+        assert budgets[1] > 29
+        assert not Path(transport.execs[0].query['cmd'][4]).exists()
+
+    async def test_stderr_capture_is_bounded_without_changing_exit_status(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_backend, '_PREVIEW_BYTES', 64)
+        backend = SpritesSandboxBackend()
+        result = await backend.run('head -c 131072 /dev/zero >&2 || exit 99; printf done; exit 42', shell=True)
+        assert (result.exit_code, result.stdout, result.stderr) == (42, 'done', '\0' * 64)
+        assert not Path(transport.execs[0].query['cmd'][4]).exists()
+
+    async def test_stderr_file_stays_bounded_while_the_command_runs(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_backend, '_PREVIEW_BYTES', 64)
+        backend = SpritesSandboxBackend()
+        with anyio.fail_after(30):
+            async with anyio.create_task_group() as group:
+                group.start_soon(backend.run, ['sh', '-c', 'head -c 131072 /dev/zero >&2; printf ready; exec sleep 30'])
+                await transport.output_received.wait()
+                capture = Path(transport.execs[0].query['cmd'][4])
+                assert capture.stat().st_size == 64
+                group.cancel_scope.cancel()
+        capture = Path(transport.execs[0].query['cmd'][4])
+        assert not capture.exists()
+        assert not capture.with_suffix('.pid').exists()
+        assert not capture.with_suffix('.pipe').exists()
+
+    async def test_old_stderr_captures_are_removed_but_active_and_recent_ones_survive(
+        self, transport: SpriteTransport
+    ) -> None:
+        captures = [Path(f'/tmp/pydantic-ai-stderr-{uuid.uuid4().hex}') for _ in range(4)]
+        legacy, stale, recent, active = captures
+        try:
+            for capture in captures:
+                capture.write_text('stderr')
+            stale.with_suffix('.pid').write_text('2147483647')
+            os.mkfifo(stale.with_suffix('.pipe'))
+            active.with_suffix('.pid').write_text(str(os.getpid()))
+            old = time.time() - 600
+            for capture in (legacy, stale, active):
+                os.utime(capture, (old, old))
+            result = await SpritesSandboxBackend().run(['true'])
+            assert result.exit_code == 0
+            assert not legacy.exists()
+            assert not stale.exists()
+            assert not stale.with_suffix('.pid').exists()
+            assert not stale.with_suffix('.pipe').exists()
+            assert recent.read_text() == active.read_text() == 'stderr'
+        finally:
+            for capture in captures:
+                capture.unlink(missing_ok=True)
+                capture.with_suffix('.pid').unlink(missing_ok=True)
+                capture.with_suffix('.pipe').unlink(missing_ok=True)
 
     @pytest.mark.parametrize('timeout', [0, -1, float('inf')])
     async def test_invalid_timeout(self, transport: SpriteTransport, timeout: float) -> None:

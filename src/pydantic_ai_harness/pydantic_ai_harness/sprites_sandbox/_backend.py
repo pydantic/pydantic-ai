@@ -727,7 +727,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 await _close_command(exec_command)
                 if capture_stderr and started:
                     # Removes the capture file, as far as the shielded grace allows.
-                    await stop_shielded(lambda: self._read_capture(capture))
+                    await stop_shielded(lambda: self._read_capture(capture), grace=_INTERNAL_EXEC_TIMEOUT)
             if isinstance(error, Exception) and (mapped := _map_error(error, sandbox.name)) is not None:
                 raise mapped from error
             raise
@@ -786,7 +786,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         # A fresh exec takes a live round trip of about two seconds (observed 2026-09-28), so the
         # read gets the internal command bound, not a sub-second one.
         result = await self._run(
-            ['sh', '-c', 'head -c 65536 -- "$1"; rm -f -- "$1"', 'sh', path],
+            ['sh', '-c', 'head -c 65536 -- "$1"; rm -f -- "$1" "$1.pid" "$1.pipe"', 'sh', path],
             timeout=_INTERNAL_EXEC_TIMEOUT,
             capture_stderr=False,
             check_working_dir=False,
@@ -864,14 +864,26 @@ def _ending_with(marker: str, capture: str, args: list[str]) -> list[str]:
     The live Sprite's stderr stream is not dependable: the same command's stderr arrived on the stderr
     stream in one run and on the stdout stream in the next, whole lines included (2026-09-25), while
     stdout arrived intact every time. So the command's stderr goes to a temporary file in the Sprite,
-    printed on stdout after the marker line, and `_split_output` separates the two again. The file is
-    removed when the command finishes; one stopped by a timeout or a cancellation can leave it in
-    `/tmp`, but every command gets a fresh name, so no later command reads it. The exit status is the
-    command's.
+    printed on stdout after the marker line, and `_split_output` separates the two again. A FIFO
+    reader retains the first 64 KiB and drains the rest so the command does not receive SIGPIPE.
+    Its exit status is preserved. Captures are removed on completion or cancellation; subsequent
+    commands also sweep captures older than five minutes whose owning wrapper has exited.
     """
     script = (
-        'cat >/dev/null; err=$1; shift; : >"$err" || exit 125; '
-        f'"$@" 2>"$err"; status=$?; printf "\\n%s\\n" {marker}; cat "$err"; rm -f "$err"; exit "$status"'
+        'cat >/dev/null; '
+        # The PID sidecar prevents an old, quiet command's capture from being swept while in use.
+        f"find /tmp/ -maxdepth 1 -type f -name 'pydantic-ai-stderr-{'?' * 32}' -mmin +5 "
+        "-exec sh -c 'for err do "
+        'kill -0 "$(cat "$err.pid" 2>/dev/null)" 2>/dev/null || '
+        'rm -f -- "$err" "$err.pid" "$err.pipe"; '
+        "done' sh {} +; "
+        'err=$1; shift; : >"$err" || exit 125; '
+        'trap \'rm -f -- "$err" "$err.pid" "$err.pipe"\' 0; '
+        'printf "%s" "$$" >"$err.pid"; mkfifo "$err.pipe" || exit 125; '
+        # Byte-sized writes retain partial stderr even if cancellation kills the reader before EOF.
+        f'(dd bs=1 count={_PREVIEW_BYTES} 2>/dev/null >"$err"; cat >/dev/null) <"$err.pipe" & reader=$!; '
+        '"$@" 2>"$err.pipe"; status=$?; wait "$reader"; '
+        f'printf "\\n%s\\n" {marker}; cat "$err"; exit "$status"'
     )
     return ['sh', '-c', script, 'sh', capture, *args]
 

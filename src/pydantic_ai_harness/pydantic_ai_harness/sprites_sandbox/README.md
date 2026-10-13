@@ -89,6 +89,8 @@ A command timeout starts after the Sprite is ready. The backend closes that comm
 
 A background child that inherits stdout or stderr keeps `run()` waiting until that child exits, because Sprites reports the exit status only after the output stream closes. Redirect background output to a file when starting a long-running job; `Shell.start_command` manages its own output log.
 
+Commands retain the first 64 KiB of stderr and discard the rest while continuing to run with their original exit status. Redirect stderr to your own file if you need the complete output. Cancellation allows up to 30 seconds to remove the temporary capture; later commands also remove captures older than five minutes if their owning process has exited.
+
 See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
 
 ## Reattach later
