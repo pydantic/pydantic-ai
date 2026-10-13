@@ -147,6 +147,7 @@ def _comparable_tool_fields(part: ModelResponsePart) -> dict[str, Any]:
 async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     model_name = _MODEL_NAME_PATTERN.search(interaction['request']['uri'])
     assert model_name is not None
+    # vcrpy recorded the raw text as `string`; cassetter writes a typed `{type, content}` mapping.
     response_body = interaction['response']['body']
     if 'string' not in response_body:
         assert response_body['type'] == 'text'
@@ -168,7 +169,10 @@ async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str,
     model_request_parameters = ModelRequestParameters(native_tools=_native_tools(request_body))
 
     async def open_stream() -> AsyncIterator[GenerateContentResponse]:
-        return await provider.client.aio.models.generate_content_stream(model=model.model_name, contents='')
+        # One recorded response is compared, so a long decode's continuation token must not send another request.
+        return await provider.client.aio.models.generate_content_stream(
+            model=model.model_name, contents='', config={'automatic_continuation': False}
+        )
 
     chunks = [chunk async for chunk in await open_stream()]
     complete = model._process_response(_merge_chunks(chunks), model_request_parameters)  # pyright: ignore[reportPrivateUsage]
