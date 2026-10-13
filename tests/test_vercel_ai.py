@@ -5010,13 +5010,11 @@ async def test_adapter_dump_messages():
             {
                 'id': IsStr(),
                 'role': 'system',
-                'metadata': None,
                 'parts': [{'type': 'text', 'text': 'You are a helpful assistant.', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [{'type': 'text', 'text': 'Hello, world!', 'state': 'done'}],
             },
             {
@@ -5063,6 +5061,8 @@ async def test_adapter_dump_messages_omits_unset_optional_fields(tiny_image: Bin
         (part['type'], key) for msg in dumped for part in msg['parts'] for key, value in part.items() if value is None
     ]
     assert null_keys == snapshot([('tool-noop', 'output')])
+    # A `metadataSchema` passed to `validateUIMessages` rejects `null` message metadata too.
+    assert 'metadata' not in dumped[0]
 
     reloaded = VercelAIAdapter.load_messages([UIMessage.model_validate(msg) for msg in dumped])
     noop_return = next(
@@ -5105,7 +5105,6 @@ async def test_adapter_dump_messages_with_tools():
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [{'type': 'text', 'text': 'Search for something', 'state': 'done'}],
             },
             {
@@ -5802,7 +5801,6 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [{'type': 'text', 'text': 'Send data', 'state': 'done'}],
             },
             {
@@ -5871,7 +5869,6 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [{'type': 'text', 'text': 'Send events', 'state': 'done'}],
             },
             {
@@ -5955,7 +5952,6 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [{'type': 'text', 'text': 'Send data', 'state': 'done'}],
             },
             {
@@ -6094,7 +6090,6 @@ async def test_adapter_dump_messages_with_builtin_tools():
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [{'type': 'text', 'text': 'Search for something', 'state': 'done'}],
             },
             {
@@ -6152,7 +6147,6 @@ async def test_adapter_dump_messages_with_builtin_tool_without_return():
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [{'type': 'text', 'text': 'Search for something', 'state': 'done'}],
             },
             {
@@ -6194,7 +6188,6 @@ async def test_adapter_dump_messages_with_thinking():
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [{'type': 'text', 'text': 'Tell me something', 'state': 'done'}],
             },
             {
@@ -6273,7 +6266,6 @@ async def test_adapter_dump_messages_with_files():
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [
                     {'type': 'text', 'text': 'Here is an image:', 'state': 'done'},
                     {'type': 'file', 'media_type': 'image/png', 'url': 'data:image/png;base64,ZmFrZV9pbWFnZQ=='},
@@ -6326,7 +6318,6 @@ async def test_adapter_dump_messages_with_retry():
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [{'type': 'text', 'text': 'Do something', 'state': 'done'}],
             },
             {
@@ -6390,7 +6381,6 @@ async def test_adapter_dump_messages_with_retry_no_tool_name():
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [{'type': 'text', 'text': 'Give me a number', 'state': 'done'}],
             },
             {
@@ -6402,7 +6392,6 @@ async def test_adapter_dump_messages_with_retry_no_tool_name():
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [
                     {
                         'type': 'text',
@@ -7913,7 +7902,6 @@ async def test_adapter_dump_messages_with_cache_point():
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [
                     {'type': 'text', 'text': 'Hello', 'state': 'done'},
                     {'type': 'text', 'text': 'World', 'state': 'done'},
@@ -8133,7 +8121,6 @@ async def test_adapter_tool_call_part_with_provider_metadata():
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [{'type': 'text', 'text': 'Do something', 'state': 'done'}],
             },
             {
@@ -8488,7 +8475,6 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [{'type': 'text', 'text': 'Search', 'state': 'done'}],
             },
             {
@@ -8562,7 +8548,6 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [{'type': 'text', 'text': 'Search', 'state': 'done'}],
             },
             {
@@ -8823,7 +8808,6 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
             {
                 'id': IsStr(),
                 'role': 'user',
-                'metadata': None,
                 'parts': [{'type': 'text', 'text': 'Do task', 'state': 'done'}],
             },
             {

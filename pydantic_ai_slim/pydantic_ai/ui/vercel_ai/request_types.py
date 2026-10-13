@@ -409,7 +409,7 @@ class UIMessage(CamelBaseModel):
     role: Literal['system', 'user', 'assistant']
     """The role of the message."""
 
-    metadata: Any | None = None
+    metadata: Any | None = Field(default=None, exclude_if=lambda value: value is None)
     """The metadata of the message."""
 
     parts: list[UIMessagePart]
