@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     post_compaction_window,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
+from pydantic_ai_harness._workspace import require_workspace
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
 from pydantic_ai_harness.code_mode._speculation import (
     MAX_SPECULATIONS_PER_PART,
@@ -80,10 +81,12 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     ```
 
     By default, sandboxed code cannot touch the host -- no filesystem, environment
-    variables, or clock. Two parameters open it up:
+    variables, or clock. Three parameters open it up:
 
+    - `workspace_files` gives it the run's workspace: reach for it when sandboxed code
+      should see the same files as `Shell` and `FileSystem`, including in a remote sandbox.
     - `mount` shares specific host directories: reach for it when the agent reads or
-      writes real files.
+      writes real files on the machine running the agent.
     - `os_access` routes the sandbox's OS calls to a handler you provide: reach for it
       when the agent needs environment variables, the clock, or filesystem behavior you
       control.
@@ -133,6 +136,14 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
+
+    workspace_files: bool = False
+    """Route sandboxed `pathlib` and `open()` calls to the run's workspace, so they see the files `Shell` and `FileSystem` do.
+
+    Relative paths resolve against the workspace's working directory. Paths under a `mount` still
+    reach the host, and `os_access` still answers environment and clock calls but no longer sees
+    file calls. The run fails at its start when no workspace is attached.
+    """
 
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None
     """Sandbox execution limits.
@@ -243,6 +254,11 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             )
         return clone
 
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Fail a `workspace_files` run without a workspace at its start, not at the first file call."""
+        if self.workspace_files:
+            require_workspace(ctx.workspace, 'CodeMode(workspace_files=True)', ctx.messages)
+
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -264,6 +280,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 dynamic_catalog=self.dynamic_catalog,
                 os_access=self.os_access,
                 mount=self.mount,
+                workspace_files=self.workspace_files,
                 monty_sandbox_url=self.monty_sandbox_url,
                 capability=self,
                 speculation=self._speculation,
@@ -277,6 +294,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             dynamic_catalog=self.dynamic_catalog,
             os_access=self.os_access,
             mount=self.mount,
+            workspace_files=self.workspace_files,
             monty_sandbox_url=self.monty_sandbox_url,
             capability=self,
             speculation=self._speculation,
