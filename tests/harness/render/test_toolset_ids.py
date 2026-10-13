@@ -52,6 +52,7 @@ print('\\n'.join(sorted({name for name in app.registered_task_names if '__functi
 """
 
 
+@pytest.mark.subprocess(reason='checks the import graph of a fresh interpreter')
 def test_importing_render_workflows_does_not_add_an_optional_mcp_import() -> None:
     completed = subprocess.run(
         [
@@ -246,6 +247,7 @@ def test_two_independent_agents_register_the_same_explicit_task_names() -> None:
     assert first_app.registered_task_names == second_app.registered_task_names
 
 
+@pytest.mark.subprocess(reason='checks task names are stable across separate processes')
 def test_explicit_names_are_process_stable_with_helper_opt_outs() -> None:
     names = probe_task_names()
 
