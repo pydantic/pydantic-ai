@@ -114,7 +114,7 @@ def test_dotenv_loaded_before_startup_imports(tmp_path: Path) -> None:
         'import os\n'
         'from pydantic_ai import Agent\n'
         'from pydantic_ai.models.test import TestModel\n'
-        "agent = Agent(TestModel(custom_output_text=os.environ['CLAI_DOTENV_TEST']))\n"
+        "agent = Agent(TestModel(call_tools=[], custom_output_text=os.environ['CLAI_DOTENV_TEST']))\n"
     )
     script = """
 import sys
