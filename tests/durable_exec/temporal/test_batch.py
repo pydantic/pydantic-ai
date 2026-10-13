@@ -99,7 +99,7 @@ class ClientFaults:
     cancel_error: RPCStatusCode | None = None
     missing_status: bool = False
     conflicting_policy: bool = False
-    enqueue_error: bool = False
+    enqueue_error: BaseException | None = None
     capture: bool = False
     updates: list[tuple[str, str, object]] = field(default_factory=list[tuple[str, str, object]])
 
@@ -169,8 +169,8 @@ class FaultOutbound(OutboundInterceptor):
             faults.updates.append(
                 (input.start_workflow_input.id, input.update_workflow_input.update, input.update_workflow_input.args[0])
             )
-        if faults.enqueue_error and input.update_workflow_input.update == 'enqueue':
-            raise RPCError('Injected enqueue failure', RPCStatusCode.UNAVAILABLE, b'')
+        if faults.enqueue_error is not None and input.update_workflow_input.update == 'enqueue':
+            raise faults.enqueue_error
         return await super().start_update_with_start_workflow(input)
 
 
@@ -471,7 +471,7 @@ def reset_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr('pydantic_ai.durable_exec.temporal._batch._WAIT_ROUND', timedelta(seconds=1))
     faults.missing_status = False
     faults.conflicting_policy = False
-    faults.enqueue_error = False
+    faults.enqueue_error = None
     faults.capture = False
     faults.updates.clear()
     faults.drop_signals = 0
@@ -1074,12 +1074,14 @@ async def test_missing_queue_record_is_reported(client: Client, temporal_env: Wo
     assert any('has no record of the request' in str(error) for error in failure_causes(exc_info.value))
 
 
+@pytest.mark.parametrize('update_failure', [False, True])
 async def test_uncertain_enqueue_is_withdrawn_and_its_tombstone_expires(
-    client: Client, temporal_env: WorkflowEnvironment, monkeypatch: pytest.MonkeyPatch
+    client: Client, temporal_env: WorkflowEnvironment, monkeypatch: pytest.MonkeyPatch, update_failure: bool
 ) -> None:
     monkeypatch.setattr('pydantic_ai.durable_exec.temporal._batch_queue._RETENTION', timedelta(seconds=2))
     provider.group = 'uncertain-enqueue'
-    faults.enqueue_error = True
+    failure = RPCError('Injected enqueue failure', RPCStatusCode.UNAVAILABLE, b'')
+    faults.enqueue_error = WorkflowUpdateFailedError(failure) if update_failure else failure
     faults.capture = True
     with temporal_env.auto_time_skipping_disabled(), pytest.raises(WorkflowFailureError):
         await client.execute_workflow(
