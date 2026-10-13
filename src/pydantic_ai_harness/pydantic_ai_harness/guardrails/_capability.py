@@ -128,15 +128,22 @@ def _replace_prompt(messages: Sequence[ModelMessage], new_content: str) -> bool:
     for message in reversed(messages):
         for part in reversed(message.parts):
             if isinstance(part, UserPromptPart):
-                if not isinstance(part.content, str):
-                    raise UserError(
-                        'An InputGuardrail returned GuardrailResult.replace() for a multimodal prompt. The prompt '
-                        f'holds {type(part.content).__name__} rather than text, so writing the replacement over it '
-                        'would drop the attached parts. Return GuardrailResult.allow() or GuardrailResult.block() '
-                        'for prompts that are not plain text, or guard the output instead.'
-                    )
-                part.content = new_content
-                return True
+                if isinstance(part.content, str):
+                    part.content = new_content
+                    return True
+                if (
+                    isinstance(part.content, Sequence)
+                    and len(part.content) == 1
+                    and isinstance(part.content[0], TextContent)
+                ):
+                    part.content[0].content = new_content
+                    return True
+                raise UserError(
+                    'An InputGuardrail returned GuardrailResult.replace() for a multimodal prompt. The prompt '
+                    f'holds {type(part.content).__name__} rather than text, so writing the replacement over it '
+                    'would drop the attached parts. Return GuardrailResult.allow() or GuardrailResult.block() '
+                    'for prompts that are not plain text, or guard the output instead.'
+                )
     return False
 
 

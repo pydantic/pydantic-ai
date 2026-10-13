@@ -37,7 +37,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness import GuardrailResult, InputBlocked, InputGuardrail
+from pydantic_ai_harness import BackgroundTools, GuardrailResult, InputBlocked, InputGuardrail
 from pydantic_ai_harness.guardrails._capability import _extract_prompt  # pyright: ignore[reportPrivateUsage]
 
 READINESS_WAIT_TIMEOUT = 10
@@ -281,6 +281,57 @@ class TestInputGuardrailRedaction:
         part = list(result.all_messages())[0].parts[0]
         assert isinstance(part, UserPromptPart)
         assert part.content == 'my *** value'
+
+    async def test_replace_background_completion_preserves_metadata(self):
+        guard_calls: list[str] = []
+        model_completions: list[tuple[str, object]] = []
+
+        def guard(prompt: str) -> bool | GuardrailResult:
+            guard_calls.append(prompt)
+            if prompt.startswith('Background tool'):
+                return GuardrailResult.replace('[redacted]')
+            return True
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            completions = [
+                item
+                for message in messages
+                for part in message.parts
+                if isinstance(part, UserPromptPart) and isinstance(part.content, list)
+                for item in part.content
+                if isinstance(item, TextContent) and item.metadata.get('origin') == 'background_tool_result'
+            ]
+            if completions:
+                model_completions.append((completions[-1].content, completions[-1].metadata))
+                return ModelResponse(parts=[TextPart('done')])
+            if any(isinstance(part, ToolCallPart) for message in messages for part in message.parts):
+                return ModelResponse(parts=[TextPart('waiting')])
+            return ModelResponse(parts=[ToolCallPart('lookup', '{}', tool_call_id='tool-1')])
+
+        agent = Agent(FunctionModel(respond), capabilities=[BackgroundTools(), InputGuardrail(guard=guard)])
+
+        @agent.tool_plain(metadata={'background': True})
+        async def lookup() -> str:
+            return 'answer'
+
+        first = await agent.run('go')
+        assert first.output == 'done'
+        assert guard_calls == ['go']
+        assert model_completions == [
+            (
+                "Background tool 'lookup' (task tool-1) completed.\nResult: answer",
+                {'origin': 'background_tool_result', 'tool_call_id': 'tool-1'},
+            )
+        ]
+
+        resumed = await agent.run(None, message_history=first.all_messages()[:-1])
+
+        assert resumed.output == 'done'
+        assert guard_calls == ['go', "Background tool 'lookup' (task tool-1) completed.\nResult: answer"]
+        assert model_completions[-1] == (
+            '[redacted]',
+            {'origin': 'background_tool_result', 'tool_call_id': 'tool-1'},
+        )
 
     async def test_replace_with_non_str_is_a_usage_error(self):
         agent = Agent(
