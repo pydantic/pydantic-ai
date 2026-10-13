@@ -49,6 +49,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
+    UsageLimitUnavailableWarning,
     UserError,
     UserPromptPart,
     capture_run_messages,
@@ -5207,6 +5208,7 @@ async def test_openai_responses_web_search_usage(allow_model_requests: None):
             details={'reasoning_tokens': 0, 'web_search_requests': 2},
             requests=2,
             cost=Decimal('0.02035'),
+            unmeasured_requests=1,
         )
     )
 
@@ -5240,10 +5242,44 @@ async def test_openai_responses_web_search_usage_without_token_usage(allow_model
     agent = Agent(model=model)
     result = await agent.run('What is pydantic?')
     # The mock response's model name (`gpt-4o-123`) is unknown to genai-prices, so `cost` stays `None`.
-    assert result.usage == snapshot(RunUsage(web_searches=1, details={'web_search_requests': 1}, requests=2))
+    assert result.usage == snapshot(
+        RunUsage(web_searches=1, unmeasured_requests=2, details={'web_search_requests': 1}, requests=2)
+    )
 
 
-async def test_openai_responses_web_search_usage_stream_in_progress_snapshot(allow_model_requests: None):
+async def test_openai_responses_web_search_without_token_usage_warns_with_token_limit(allow_model_requests: None):
+    """A counted web search doesn't make up for the missing token usage, so a token limit still can't count it."""
+    c = response_message(
+        [
+            ResponseFunctionWebSearch.model_construct(
+                id='web-search-1',
+                action={'type': 'search', 'query': 'pydantic'},
+                status='completed',
+                type='web_search_call',
+            ),
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(c)))
+
+    with pytest.warns(UsageLimitUnavailableWarning, match='Some responses omitted usage information'):
+        result = await Agent(model).run('What is pydantic?', usage_limits=UsageLimits(input_tokens_limit=100))
+
+    assert result.usage == snapshot(
+        RunUsage(web_searches=1, details={'web_search_requests': 1}, requests=1, unmeasured_requests=1)
+    )
+
+
+@pytest.mark.parametrize('cost_limit', [None, Decimal('0.005')], ids=['partial-cost', 'cost-limit'])
+async def test_openai_responses_web_search_usage_stream_in_progress_snapshot(
+    allow_model_requests: None, cost_limit: Decimal | None
+):
     """A search already listed in an `in_progress` snapshot is counted once, from the terminal response.
 
     Mocked because the recorded streams' `in_progress` snapshots carry no output items.
@@ -5303,11 +5339,25 @@ async def test_openai_responses_web_search_usage_stream_in_progress_snapshot(all
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
 
-    async with agent.run_stream('What is pydantic?') as result:
-        assert await result.get_output() == 'done'
-    assert result.usage == snapshot(
-        RunUsage(requests=1, web_searches=1, details={'web_search_requests': 1}, cost=Decimal('0.01'))
-    )
+    if cost_limit is None:
+        async with agent.run_stream('What is pydantic?') as result:
+            assert await result.get_output() == 'done'
+        assert result.usage == snapshot(
+            RunUsage(
+                requests=1,
+                web_searches=1,
+                unmeasured_requests=1,
+                details={'web_search_requests': 1},
+                cost=Decimal('0.01'),
+            )
+        )
+    else:
+        with pytest.warns(UsageLimitUnavailableWarning, match='Some responses omitted usage information'):
+            with pytest.raises(UsageLimitExceeded):
+                async with agent.run_stream(
+                    'What is pydantic?', usage_limits=UsageLimits(cost_limit=cost_limit)
+                ) as result:
+                    assert await result.get_output() == 'done'
 
 
 async def test_openai_responses_web_search_usage_reported_count(
@@ -5911,6 +5961,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
                     ThinkingPart(content='', id='rs_123', signature='123', provider_name='openai'),
                     TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -6071,6 +6122,7 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
                     ThinkingPart(content='4', id='rs_123', provider_name='openai'),
                     TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -12515,6 +12567,7 @@ async def test_openai_responses_raw_cot_only(allow_model_requests: None):
                     ),
                     TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -12584,6 +12637,7 @@ async def test_openai_responses_raw_cot_with_summary(allow_model_requests: None)
                     ),
                     TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -12657,6 +12711,7 @@ async def test_openai_responses_multiple_summaries(allow_model_requests: None):
                     ThinkingPart(content='Third summary', id='rs_123', provider_name='openai'),
                     TextPart(content='Done', id='msg_123', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -12855,6 +12910,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                     ),
                     TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -12892,6 +12948,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                     ),
                     TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -12924,6 +12981,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                     ThinkingPart(content='Second summary', id='rs_456', provider_name='openai'),
                     TextPart(content='9', id='msg_456', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -12961,6 +13019,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                     ),
                     TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -12993,6 +13052,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                     ThinkingPart(content='Second summary', id='rs_456', provider_name='openai'),
                     TextPart(content='9', id='msg_456', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -13023,6 +13083,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                     ),
                     TextPart(content='42', id='msg_789', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -13668,6 +13729,7 @@ async def test_web_search_call_action_find_in_page(allow_model_requests: None):
                     provider_name='openai',
                 ),
             ],
+            usage=RequestUsage(unmeasured_requests=1),
             model_name='gpt-4o-123',
             timestamp=IsDatetime(),
             provider_name='openai',
@@ -14617,7 +14679,7 @@ async def test_openai_responses_null_text(allow_model_requests: None):
                 parts=[
                     TextPart(content='Hello', id='msg_001', provider_name='openai'),
                 ],
-                usage=RequestUsage(),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -14737,7 +14799,7 @@ async def test_openai_responses_null_text_stream(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello!', id='msg_001', provider_name='openai')],
-                usage=RequestUsage(cost=Decimal('0.00')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -16708,6 +16770,7 @@ async def test_background_queued_then_completed(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='The answer is 42.', id='output-1', provider_name='openai')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -16753,6 +16816,7 @@ async def test_background_in_progress_then_completed(allow_model_requests: None)
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!', id='output-1', provider_name='openai')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -16849,6 +16913,7 @@ async def test_background_retrieve_uses_response_id(allow_model_requests: None):
                 parts=[
                     TextPart(content='final', id='output-1', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=2),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',

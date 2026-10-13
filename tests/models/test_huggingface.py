@@ -487,6 +487,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
@@ -892,6 +893,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='invalid-response')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
@@ -919,6 +921,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final-response')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',

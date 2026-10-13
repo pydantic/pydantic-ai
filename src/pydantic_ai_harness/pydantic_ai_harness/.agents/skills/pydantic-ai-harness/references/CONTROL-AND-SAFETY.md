@@ -347,6 +347,9 @@ Gotchas:
   `'raise'` or `price=` when callers choose the model. `TestModel` is unpriced: to test a `usd` budget
   offline, pass a fixed price such as `price=lambda response: Decimal('0.01')` (a `PriceFunc`,
   `ModelResponse -> Decimal | None`).
+- Omitted usage increments `response.usage.unmeasured_requests`. When `price` is unset or returns `None`,
+  any known cost subtotal still accrues, but the response remains unpriced and `on_unpriced` applies.
+  Known token and cost totals are lower bounds.
 - The built-in stores are `InMemorySpendStore` (default; per process and instance, lost on restart)
   and `RedisSpendStore` (shared across workers; install `redis` yourself, `RedisClient` is a protocol).
   For a restart-safe budget on one machine without Redis, implement `BatchSpendStore`:
