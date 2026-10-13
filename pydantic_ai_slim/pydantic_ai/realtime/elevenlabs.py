@@ -38,12 +38,12 @@ import time
 from collections.abc import AsyncGenerator, AsyncIterator, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import KW_ONLY, dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, assert_never, cast
 
 import httpx2
 from pydantic import BaseModel, ConfigDict
 from pydantic_core import to_json
-from typing_extensions import TypedDict, assert_never
+from typing_extensions import TypedDict
 
 try:
     import websockets
@@ -724,7 +724,7 @@ async def _expect_handshake(ws: ClientConnection, *, timeout: float) -> _Convers
     while True:
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - time.monotonic()))
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise _HandshakeError("timed out waiting for a 'conversation_initiation_metadata' event") from None
         if not isinstance(raw, str):
             raise _HandshakeError(f'expected a text frame, got {type(raw).__name__}')
