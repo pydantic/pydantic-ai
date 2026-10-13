@@ -28,7 +28,7 @@ class WrapperTranscriptionModel(TranscriptionModel):
         Args:
             wrapped: The model to wrap. Can be a
                 [`TranscriptionModel`][pydantic_ai.transcription.TranscriptionModel] instance
-                or a model name string (e.g., `'openai:gpt-4o-transcribe'`).
+                or a model name string (e.g., `'openai:gpt-transcribe'`).
         """
         from . import infer_transcription_model
 

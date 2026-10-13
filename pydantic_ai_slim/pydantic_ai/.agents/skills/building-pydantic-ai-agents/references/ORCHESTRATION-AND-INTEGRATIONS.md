@@ -147,7 +147,7 @@ from pathlib import Path
 
 from pydantic_ai import BinaryContent, Transcriber
 
-transcriber = Transcriber('openai:gpt-4o-transcribe', settings={'language': 'en'})
+transcriber = Transcriber('openai:gpt-transcribe', settings={'language': 'en'})
 result = transcriber.transcribe_sync(BinaryContent.from_path(Path('voice-message.ogg')))
 text = result.text
 ```

@@ -105,7 +105,7 @@ class Transcriber:
     ```python
     from pydantic_ai import BinaryContent, Transcriber
 
-    transcriber = Transcriber('openai:gpt-4o-transcribe')
+    transcriber = Transcriber('openai:gpt-transcribe')
 
 
     async def main():
@@ -143,7 +143,7 @@ class Transcriber:
             model: The transcription model to use. Can be specified as:
 
                 - A model name string in the format `'provider:model-name'`
-                  (e.g., `'openai:gpt-4o-transcribe'`)
+                  (e.g., `'openai:gpt-transcribe'`)
                 - A [`TranscriptionModel`][pydantic_ai.transcription.TranscriptionModel] instance
             settings: Optional [`TranscriptionSettings`][pydantic_ai.transcription.TranscriptionSettings]
                 to use as defaults for all transcribe calls.
@@ -197,7 +197,7 @@ class Transcriber:
         ```python
         from pydantic_ai import BinaryContent, Transcriber
 
-        transcriber = Transcriber('openai:gpt-4o-transcribe')
+        transcriber = Transcriber('openai:gpt-transcribe')
 
 
         async def main():

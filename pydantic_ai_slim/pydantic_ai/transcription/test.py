@@ -25,7 +25,7 @@ class TestTranscriptionModel(TranscriptionModel):
     from pydantic_ai.transcription import TestTranscriptionModel
 
     test_model = TestTranscriptionModel(text='Hello from the test model.')
-    transcriber = Transcriber('openai:gpt-4o-transcribe')
+    transcriber = Transcriber('openai:gpt-transcribe')
 
 
     async def main():

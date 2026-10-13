@@ -34,7 +34,7 @@ class TranscriptionResult:
     ```python
     from pydantic_ai import BinaryContent, Transcriber
 
-    transcriber = Transcriber('openai:gpt-4o-transcribe')
+    transcriber = Transcriber('openai:gpt-transcribe')
 
 
     async def main():
@@ -43,7 +43,7 @@ class TranscriptionResult:
         print(result.text)
         #> Hi, I'd like to book a table for two tonight at seven.
         print(result.model_name)
-        #> gpt-4o-transcribe
+        #> gpt-transcribe
     ```
     """
 
@@ -88,7 +88,7 @@ class TranscriptionResult:
         """Calculate the cost of the transcription request.
 
         Uses [`genai-prices`](https://github.com/pydantic/genai-prices) for pricing data, which covers
-        both token-billed models (like `gpt-4o-transcribe`) and models billed by audio duration (like `whisper-1`).
+        both models billed by audio duration (like `gpt-transcribe`) and token-billed models.
 
         Returns:
             A price calculation object with `total_price`, `input_price`, and other cost details.

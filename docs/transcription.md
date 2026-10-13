@@ -31,7 +31,7 @@ Then pass a provider-prefixed model name to [`Transcriber`][pydantic_ai.transcri
 ```python {title="transcription_quickstart.py"}
 from pydantic_ai import AudioUrl, Transcriber
 
-transcriber = Transcriber('openai:gpt-4o-transcribe')
+transcriber = Transcriber('openai:gpt-transcribe')
 
 
 async def main():
@@ -63,7 +63,7 @@ A transcript is plain text, so it can be passed to any agent, including one whos
 ```python {title="voice_message_agent.py"}
 from pydantic_ai import Agent, BinaryContent, Transcriber
 
-transcriber = Transcriber('openai:gpt-4o-mini-transcribe', settings={'language': 'en'})
+transcriber = Transcriber('openai:gpt-transcribe', settings={'language': 'en'})
 agent = Agent('openai:gpt-6-sol', instructions='You take restaurant bookings.')
 
 
@@ -80,8 +80,8 @@ A `'provider:model-name'` string configures the provider from its usual environm
 ### OpenAI
 
 [`OpenAITranscriptionModel`][pydantic_ai.transcription.openai.OpenAITranscriptionModel] works with OpenAI's
-[speech-to-text models](https://developers.openai.com/api/docs/guides/speech-to-text), such as `gpt-4o-transcribe`,
-`gpt-4o-mini-transcribe`, `gpt-transcribe`, and `whisper-1`.
+[speech-to-text models](https://developers.openai.com/api/docs/guides/speech-to-text), such as `gpt-transcribe`, the
+latest, and `whisper-1`.
 [`KnownTranscriptionModelName`][pydantic_ai.transcription.KnownTranscriptionModelName] carries the names Pydantic AI
 recognizes for autocompletion; any other name is passed through unchanged.
 
@@ -104,7 +104,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.transcription.openai import OpenAITranscriptionModel
 
 model = OpenAITranscriptionModel(
-    'gpt-4o-transcribe',
+    'gpt-transcribe',
     provider=OpenAIProvider(api_key='your-api-key'),
 )
 transcriber = Transcriber(model)
@@ -148,7 +148,7 @@ Pass them to the [`Transcriber`][pydantic_ai.transcription.Transcriber] as defau
 from pydantic_ai import BinaryContent, Transcriber
 
 # Default settings for all calls
-transcriber = Transcriber('openai:gpt-4o-transcribe', settings={'language': 'de'})
+transcriber = Transcriber('openai:gpt-transcribe', settings={'language': 'de'})
 
 
 async def transcribe_english(audio: BinaryContent) -> str:
@@ -165,8 +165,7 @@ Pass the [ISO-639-1](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) code
 
 [`OpenAITranscriptionSettings`][pydantic_ai.transcription.openai.OpenAITranscriptionSettings] adds `openai_prompt`, to
 guide the spelling of names and domain terms, and `openai_response_format`. Set the latter to `'verbose_json'` to get
-timestamped [`segments`][pydantic_ai.transcription.TranscriptionResult.segments] from `whisper-1`, the only OpenAI
-model that supports it:
+timestamped [`segments`][pydantic_ai.transcription.TranscriptionResult.segments] from `whisper-1`, which supports it:
 
 ```python {title="openai_transcription_segments.py"}
 from pydantic_ai import BinaryContent, Transcriber
@@ -190,30 +189,28 @@ async def print_subtitles(audio: BinaryContent) -> None:
 ## Results and Usage
 
 [`TranscriptionResult`][pydantic_ai.transcription.TranscriptionResult] carries the transcript `text`, any timestamped
-`segments`, request usage, model and provider identity, and any provider-specific response details, such as the language
-`whisper-1` detected.
+`segments`, request usage, model and provider identity, and any provider-specific response details, such as the
+languages `gpt-transcribe` detected.
 
-Transcription models are billed either by token, like `gpt-4o-transcribe`, which reports `input_tokens`,
-`output_tokens` and `input_audio_tokens` in [`usage`][pydantic_ai.transcription.TranscriptionResult.usage], or by audio
-duration, like `whisper-1`, which reports `audio_seconds`.
+Transcription models are billed either by audio duration, like `gpt-transcribe` and `whisper-1`, which report
+`audio_seconds` in [`usage`][pydantic_ai.transcription.TranscriptionResult.usage], or by token, which report
+`input_tokens`, `output_tokens` and `input_audio_tokens`.
 [`cost()`][pydantic_ai.transcription.TranscriptionResult.cost] uses
 [`genai-prices`](https://github.com/pydantic/genai-prices) to price either:
 
 ```python {title="transcription_result.py"}
+from decimal import Decimal
+
 from pydantic_ai import AudioUrl, Transcriber
 
-transcriber = Transcriber('openai:gpt-4o-transcribe')
+transcriber = Transcriber('openai:gpt-transcribe')
 
 
-async def main():
-    result = await transcriber.transcribe(AudioUrl('https://example.com/voice-message.ogg'))
-    print(result.model_name)
-    #> gpt-4o-transcribe
-    print(result.usage.output_tokens)
-    #> 13
+async def transcription_cost(audio: AudioUrl) -> Decimal:
+    result = await transcriber.transcribe(audio)
+    # `gpt-transcribe` is billed by audio duration, reported as `result.usage.audio_seconds`
+    return result.cost().total_price
 ```
-
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`.)_
 
 ## Error Handling
 
@@ -235,7 +232,7 @@ from pydantic_ai import Transcriber
 
 logfire.configure()
 
-transcriber = Transcriber('openai:gpt-4o-transcribe', instrument=True)
+transcriber = Transcriber('openai:gpt-transcribe', instrument=True)
 
 # Or instrument all transcribers globally
 Transcriber.instrument_all()
@@ -261,7 +258,7 @@ from pydantic_ai.transcription import TestTranscriptionModel
 
 
 async def test_voice_message_workflow():
-    transcriber = Transcriber('openai:gpt-4o-transcribe')
+    transcriber = Transcriber('openai:gpt-transcribe')
     test_model = TestTranscriptionModel(text='Book a table for two.')
 
     with transcriber.override(model=test_model):

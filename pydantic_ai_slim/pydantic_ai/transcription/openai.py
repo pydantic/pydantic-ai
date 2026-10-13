@@ -87,7 +87,7 @@ class OpenAITranscriptionSettings(TranscriptionSettings, total=False):
     Set to `'verbose_json'` to also receive timestamped
     [`segments`][pydantic_ai.transcription.TranscriptionResult.segments], and the detected language and
     audio duration in [`provider_details`][pydantic_ai.transcription.TranscriptionResult.provider_details].
-    Of OpenAI's models, only `whisper-1` supports it.
+    Supported by `whisper-1`.
     """
 
 
@@ -107,7 +107,7 @@ class OpenAITranscriptionModel(TranscriptionModel):
     from pydantic_ai.transcription.openai import OpenAITranscriptionModel
 
     # Using OpenAI directly
-    model = OpenAITranscriptionModel('gpt-4o-transcribe')
+    model = OpenAITranscriptionModel('gpt-transcribe')
 
     # Using an OpenAI-compatible provider
     model = OpenAITranscriptionModel(
