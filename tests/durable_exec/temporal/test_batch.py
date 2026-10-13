@@ -965,12 +965,22 @@ async def test_failed_provider_cancellation_does_not_leave_a_run_waiting(
     client: Client, temporal_env: WorkflowEnvironment
 ) -> None:
     provider.hold = True
+    provider.group = 'cancel-failure'
     provider.cancel_failures = 3
+    faults.capture = True
     handle = await client.start_workflow(
         DeadlineWorkflow.run, 'cancel-failure', id=f'cancel-failure-{uuid.uuid4()}', task_queue=TASK_QUEUE
     )
     await temporal_env.sleep(timedelta(seconds=1))
     await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
+    from pydantic_core import to_json
+
+    queue_id, _, params = next(update for update in faults.updates if update[1] == 'enqueue')
+    item_id = json.loads(to_json(params))['consumer']['item_id']
+    manager = client.get_workflow_handle(queue_id)
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        while (await manager.query('status', item_id))['state'] != 'submitted':
+            pass
     await handle.cancel()
     with temporal_env.auto_time_skipping_disabled():
         with pytest.raises(WorkflowFailureError):
@@ -1076,5 +1086,4 @@ async def test_uncertain_enqueue_is_withdrawn_and_its_tombstone_expires(
     queue_id, _, item_id = faults.updates[-1]
     manager = client.get_workflow_handle(queue_id)
     assert (await manager.query('status', item_id))['state'] == 'canceled'
-    await temporal_env.sleep(timedelta(hours=1, seconds=1))
     assert await manager.result() is None
