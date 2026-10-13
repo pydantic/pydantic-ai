@@ -23,7 +23,7 @@ from pydantic_ai.exceptions import (
     ToolRetryError,
     UserError,
 )
-from pydantic_ai.messages import ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.messages import ModelRequest, ToolCallPart, ToolReturn, ToolReturnPart, UserContent, UserPromptPart
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -69,14 +69,30 @@ def _with_run_in_background(tool_def: ToolDefinition) -> ToolDefinition:
     return replace(tool_def, parameters_json_schema=schema)
 
 
-_Outcome = tuple[UserContent, ...] | BaseException
+_Outcome = ModelRequest | BaseException
 """What a finished background task hands to the run: the follow-up to deliver, or the error that ends the run."""
 
 
 def _deliver(ctx: RunContext[Any], outcome: _Outcome) -> None:
     if isinstance(outcome, BaseException):
         raise outcome
-    ctx.enqueue(*outcome)
+    ctx.enqueue(outcome)
+
+
+def _follow_up(
+    content: tuple[UserContent, ...],
+    *,
+    tool_name: str,
+    task_id: str,
+    status: Literal['completed', 'failed'],
+    metadata: Any = None,
+) -> ModelRequest:
+    """Wrap the model-visible follow-up in a request whose metadata names the call it completes."""
+    background: dict[str, Any] = {'tool_call_id': task_id, 'tool_name': tool_name, 'status': status}
+    if metadata is not None:
+        background['metadata'] = metadata
+    prompt = content[0] if len(content) == 1 and isinstance(content[0], str) else list(content)
+    return ModelRequest(parts=[UserPromptPart(prompt)], metadata={'background': background})
 
 
 def _format_background_error(error: ApprovalRequired | CallDeferred | ToolRetryError | ToolFailedError) -> str:
@@ -267,7 +283,8 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 try:
                     result = await handler(args)
                 except (ApprovalRequired, CallDeferred, ToolRetryError, ToolFailedError) as e:
-                    outcome = (f"Background tool '{tool_name}' (task {task_id}) failed: {_format_background_error(e)}",)
+                    message = f"Background tool '{tool_name}' (task {task_id}) failed: {_format_background_error(e)}"
+                    outcome = _follow_up((message,), tool_name=tool_name, task_id=task_id, status='failed')
                 except anyio.get_cancelled_exc_class() as e:
                     # Propagate cancellation delivered by any enclosing scope. If none is pending,
                     # the tool raised this itself and it ends the run like a sequential tool.
@@ -278,7 +295,13 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                     # would for a sequential tool.
                     outcome = e
                 else:
-                    outcome = _format_background_result(tool_name, task_id, result)
+                    outcome = _follow_up(
+                        _format_background_result(tool_name, task_id, result),
+                        tool_name=tool_name,
+                        task_id=task_id,
+                        status='completed',
+                        metadata=result.metadata if isinstance(result, ToolReturn) else None,
+                    )
                 self._send.send_nowait(outcome)
             finally:
                 self._live -= 1
@@ -288,10 +311,13 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         ctx.usage.tool_calls += 1
         self._live += 1
         self._task_group.start_soon(_run, name=f'background tool {tool_name} ({task_id})')
-        return (
-            f"Tool '{tool_name}' is running in background (task {task_id}). This call is pending. "
-            'Do not repeat or poll it; its result will arrive automatically. '
-            'Continue independent work, or end your response.'
+        return ToolReturn(
+            return_value=(
+                f"Tool '{tool_name}' is running in background (task {task_id}). This call is pending. "
+                'Do not repeat or poll it; its result will arrive automatically. '
+                'Continue independent work, or end your response.'
+            ),
+            metadata={'background': {'status': 'pending'}},
         )
 
     async def after_node_run(

@@ -51,6 +51,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import BackgroundTools
+from tests.harness.conftest import IsStr
 
 
 def _ack_seen(messages: list[ModelMessage]) -> bool:
@@ -75,6 +76,16 @@ def _follow_up_seen(messages: list[ModelMessage], needle: str) -> bool:
         for msg in messages
         if isinstance(msg, ModelRequest)
         for part in msg.parts
+    )
+
+
+def _follow_up_request(messages: list[ModelMessage]) -> ModelRequest:
+    """The request that delivered the background follow-up."""
+    return next(
+        msg
+        for msg in messages
+        if isinstance(msg, ModelRequest)
+        and any(isinstance(part, UserPromptPart) and 'Background tool' in str(part.content) for part in msg.parts)
     )
 
 
@@ -187,6 +198,11 @@ class TestBackgroundTools:
         assert follow_up == (
             f"Background tool 'slow_research' (task {match['task_id']}) completed.\nResult: researched topic"
         )
+        ack_part = next(part for part in parts if isinstance(part, ToolReturnPart))
+        assert ack_part.metadata == {'background': {'status': 'pending'}}
+        assert _follow_up_request(result.all_messages()).metadata == {
+            'background': {'tool_call_id': ack_part.tool_call_id, 'tool_name': 'slow_research', 'status': 'completed'}
+        }
 
     async def test_realtime_session_keeps_native_tool_path_and_instructions(self) -> None:
         image = BinaryContent(data=b'image bytes', media_type='image/png')
@@ -255,6 +271,9 @@ class TestBackgroundTools:
         assert _follow_up_seen(result.all_messages(), expected)
         if private_detail is not None:
             assert not _follow_up_seen(result.all_messages(), private_detail)
+        assert _follow_up_request(result.all_messages()).metadata == {
+            'background': {'tool_call_id': IsStr(), 'tool_name': 'broken', 'status': 'failed'}
+        }
 
     async def test_retry_exhaustion_terminates_run(self) -> None:
         agent = Agent(_model_calling('broken'), capabilities=[BackgroundTools()])
@@ -602,7 +621,7 @@ class TestBackgroundTools:
         assert first_cancelled.is_set()
         assert second_cancelled.is_set()
 
-    async def test_tool_return_preserves_model_content_without_exposing_metadata(self) -> None:
+    async def test_tool_return_metadata_reaches_the_application_but_not_the_model(self) -> None:
         image = BinaryContent(data=b'image bytes', media_type='image/png')
         agent = Agent(_model_calling('structured'), capabilities=[BackgroundTools()])
 
@@ -632,6 +651,14 @@ class TestBackgroundTools:
         assert follow_up.content[1:] == ['supporting image', image]
         assert 'secret application metadata' not in str(follow_up.content)
         assert 'deferred_tool' not in str(follow_up.content)
+        assert _follow_up_request(result.all_messages()).metadata == {
+            'background': {
+                'tool_call_id': IsStr(),
+                'tool_name': 'structured',
+                'status': 'completed',
+                'metadata': {'api_key': 'secret application metadata'},
+            }
+        }
 
     async def test_tool_return_preserves_string_content(self) -> None:
         agent = Agent(_model_calling('structured'), capabilities=[BackgroundTools()])
