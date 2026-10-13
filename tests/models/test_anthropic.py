@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 import httpx2
 import pytest
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter
 
 from pydantic_ai import (
     Agent,
@@ -717,6 +717,116 @@ def test_anthropic_model_resolves_profile_for_bedrock_model_ids(model_name: str,
     assert m.model_name == model_name
     assert m.profile.get('supports_json_schema_output', False) is True
     assert ToolSearchTool in m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+
+
+@pytest.mark.parametrize(
+    ('client', 'model_name', 'supports_json_schema_output'),
+    [
+        pytest.param('bedrock', 'us.anthropic.claude-opus-4-7', False, id='bedrock-withheld-geo'),
+        pytest.param('bedrock-mantle', 'anthropic.claude-sonnet-5', True, id='bedrock-mantle'),
+        pytest.param('claude-api', 'claude-sonnet-5', True, id='direct'),
+    ],
+)
+def test_anthropic_structured_output_follows_legacy_bedrock_support(
+    client: Literal['bedrock', 'bedrock-mantle', 'claude-api'], model_name: str, supports_json_schema_output: bool
+):
+    """Only the legacy Bedrock client narrows structured output, and only for the models Bedrock withholds it from.
+
+    The Mantle client and the direct API keep the direct API's profile. These are profile checks that need no
+    request, so there is nothing to record.
+    """
+    client_cls, base_url = {
+        'bedrock': (AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'),
+        'bedrock-mantle': (AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws'),
+        'claude-api': (AsyncAnthropic, 'https://api.anthropic.com'),
+    }[client]
+    m = AnthropicModel(
+        model_name, provider=AnthropicProvider(anthropic_client=mock_anthropic_client(client_cls, base_url))
+    )
+    assert m.profile.get('supports_json_schema_output', False) is supports_json_schema_output
+
+
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [
+        pytest.param(
+            'global.anthropic.claude-sonnet-5',
+            snapshot(
+                {
+                    'output_config': None,
+                    'tool_choice': {'type': 'auto'},
+                    'tools': [{'name': 'add'}, {'name': 'final_result'}],
+                }
+            ),
+            id='withheld',
+        ),
+        pytest.param(
+            'global.anthropic.claude-sonnet-4-6',
+            snapshot(
+                {
+                    'output_config': {
+                        'format': {
+                            'type': 'json_schema',
+                            'schema': {
+                                'type': 'object',
+                                'properties': {'response': {'type': 'integer'}},
+                                'additionalProperties': False,
+                                'required': ['response'],
+                            },
+                        }
+                    },
+                    'tool_choice': {'type': 'auto'},
+                    'tools': [{'name': 'add', 'strict': True}],
+                }
+            ),
+            id='served',
+        ),
+    ],
+)
+async def test_anthropic_legacy_bedrock_structured_output_request(
+    allow_model_requests: None, model_name: str, expected: dict[str, JsonValue]
+):
+    """On `AsyncAnthropicBedrock`, a model Bedrock withholds structured output from gets Tool Output and no `strict`.
+
+    Bedrock answers `output_config.format` on Claude Sonnet 5 with a 400:
+    https://github.com/pydantic/pydantic-ai/issues/9878. Claude Sonnet 4.6, which Bedrock serves structured output
+    for, keeps Native Output and `strict`. A mock transport stands in for a cassette because the recording
+    account has no access to the models Bedrock withholds structured output from.
+    """
+    bodies: list[dict[str, JsonValue]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(TypeAdapter(dict[str, JsonValue]).validate_json(request.content))
+        return httpx2.Response(400, json={'message': 'captured'})
+
+    from anthropic import AsyncAnthropicBedrock
+
+    # A bearer token skips SigV4 signing, which would need `botocore` from the `bedrock` extra.
+    async with AsyncAnthropicBedrock(
+        api_key='x',
+        aws_region='us-east-1',
+        base_url='http://localhost',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        agent = Agent(AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client)), output_type=int)
+
+        @agent.tool_plain(strict=True)
+        def add(a: int, b: int) -> int:
+            raise NotImplementedError
+
+        # Claude Sonnet 5 thinks by default; Sonnet 4.6 needs the setting to reach the same output mode choice.
+        with pytest.raises(ModelHTTPError):
+            await agent.run('1+1', model_settings={'thinking': True})
+
+    [body] = bodies
+    assert {
+        'output_config': body.get('output_config'),
+        'tool_choice': body.get('tool_choice'),
+        'tools': [
+            {key: tool[key] for key in ('name', 'strict') if key in tool} for tool in json_objects(body['tools'])
+        ],
+    } == expected
 
 
 def _tool_search_param(client_cls: Any, base_url: str, tool: ToolSearchTool) -> dict[str, Any]:
