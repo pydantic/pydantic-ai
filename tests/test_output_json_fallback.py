@@ -1,3 +1,10 @@
+"""Regression tests for the JSON-string fallback in `ObjectOutputProcessor.validate`.
+
+Unit tests rather than VCR tests: these drive in-process `FunctionModel`/`TestModel`
+models, so there is no provider request to record, and the assertions pin which
+validator path (strict declared type vs `Json[...]` string fallback) produced the
+result — something a cassette could never distinguish.
+"""
 import json
 from collections.abc import AsyncIterator
 from contextlib import nullcontext
