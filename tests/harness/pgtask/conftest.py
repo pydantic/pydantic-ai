@@ -58,7 +58,14 @@ def pgtask_dsn() -> str:
     return dsn
 
 
+# pgtask's `Client` cannot be closed, so each test process reuses one rather than leaving a pool
+# behind per test.
+_clients: dict[str, Client] = {}
+
+
 @pytest.fixture
 async def pgtask_db(pgtask_dsn: str) -> PGTaskDatabase:
-    """A pgtask client on the migrated database, for one test."""
-    return PGTaskDatabase(pgtask_dsn, await Client.connect(pgtask_dsn, max_query_connections=1))
+    """The test process's pgtask client on the migrated database."""
+    if pgtask_dsn not in _clients:
+        _clients[pgtask_dsn] = await Client.connect(pgtask_dsn, max_query_connections=1)
+    return PGTaskDatabase(pgtask_dsn, _clients[pgtask_dsn])
