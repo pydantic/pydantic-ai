@@ -179,7 +179,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.profiles.anthropic import anthropic_model_profile
-    from pydantic_ai.providers.anthropic import AnthropicProvider, AsyncAnthropicClient
+    from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
     MockAnthropicMessage = BetaMessage | Exception
@@ -720,36 +720,26 @@ def test_anthropic_model_resolves_profile_for_bedrock_model_ids(model_name: str,
 
 
 @pytest.mark.parametrize(
-    'model_name,client_cls,base_url,supports_json_schema_output',
+    ('client', 'model_name', 'supports_json_schema_output'),
     [
-        pytest.param(
-            'us.anthropic.claude-opus-4-7',
-            AsyncAnthropicBedrock,
-            'https://bedrock-runtime.us-east-1.amazonaws.com',
-            False,
-            id='bedrock-withheld-geo',
-        ),
-        pytest.param(
-            'anthropic.claude-sonnet-5',
-            AsyncAnthropicBedrockMantle,
-            'https://bedrock-mantle.us-east-1.api.aws',
-            True,
-            id='bedrock-mantle',
-        ),
-        pytest.param('claude-sonnet-5', AsyncAnthropic, 'https://api.anthropic.com', True, id='direct'),
+        pytest.param('bedrock', 'us.anthropic.claude-opus-4-7', False, id='bedrock-withheld-geo'),
+        pytest.param('bedrock-mantle', 'anthropic.claude-sonnet-5', True, id='bedrock-mantle'),
+        pytest.param('claude-api', 'claude-sonnet-5', True, id='direct'),
     ],
 )
 def test_anthropic_structured_output_follows_legacy_bedrock_support(
-    model_name: str,
-    client_cls: type[AsyncAnthropicClient],
-    base_url: str,
-    supports_json_schema_output: bool,
+    client: Literal['bedrock', 'bedrock-mantle', 'claude-api'], model_name: str, supports_json_schema_output: bool
 ):
     """Only the legacy Bedrock client narrows structured output, and only for the models Bedrock withholds it from.
 
     The Mantle client and the direct API keep the direct API's profile. These are profile checks that need no
     request, so there is nothing to record.
     """
+    client_cls, base_url = {
+        'bedrock': (AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'),
+        'bedrock-mantle': (AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws'),
+        'claude-api': (AsyncAnthropic, 'https://api.anthropic.com'),
+    }[client]
     m = AnthropicModel(
         model_name, provider=AnthropicProvider(anthropic_client=mock_anthropic_client(client_cls, base_url))
     )
