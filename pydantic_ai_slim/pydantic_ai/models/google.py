@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
 from typing import Any, Literal, assert_never, cast, get_args, overload
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx2
 
@@ -1508,6 +1508,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _file_search_tool_call_ids: list[str] = field(default_factory=list[str], init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _media_processing_tool_call_id: str | None = field(default=None, init=False)
+    _media_processing_tool_call_vendor_id: UUID | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
     _has_tool_invocations: bool = field(default=False, init=False)
     # Returns to fill from the grounding metadata that arrives on the final chunk: empty file_search returns (see
@@ -1685,16 +1686,29 @@ class GeminiStreamedResponse(StreamedResponse):
                     elif part.tool_call:
                         tool_call_part = _map_tool_call(part.tool_call, self.provider_name)
                         tool_call_part.provider_details = provider_details
+                        tool_call_vendor_id = uuid4()
                         if tool_call_part.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
                             self._media_processing_tool_call_id = tool_call_part.tool_call_id
-                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_call_part)
+                            self._media_processing_tool_call_vendor_id = (
+                                tool_call_vendor_id if part.tool_call.id is None else None
+                            )
+                        yield self._parts_manager.handle_part(vendor_part_id=tool_call_vendor_id, part=tool_call_part)
                     elif part.tool_response:
                         tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
                         tool_response_part.provider_details = provider_details
                         if tool_response_part.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
                             if part.tool_response.id is None and self._media_processing_tool_call_id is not None:
                                 tool_response_part.tool_call_id = self._media_processing_tool_call_id
+                            elif self._media_processing_tool_call_vendor_id is not None:
+                                # The response can supply an ID omitted by the call; notify stream consumers too.
+                                event = self._parts_manager.handle_tool_call_delta(
+                                    vendor_part_id=self._media_processing_tool_call_vendor_id,
+                                    tool_call_id=tool_response_part.tool_call_id,
+                                )
+                                assert event is not None
+                                yield event
                             self._media_processing_tool_call_id = None
+                            self._media_processing_tool_call_vendor_id = None
                             yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
                         elif tool_response_part.tool_name == WebSearchTool.kind:
                             # Only the response's last web_search return gets the sources, so an earlier one is
@@ -2056,6 +2070,7 @@ def _process_response_from_parts(
 
     code_execution_tool_call_id: str | None = None
     media_processing_tool_call_id: str | None = None
+    media_processing_tool_call_without_id: NativeToolCallPart | None = None
     file_search_tool_call_ids: list[str] = []
     last_web_search_return: NativeToolReturnPart | None = None
     for part in parts:
@@ -2072,7 +2087,10 @@ def _process_response_from_parts(
                     and media_processing_tool_call_id is not None
                 ):
                     item.tool_call_id = media_processing_tool_call_id
+                elif media_processing_tool_call_without_id is not None:
+                    media_processing_tool_call_without_id.tool_call_id = item.tool_call_id
                 media_processing_tool_call_id = None
+                media_processing_tool_call_without_id = None
             elif item.tool_name == WebSearchTool.kind:
                 last_web_search_return = item
             else:
@@ -2080,7 +2098,9 @@ def _process_response_from_parts(
         elif isinstance(item, NativeToolCallPart) and item.tool_name == FileSearchTool.kind:
             file_search_tool_call_ids.append(item.tool_call_id)
         elif isinstance(item, NativeToolCallPart) and item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+            assert part.tool_call is not None
             media_processing_tool_call_id = item.tool_call_id
+            media_processing_tool_call_without_id = item if part.tool_call.id is None else None
         items.append(item)
 
     if last_web_search_return is not None:

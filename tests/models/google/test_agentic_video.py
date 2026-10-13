@@ -10,7 +10,14 @@ from cassetter import Cassette, RecordMode
 
 from pydantic_ai import NativeToolCallPart, NativeToolReturnPart, TextPart, UnexpectedModelBehavior, VideoUrl
 from pydantic_ai.agent import Agent
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, ModelResponsePart
+from pydantic_ai.messages import (
+    ModelMessagesTypeAdapter,
+    ModelResponse,
+    ModelResponsePart,
+    PartDeltaEvent,
+    PartStartEvent,
+    ToolCallPartDelta,
+)
 from pydantic_ai.usage import RequestUsage
 
 from ..._inline_snapshot import snapshot
@@ -47,11 +54,11 @@ _VIDEO_HELD_OUT_FILENAME = 'browserRouter.tsx'
 
 
 def _default_vertex_credentials() -> Credentials:
-    credentials, _ = google_auth_default(  # pyright: ignore[reportUnknownVariableType]
+    credentials, _ = google_auth_default(  # pyright: ignore[reportUnknownVariableType] # pragma: no cover
         scopes=['https://www.googleapis.com/auth/cloud-platform']
     )
-    assert isinstance(credentials, Credentials)
-    return credentials
+    assert isinstance(credentials, Credentials)  # pragma: no cover
+    return credentials  # pragma: no cover
 
 
 async def _stream_response_parts(
@@ -322,7 +329,32 @@ async def test_media_processing_pairing_preserves_explicit_ids(
         {'tool_response': {'tool_type': 'MEDIA_PROCESSING', **tool_response}},
     ]
     if stream:
-        response_parts = await _stream_response_parts([[parts[0]], [parts[1]]])
+
+        async def response_chunks() -> AsyncIterator[GenerateContentResponse]:
+            for part in parts:
+                yield GenerateContentResponse.model_validate({'candidates': [{'content': {'parts': [part]}}]})
+
+        streamed = GeminiStreamedResponse(
+            model_request_parameters=ModelRequestParameters(),
+            _model_name=_VIDEO_MODEL,
+            _response=_utils.PeekableAsyncStream(response_chunks()),
+            _provider_name='google-gla',
+            _model_id_namespace='google',
+            _provider_url='https://generativelanguage.googleapis.com/',
+        )
+        observed_call_id: str | None = None
+        async for event in streamed:
+            if isinstance(event, PartStartEvent):
+                if isinstance(event.part, NativeToolCallPart):
+                    observed_call_id = event.part.tool_call_id
+                else:
+                    assert isinstance(event.part, NativeToolReturnPart)
+                    assert observed_call_id == event.part.tool_call_id
+            elif isinstance(event, PartDeltaEvent):
+                assert isinstance(event.delta, ToolCallPartDelta)
+                assert event.delta.tool_call_id is not None
+                observed_call_id = event.delta.tool_call_id
+        response_parts = list(streamed.get().parts)
     else:
         response = _process_response_from_parts(
             parts=[Part.model_validate(part) for part in parts],
@@ -339,8 +371,7 @@ async def test_media_processing_pairing_preserves_explicit_ids(
     assert isinstance(call_part, NativeToolCallPart)
     assert isinstance(response_part, NativeToolReturnPart)
     assert response_part.tool_call_id == expected_id
-    if call:
-        assert call_part.tool_call_id == response_part.tool_call_id
+    assert call_part.tool_call_id == response_part.tool_call_id
 
 
 def test_untyped_tool_call_with_a_payload_is_not_media_processing() -> None:
@@ -368,8 +399,8 @@ async def test_agentic_video_processing_vertex(
 ) -> None:
     """Vertex AI reports separate signature-only parts, which are omitted from follow-up history."""
     if not os.getenv('CI', False):
-        pytest.skip('Requires properly configured local google vertex config to pass')
-    if vcr.record_mode != RecordMode.NONE:
+        pytest.skip('Requires properly configured local google vertex config to pass')  # pragma: no cover
+    if vcr.record_mode != RecordMode.NONE:  # pragma: no cover
         # The auth fixture substitutes a fake token in CI playback; recordings use real ADC explicitly.
         credentials = _default_vertex_credentials()
         provider = GoogleCloudProvider(
@@ -473,8 +504,8 @@ async def test_agentic_video_context_replay(
         provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=60))
     else:
         if not os.getenv('CI', False):
-            pytest.skip('Requires properly configured local google vertex config to pass')
-        if vcr.record_mode != RecordMode.NONE:
+            pytest.skip('Requires properly configured local google vertex config to pass')  # pragma: no cover
+        if vcr.record_mode != RecordMode.NONE:  # pragma: no cover
             # The auth fixture substitutes a fake token in CI playback; recordings use real ADC explicitly.
             credentials = _default_vertex_credentials()
             provider = GoogleCloudProvider(
