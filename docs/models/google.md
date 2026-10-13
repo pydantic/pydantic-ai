@@ -221,7 +221,9 @@ result = agent.run_sync(
 print(result.output)
 ```
 
-On the Gemini Developer API, each processing step appears in the response as a [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] named `media_processing`. Vertex AI returns only thought signatures for these steps, so nothing is added to the message history there. The steps are left out of later requests; the final response and its thought signature are kept.
+On the Gemini Developer API, each processing step appears in the response as a [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] named `media_processing`. Vertex AI returns signature-only parts for these steps, so they do not appear in the message history.
+
+Pydantic AI omits media-processing steps from later requests. Live follow-ups that replayed the complete response returned HTTP 400 from both the Gemini Developer API and Vertex AI; follow-ups without the processing steps succeeded and processed the video again. The ordinary final response, including its thought signature, remains in history.
 
 Files can be uploaded via the [Files API](https://ai.google.dev/gemini-api/docs/files) and passed as URLs:
 

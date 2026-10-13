@@ -1507,6 +1507,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _file_search_tool_call_ids: list[str] = field(default_factory=list[str], init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
+    _media_processing_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
     _has_tool_invocations: bool = field(default=False, init=False)
     # Returns to fill from the grounding metadata that arrives on the final chunk: empty file_search returns (see
@@ -1684,11 +1685,18 @@ class GeminiStreamedResponse(StreamedResponse):
                     elif part.tool_call:
                         tool_call_part = _map_tool_call(part.tool_call, self.provider_name)
                         tool_call_part.provider_details = provider_details
+                        if tool_call_part.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+                            self._media_processing_tool_call_id = tool_call_part.tool_call_id
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_call_part)
                     elif part.tool_response:
                         tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
                         tool_response_part.provider_details = provider_details
-                        if tool_response_part.tool_name == WebSearchTool.kind:
+                        if tool_response_part.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+                            if part.tool_response.id is None and self._media_processing_tool_call_id is not None:
+                                tool_response_part.tool_call_id = self._media_processing_tool_call_id
+                            self._media_processing_tool_call_id = None
+                            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
+                        elif tool_response_part.tool_name == WebSearchTool.kind:
                             # Only the response's last web_search return gets the sources, so an earlier one is
                             # complete once another arrives.
                             if (previous := self._pending_web_search_return) is not None:
@@ -1710,7 +1718,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         part = self._map_code_execution_result(part.code_execution_result)
                         part.provider_details = provider_details
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
-                    elif part.thought_signature:
+                    elif _is_signature_only_part(part):
                         # See the signature-only media-processing comment in `_process_part`.
                         continue
                     else:
@@ -1888,9 +1896,14 @@ def _native_tool_call_part_dict(
     if item.tool_name == CodeExecutionTool.kind:
         return _attach_signature({'executable_code': cast(ExecutableCodeDict, item.args_as_dict())}, signature)
     if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
-        # Not replayed: Gemini rejects echoed media-processing steps in every shape, including the one
-        # Google's own ADK sends ("Tool type of tool_call part does not match with tool call context").
-        # The final part's own signature is what carries the video context into the next turn.
+        # Live full-history replays returned HTTP 400 on the Developer API and Vertex, so later requests omit these
+        # processing steps and may process the video again.
+        # TODO: Recheck this workaround against Google's [GenerateContent response structure](https://ai.google.dev/gemini-api/docs/generate-content/video-understanding#response-structure),
+        # [Cloud video guidance](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/video-understanding),
+        # and [API changelog](https://ai.google.dev/gemini-api/docs/changelog). With `GEMINI_API_KEY` set, rewrite with
+        # `uv run pytest 'tests/models/google/test_agentic_video.py::test_agentic_video_context_replay[developer-api]' --record-mode=rewrite`, then play back without the flag.
+        # For Vertex, rewrite with `.agents/skills/run-provider-tests/run-vertex-tests.sh 'tests/models/google/test_agentic_video.py::test_agentic_video_context_replay[vertex]' --record-mode=rewrite`, then play back without the flag.
+        # Remove this omission only when full returned content is accepted and answers the held-out filename question.
         return None
     tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
@@ -2000,7 +2013,7 @@ def _process_part(
         assert data and mime_type, 'Inline data must have data and mime type'
         content = BinaryContent(data=data, media_type=mime_type)
         item = FilePart(content=BinaryContent.narrow_type(content))
-    elif part.thought_signature:
+    elif _is_signature_only_part(part):
         # Vertex AI reports agentic media-processing steps as signature-only parts. There is nothing to
         # show, and both backends reject them when replayed ("Invalid thought signature").
         return None, code_execution_tool_call_id
@@ -2012,6 +2025,11 @@ def _process_part(
         item.provider_name = provider_name
 
     return item, code_execution_tool_call_id
+
+
+def _is_signature_only_part(part: Part) -> bool:
+    """Whether a part carries a thought signature and no other provider content."""
+    return bool(part.thought_signature) and part.model_dump(exclude_none=True).keys() == {'thought_signature'}
 
 
 def _process_response_from_parts(
@@ -2037,6 +2055,7 @@ def _process_response_from_parts(
             items.append(web_fetch_return)
 
     code_execution_tool_call_id: str | None = None
+    media_processing_tool_call_id: str | None = None
     file_search_tool_call_ids: list[str] = []
     last_web_search_return: NativeToolReturnPart | None = None
     for part in parts:
@@ -2046,12 +2065,22 @@ def _process_response_from_parts(
         if item is None:
             continue
         if isinstance(item, NativeToolReturnPart):
-            if item.tool_name == WebSearchTool.kind:
+            if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+                if (
+                    part.tool_response is not None
+                    and part.tool_response.id is None
+                    and media_processing_tool_call_id is not None
+                ):
+                    item.tool_call_id = media_processing_tool_call_id
+                media_processing_tool_call_id = None
+            elif item.tool_name == WebSearchTool.kind:
                 last_web_search_return = item
             else:
                 _fill_empty_file_search_return_content(item, grounding_metadata)
         elif isinstance(item, NativeToolCallPart) and item.tool_name == FileSearchTool.kind:
             file_search_tool_call_ids.append(item.tool_call_id)
+        elif isinstance(item, NativeToolCallPart) and item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+            media_processing_tool_call_id = item.tool_call_id
         items.append(item)
 
     if last_web_search_return is not None:
