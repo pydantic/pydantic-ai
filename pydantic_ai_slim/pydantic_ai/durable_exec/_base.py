@@ -178,11 +178,12 @@ class _RestrictedRunContext(Protocol):
 MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 
 _CONVERSATION_ID_NAMESPACE = uuid.UUID('b4a5470b-7dc5-4744-b6d4-27f7c81a3775')
+"""Namespace for the UUID5 a durable run derives its default `conversation_id` from."""
+
 _UNSUPPORTED_BATCH_QUEUE = (
     '`BatchModel` requests need a durable batch queue, which {engine_name} does not provide. '
     'Use the wrapped model directly, or a durable execution engine with batch support, such as Temporal.'
 )
-"""Namespace for the UUID5 a durable run derives its default `conversation_id` from."""
 
 
 def conversation_id_from_run_id(run_id: str) -> str:
