@@ -219,7 +219,7 @@ reviews = await parallel([agent(f'Review {path} for bugs.', name='reviewer') for
 await agent('Summarize: ' + '\n'.join(r for r in reviews if r), name='summarizer')
 ```
 
-`meta` needs a `name`, equal to the file name, and a `description`; the other keys are optional and no others are allowed. `args` is a JSON schema of the arguments; only its top-level `required` is checked before the script runs. `agents` names the sub-agents it calls, and a file naming one that is not in the catalog is skipped. `meta` is read without running the script, so it must be a plain literal. Inside the file, `meta` is that dict, so a sub-agent named `meta` is called there as `agent(task, name='meta')`.
+`meta` needs a `name`, equal to the file name without `.py`, and a `description`; the other keys are optional and no others are allowed. `args` is a JSON schema of the arguments; only its top-level `required` is checked before the script runs. `agents` names the sub-agents it calls, and a file naming one that is not in the catalog is skipped. `meta` is read without running the script, so it must be a plain literal. Inside the file, `meta` is that dict, so a sub-agent named `meta` is called there as `agent(task, name='meta')`.
 
 At the start of each run, the files are listed to the model in an `<available_workflows>` block of the instructions, with their `name`, `description`, `when_to_use`, `args` and `returns`. The model can then:
 
