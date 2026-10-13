@@ -211,7 +211,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     instrumentation_version: int = DEFAULT_INSTRUMENTATION_VERSION
     """Instrumentation settings version, if instrumentation is enabled."""
     retries: dict[str, int] = field(default_factory=dict[str, int])
-    """Number of retries for each tool so far."""
+    """Number of retries for each tool so far, keyed by tool name.
+
+    Inside a prefixed or renamed toolset, a wrapped tool's count is keyed by its original name, and a prefixed
+    toolset only sees its own tools' counts.
+    """
     tool_call_id: str | None = None
     """The ID of the tool call."""
     tool_name: str | None = None

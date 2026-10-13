@@ -22,7 +22,7 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
         return 'Change the `prefix` attribute to avoid name conflicts.'
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        # Preparation uses the wrapped names, while the manager tracks retries under the exposed names.
+        # Preparation uses the original names, while the manager tracks retries under the exposed names.
         prefix = f'{self.prefix}_'
         ctx = replace(
             ctx,
@@ -37,7 +37,7 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
                 tool_def=replace(tool.tool_def, name=new_name),
             )
             for name, tool in (await super().get_tools(ctx)).items()
-            if (new_name := f'{self.prefix}_{name}')
+            if (new_name := f'{prefix}{name}')
         }
 
     async def call_tool(

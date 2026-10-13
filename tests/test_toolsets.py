@@ -1930,6 +1930,7 @@ TOOL_NAME_WRAPPERS: dict[str, Callable[[AbstractToolset[None]], AbstractToolset[
     'prefixed': lambda toolset: toolset.prefixed('demo'),
     'nested': lambda toolset: toolset.prefixed('inner').prefixed('outer'),
     'renamed': lambda toolset: toolset.renamed({'demo_fail': 'fail'}),
+    'unmatched_rename': lambda toolset: toolset.renamed({'fail': 'missing'}),
 }
 
 
@@ -1967,14 +1968,14 @@ async def test_tool_name_wrapper_prepare_retry(wrapper: str):
 async def test_tool_name_wrapper_prepare_retry_isolated_from_same_named_tool(wrapper: str):
     """A failure of an unwrapped tool must not disable a different tool with the same original name."""
     plain = FunctionToolset[None]()
-    prefixed = FunctionToolset[None]()
+    wrapped = FunctionToolset[None]()
     calls: list[str] = []
     prepare_retries: list[int] = []
 
     async def prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         return None if ctx.retry else tool_def
 
-    async def prepare_prefixed(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def prepare_wrapped(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         prepare_retries.append(ctx.retry)
         return await prepare(ctx, tool_def)
 
@@ -1983,19 +1984,19 @@ async def test_tool_name_wrapper_prepare_retry_isolated_from_same_named_tool(wra
         calls.append('plain')
         raise ModelRetry('Choose another approach.')
 
-    @prefixed.tool_plain(name='fail', prepare=prepare_prefixed)
+    @wrapped.tool_plain(name='fail', prepare=prepare_wrapped)
     async def another_fail() -> str:
-        calls.append('prefixed')
+        calls.append('wrapped')
         raise ModelRetry('Choose another approach.')
 
     result = await Agent(
         FunctionModel(call_first_available_tool),
         deps_type=type(None),
-        toolsets=[plain, TOOL_NAME_WRAPPERS[wrapper](prefixed)],
+        toolsets=[plain, TOOL_NAME_WRAPPERS[wrapper](wrapped)],
     ).run('Try the tools.')
 
     assert result.output == 'No tools left.'
-    assert calls == ['plain', 'prefixed']
+    assert calls == ['plain', 'wrapped']
     assert prepare_retries == [0, 0, 1]
 
 

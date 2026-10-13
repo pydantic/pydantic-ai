@@ -25,9 +25,12 @@ class RenamedToolset(WrapperToolset[AgentDepsT]):
         ctx = replace(
             ctx,
             retries={
-                self.name_map.get(name, name): count
-                for name, count in ctx.retries.items()
-                if name in self.name_map or name not in original_to_new_name_map
+                **{name: count for name, count in ctx.retries.items() if name not in original_to_new_name_map},
+                **{
+                    original_name: ctx.retries[new_name]
+                    for original_name, new_name in original_to_new_name_map.items()
+                    if new_name in ctx.retries
+                },
             },
         )
         original_tools = await super().get_tools(ctx)
