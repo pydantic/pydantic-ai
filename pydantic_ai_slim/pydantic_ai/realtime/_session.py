@@ -1390,13 +1390,18 @@ class RealtimeSession:
                 # A part's start always precedes its deltas and its end, so this is the whole part
                 # going: drop the rest of it rather than leave deltas a reader cannot attach to
                 # anything. Part indexes are unique for the life of the session (`_next_part_index`
-                # only ever increments), so this cannot reach a later part that reused the number.
-                self._drop_queued_part(evicted.index)
+                # only ever increments), except that a late transcript streams an ended part again
+                # under its index (see `_late_assistant_transcript`): that restart is whole by itself.
+                self._drop_queued_part(position, evicted.index)
 
-    def _drop_queued_part(self, index: int) -> None:
-        for position in reversed(range(len(self._queue))):
+    def _drop_queued_part(self, position: int, index: int) -> None:
+        """Drop the deltas and end queued from `position` on for the part at `index`, up to a restart of it."""
+        while position < len(self._queue):
             queued = self._queue[position]
+            if isinstance(queued, PartStartEvent) and queued.index == index:
+                break
             if not isinstance(queued, (PartDeltaEvent, PartEndEvent)) or queued.index != index:
+                position += 1
                 continue
             del self._queue[position]
             if isinstance(queued, PartDeltaEvent):
@@ -2603,7 +2608,8 @@ class RealtimeSession:
 
         A provider can finish an item after a later item's content arrived, so the item's transcript comes late.
         Text the stream already showed only updates the recorded part. New text streams the part again under the
-        index it ended with, which a `PartStartEvent` replaces, so the item still streams as one part.
+        index it ended with, which a `PartStartEvent` replaces, so the item still streams as one part. The part
+        under way keeps streaming around it, as the user's and the model's parts do.
         """
         if item_id is None or item_id == self._active_assistant_item_id:
             return None
@@ -2628,7 +2634,6 @@ class RealtimeSession:
         if not appended:
             return []
         return [
-            *self._finalize_assistant_part(),
             PartStartEvent(index=index, part=restarted),
             PartDeltaEvent(index=index, delta=delta),
             PartEndEvent(index=index, part=updated),

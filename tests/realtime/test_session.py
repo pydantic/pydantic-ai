@@ -6522,6 +6522,38 @@ async def test_unconsumed_session_queue_never_orphans_a_delta(frames_per_turn: i
         assert {event.index for event in queued if isinstance(event, PartEndEvent)} <= started
 
 
+async def test_unconsumed_session_queue_keeps_a_restarted_part_whole(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Evicting a part's start leaves alone a later start under the same index, which carries the part again.
+
+    A late transcript streams its item's ended part again under the part's index, so the eviction of the first
+    start must stop at the restart rather than take its delta and end too.
+    """
+    monkeypatch.setattr('pydantic_ai.realtime._session._SESSION_STRUCTURAL_QUEUE_SIZE', 5)
+    events: list[RealtimeCodecEvent] = [
+        OutputTranscript('Hello', is_final=False, item_id='a'),
+        OutputTranscript('Bonjour.', is_final=False, item_id='b'),
+        OutputTranscript(' world.', is_final=False, item_id='a'),
+        ResponseDone(),
+    ]
+
+    async with RealtimeSession(FakeRealtimeConnection(events)) as session:
+        _ = [chunk async for chunk in session.stream_audio()]
+
+        parts: dict[int, list[tuple[str, str | None]]] = {}
+        for event in _queued_realtime_events(session):
+            if isinstance(event, PartDeltaEvent):
+                assert isinstance(event.delta, SpeechPartDelta)
+                parts.setdefault(event.index, []).append(('delta', event.delta.transcript_delta))
+            elif isinstance(event, (PartStartEvent, PartEndEvent)):
+                assert isinstance(event.part, SpeechPart)
+                kind = 'start' if isinstance(event, PartStartEvent) else 'end'
+                parts.setdefault(event.index, []).append((kind, event.part.transcript))
+        assert list(parts.values()) == [
+            [('start', ''), ('delta', 'Bonjour.'), ('end', 'Bonjour.')],
+            [('start', 'Hello'), ('delta', ' world.'), ('end', 'Hello world.')],
+        ]
+
+
 async def test_parked_exception_survives_a_trimmed_queue() -> None:
     """A failure parked after heavy trimming is still delivered when the session closes."""
     events: list[RealtimeCodecEvent] = []

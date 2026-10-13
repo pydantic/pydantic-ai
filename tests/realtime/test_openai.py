@@ -41,6 +41,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -5727,7 +5728,8 @@ LATE_TRANSCRIPT_CASES = [
         ],
     ),
     LateTranscriptCase(
-        # Text the stream has not shown yet re-opens the item's part under its own index, which replaces it.
+        # Text the stream has not shown yet streams the item's part again under its own index, which replaces it,
+        # while the part under way keeps streaming.
         id='late-delta',
         frames=_two_item_response(
             ('delta', 'a', 'Hello'),
@@ -5746,10 +5748,10 @@ LATE_TRANSCRIPT_CASES = [
             ('end', 0, 'Hello'),
             ('start', 1, ''),
             ('delta', 1, 'Bonjour.'),
-            ('end', 1, 'Bonjour.'),
             ('start', 0, 'Hello'),
             ('delta', 0, ' world.'),
             ('end', 0, 'Hello world.'),
+            ('end', 1, 'Bonjour.'),
         ],
     ),
     LateTranscriptCase(
@@ -5772,10 +5774,10 @@ LATE_TRANSCRIPT_CASES = [
             ('end', 0, 'Hello'),
             ('start', 1, ''),
             ('delta', 1, 'Bonjour.'),
-            ('end', 1, 'Bonjour.'),
             ('start', 0, 'Hello'),
             ('delta', 0, ' world.'),
             ('end', 0, 'Hello world.'),
+            ('end', 1, 'Bonjour.'),
         ],
     ),
 ]
@@ -5786,7 +5788,8 @@ async def test_late_transcript_keeps_one_part_per_output_item(case: LateTranscri
     """A transcript that arrives for an item after a later item's content keeps that item to one part.
 
     Both in history and in the event stream: a late transcript that adds nothing streams nothing, and one that
-    adds text re-opens the item's part under the index it streamed with.
+    adds text streams the item's part again under the index it ended with. Scripted frames rather than a
+    recording: the provider's event order can't be produced on demand.
     """
     ws = _QueuedWebSocket()
     connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
@@ -5806,8 +5809,11 @@ async def test_late_transcript_keeps_one_part_per_output_item(case: LateTranscri
                     break
         own = session._own_messages()  # pyright: ignore[reportPrivateUsage]
 
-    def text_of(part: Any) -> str | None:
-        return part.content if isinstance(part, TextPart) else part.transcript
+    def text_of(part: ModelResponsePart) -> str | None:
+        if isinstance(part, TextPart):
+            return part.content
+        assert isinstance(part, SpeechPart)
+        return part.transcript
 
     def summarize(messages: list[ModelMessage]) -> list[tuple[str, str | None, dict[str, Any] | None]]:
         (response,) = [message for message in messages if isinstance(message, ModelResponse)]
@@ -5831,10 +5837,39 @@ async def test_late_transcript_keeps_one_part_per_output_item(case: LateTranscri
     assert streamed == case.stream
 
 
+async def test_transcript_after_its_response_ended_changes_nothing_recorded() -> None:
+    """An item's transcript that arrives after its response ended doesn't fold into what that response recorded.
+
+    Scripted frames rather than a recording: the provider's event order can't be produced on demand.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    async with session:
+        await session.send('Greet me twice.')
+        for frame in _two_item_response(('delta', 'a', 'Hello'), ('delta', 'b', 'Bonjour.')):
+            ws.push(frame)
+        with anyio.fail_after(5):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+        for frame in _item_done('a', 0, 'commentary', 'Hello world.', text=False):
+            ws.push(frame)
+        for _ in range(20):
+            await asyncio.sleep(0)
+        responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert [[getattr(part, 'transcript', None) for part in response.parts] for response in responses] == [
+        ['Hello', 'Bonjour.']
+    ]
+
+
 async def test_evicted_output_audio_is_released() -> None:
     """Output audio `retain_audio_max_seconds` evicts from history is no longer held anywhere in the session.
 
-    Nothing in the messages shows memory that is still held, so a weak reference to the evicted audio checks it.
+    Nothing in the messages shows memory that is still held, so a weak reference to the evicted audio checks it,
+    over scripted frames sized to the budget rather than a recording.
     """
     ws = _QueuedWebSocket()
     connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
