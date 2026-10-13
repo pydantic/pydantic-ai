@@ -306,7 +306,10 @@ def test_result_list_of_models_with_stringified_response():
 
 
 def test_result_validation_error_without_json_string_fallback_error():
-    """https://github.com/pydantic/pydantic-ai/issues/9476"""
+    """https://github.com/pydantic/pydantic-ai/issues/9476
+
+    Not a VCR test: real models can't be made to reliably send these wrongly shaped responses.
+    """
 
     def check_name(name: str) -> str:
         if len(name.split()) < 2:
@@ -362,6 +365,7 @@ def test_result_validation_error_without_json_string_fallback_error():
 def test_result_validation_error_when_only_output_type_accepts_response():
     # The default only applies to the output type on its own, not to it as a member of the lenient
     # `T | Json[T]` union, so the union's own error is reported rather than accepting the default.
+    # Not a VCR test: real models can't be made to reliably omit the `response` key.
     def return_empty(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{}')])
