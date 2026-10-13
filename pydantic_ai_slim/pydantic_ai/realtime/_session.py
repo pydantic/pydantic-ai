@@ -1715,9 +1715,10 @@ class RealtimeSession:
         """Stream speech transcripts for both the user and assistant.
 
         By default, yields finalized [`SpeechPart`][pydantic_ai.messages.SpeechPart] instances — one
-        per completed turn, carrying its `speaker` and full `transcript`. A model turn whose transcript
-        grows after the turn ended is yielded again each time it grows, with the transcript so far;
-        `delta=True` carries the `index` to replace it by.
+        per completed turn, carrying its `speaker` and full `transcript`. A model output item whose
+        transcript grows after its part ended, possibly while a later item is still streaming, is
+        yielded again each time it grows, with the transcript so far; `delta=True` carries the
+        `index` to replace it by.
 
         Pass `delta=True` for live captions, which yields
         [`TranscriptUpdate`][pydantic_ai.realtime.TranscriptUpdate]s carrying the new text, the turn's
