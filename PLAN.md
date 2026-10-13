@@ -52,17 +52,17 @@ Proposed shape (method names and module are a maintainer decision):
 
 - `enqueue(request, item_id) -> ticket`
 - `wait(ticket) -> outcome`, normalized as success, error, expired or cancelled
-- `cancel(ticket)`
+- `cancel(item_id)`, including an item whose enqueue acknowledgement has not arrived
 - Engine-owned manager registrations. Extend worker setup to include manager workflows and activities; keep the existing activity registration contract intact.
 
 ## Agent loop integration
 
 `wrap_model_request` spans the logical turn; `after_model_request` sees its final response. Usage is recorded once. Reuse the suspended `ModelResponse` loop in [`_agent_graph.py`](pydantic_ai_slim/pydantic_ai/_agent_graph.py), which runs in workflow code. Activities enqueue, submit, poll or collect; the workflow owns the long wait.
 
-- The manager wakes the workflow with a keyed notification. Durable polling is the fallback.
-- A poll-only prototype may ship first, but the target design includes notification triggers.
-- `MAX_BACKGROUND_POLLS = 1000` in [`models/_continuation.py`](pydantic_ai_slim/pydantic_ai/models/_continuation.py) must cover provider batch windows (up to 24h) while keeping history bounded. The poll interval comes from `continuation_delay`.
-- Batch tickets must not be confused with provider-side suspended turns such as Anthropic `pause_turn`. Keep real provider response IDs on the response, and put batch provenance (batch ID, item ID) in `provider_details`.
+- In `_build_durable_model()`'s workflow-side `request_segment`, detect batch-ticket continuations and call `binding.wait(ticket)`. It owns the keyed notification wait and durable timeout/collection fallback. Batch continuations skip the existing duration-only sleep to avoid waiting twice; ordinary model segments keep their current path.
+- A poll-only prototype can first use `BatchModel.continuation_delay` and short collection activities. The target adds the binding's notification wait; the existing sleep hook cannot provide keyed wakeups itself.
+- Pending responses have empty parts, zero usage and a stable pending-job ID in `provider_response_id`. Repeated pending polls retain that ID, selecting `replace-same-id` and its 1,000-poll ceiling. Choose a polling schedule that covers the provider window, including queue time, without raising shared limits.
+- Completion preserves the actual provider response ID and batch/item provenance in `provider_details`. Test merging the empty placeholder with that response and distinguish batch tickets from provider-native suspended turns such as Anthropic `pause_turn`. Ordinary continuation classification stays unchanged.
 
 ## Queueing and grouping
 
@@ -92,7 +92,7 @@ Storage is real, and the backend owns it. [Temporal Cloud limits](https://docs.t
 | Item error from the provider | Goes through the existing model retry and error handling. No extra free retries |
 | Expired | Normalized outcome, handled as a model error |
 | Cancelled before submission | Tombstoned. Unrelated items in the batch are not affected |
-| Cancelled during enqueue | Tombstoned. The race is resolved in the manager |
+| Cancelled during enqueue | Allocate the item ID before dispatch; cancellation tombstones it even without a returned ticket. The manager rejects a late enqueue |
 | Cancelled after submission | Abandon that item. Cancel the provider job only when all its items are abandoned; submitted items may still be billed |
 | Crash between submit and checkpoint | Either verified provider idempotency, or a durable intent record plus reconciliation. No claim of exactly-once |
 | Tool side effects | The engine's existing guarantees apply. Batching doesn't make tools exactly-once |
