@@ -12,6 +12,7 @@ import hashlib
 import json
 import warnings
 from collections.abc import Iterable, Sequence
+from decimal import Decimal
 from typing import Any, cast
 
 from anthropic import AsyncAnthropic, Omit, omit as OMIT
@@ -35,6 +36,8 @@ from .anthropic import (
     _resolve_anthropic_service_tier,  # pyright: ignore[reportPrivateUsage]
 )
 from .batch import BatchRequest, BatchResult, BatchStatus
+
+_BATCH_PRICE_MULTIPLIER = Decimal('0.5')
 
 _MAX_REQUESTS = 100_000
 """Anthropic's limit on requests in one Message Batch."""
@@ -210,10 +213,10 @@ class AnthropicBatchProvider:
             )
             # Anthropic bills every batch token, cache reads and writes included, at half the standard price.
             if price is not None:
-                response.usage.cost = price.total_price / 2
+                response.usage.cost = price.total_price * _BATCH_PRICE_MULTIPLIER
             response.provider_details = {
                 **(response.provider_details or {}),
-                'batch': {'price_multiplier': '0.5'},
+                'batch': {'item_id': result.custom_id},
             }
             return response
         if result.status == 'errored':

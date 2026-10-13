@@ -12,7 +12,6 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime, timedelta
-from decimal import Decimal
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
@@ -3043,26 +3042,15 @@ class ModelResponse:
         """Calculate the cost of the usage.
 
         Uses [`genai-prices`](https://github.com/pydantic/genai-prices).
-        Batch response totals include the provider's discount; `model_price` retains the base rates.
         """
         assert self.model_name, 'Model name is required to calculate price'
-        price = calculate_price_for_usage(
+        return calculate_price_for_usage(
             self.usage,
             model_name=self.model_name,
             provider_api_url=self.provider_url,
             provider_name=self.provider_name,
             genai_request_timestamp=self.timestamp,
         )
-        batch_details = (self.provider_details or {}).get('batch')
-        if _utils.is_str_dict(batch_details) and isinstance(multiplier := batch_details.get('price_multiplier'), str):
-            factor = Decimal(multiplier)
-            return replace(
-                price,
-                input_price=price.input_price * factor,
-                output_price=price.output_price * factor,
-                total_price=price.total_price * factor,
-            )
-        return price
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         parts: list[_otel_messages.MessagePart] = []

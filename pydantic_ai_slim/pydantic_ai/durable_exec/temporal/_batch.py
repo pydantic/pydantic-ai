@@ -110,8 +110,8 @@ def _inbox() -> _ResultInbox:
     return inbox
 
 
-def _queue_id(policy: QueuePolicy, group: str) -> str:
-    group_hash = hashlib.sha256(group.encode()).hexdigest()[:16]
+def _queue_id(policy: QueuePolicy, group: str, task_queue: str) -> str:
+    group_hash = hashlib.sha256(to_json([group, task_queue])).hexdigest()[:16]
     return f'pydantic-ai-batch:{policy.agent_name}:{policy.model_id or "default"}:{group_hash}'
 
 
@@ -159,8 +159,12 @@ class TemporalBatchBinding:
 
         @activity.defn(name=f'{prefix}submit')
         async def submit(params: SubmitParams) -> str:
-            async with heartbeating():
-                return await self._resolve_model(params.model_id).batch_provider.create(params.requests)
+            creation = asyncio.create_task(self._resolve_model(params.model_id).batch_provider.create(params.requests))
+            try:
+                async with heartbeating():
+                    return await asyncio.shield(creation)
+            except asyncio.CancelledError:
+                return await creation
 
         @activity.defn(name=f'{prefix}poll')
         async def poll(params: PollParams) -> PollResult:
@@ -192,26 +196,16 @@ class TemporalBatchBinding:
         _inbox().pending.add(wire.item_id)
         try:
             return await self._execute(self._enqueue, wire, bounded_enqueue=True)
-        except BaseException as error:
-            if isinstance(error, (Exception, asyncio.CancelledError)):
-                _inbox().pending.discard(wire.item_id)
-                _inbox().outcomes.pop(wire.item_id, None)
-                await _shielded(self._execute(self._withdraw, wire, bounded_enqueue=True))
+        except BaseException:
+            _inbox().pending.discard(wire.item_id)
+            _inbox().outcomes.pop(wire.item_id, None)
+            await _shielded(self._execute(self._withdraw, wire, bounded_enqueue=True))
             raise
 
     async def wait(self, ticket: BatchTicket, params: ModelRequestParams) -> ModelResponse | None:
         inbox = _inbox()
-        wait = asyncio.create_task(
-            workflow.wait_condition(lambda: ticket.item_id in inbox.outcomes, timeout=_WAIT_ROUND)
-        )
-        try:
-            with suppress(asyncio.TimeoutError):
-                await asyncio.shield(wait)
-        except asyncio.CancelledError:
-            wait.cancel()
-            with anyio.CancelScope(shield=True):
-                await asyncio.wait([wait])
-            raise
+        with suppress(asyncio.TimeoutError):
+            await workflow.wait_condition(lambda: ticket.item_id in inbox.outcomes, timeout=_WAIT_ROUND)
         response = await self._execute(
             self._collect,
             CollectParams(
@@ -272,7 +266,7 @@ class TemporalBatchBinding:
                 'an uploaded file, rather than inline.'
             )
         policy = self._policy(params.model_id, model, request.group)
-        queue_id = _queue_id(policy, request.group)
+        queue_id = _queue_id(policy, request.group, activity.info().task_queue)
         info = activity.info()
         assert info.workflow_id is not None and info.workflow_run_id is not None, 'run by an agent workflow'
         consumer = Consumer(item_id=params.item_id, workflow_id=info.workflow_id, run_id=info.workflow_run_id)
@@ -311,7 +305,7 @@ class TemporalBatchBinding:
             start_workflow_operation=WithStartWorkflowOperation(
                 BatchQueueWorkflow.run,
                 QueueState(policy=policy),
-                id=_queue_id(policy, request.group),
+                id=_queue_id(policy, request.group, activity.info().task_queue),
                 task_queue=activity.info().task_queue,
                 id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
             ),

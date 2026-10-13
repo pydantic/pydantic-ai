@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import copy
 import uuid
 from abc import abstractmethod
@@ -1758,9 +1757,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 if response is not None:
                     return response
             raise UnexpectedModelBehavior('The batch request exceeded the maximum number of durable wait rounds.')
-        except BaseException as error:
-            if isinstance(error, (Exception, asyncio.CancelledError)):
-                await binding.cancel(ticket)
+        except BaseException:
+            await binding.cancel(ticket)
             raise
 
     def _bind_model_operations(

@@ -95,6 +95,7 @@ def test_public_engine_builder_exports() -> None:
         'JournalCallableOperationBackend',
         'JournalOperationNamer',
         'ModelRequestId',
+        'ModelRequestParams',
         'OperationConfigRole',
         'RegisteredOperationBackend',
         'RoleBasedOperationConfig',

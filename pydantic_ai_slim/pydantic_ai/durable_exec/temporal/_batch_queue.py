@@ -40,8 +40,8 @@ _MAX_ITEMS = 500
 _RETENTION = timedelta(hours=1)
 """How long a finished request's tombstone is kept, covering retries of the activity that enqueued it."""
 
-_MAX_HISTORY_BYTES = 10 * 1024 * 1024
-_MAX_HISTORY_EVENTS = 10_000
+_MAX_ACCEPTED_BYTES = 3 * 1024 * 1024
+_MAX_OPERATIONS = 500
 
 _MAX_POLL_FAILURES = 10
 
@@ -154,6 +154,8 @@ class BatchQueueWorkflow:
         self._state = state
         self._changed = False
         self._updates = 0
+        self._accepted_bytes = 0
+        self._operations = 0
 
     @workflow.run
     async def run(self, state: QueueState) -> None:
@@ -163,8 +165,8 @@ class BatchQueueWorkflow:
             if (
                 self._updates >= 500
                 or info.is_continue_as_new_suggested()
-                or info.get_current_history_size() > _MAX_HISTORY_BYTES
-                or info.get_current_history_length() > _MAX_HISTORY_EVENTS
+                or self._accepted_bytes >= _MAX_ACCEPTED_BYTES
+                or self._operations >= _MAX_OPERATIONS
             ):
                 await workflow.wait_condition(workflow.all_handlers_finished)
                 workflow.continue_as_new(self._state)
@@ -189,6 +191,7 @@ class BatchQueueWorkflow:
     @workflow.update
     def enqueue(self, request: EnqueueRequest) -> datetime:
         self._updates += 1
+        self._accepted_bytes += len(to_json(request))
         item_id = request.consumer.item_id
         item = self._state.items.get(item_id)
         if item is None:
@@ -306,6 +309,7 @@ class BatchQueueWorkflow:
             item.finished_at = workflow.now()
 
     async def _submit(self, batch: list[QueueItem]) -> None:
+        self._operations += 1
         policy = self._state.policy
         requests: list[BatchRequest] = []
         for item in batch:
@@ -339,6 +343,7 @@ class BatchQueueWorkflow:
         self._state.next_polls[batch_id] = workflow.now() + policy.poll_interval
 
     async def _poll(self, batch_id: str) -> None:
+        self._operations += 1
         policy = self._state.policy
         waiting = [
             item for item in self._state.items.values() if item.batch_id == batch_id and item.state == 'submitted'

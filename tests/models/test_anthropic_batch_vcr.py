@@ -4,16 +4,18 @@ from decimal import Decimal
 
 import pytest
 
-from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from tests.conftest import try_import
 
-with try_import():
+with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
+
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic not installed')
 
 
 @pytest.mark.vcr('test_anthropic_batch_roundtrip.yaml')
@@ -54,7 +56,7 @@ async def test_anthropic_batch_roundtrip(
         assert response.usage.input_tokens == 11
         assert response.usage.output_tokens == 5
         assert response.usage.cost == Decimal('0.000018')
-        assert response.cost().total_price == response.usage.cost
+        assert response.cost().total_price == Decimal('0.000036')
 
     def unavailable_price(*args: object, **kwargs: object) -> None:
         raise ValueError('Price data unavailable')
@@ -82,7 +84,7 @@ async def test_anthropic_batch_item_error(allow_model_requests: None) -> None:
         provider.decode(results[0], settings, parameters)
     assert exc_info.value.status_code == 404
     body = exc_info.value.body
-    assert is_str_dict(body) and is_str_dict(body['error'])
+    assert isinstance(body, dict) and isinstance(body['error'], dict)
     assert body['error']['type'] == 'not_found_error'
 
 

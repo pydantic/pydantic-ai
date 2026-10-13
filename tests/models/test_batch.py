@@ -35,7 +35,7 @@ class UnreachableBatchProvider:
 
     @property
     def max_requests(self) -> int:
-        return 10
+        raise NotImplementedError
 
     async def encode(
         self,
@@ -183,14 +183,11 @@ def test_anthropic_batch_request_that_never_ran_is_a_model_error(status: str) ->
         )
 
 
-async def test_an_engine_without_batch_support_rejects_the_model() -> None:
+def test_an_engine_without_batch_support_rejects_the_model() -> None:
     from tests.durable_exec.test_durable_exec_compat import JournalDurability
 
     with pytest.raises(UserError, match='Journal compatibility stub does not provide'):
-        agent = Agent(
-            BatchModel(BatchCapableTestModel()), name='unsupported-batch-agent', capabilities=[JournalDurability()]
-        )
-        await agent.run('unsupported')
+        Agent(BatchModel(BatchCapableTestModel()), name='unsupported-batch-agent', capabilities=[JournalDurability()])
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
@@ -274,3 +271,13 @@ def test_anthropic_batch_requires_static_credentials() -> None:
     client = AsyncAnthropic(api_key='')
     with pytest.raises(UserError, match='requires static Anthropic API credentials'):
         BatchModel(AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client)))
+
+
+async def test_wrapped_non_batch_model_keeps_durable_execution() -> None:
+    from pydantic_ai.models.wrapper import WrapperModel
+    from tests.durable_exec.test_durable_exec_compat import JournalDurability
+
+    result = await Agent(WrapperModel(TestModel()), name='wrapped-plain', capabilities=[JournalDurability()]).run(
+        'hello'
+    )
+    assert isinstance(result.output, str)

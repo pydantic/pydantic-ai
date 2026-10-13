@@ -36,7 +36,7 @@ from pydantic_ai.usage import RequestUsage
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
 try:
-    from temporalio import workflow
+    from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import (
         Client,
@@ -53,7 +53,8 @@ try:
     )
     from temporalio.common import RetryPolicy
     from temporalio.exceptions import ApplicationError
-    from temporalio.service import RPCError, RPCStatusCode
+    from temporalio.runtime import Runtime, TelemetryConfig
+    from temporalio.service import RPCError, RPCStatusCode, ServiceClient
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import (
         Interceptor as WorkerInterceptor,
@@ -80,7 +81,7 @@ if sys.version_info >= (3, 14):  # pragma: lax no cover
 pytestmark = pytest.mark.xdist_group(name='temporal-batch')
 
 TASK_QUEUE = 'pydantic-ai-batch-task-queue'
-OTHER_TASK_QUEUE = 'pydantic-ai-batch-other-task-queue'
+OTHER_TASK_QUEUE = TASK_QUEUE
 READINESS_WAIT_TIMEOUT = 30
 ACTIVITY_CONFIG = ActivityConfig(
     start_to_close_timeout=timedelta(seconds=60), retry_policy=RetryPolicy(maximum_attempts=1)
@@ -95,6 +96,8 @@ class ClientFaults:
     signal_failures: int = 0
     query_error: RPCStatusCode | None = None
     cancel_error: RPCStatusCode | None = None
+    missing_status: bool = False
+    conflicting_policy: bool = False
     capture: bool = False
     updates: list[tuple[str, str, object]] = field(default_factory=list[tuple[str, str, object]])
 
@@ -117,12 +120,12 @@ class FastRetryInbound(WorkflowInboundInterceptor):
 
 class FastRetryOutbound(WorkflowOutboundInterceptor):
     def start_activity(self, input: StartActivityInput) -> ActivityHandle[Any]:
-        if input.retry_policy is not None:
-            input.retry_policy = replace(
-                input.retry_policy,
-                initial_interval=timedelta(milliseconds=1),
-                maximum_interval=timedelta(milliseconds=1),
-            )
+        assert input.retry_policy is not None
+        input.retry_policy = replace(
+            input.retry_policy,
+            initial_interval=timedelta(milliseconds=1),
+            maximum_interval=timedelta(milliseconds=1),
+        )
         return super().start_activity(input)
 
 
@@ -138,6 +141,8 @@ class FaultOutbound(OutboundInterceptor):
         await super().signal_workflow(input)
 
     async def query_workflow(self, input: QueryWorkflowInput) -> Any:
+        if input.query == 'status' and faults.missing_status:
+            return None
         if input.query == 'status' and faults.query_error is not None:
             error, faults.query_error = faults.query_error, None
             raise RPCError('Injected query failure', error, b'')
@@ -152,6 +157,12 @@ class FaultOutbound(OutboundInterceptor):
     async def start_update_with_start_workflow(
         self, input: StartWorkflowUpdateWithStartInput
     ) -> WorkflowUpdateHandle[Any]:
+        if faults.conflicting_policy and input.update_workflow_input.update == 'enqueue':
+            from pydantic_core import to_json
+
+            wire = json.loads(to_json(input.update_workflow_input.args[0]))
+            wire['policy']['max_requests'] -= 1
+            input.update_workflow_input.args = [wire]
         if faults.capture:
             faults.updates.append(
                 (input.start_workflow_input.id, input.update_workflow_input.update, input.update_workflow_input.args[0])
@@ -166,8 +177,10 @@ class ScriptedBatchProvider:
     `hold` keeps every batch processing; `errored_prompts` makes those requests fail at the provider.
     """
 
+    group: str = 'scripted'
     hold: bool = False
     ambiguous_create: bool = False
+    finish_create_on_shutdown: bool = False
     hold_create: bool = False
     create_release: asyncio.Event = field(default_factory=asyncio.Event)
     cancel_failures: int = 0
@@ -197,13 +210,16 @@ class ScriptedBatchProvider:
         prompt = next(part.content for part in parts if isinstance(part, UserPromptPart))
         tool_returns = sum(isinstance(part, ToolReturnPart) for part in parts)
         return BatchRequest(
-            custom_id=custom_id, group='scripted', body=json.dumps({'prompt': prompt, 'tool_returns': tool_returns})
+            custom_id=custom_id, group=self.group, body=json.dumps({'prompt': prompt, 'tool_returns': tool_returns})
         )
 
     async def create(self, requests: Sequence[BatchRequest]) -> str:
         batch_id = f'batch_{uuid.uuid4().hex}'
         self.batches[batch_id] = list(requests)
         self.created.set()
+        if self.finish_create_on_shutdown:
+            await activity.wait_for_worker_shutdown()
+            await activity.wait_for_cancelled()
         if self.hold_create:
             await self.create_release.wait()
         if self.ambiguous_create:
@@ -217,7 +233,7 @@ class ScriptedBatchProvider:
         if self.poll_failures:
             self.poll_failures -= 1
             raise ModelAPIError('scripted', 'Transient result fetch failure')
-        if self.hold:
+        if await self.status(batch_id, group=group) != 'ended':
             return None
         results: list[BatchResult] = []
         if self.omit_results:
@@ -306,12 +322,6 @@ deadline_agent = batch_agent(
 policy_agent = batch_agent(
     'batch_policy_agent', BatchSettings(max_requests=100, max_wait=SHORT_WAIT, poll_interval=FAST_POLL)
 )
-# Same agent and model as `policy_agent`, so the same queue, deployed with a different policy.
-conflicting_policy_agent = batch_agent(
-    'batch_policy_agent', BatchSettings(max_requests=99, max_wait=SHORT_WAIT, poll_interval=FAST_POLL)
-)
-
-
 restart_agent = batch_agent('batch_restart_agent', BatchSettings(max_requests=1, poll_interval=FAST_POLL))
 
 
@@ -322,6 +332,10 @@ plain_agent = Agent(
 
 @workflow.defn(failure_exception_types=[ModelAPIError, UserError])
 class PairWorkflow:
+    @workflow.signal
+    def ping(self) -> None:
+        pass
+
     @workflow.run
     async def run(self, prompt: str) -> list[ModelMessage]:
         return (await pair_agent.run(prompt)).all_messages()
@@ -342,26 +356,19 @@ class PolicyWorkflow:
 
 
 @workflow.defn(failure_exception_types=[ModelAPIError, UserError])
-class ConflictingPolicyWorkflow:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        return (await conflicting_policy_agent.run(prompt)).output
-
-
-@workflow.defn(failure_exception_types=[ModelAPIError, UserError])
 class RestartWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         return (await restart_agent.run(prompt)).output
 
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     async with await WorkflowEnvironment.start_time_skipping(download_dest_dir=temporal_dev_server_cache_dir()) as env:
         yield env
 
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def client(temporal_env: WorkflowEnvironment) -> Client:
     config = temporal_env.client.config()
     config['plugins'] = [*config['plugins'], PydanticAIPlugin()]
@@ -369,8 +376,17 @@ def client(temporal_env: WorkflowEnvironment) -> Client:
     return Client(**config)
 
 
-@pytest.fixture(autouse=True)
-async def workers(client: Client) -> AsyncIterator[None]:
+@pytest.fixture(scope='module')
+async def other_client(client: Client) -> Client:
+    config = client.config()
+    config['service_client'] = await ServiceClient.connect(
+        replace(client.service_client.config, runtime=Runtime(telemetry=TelemetryConfig()))
+    )
+    return Client(**config)
+
+
+@pytest.fixture(autouse=True, scope='module')
+async def workers(client: Client, other_client: Client) -> AsyncIterator[None]:
     async with (
         Worker(
             client,
@@ -379,10 +395,10 @@ async def workers(client: Client) -> AsyncIterator[None]:
             plugins=[AgentPlugin(pair_agent), AgentPlugin(deadline_agent), AgentPlugin(policy_agent)],
         ),
         Worker(
-            client,
+            other_client,
             task_queue=OTHER_TASK_QUEUE,
-            workflows=[PairWorkflow, ConflictingPolicyWorkflow],
-            plugins=[AgentPlugin(pair_agent), AgentPlugin(conflicting_policy_agent)],
+            workflows=[PairWorkflow, DeadlineWorkflow, PolicyWorkflow],
+            plugins=[AgentPlugin(pair_agent), AgentPlugin(deadline_agent), AgentPlugin(policy_agent)],
         ),
     ):
         yield
@@ -390,7 +406,9 @@ async def workers(client: Client) -> AsyncIterator[None]:
 
 @pytest.fixture(autouse=True)
 def reset_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._batch._WAIT_ROUND', timedelta(milliseconds=100))
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._batch._WAIT_ROUND', timedelta(seconds=1))
+    faults.missing_status = False
+    faults.conflicting_policy = False
     faults.capture = False
     faults.updates.clear()
     faults.drop_signals = 0
@@ -398,8 +416,10 @@ def reset_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     faults.signal_failures = 0
     faults.query_error = None
     faults.cancel_error = None
+    provider.group = 'scripted'
     provider.hold = False
     provider.ambiguous_create = False
+    provider.finish_create_on_shutdown = False
     provider.hold_create = False
     provider.create_release.clear()
     provider.cancel_failures = 0
@@ -525,13 +545,15 @@ async def test_workers_with_conflicting_batch_policies_fail_instead_of_splitting
         PolicyWorkflow.run, 'policy', id=f'batch-policy-{uuid.uuid4()}', task_queue=TASK_QUEUE
     )
     await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
+    faults.conflicting_policy = True
     with pytest.raises(WorkflowFailureError) as exc_info:
         await client.execute_workflow(
-            ConflictingPolicyWorkflow.run,
+            PolicyWorkflow.run,
             'conflict',
             id=f'batch-conflict-{uuid.uuid4()}',
             task_queue=OTHER_TASK_QUEUE,
         )
+    faults.conflicting_policy = False
     provider.hold = False
     assert await first.result() == 'Echo: policy'
 
@@ -590,12 +612,13 @@ async def test_batch_model_fails_outside_a_workflow_before_queueing() -> None:
     assert provider.batch_ids('outside') == []
 
 
-async def test_batch_resumes_after_workers_are_replaced(client: Client) -> None:
+async def test_batch_resumes_after_workers_are_replaced(client: Client, other_client: Client) -> None:
     provider.hold = True
     queue = 'batch-restart-task-queue'
     async with Worker(
         client,
         task_queue=queue,
+        max_cached_workflows=0,
         workflows=[RestartWorkflow],
         plugins=[AgentPlugin(restart_agent)],
     ):
@@ -605,8 +628,9 @@ async def test_batch_resumes_after_workers_are_replaced(client: Client) -> None:
         await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
     provider.hold = False
     async with Worker(
-        client,
+        other_client,
         task_queue=queue,
+        max_cached_workflows=0,
         workflows=[RestartWorkflow],
         plugins=[AgentPlugin(restart_agent)],
     ):
@@ -755,6 +779,7 @@ async def test_duplicate_enqueue_and_late_result_delivery_are_idempotent(
     with pytest.raises(WorkflowUpdateFailedError) as exc_info:
         await manager.execute_update('enqueue', request)  # pyright: ignore[reportUnknownMemberType]
     assert isinstance(exc_info.value.cause, ApplicationError) and exc_info.value.cause.type == 'BatchRequestCancelled'
+    await second.signal('ping')
     await second.signal('pydantic_ai__batch_result', {'item_id': 'unknown'})
     provider.hold = False
     messages = await second.result()
@@ -763,7 +788,8 @@ async def test_duplicate_enqueue_and_late_result_delivery_are_idempotent(
 
 
 async def test_manager_rotates_history_with_pending_jobs(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._batch_queue._MAX_HISTORY_EVENTS', 10)
+    provider.group = 'rotating'
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._batch_queue._MAX_OPERATIONS', 1)
     faults.capture = True
     handle = await client.start_workflow(
         DeadlineWorkflow.run, 'rotate', id=f'rotate-{uuid.uuid4()}', task_queue=TASK_QUEUE
@@ -802,9 +828,13 @@ async def test_repeated_poll_failures_terminate_the_wait(client: Client, monkeyp
     assert any('Collecting batch' in str(error) for error in failure_causes(exc_info.value))
 
 
+@pytest.mark.parametrize('uncertain', [False, True])
 async def test_cancellation_during_provider_submission_cancels_the_created_job(
-    client: Client, temporal_env: WorkflowEnvironment
+    client: Client, temporal_env: WorkflowEnvironment, uncertain: bool
 ) -> None:
+    provider.group = f'cancel-submit-{uncertain}'
+    provider.ambiguous_create = uncertain
+    faults.capture = True
     provider.hold_create = True
     handle = await client.start_workflow(
         DeadlineWorkflow.run, 'cancel-submit', id=f'cancel-submit-{uuid.uuid4()}', task_queue=TASK_QUEUE
@@ -817,8 +847,17 @@ async def test_cancellation_during_provider_submission_cancels_the_created_job(
             await handle.result()
     provider.create_release.set()
     await temporal_env.sleep(timedelta(seconds=1))
-    await asyncio.wait_for(provider.cancelled_job.wait(), READINESS_WAIT_TIMEOUT)
-    assert provider.canceled == provider.batch_ids('cancel-submit')
+    if uncertain:
+        from pydantic_core import to_json
+
+        queue_id, _, params = next(update for update in faults.updates if update[1] == 'enqueue')
+        item_id = json.loads(to_json(params))['consumer']['item_id']
+        status = await client.get_workflow_handle(queue_id).query('status', item_id)
+        assert status['state'] == 'canceled'
+        assert provider.canceled == []
+    else:
+        await asyncio.wait_for(provider.cancelled_job.wait(), READINESS_WAIT_TIMEOUT)
+        assert provider.canceled == provider.batch_ids('cancel-submit')
 
 
 async def test_failed_provider_cancellation_does_not_leave_a_run_waiting(
@@ -837,3 +876,86 @@ async def test_failed_provider_cancellation_does_not_leave_a_run_waiting(
             await handle.result()
     await temporal_env.sleep(timedelta(seconds=30))
     assert len(provider.canceled) == 3
+
+
+async def test_worker_shutdown_finishes_an_inflight_submission(client: Client, other_client: Client) -> None:
+    provider.finish_create_on_shutdown = True
+    queue = 'batch-submit-shutdown'
+    async with Worker(
+        client,
+        task_queue=queue,
+        max_cached_workflows=0,
+        workflows=[RestartWorkflow],
+        plugins=[AgentPlugin(restart_agent)],
+    ):
+        handle = await client.start_workflow(
+            RestartWorkflow.run, 'shutdown-submit', id=f'shutdown-submit-{uuid.uuid4()}', task_queue=queue
+        )
+        await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
+        async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+            while not any(
+                event.HasField('activity_task_completed_event_attributes')
+                for event in (await handle.fetch_history()).events
+            ):
+                pass
+    provider.finish_create_on_shutdown = False
+    async with Worker(
+        other_client,
+        task_queue=queue,
+        max_cached_workflows=0,
+        workflows=[RestartWorkflow],
+        plugins=[AgentPlugin(restart_agent)],
+    ):
+        assert await handle.result() == 'Echo: shutdown-submit'
+    assert len(provider.batch_ids('shutdown-submit')) == 1
+
+
+async def test_pending_collection_keeps_waiting(client: Client, temporal_env: WorkflowEnvironment) -> None:
+    provider.group = 'pending-collection'
+    provider.hold = True
+    handle = await client.start_workflow(
+        DeadlineWorkflow.run, 'still-pending', id=f'pending-{uuid.uuid4()}', task_queue=TASK_QUEUE
+    )
+    await temporal_env.sleep(timedelta(seconds=1))
+    await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
+    await temporal_env.sleep(timedelta(seconds=2))
+    provider.hold = False
+    messages = await handle.result()
+    assert isinstance(messages[-1], ModelResponse) and messages[-1].text == 'Echo: still-pending'
+
+
+async def test_external_cancellation_of_a_queued_item_is_reported(client: Client) -> None:
+    from pydantic_core import to_json
+
+    provider.group = 'external-cancel'
+    faults.capture = True
+    handle = await client.start_workflow(
+        PairWorkflow.run, 'external-cancel', id=f'external-cancel-{uuid.uuid4()}', task_queue=TASK_QUEUE
+    )
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        while not any(
+            event.HasField('activity_task_completed_event_attributes')
+            for event in (await handle.fetch_history()).events
+        ):
+            pass
+    queue_id, _, params = next(update for update in faults.updates if update[1] == 'enqueue')
+    item_id = json.loads(to_json(params))['consumer']['item_id']
+    await client.get_workflow_handle(queue_id).execute_update('cancel', item_id)  # pyright: ignore[reportUnknownMemberType]
+    with pytest.raises(WorkflowFailureError) as exc_info:
+        await handle.result()
+    assert any('batch request was cancelled' in str(error) for error in failure_causes(exc_info.value))
+    assert provider.batch_ids('external-cancel') == []
+
+
+async def test_missing_queue_record_is_reported(client: Client, temporal_env: WorkflowEnvironment) -> None:
+    provider.group = 'missing-record'
+    provider.hold = True
+    handle = await client.start_workflow(
+        DeadlineWorkflow.run, 'missing-record', id=f'missing-record-{uuid.uuid4()}', task_queue=TASK_QUEUE
+    )
+    await temporal_env.sleep(timedelta(seconds=1))
+    await asyncio.wait_for(provider.created.wait(), READINESS_WAIT_TIMEOUT)
+    faults.missing_status = True
+    with pytest.raises(WorkflowFailureError) as exc_info:
+        await handle.result()
+    assert any('has no record of the request' in str(error) for error in failure_causes(exc_info.value))

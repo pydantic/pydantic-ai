@@ -63,7 +63,7 @@ Install `pydantic-ai[anthropic,logfire]` to run this example.
 
 [`Model.batch_provider`][pydantic_ai.models.Model.batch_provider] returns a
 [`BatchProvider`][pydantic_ai.models.batch.BatchProvider] or `None` when unsupported.
-The initial provider is Anthropic's direct API. This API does not require a durable engine.
+Anthropic's direct API supports this interface. This API does not require a durable engine.
 You own persistence, scheduling and recovery; it does not run an agent, tools or output validators.
 For automatic durable agent batching, use [`BatchModel`](../durable_execution/batching.md).
 
@@ -80,6 +80,8 @@ Persist batch IDs and each request's ID, settings and parameters before collecti
 Use the same settings and parameters for encoding and decoding. Match results by `custom_id`, not order.
 `ended` includes mixed successful, failed, expired and canceled requests; handle decode errors per item
 when you want to keep successful results. Status checks and result retrieval are separate provider calls.
+Anthropic responses record their discounted cost in `response.usage.cost`.
+`response.cost()` continues to estimate standard synchronous pricing.
 
 Requests in a job must share a `group`. Persist its value with the batch ID and pass `group=` when
 retrieving status, results or canceling to verify compatible client configuration after restart.

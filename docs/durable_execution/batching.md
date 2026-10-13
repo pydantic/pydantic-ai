@@ -83,13 +83,15 @@ you do not call submission or collection methods or run a separate coordinator s
 The Temporal worker plugins register the required manager handlers alongside the agent's handlers.
 
 The backend persists accepted requests and provider job references. Worker restarts preserve waiting runs.
-Grouping uses stable registered agent and model identities, rather than Python object identities.
+Grouping uses the task queue and stable registered agent/model identities.
+Workers on another task queue have their own manager, so retiring an old queue does not strand new runs.
 Requests with incompatible provider configuration stay in separate groups.
 Deploy the same registered client configuration on every worker polling a task queue.
+Changing a live group's `BatchSettings` requires draining it or using a new registered agent/model name.
 Configure transport timeouts and custom headers on that client; per-request `timeout` and `extra_headers` are unsupported.
 
 This implementation supports Anthropic Message Batches with Temporal. It requires a registered provider model
-and non-streaming agent execution. Anthropic batches reject fast mode and `max_tokens=0` cache pre-warming. `FallbackModel` containing a `BatchModel` is not supported. Other durable execution integrations reject batch mode before submission.
+and non-streaming agent execution. Anthropic batches reject `anthropic_speed` and `max_tokens=0` cache pre-warming. `FallbackModel` containing a `BatchModel` is not supported. Other durable execution integrations reject batch mode before submission.
 
 !!! warning "Batch turns can take hours"
     Each tool turn or output-validation retry can require another provider batch.
@@ -100,7 +102,8 @@ and non-streaming agent execution. Anthropic batches reject fast mode and `max_t
 Results are matched by item ID; provider output order does not matter.
 A failed item follows the normal model-error handling path without failing successful items in the same batch.
 Output validators, retry budgets and usage limits keep their usual behavior.
-Completed Anthropic batch responses include the provider's batch discount in their recorded cost.
+Completed Anthropic batch responses include the provider's discount in `response.usage.cost` and run spend limits.
+`response.cost()` continues to estimate standard synchronous pricing.
 
 Cancelling a queued run withdraws its request. After submission, cancellation abandons that item's result;
 the provider may still charge for it. Cancelling one run does not cancel another run's request.
@@ -112,14 +115,14 @@ the provider may still charge for it. Cancelling one run does not cancel another
 
 ## Payload Limits
 
-The initial backend stores bounded inline requests and results. It rejects oversized requests before acceptance.
+The backend stores bounded inline requests and results. It rejects oversized requests before acceptance.
 Encoded requests and result signals are limited to 512 KiB. Larger results are delivered by provider reference
 and fetched in a short activity; decoded responses still need to fit Temporal's activity-result limit. The queue limits its serialized state to 1 MiB
 and accepts at most 500 queued requests. Compact completed records are retained for one hour.
 A full queue applies backpressure; enqueue retries are bounded to 30 minutes.
 Temporal's [payload and history limits](https://docs.temporal.io/evaluate/cloud/limits) apply to the manager
 as well as the agent workflow. Large documents and generated files need a durable payload-offload strategy.
-There is no public batch-store parameter.
+
 
 
 ## Other Durable Execution Backends
