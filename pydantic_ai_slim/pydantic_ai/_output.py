@@ -862,9 +862,9 @@ def _output_type_name(output: Any) -> str | None:
 
 
 class _JsonStringResponse(TypedDict):
-    """Check JSON decoding without applying the output type's validators."""
+    """A `response` holding a JSON string, as the lenient `Json[...]` branch of the validator expects."""
 
-    response: Json[object]
+    response: Json[Any]
 
 
 _JSON_STRING_RESPONSE_VALIDATOR = cast(SchemaValidator, TypeAdapter(_JsonStringResponse).validator)
@@ -883,7 +883,8 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     type. `None` only for processors without a resolvable input type."""
     outer_typed_dict_key: str | None = None
     validator: SchemaValidator
-    _json_string_validator: SchemaValidator | None = None
+    _response_validator: SchemaValidator | None = None
+    """Validates the `response` as the output type alone, without the lenient `Json[...]` branch."""
     _function_schema: _function_schema.FunctionSchema | None = None
     _choice_values: Mapping[str, Any] | None = None
     """What each key of a `Choices` set with callable values stands for, resolved by `call()`."""
@@ -929,21 +930,22 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 self.outer_typed_dict_key = 'response'
                 output_type: type[OutputDataT] = cast(type[OutputDataT], output)
 
+                # Named like the lenient validator below, since its name is the title of the errors either one raises
                 response_validation_typed_dict = TypedDict(  # noqa: UP013
                     'response_validation_typed_dict',
                     {'response': output_type},  # pyright: ignore[reportInvalidTypeForm]
                 )
-                json_schema_type_adapter = validation_type_adapter = TypeAdapter(response_validation_typed_dict)
+                json_schema_type_adapter = TypeAdapter(response_validation_typed_dict)
+                self._response_validator = cast(SchemaValidator, json_schema_type_adapter.validator)
 
-                # Some models send a JSON string instead of the value. Keep this validation in pydantic-core
-                # rather than a WrapValidator so both attempts preserve JSON mode and partial validation.
-                json_string_response_typed_dict = TypedDict(  # noqa: UP013
-                    'json_string_response_typed_dict',
-                    {'response': Json[output_type]},  # pyright: ignore[reportInvalidTypeForm]
+                # More lenient validator: allow either the native type or a JSON string containing it
+                # i.e. `response: OutputDataT | Json[OutputDataT]`, as some models don't follow the schema correctly,
+                # e.g. `BedrockConverseModel('us.meta.llama3-2-11b-instruct-v1:0')`
+                response_validation_typed_dict = TypedDict(  # noqa: UP013
+                    'response_validation_typed_dict',
+                    {'response': output_type | Json[output_type]},  # pyright: ignore[reportInvalidTypeForm]
                 )
-                self._json_string_validator = cast(
-                    SchemaValidator, TypeAdapter(json_string_response_typed_dict).validator
-                )
+                validation_type_adapter = TypeAdapter(response_validation_typed_dict)
 
             # Really a PluggableSchemaValidator, but it's API-compatible
             self.validator = cast(SchemaValidator, validation_type_adapter.validator)
@@ -960,7 +962,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             json_schema.update(annotation_keywords)
 
             if self.outer_typed_dict_key:
-                # Including the internal TypedDict name as a title doesn't add anything and could confuse the LLM
+                # including the internal TypedDict name as a title here doesn't add anything and could confuse the LLM
                 json_schema.pop('title')
 
         if name is None and (json_schema_title := json_schema.get('title', None)):
@@ -992,38 +994,31 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             data = _utils.strip_markdown_fences(data)
         pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
 
-        def validate_with(validator: SchemaValidator) -> dict[str, object]:
+        def validate_with(validator: SchemaValidator) -> dict[str, Any]:
             if isinstance(data, str):
-                validated = validator.validate_json(
+                return validator.validate_json(
                     data or '{}', allow_partial=pyd_allow_partial, context=validation_context
                 )
             else:
-                validated = validator.validate_python(
+                return validator.validate_python(
                     data or {}, allow_partial=pyd_allow_partial, context=validation_context
                 )
-            # Partial validation can omit an invalid field with a default. That must trigger the fallback,
-            # not return an empty envelope that crashes when its value is unwrapped.
-            if (key := self.outer_typed_dict_key) is not None and key not in validated:
-                raise ValidationError.from_exception_data(
-                    'response_validation_typed_dict', [{'type': 'missing', 'loc': (key,), 'input': validated}]
-                )
-            return validated
 
         try:
             return validate_with(self.validator)
         except ValidationError:
-            if self._json_string_validator is not None:
+            # Errors from partial validation only skip a streamed snapshot, so they're left as they are.
+            if self._response_validator is None or allow_partial:
+                raise
+            try:
+                validate_with(_JSON_STRING_RESPONSE_VALIDATOR)
+            except ValidationError:
+                # The model didn't send a JSON string, so the `Json[...]` branch's errors only say so:
+                # report the output type's own errors instead.
                 try:
-                    return validate_with(self._json_string_validator)
-                except ValidationError as fallback_error:
-                    try:
-                        validate_with(_JSON_STRING_RESPONSE_VALIDATOR)
-                    except ValidationError:
-                        pass
-                    else:
-                        # JSON decoded successfully: keep its actionable validation errors, including custom errors.
-                        raise fallback_error
-            # Suppress only the decoding failure, not errors validating a successfully decoded value.
+                    validate_with(self._response_validator)
+                except ValidationError as error:
+                    raise error from None
             raise
 
     async def call(
