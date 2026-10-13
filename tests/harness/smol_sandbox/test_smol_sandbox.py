@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import threading
 from pathlib import Path
 
 import anyio
@@ -138,7 +139,12 @@ async def test_commands_get_the_working_dir_and_layered_env(fake_smol: FakeSmol,
     result = await backend.run('printf "%s %s" "$BASE" "$OVERRIDE"; pwd -P >&2', shell=True, env={'OVERRIDE': 'run'})
     assert (result.exit_code, result.stdout, result.stderr) == (0, 'base run', f'{working_dir}\n')
     argv, options = fake_smol.commands[-1]
-    assert argv[:4] == ['/bin/sh', '-c', 'exec "$@" </dev/null', 'sh']
+    assert argv[:2] == ['/bin/sh', '-c'] and argv[3:] == [
+        'sh',
+        '/bin/sh',
+        '-c',
+        'printf "%s %s" "$BASE" "$OVERRIDE"; pwd -P >&2',
+    ]
     assert options is not None and options.workdir == working_dir and options.timeout is None
 
 
@@ -204,11 +210,10 @@ async def test_concurrent_first_use_boots_once(fake_smol: FakeSmol, working_dir:
 
 
 async def test_cancelled_creation_keeps_the_vm_it_made(fake_smol: FakeSmol, working_dir: str) -> None:
-    fake_smol.create_gate = gate = asyncio.Event()
+    fake_smol.create_gate = gate = threading.Event()
     backend = SmolSandboxBackend(working_dir=working_dir)
     caller = asyncio.create_task(backend.get_sandbox())
-    with anyio.fail_after(5):
-        await fake_smol.create_started.wait()
+    assert await asyncio.to_thread(fake_smol.create_started.wait, 5)
     caller.cancel()
     with pytest.raises(asyncio.CancelledError):
         await caller
@@ -220,11 +225,10 @@ async def test_cancelled_creation_keeps_the_vm_it_made(fake_smol: FakeSmol, work
 
 async def test_cleanup_of_a_cancelled_boot_deletes_the_vm(fake_smol: FakeSmol, working_dir: str) -> None:
     # The documented cleanup: whatever ends the run, delete the ref if there is one.
-    fake_smol.create_gate = gate = asyncio.Event()
+    fake_smol.create_gate = gate = threading.Event()
     backend = SmolSandboxBackend(working_dir=working_dir)
     caller = asyncio.create_task(backend.get_sandbox())
-    with anyio.fail_after(5):
-        await fake_smol.create_started.wait()
+    assert await asyncio.to_thread(fake_smol.create_started.wait, 5)
     caller.cancel()
     with pytest.raises(asyncio.CancelledError):
         await caller
@@ -244,10 +248,9 @@ async def test_cancelled_destroy_still_deletes(fake_smol: FakeSmol, working_dir:
     await backend.get_sandbox()
     assert backend.ref is not None
     # `connect` boots a stopped VM; a cancelled caller must not leave it running undeleted.
-    fake_smol.connect_gate = gate = asyncio.Event()
+    fake_smol.connect_gate = gate = threading.Event()
     caller = asyncio.create_task(SmolSandbox[None]().destroy(backend.ref))
-    with anyio.fail_after(5):
-        await fake_smol.connect_started.wait()
+    assert await asyncio.to_thread(fake_smol.connect_started.wait, 5)
     caller.cancel()
     with pytest.raises(asyncio.CancelledError):
         await caller
@@ -255,6 +258,81 @@ async def test_cancelled_destroy_still_deletes(fake_smol: FakeSmol, working_dir:
     with anyio.fail_after(5):
         await SmolSandbox[None]().destroy(backend.ref)
     assert fake_smol.vms == {}
+
+
+async def test_destroy_during_a_boot_and_a_failed_attach_still_deletes(fake_smol: FakeSmol, working_dir: str) -> None:
+    # An attach to a VM still booting waits for the boot, so it can't forget it for the deletion behind it.
+    fake_smol.create_gate = gate = threading.Event()
+    booting = SmolSandboxBackend(working_dir=working_dir)
+    boot = asyncio.create_task(booting.get_sandbox())
+    assert await asyncio.to_thread(fake_smol.create_started.wait, 5)
+    assert booting.ref is not None
+    attach = asyncio.create_task(SmolSandboxBackend(ref=booting.ref, working_dir=working_dir).get_sandbox())
+    await asyncio.sleep(0)
+    cleanup = asyncio.create_task(SmolSandbox[None]().destroy(booting.ref))
+    await asyncio.sleep(0)
+    gate.set()
+    with anyio.fail_after(5):
+        await asyncio.gather(boot, attach, cleanup)
+    assert fake_smol.vms == {}
+    assert [machine_id for machine_id, _ in fake_smol.connections] == [None, booting.ref.id, booting.ref.id]
+
+
+@pytest.mark.parametrize('opened', [True, False])
+async def test_a_command_opened_after_its_caller_was_cancelled_is_killed(
+    fake_smol: FakeSmol, working_dir: str, opened: bool
+) -> None:
+    backend = SmolSandboxBackend(working_dir=working_dir)
+    await backend.get_sandbox()
+    fake_smol.open_started.clear()
+    fake_smol.open_gate = gate = threading.Event()
+    if not opened:
+        fake_smol.open_error = smol.SmolError('SMOLVM_ERROR', 'engine busy')
+    caller = asyncio.create_task(backend.run(['sleep', '30']))
+    assert await asyncio.to_thread(fake_smol.open_started.wait, 5)
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    started = len(fake_smol.spawned)
+    gate.set()
+    if opened:
+        with anyio.fail_after(5):
+            while len(fake_smol.spawned) == started:
+                await asyncio.sleep(0.01)
+            # Without a timeout, nothing but the backend closing the late stream stops the command.
+            assert await asyncio.to_thread(fake_smol.spawned[-1].wait) == -9
+    else:
+        await asyncio.sleep(0.05)
+        assert len(fake_smol.spawned) == started
+
+
+async def test_a_program_named_like_an_option_runs(fake_smol: FakeSmol, working_dir: str, tmp_path: Path) -> None:
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    (bin_dir / '-c').write_text('#!/bin/sh\necho "ran $*"\n')
+    (bin_dir / '-c').chmod(0o755)
+    backend = SmolSandboxBackend(working_dir=working_dir, env={'PATH': f'{bin_dir}:/usr/bin:/bin'})
+    assert (await backend.run(['-c', '/bin/echo', 'WRONG'])).stdout == 'ran /bin/echo WRONG\n'
+    missing = await backend.run(['-n', 'x'])
+    assert (missing.exit_code, missing.stderr) == (127, 'sh: -n: not found\n')
+    await backend.run(['mkdir', '--', '-d'])
+    await backend.run(['cp', '--', str(bin_dir / '-c'), '-d/run'])
+    assert (await backend.run(['-d/run', 'here'])).stdout == 'ran here\n'
+
+
+@pytest.mark.smol_live
+async def test_live_program_named_like_an_option_runs() -> None:  # pragma: lax no cover
+    # BusyBox's `exec` reads a program named `-c` as its own option.
+    backend = SmolSandboxBackend(env={'PATH': '/workspace/bin:/usr/bin:/bin'})
+    try:
+        await backend.run(
+            'mkdir bin && printf \'#!/bin/sh\\necho "ran $*"\\n\' > bin/-c && chmod +x bin/-c', shell=True
+        )
+        assert (await backend.run(['-c', '/bin/echo', 'WRONG'])).stdout == 'ran /bin/echo WRONG\n'
+        assert (await backend.run(['-n'])).exit_code == 127
+    finally:
+        assert backend.ref is not None
+        await SmolSandbox[None]().destroy(backend.ref)
 
 
 async def test_failed_creation_can_retry(fake_smol: FakeSmol, working_dir: str) -> None:

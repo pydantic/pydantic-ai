@@ -70,8 +70,7 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
         _backend.check_ref(ref)
         if not running_on_asyncio():
             raise UserError(_backend.ASYNCIO_ONLY)
-        previous = _backend.lifecycle.get(ref.id)
-        await _backend.settled(_backend.start_lifecycle(ref.id, _delete(ref.id, previous)))
+        await _backend.settled(_backend.start_lifecycle(ref.id, lambda: _delete(ref.id)))
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it boots or attaches on first use."""
@@ -89,14 +88,11 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
         )
 
 
-async def _delete(machine_id: str, previous: asyncio.Task[object] | None) -> None:
-    if previous is not None:
-        # Deleting a VM that is still booting would find nothing, and the boot would then leave it behind.
-        await asyncio.wait([previous])
+async def _delete(machine_id: str) -> None:
     try:
-        machine = await smol.AsyncMachine.connect(machine_id, _backend.local_target())
+        machine = await asyncio.to_thread(smol.Machine.connect, machine_id, _backend.local_target())
     except smol.SmolError as error:
         if error.code == 'NOT_FOUND':
             return
         raise
-    await machine.delete()
+    await asyncio.to_thread(machine.delete)

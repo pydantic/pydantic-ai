@@ -73,7 +73,7 @@ async def run_python(ctx: RunContext, code: str) -> str:
     return result.stdout + result.stderr
 ```
 
-See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
+See [Workspaces](../workspace.md) for more.
 
 ## Reattach later
 
@@ -166,13 +166,13 @@ Nothing deletes a VM for you, and there is no idle or lifetime limit. A VM shuts
 
 ## How commands run
 
-Every command runs through the VM's `/bin/sh` (`/bin/sh -c 'exec "$@"'`), which keeps an argv sequence literal and gives a missing program exit code 127; a `shell=True` string runs under `/bin/sh -c`. Custom images need `/bin/sh`.
+Every command runs through the VM's `/bin/sh`, which starts an argv sequence with `exec`, keeping it literal, and gives a missing program exit code 127. A program whose name starts with `-` is looked up on `PATH` first, so `exec` can't read it as an option. A `shell=True` string runs under `/bin/sh -c`. Custom images need a POSIX `/bin/sh`.
 
-On a timeout or cancellation, the backend closes the command's output stream, and smolvm kills the command and the processes it started. Jobs that outlive the command that started them, like a [Shell](shell.md) background job, keep running. smolvm also kills a command itself 5 seconds after its timeout, in case the event loop is too busy to. A command whose combined output passes 10 MiB is stopped the same way and raises `WorkspaceOutputLimitError`, with the first 65,536 characters of each stream in `stdout` and `stderr`. Redirect large output to a file instead. The cap bounds what the backend keeps: smolmachines queues output the VM writes faster than the backend reads it, without a limit of its own.
+On a timeout or cancellation, the backend closes the command's output stream, and smolvm kills the command and the processes it started. Jobs that outlive the command that started them, like a [Shell](shell.md) background job, keep running. smolvm also kills a command itself 5 seconds after its timeout, in case the event loop is too busy to. A command whose combined output passes 10 MiB is stopped the same way and raises `WorkspaceOutputLimitError`, with the first 65,536 characters of each stream in `stdout` and `stderr`. Redirect large output to a file instead. The cap bounds what the backend keeps, not the memory this process uses: smolvm stops a command's stdout and stderr once they pass 11 MiB, but smolmachines queues the output events the VM sends faster than the backend reads them without a limit of its own, so the overhead of those events isn't bounded.
 
 The backend's own commands, `mkdir -p` for `working_dir` and `pwd -P`, raise `WorkspaceTimeoutError` after 60 seconds, so a broken image can't hang the run.
 
-File operations run as shell commands in the VM (see [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace/#writing-a-backend)), so images need the usual file utilities, which Alpine's BusyBox has. Files move 64 KiB per command, so reading or writing a file of several MiB takes seconds.
+File operations run as shell commands in the VM (see [Writing a backend](../workspace.md#writing-a-backend)), so images need the usual file utilities, which Alpine's BusyBox has. Files move 64 KiB per command, so reading or writing a file of several MiB takes seconds.
 
 A deleted or stopped VM raises `WorkspaceUnavailableError`; a `working_dir` that was removed raises `WorkspaceError`. Other smolmachines failures propagate as `smol.SmolError`, for durable execution engines to retry.
 

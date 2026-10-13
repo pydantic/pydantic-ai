@@ -4,12 +4,15 @@ SDK behavior verified 2026-10-12 against smolmachines 1.22.2 and 1.27.0 on macOS
 https://github.com/smol-machines/smol/tree/main/sdk/python. Re-check these before changing acquisition,
 command, or error handling:
 
-- `AsyncMachine` runs every blocking call with `asyncio.to_thread`, so the SDK needs asyncio.
+- `Machine` blocks, and `AsyncMachine` runs each of its calls with `asyncio.to_thread`. The backend calls
+  `Machine` on worker threads itself, because `AsyncMachine.exec_stream` opens the stream before the
+  `try` that closes it, so a caller cancelled mid-open can't close the command it started.
 - Without an image, a VM boots smolvm's own Alpine root filesystem with BusyBox, runs commands as root,
   and starts them in `/`.
-- `exec_stream` yields `{'kind': 'stdout' | 'stderr', 'data': str}` events, then
+- `exec_stream` returns an `ExecStream` of `{'kind': 'stdout' | 'stderr', 'data': str}` events, then
   `{'kind': 'exit', 'exit_code': int}`, or `{'kind': 'error', 'message': '[CODE] ...'}` instead of
-  raising. Closing the generator kills the command and the processes it started in the VM.
+  raising. Its `close()`, safe from any thread, kills the command and the processes it started in the
+  VM, and wakes a thread waiting for the next event.
 - A missing argv program exits 255 with an engine message rather than 127.
 - Deleting a VM during a command ends the stream with an `io operation failed: connection closed` error
   event; the old handle's `state()` then reports `stopped`, and `connect` raises `NOT_FOUND`.
@@ -17,8 +20,10 @@ command, or error handling:
   guest) flushes its disk: a VM still running when its process exits loses its unflushed writes.
 - On the local target a VM's id is its name, and `connect` opens any VM this OS user has by name.
 - `ExecOptions.timeout` kills the command in the VM, which then exits 124.
-- The native SDK queues output events without a bound until they are read, so `_MAX_OUTPUT_BYTES`
-  bounds what the backend keeps, not what smolmachines buffers when the guest outpaces the reader.
+- smolvm stops a command's stdout and stderr once they pass 11 MiB, but the native SDK queues output
+  events without a bound of its own until they are read. `_MAX_OUTPUT_BYTES` bounds what the backend
+  keeps; what smolmachines holds in between is up to that 11 MiB of output plus each event's overhead,
+  which nothing bounds.
 """
 
 from __future__ import annotations
@@ -27,8 +32,7 @@ import asyncio
 import logging
 import re
 import uuid
-from collections.abc import AsyncGenerator, Coroutine, Mapping
-from contextlib import aclosing
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, TypeVar, cast
 
 import anyio
@@ -82,7 +86,8 @@ _ENGINE_TIMEOUT_GRACE = 5.0
 lifecycle: dict[str, asyncio.Task[object]] = {}
 """This process's latest unfinished creation, attachment or deletion of each VM, by name.
 
-A deletion waits for the creation it races, and neither stops when its callers are cancelled.
+Each one waits for the one started before it, so the latest finishing means they all have, and none
+stops when its callers are cancelled.
 """
 _HOST_UNAVAILABLE = frozenset(
     {'UNSUPPORTED_PLATFORM', 'RUNTIME_NOT_INSTALLED', 'KVM_UNAVAILABLE', 'HYPERVISOR_UNAVAILABLE'}
@@ -90,9 +95,18 @@ _HOST_UNAVAILABLE = frozenset(
 """Codes for a host that can't run a local VM at all, so no retry can succeed."""
 
 # `sh` resolves the program on `PATH` and exits 127 when it is missing, as the protocol asks;
-# `exec` keeps the argv literal and replaces the shell with the program. smolmachines 1.22 leaves
-# a streamed command's stdin open, so it is closed here.
-_EXEC = ('/bin/sh', '-c', 'exec "$@" </dev/null', 'sh')
+# `exec` keeps the argv literal and replaces the shell with the program. BusyBox and bash read a
+# program named like `-c` as an option of `exec`, and dash's `exec` takes no `--`, so such a name is
+# resolved to its path first. smolmachines 1.22 leaves a streamed command's stdin open, so it is
+# closed here.
+_EXEC_SCRIPT = """p=$1
+shift
+case $p in
+-*/*) p=./$p ;;
+-*) q=$(command -v -- "$p") || { printf 'sh: %s: not found\\n' "$p" >&2; exit 127; }; p=$q ;;
+esac
+exec "$p" "$@" </dev/null"""
+_EXEC = ('/bin/sh', '-c', _EXEC_SCRIPT, 'sh')
 
 # The local backend's cap and E2B's preview: the output is held in memory until the command ends.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
@@ -126,9 +140,17 @@ def check_ref(ref: WorkspaceRef) -> None:
         )
 
 
-def start_lifecycle(machine_id: str, work: Coroutine[object, object, _T]) -> asyncio.Task[_T]:
-    """Run `work` on `machine_id` in a task its callers' cancellation doesn't stop, recorded in `lifecycle`."""
-    task = asyncio.create_task(work, name=f'smol-sandbox-{machine_id}')
+def start_lifecycle(machine_id: str, work: Callable[[], Awaitable[_T]]) -> asyncio.Task[_T]:
+    """Run `work` on `machine_id` once its earlier operations finish, in a task its callers' cancellation doesn't stop."""
+    previous = lifecycle.get(machine_id)
+
+    async def run() -> _T:
+        if previous is not None:
+            # A deletion that overtook a boot would find nothing, and the boot would then leave its VM behind.
+            await asyncio.wait([previous])
+        return await work()
+
+    task = asyncio.create_task(run(), name=f'smol-sandbox-{machine_id}')
     # Waiting callers still get the failure; this only stops asyncio reporting it as never retrieved
     # when every caller was cancelled first.
     task.add_done_callback(lambda done: done.cancelled() or done.exception())
@@ -144,15 +166,26 @@ async def settled(task: asyncio.Task[_T]) -> _T:
     return task.result()
 
 
-def _events(
-    machine: smol.AsyncMachine, argv: list[str], options: smol.ExecOptions
-) -> AsyncGenerator[Mapping[str, object]]:
-    """`AsyncMachine.exec_stream` with its real type: an async generator, which `aclosing` needs.
+async def _open(machine: smol.Machine, argv: list[str], options: smol.ExecOptions) -> smol.ExecStream:
+    """Start a command, closing its stream when it arrives after the caller was cancelled."""
+    opening = asyncio.ensure_future(asyncio.to_thread(machine.exec_stream, argv, options))
+    try:
+        await asyncio.wait([opening])
+    except asyncio.CancelledError:
+        # The open goes on in its thread and may still start the command, which closing then kills.
+        opening.add_done_callback(_close_opened)
+        raise
+    return opening.result()
 
-    The SDK annotates it as an `AsyncIterator` of bare `dict`s; the event shapes are in the module docstring.
-    """
-    events = machine.exec_stream(argv, options)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    return cast('AsyncGenerator[Mapping[str, object]]', events)
+
+def _close_opened(opening: asyncio.Future[smol.ExecStream]) -> None:
+    if opening.exception() is None:
+        opening.result().close()
+
+
+def _next_event(stream: smol.ExecStream) -> Mapping[str, object] | None:
+    """The stream's next event, or `None` once it ends; the SDK types events as bare `dict`s."""
+    return cast('Mapping[str, object] | None', next(stream, None))
 
 
 class _Output:
@@ -233,8 +266,9 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         self._resources = smol.ResourceSpec(cpus=cpus, memory_mb=memory_mb, network=allow_internet_access)
         self._working_dir = absolute_path('working_dir', working_dir)
         self._env = dict(env or {})
-        self._machine: smol.AsyncMachine | None = None
-        self._acquisition: asyncio.Task[smol.AsyncMachine] | None = None
+        self._machine: smol.Machine | None = None
+        self._sandbox: smol.AsyncMachine | None = None
+        self._acquisition: asyncio.Task[smol.Machine] | None = None
         self._resolved_working_dir: str | None = None
 
     @property
@@ -253,6 +287,12 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         first operation. Attaching to a deleted VM raises `WorkspaceUnavailableError`; it does not
         create a replacement.
         """
+        machine = await self._vm()
+        if self._sandbox is None:
+            self._sandbox = smol.AsyncMachine(machine)
+        return self._sandbox
+
+    async def _vm(self) -> smol.Machine:
         if not running_on_asyncio():
             raise UserError(ASYNCIO_ONLY)
         if self._machine is not None:
@@ -264,22 +304,22 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
                 # Named and recorded before the boot starts, so cleanup has the ref whatever ends the run.
                 ref = self._ref = WorkspaceRef(provider='smol', id=f'{_NAME_PREFIX}{uuid.uuid4().hex}')
                 logger.info('Creating smol VM %s', ref.id)
-                task = start_lifecycle(ref.id, self._acquire(ref.id, create=True))
+                task = start_lifecycle(ref.id, lambda: self._acquire(ref.id, create=True))
             else:
-                task = start_lifecycle(ref.id, self._acquire(ref.id, create=False))
+                task = start_lifecycle(ref.id, lambda: self._acquire(ref.id, create=False))
             self._acquisition = task
         return await settled(task)
 
-    async def _acquire(self, machine_id: str, *, create: bool) -> smol.AsyncMachine:
+    async def _acquire(self, machine_id: str, *, create: bool) -> smol.Machine:
         try:
             try:
                 if create:
                     config = smol.MachineConfig(
                         name=machine_id, image=self._image, resources=self._resources, persistent=True
                     )
-                    machine = await smol.AsyncMachine.create(config, local_target())
+                    machine = await asyncio.to_thread(smol.Machine.create, config, local_target())
                 else:
-                    machine = await smol.AsyncMachine.connect(machine_id, local_target())
+                    machine = await asyncio.to_thread(smol.Machine.connect, machine_id, local_target())
             except smol.SmolError as error:
                 if create:
                     # The SDK reported the boot failed, so a retry boots a VM under a new name.
@@ -330,14 +370,14 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         check_timeout(timeout)
         _check_env(env)
         # Booting or attaching is bounded by the SDK; the timeout is the command's alone.
-        machine = await self.get_sandbox()
+        machine = await self._vm()
         return await self._exec(
             machine, [*_EXEC, *argv], env={**self._env, **(env or {})}, working_dir=self._working_dir, timeout=timeout
         )
 
     async def _exec(
         self,
-        machine: smol.AsyncMachine,
+        machine: smol.Machine,
         argv: list[str],
         *,
         env: dict[str, str],
@@ -350,10 +390,9 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         options = smol.ExecOptions(env=env or None, workdir=working_dir, timeout=engine_timeout)
         try:
             with anyio.move_on_after(timeout) as scope:
-                events = _events(machine, argv, options)
-                # Closing the generator, on any way out of this block, kills the command in the VM.
-                async with aclosing(events):
-                    async for event in events:
+                stream = await _open(machine, argv, options)
+                try:
+                    while (event := await asyncio.to_thread(_next_event, stream)) is not None:
                         kind = event.get('kind')
                         if kind == 'stdout' or kind == 'stderr':
                             if type(data := event.get('data')) is not str:
@@ -366,6 +405,9 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
                         else:
                             # `error`, the only other kind the SDK sends, carries a bracketed code.
                             raise smol.wrap_native_error(RuntimeError(str(event.get('message', event))))
+                finally:
+                    # On any way out, this kills the command in the VM and wakes a thread waiting for its next event.
+                    stream.close()
         except smol.SmolError as error:
             translated = await self._command_error(machine, error)
             if translated is error:
@@ -378,7 +420,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
             raise WorkspaceTimeoutError(f'Command timed out after {timeout:g} seconds', stdout=stdout, stderr=stderr)
         raise WorkspaceError(f'The command in smol VM {machine.id} ended without an exit status')
 
-    async def _command_error(self, machine: smol.AsyncMachine, error: smol.SmolError) -> Exception:
+    async def _command_error(self, machine: smol.Machine, error: smol.SmolError) -> Exception:
         """Map a failed command onto the protocol: a VM that is gone is unavailable, anything else propagates.
 
         The VM is probed only after a failure, to keep the round trip off successful commands; a probe
@@ -386,7 +428,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         """
         # Even a `NOT_FOUND` is checked: the error's code comes from its text, which may be the guest's.
         try:
-            state = await machine.state()
+            state = await asyncio.to_thread(machine.state)
         except smol.SmolError as probe_error:
             if probe_error.code == 'NOT_FOUND':
                 return WorkspaceUnavailableError(_gone_message(machine.id))
