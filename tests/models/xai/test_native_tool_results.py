@@ -77,11 +77,13 @@ def _tool_turns(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         call_ids = [call['id'] for call in message.get('tool_calls', [])]
         if not call_ids:
             continue
-        turn: dict[str, Any] = {'role': message['role'], 'calls': len(call_ids)}
+        turn: dict[str, Any] = {
+            'role': message['role'],
+            'calls': len(call_ids),
+            'encrypted_content': 'encrypted_content' in message,
+        }
         if 'tool_call_id' in message:
             turn['paired'] = message['tool_call_id'] == call_ids[0]
-        if 'encrypted_content' in message:
-            turn['encrypted_content'] = True
         turns.append(turn)
     return turns
 
