@@ -156,7 +156,7 @@ class ToolApprovalResponded(CamelBaseModel):
     (which upstream declares `approved?: never`). Relaxing either would reopen the gate.
     """
 
-    reason: str | None = None
+    reason: str | None = Field(default=None, exclude_if=lambda value: value is None)
     """Optional reason for the approval or denial."""
 
 

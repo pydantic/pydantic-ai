@@ -5063,6 +5063,9 @@ async def test_adapter_dump_messages_omits_unset_optional_fields(tiny_image: Bin
     assert null_keys == snapshot([('tool-noop', 'output')])
     # A `metadataSchema` passed to `validateUIMessages` rejects `null` message metadata too.
     assert 'metadata' not in dumped[0]
+    # As does a client-sent approval without a reason, when it's serialized back to the browser.
+    approval = ToolApprovalResponded(id='approval_1', approved=True)
+    assert approval.model_dump(by_alias=True) == snapshot({'id': 'approval_1', 'approved': True})
 
     reloaded = VercelAIAdapter.load_messages([UIMessage.model_validate(msg) for msg in dumped])
     noop_return = next(
