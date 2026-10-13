@@ -22,7 +22,7 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
     """Supply a [smolvm](https://github.com/smol-machines/smolvm) microVM on this machine as the run's workspace.
 
     A run with no reference boots a fresh VM on first use. Pass a `WorkspaceRef` supplied by the
-    application to attach to a VM from an earlier run; only VMs `SmolSandbox` created are accepted.
+    application to attach to a VM from an earlier run; only ids in the form `SmolSandbox` names its VMs are accepted.
 
     This capability supplies execution only. Compose it with tools or capabilities that use the
     workspace, such as `Coder`, `Shell`, or `FileSystem`.

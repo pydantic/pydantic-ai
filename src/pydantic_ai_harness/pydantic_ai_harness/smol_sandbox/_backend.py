@@ -68,7 +68,9 @@ _NAME = re.compile(rf'{_NAME_PREFIX}[0-9a-f]{{32}}')
 """The names the backend gives its VMs, and so the only refs it attaches to or deletes.
 
 A local VM's id is its name and `connect` opens any VM of this OS user, so without this check a ref
-from message history could reach a VM made by another tool, with host mounts or network.
+from message history could reach a VM made by another tool, with host mounts or network. The name is
+a namespace, not proof of origin: any process of this OS user could use it, and smolmachines can't report
+an existing VM's mounts or network, so a ref is still trusted input.
 """
 
 _SETUP_TIMEOUT = 60.0

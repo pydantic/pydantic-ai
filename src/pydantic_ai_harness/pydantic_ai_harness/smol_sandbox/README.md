@@ -97,7 +97,7 @@ later = agent.run_sync('Now make it print the first 100.', workspace=ref)
 
 Pass `workspace='new'` to boot a fresh VM even when the message history names one. `image`, `cpus`, `memory_mb` and `allow_internet_access` only shape a new VM, so a VM booted with network access keeps it when you reattach; `working_dir` and `env` apply to every command.
 
-A ref is trusted input: whoever passes one runs commands in that VM. `SmolSandbox` names the VMs it boots `pydantic-ai-` and 32 hex digits, and raises `ValueError` for a ref with any other id, so a ref can't reach a VM another tool made, which may mount your files.
+A ref is trusted input: whoever passes one runs commands in that VM. `SmolSandbox` names the VMs it boots `pydantic-ai-` and 32 hex digits, and raises `ValueError` for a ref with any other id, so a ref can't reach the VMs other tools make under their own names, which may mount your files. The name isn't proof of origin, though: any process running as your OS user can boot a VM under such a name, and smolmachines can't report how an existing VM was configured, so only pass refs your application stored itself.
 
 VMs are persistent, so a ref also works from another process, which boots the VM again if it isn't running. But smolmachines doesn't flush a VM's disk when the process using it exits, so file changes since the VM booted can be lost. To keep them, stop the VM before the process exits:
 
