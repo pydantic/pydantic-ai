@@ -100,6 +100,14 @@ agent = Agent(model)
 ...
 ```
 
+Structured output with `NativeOutput` (or `output_type` pointing at a model) is supported provider-wide on Fireworks: every model served on the platform accepts OpenAI-style `response_format`, regardless of model family.
+
+Known caveats:
+
+- Schemas using `pattern` constraints may fall back to prompt-based enforcement for some models.
+- Output can be truncated with `finish_reason='length'` when the generated JSON exceeds the model's completion limit.
+- A `json_schema` response format disables reasoning output on reasoning models.
+
 ## Heroku AI
 
 To use [Heroku AI](https://www.heroku.com/ai), first create an API key.
