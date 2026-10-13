@@ -444,8 +444,8 @@ class TestSummarizingCompactionTokenRetention:
 
         kept_text = [part.content for message in result for part in message.parts if isinstance(part, UserPromptPart)]
         assert kept_text == (['a'] if keep_messages and user_text == 'a' else [])
-        assert len(result) == 1 + len(kept_text)
-        assert history[-1] not in result
+        assert len(result) == 2 + len(kept_text)
+        assert result[-1] is history[-1]
 
     async def test_message_count_mode_with_no_older_users_keeps_the_tail(self) -> None:
         history: list[ModelMessage] = [response('discard'), response('recent'), response('newest')]

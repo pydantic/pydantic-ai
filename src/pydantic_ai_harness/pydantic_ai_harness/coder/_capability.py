@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import replace
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
 from pydantic_ai_harness.coder._instructions import INSTRUCTIONS, project_instructions
@@ -29,6 +30,20 @@ class _BoundToolOutputs(ToolOutputLimits[AgentDepsT]):
     def get_toolset(self) -> None:
         """Coder uses bounded truncation, so no spill-retrieval tool is needed."""
         return None
+
+
+@dataclass
+class _DefaultCaching(AbstractCapability[AgentDepsT]):
+    """`Caching()` that yields to a `cache` value set before it, by the model, the agent, or a capability.
+
+    Without `Caching`'s fixed id, so a `Caching` bound next to `Coder` is not combined away.
+    """
+
+    def get_model_settings(self) -> Callable[[RunContext[AgentDepsT]], ModelSettings]:
+        def unless_configured(ctx: RunContext[AgentDepsT]) -> ModelSettings:
+            return ModelSettings() if 'cache' in (ctx.model_settings or {}) else ModelSettings(cache=True)
+
+        return unless_configured
 
 
 MAX_READ_CHARS = 50_000
@@ -79,6 +94,11 @@ class Coder(CombinedCapability[AgentDepsT]):
     passing it to `run()`. `sub_agents=False` leaves delegation out.
     `agent_folders` optionally adds disk-defined delegates using `SubAgents`' folder
     names or explicit workspace paths. It defaults to `None` (no disk discovery).
+
+    `caching=True` turns on prompt caching through the unified `cache` model setting,
+    unless the model, the agent, or a capability listed before `Coder` already sets
+    `cache`; a capability listed after it and the run's own `model_settings` take
+    precedence as usual. `caching=False` leaves it out.
     """
 
     def __init__(
@@ -90,6 +110,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         repo_context: bool = True,
         sub_agents: bool = True,
         agent_folders: str | Sequence[str | Path] | None = None,
+        caching: bool = True,
     ) -> None:
         if workspace is not None:
             warn_argument_ignored(
@@ -133,4 +154,6 @@ class Coder(CombinedCapability[AgentDepsT]):
             ),
             RepairToolArguments[AgentDepsT](),
         ]
+        if caching:
+            capabilities.append(_DefaultCaching[AgentDepsT]())
         super().__init__(capabilities)

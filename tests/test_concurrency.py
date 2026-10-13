@@ -34,7 +34,7 @@ READINESS_WAIT_TIMEOUT = 5
 
 
 class AsyncBarrier:
-    """A simple asyncio.Barrier-like implementation compatible with Python 3.10 using anyio."""
+    """A one-shot barrier for AnyIO's asyncio and Trio backends."""
 
     def __init__(self, parties: int):
         self._parties = parties

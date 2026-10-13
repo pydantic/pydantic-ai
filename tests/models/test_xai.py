@@ -17,7 +17,7 @@ Across these tests, we verify:
 from __future__ import annotations as _annotations
 
 import json
-from datetime import timezone
+from datetime import UTC
 from decimal import Decimal
 from typing import Any
 
@@ -177,7 +177,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -195,7 +195,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -848,7 +848,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
                 parts=[
                     UserPromptPart(
                         content='What is the largest city in the user country?',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -875,7 +875,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
                         tool_name='get_user_country',
                         content='Mexico',
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -1348,7 +1348,7 @@ async def test_xai_web_search_user_location_recorded(allow_model_requests: None,
                 parts=[
                     UserPromptPart(
                         content='Search the web for one popular tourist attraction near me and name it.',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -2262,7 +2262,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                 parts=[
                     UserPromptPart(
                         content='Return just the day of week for the date of Jan 1 in 2026?',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -2675,7 +2675,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                 parts=[
                     UserPromptPart(
                         content=prompt,
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -3714,7 +3714,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='What is 2+2? Return just number.', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What is 2+2? Return just number.', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3751,7 +3751,7 @@ async def test_xai_encrypted_content_only(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='What is 2+2? Return just "4".', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What is 2+2? Return just "4".', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4402,7 +4402,7 @@ First reasoning
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4430,11 +4430,7 @@ First reasoning
                 run_id=None,
             ),
             ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Second question <think>user think</think>', timestamp=IsNow(tz=timezone.utc)
-                    )
-                ],
+                parts=[UserPromptPart(content='Second question <think>user think</think>', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4518,7 +4514,7 @@ async def test_xai_thinking_part_with_content_and_signature_in_history(allow_mod
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4539,7 +4535,7 @@ async def test_xai_thinking_part_with_content_and_signature_in_history(allow_mod
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='Second question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Second question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4618,7 +4614,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4639,7 +4635,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='Second question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Second question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4721,7 +4717,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Calculate 2+2', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Calculate 2+2', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4755,7 +4751,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='What was the result?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What was the result?', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4795,7 +4791,7 @@ def test_builtin_tool_call_part_failed_status(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4920,7 +4916,7 @@ async def test_xai_builtin_tool_failed_in_history(allow_model_requests: None):
                 timestamp=IsDatetime(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='What happened?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What happened?', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5350,7 +5346,7 @@ async def test_xai_map_builtin_tool_call_part_unknown_tool_name_ignored(allow_mo
                 )
             ],
             model_name=XAI_NON_REASONING_MODEL,
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             provider_name='xai',
         )
     ]
@@ -5480,7 +5476,7 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5498,7 +5494,7 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content=[CachePoint()], timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content=[CachePoint()], timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5547,7 +5543,7 @@ async def test_xai_empty_usage_response(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5609,7 +5605,7 @@ async def test_xai_parse_tool_args_invalid_json(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Search for something', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Search for something', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5777,7 +5773,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Search for test', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Search for test', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5811,7 +5807,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='What did you find?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What did you find?', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5896,7 +5892,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Get MCP data', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Get MCP data', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5930,7 +5926,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='What did MCP return?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What did MCP return?', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -6011,7 +6007,7 @@ async def test_xai_builtin_tool_without_tool_call_id(allow_model_requests: None)
                 timestamp=IsDatetime(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='What happened?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What happened?', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -6288,7 +6284,7 @@ async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: No
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Use the custom server tool', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Use the custom server tool', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),

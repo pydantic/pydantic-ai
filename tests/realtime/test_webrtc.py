@@ -13,7 +13,7 @@ import asyncio
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import anyio
@@ -24,7 +24,7 @@ from cassetter import RawRequest, RawResponse
 from pydantic_ai import Agent
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.realtime import (
     RealtimeClientSecret,
@@ -76,6 +76,7 @@ class _SignalingModel(RealtimeModel):
         self.settings = settings
         self.calls: list[tuple[str | None, Sequence[ToolDefinition] | None, RealtimeModelSettings | None]] = []
         self.expires_after_seconds: int | None = None
+        self.message_history: Sequence[ModelMessage] | None = None
 
     @property
     def model_name(self) -> str:
@@ -101,8 +102,10 @@ class _SignalingModel(RealtimeModel):
         instructions: str | None = None,
         tools: Sequence[ToolDefinition] | None = None,
         model_settings: RealtimeModelSettings | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
     ) -> WebRTCAnswer:
         self.calls.append((instructions, tools, model_settings))
+        self.message_history = message_history
         return WebRTCAnswer(sdp=sdp_offer, session=WebRTCSession(provider_name='test', session_id='rtc_test'))
 
     async def create_client_secret(
@@ -115,7 +118,7 @@ class _SignalingModel(RealtimeModel):
     ) -> RealtimeClientSecret:
         self.calls.append((instructions, tools, model_settings))
         self.expires_after_seconds = expires_after_seconds
-        return RealtimeClientSecret(value='ek_test', expires_at=datetime.now(timezone.utc))
+        return RealtimeClientSecret(value='ek_test', expires_at=datetime.now(UTC))
 
 
 async def test_agent_realtime_signaling_resolves_bound_configuration() -> None:
@@ -155,6 +158,36 @@ async def test_agent_realtime_signaling_resolves_bound_configuration() -> None:
         assert tools is not None
         assert [tool.name for tool in tools] == ['agent_tool', 'accessor_tool']
         assert settings == RealtimeModelSettings(max_tokens=100, output_modality='text')
+
+
+async def test_agent_realtime_offer_carries_the_bound_history() -> None:
+    """The history bound with `agent.realtime(...)` reaches the offer, as it reaches the session.
+
+    Without any, the keyword isn't passed at all, so a `RealtimeModel` written before it existed still works.
+    """
+    history = [ModelRequest(parts=[UserPromptPart(content='My name is Ada.')])]
+    model = _SignalingModel()
+
+    await Agent().realtime(model, message_history=history).answer_webrtc_offer(SAMPLE_SDP_OFFER)
+    assert model.message_history == history
+
+    class _LegacyModel(_SignalingModel):
+        async def answer_webrtc_offer(  # pyright: ignore[reportIncompatibleMethodOverride]
+            self,
+            sdp_offer: str,
+            *,
+            instructions: str | None = None,
+            tools: Sequence[ToolDefinition] | None = None,
+            model_settings: RealtimeModelSettings | None = None,
+        ) -> WebRTCAnswer:
+            return await super().answer_webrtc_offer(sdp_offer)
+
+    answer = await Agent().realtime(_LegacyModel()).answer_webrtc_offer(SAMPLE_SDP_OFFER)
+    assert answer.sdp == SAMPLE_SDP_OFFER
+    # With history bound too: the model can't take it at the offer, so its sideband seeds it, as before.
+    history = [ModelRequest(parts=[UserPromptPart(content='My name is Ada.')])]
+    answer = await Agent().realtime(_LegacyModel(), message_history=history).answer_webrtc_offer(SAMPLE_SDP_OFFER)
+    assert answer.sdp == SAMPLE_SDP_OFFER
 
 
 async def test_agent_realtime_signaling_resolves_bound_run_identity() -> None:
@@ -312,7 +345,7 @@ async def test_create_client_secret(openai_api_key: str, request: pytest.Fixture
     assert secret.expires_at.tzinfo is not None
     # The secret expires shortly after recording, so only a live response can remain future-dated.
     recording = request.config.getoption('record_mode') == 'rewrite'
-    assert not recording or secret.expires_at > datetime.now(timezone.utc)
+    assert not recording or secret.expires_at > datetime.now(UTC)
 
 
 @pytest.mark.vcr
@@ -331,7 +364,7 @@ async def test_agent_create_client_secret(openai_api_key: str, request: pytest.F
     assert secret.value
     assert secret.expires_at.tzinfo is not None
     recording = request.config.getoption('record_mode') == 'rewrite'
-    assert not recording or secret.expires_at > datetime.now(timezone.utc)
+    assert not recording or secret.expires_at > datetime.now(UTC)
 
 
 async def test_create_client_secret_missing_value() -> None:
@@ -438,7 +471,7 @@ def test_client_secret_value_absent_from_repr() -> None:
     # `provider_details`) must leak into logs via the dataclass repr.
     secret = RealtimeClientSecret(
         value='ek_live_secret',
-        expires_at=datetime.now(timezone.utc),
+        expires_at=datetime.now(UTC),
         provider_details={'session': {'instructions': 'secret system prompt'}},
     )
     rendered = repr(secret)
@@ -479,6 +512,25 @@ async def test_agent_answer_webrtc_offer(openai_api_key: str) -> None:
     assert answer.session.provider_name == 'openai'
     assert answer.session.call_id.startswith('rtc_')
     assert answer.sdp.startswith('v=0')
+
+
+async def test_answer_webrtc_offer_leaves_history_to_the_sideband() -> None:
+    """The Realtime API's calls endpoint takes no conversation items (it rejects `session.input`, checked live).
+
+    So the offer carries none, and the history is seeded once, by the sideband when it attaches.
+    """
+    sessions: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = request.content.decode()
+        sessions.append(json.loads(body.split('Content-Type: application/json\r\n\r\n', 1)[1].split('\r\n--', 1)[0]))
+        return httpx2.Response(201, text=SAMPLE_SDP_ANSWER, headers={'Location': '/v1/realtime/calls/rtc_abc'})
+
+    model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
+    history = [ModelRequest(parts=[UserPromptPart(content='My name is Ada.')])]
+    await model.answer_webrtc_offer(SAMPLE_SDP_OFFER, message_history=history)
+
+    assert 'Ada' not in json.dumps(sessions)
 
 
 async def test_answer_webrtc_offer_missing_location() -> None:

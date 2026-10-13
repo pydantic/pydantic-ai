@@ -86,7 +86,10 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     registry cannot resolve."""
 
     keep_messages: int = 40
-    """Number of tail messages to retain after trimming (message-count trigger)."""
+    """Number of tail messages to retain after trimming (message-count trigger).
+
+    With `receipts=True`, the receipt counts as one of these, but never displaces the newest message.
+    """
 
     keep_tokens: int | None = None
     """Minimum original message-content tokens to retain in an unchanged recent suffix.
@@ -135,7 +138,10 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
         if self.keep_tokens is not None:
             cutoff = find_token_cutoff(messages, self.keep_tokens, self.tokenizer)
         else:
-            cutoff = find_safe_cutoff(messages, max(0, self.keep_messages - int(self.receipts)))
+            # The receipt takes one of the kept slots, but never the last one: keeping zero
+            # messages would drop the newest message, which in a run is the request being answered.
+            keep = self.keep_messages - 1 if self.receipts and self.keep_messages > 1 else self.keep_messages
+            cutoff = find_safe_cutoff(messages, keep)
 
         if cutoff <= 0:
             return messages

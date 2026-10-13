@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Generic
@@ -21,11 +20,12 @@ from pydantic import (
 
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.coder import Coder
+from pydantic_clai2.builtin_plugins.coder_folders import is_folder_name, run_coder_flow
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost
-from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow, first_error, run_flow
+from pydantic_clai2.ui.menus.field_menu import FieldRow, first_error
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 
-_FOLDER_NAME = re.compile(r'[A-Za-z0-9_-]+')
+_JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
 class CoderSettings(BaseModel):
@@ -67,7 +67,7 @@ class CoderSettings(BaseModel):
         project: list[str] = []
         personal: list[str] = []
         for value in self.agent_folders:
-            if _FOLDER_NAME.fullmatch(value):
+            if is_folder_name(value):
                 for prefix in ('.agents', '.claude', '.codex'):
                     folder = f'{prefix}/{value}'
                     project.append(folder)
@@ -86,6 +86,7 @@ class CoderSource(Generic[DepsT]):
         self.host = host
 
     def rows(self) -> tuple[FieldRow, ...]:
+        folders = self.host.settings(CoderSettings).agent_folders
         return (
             FieldRow(
                 key='unrestricted_filesystem',
@@ -106,8 +107,12 @@ class CoderSource(Generic[DepsT]):
             FieldRow(
                 key='agent_folders',
                 label='Agent folders',
-                description=CoderSettings.model_fields['agent_folders'].description or '',
+                description='Manage sub-agent definition folders.\nEnter opens the folder list.\nAn empty list turns disk agents off.',
                 default='[]',
+                choice_labels={
+                    '[]': 'None (off)',
+                    **({json.dumps(folders): f'{len(folders)} selected'} if folders else {}),
+                },
             ),
         )
 
@@ -120,10 +125,27 @@ class CoderSource(Generic[DepsT]):
         }
         return json.dumps(values[row.key])
 
-    def _updated(self, row: FieldRow, raw: str) -> CoderSettings:
+    def _with(self, key: str, value: JsonValue) -> CoderSettings:
         data: dict[str, JsonValue] = self.host.settings(CoderSettings).model_dump(mode='json')
-        data[row.key] = TypeAdapter(JsonValue).validate_json(raw)
+        data[key] = value
         return CoderSettings.model_validate(data)
+
+    def _updated(self, row: FieldRow, raw: str) -> CoderSettings:
+        return self._with(row.key, _JSON.validate_json(raw))
+
+    def agent_folders(self) -> list[str]:
+        return self.host.settings(CoderSettings).agent_folders
+
+    def sub_agents_enabled(self) -> bool:
+        return self.host.settings(CoderSettings).sub_agents
+
+    def expand_folder(self, value: str) -> list[str]:
+        """The locations one entry searches, in the order the Coder plugin passes them on."""
+        return CoderSettings(agent_folders=[value]).folders(home=Path.home())
+
+    def save_agent_folders(self, folders: list[str]) -> None:
+        """Persist the folder list, keeping every other Coder preference."""
+        self.host.save_settings(self._with('agent_folders', list[JsonValue](folders)))
 
     def problem(self, row: FieldRow, text: str) -> str | None:
         try:
@@ -162,5 +184,5 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
     async def configure(self) -> str:
         if not self.host.console.is_terminal:
             return 'Configure Coder from a terminal: /plugins configure coder'
-        messages = await run_worker(lambda: run_flow(FieldMenu(CoderSource(self.host))))
+        messages = await run_worker(lambda: run_coder_flow(CoderSource(self.host)))
         return '\n'.join(messages) or 'No Coder settings changed.'
