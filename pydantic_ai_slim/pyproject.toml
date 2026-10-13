@@ -65,7 +65,7 @@ dependencies = [
     "pydantic-graph=={{ version }}",
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
-    "genai-prices>=0.1.9",
+    "genai-prices>=0.1.10",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]

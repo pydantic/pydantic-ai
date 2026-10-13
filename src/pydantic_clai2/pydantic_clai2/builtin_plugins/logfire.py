@@ -31,6 +31,7 @@ from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_e
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, run_setup
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
 from pydantic_clai2.plugins import Plugin, PluginHost, PluginLoadFailed, SessionEnd, SessionStart, TurnEnd
+from pydantic_clai2.runtime import agent_instrumentation
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow_async
 from pydantic_clai2.ui.rendering import theme
@@ -89,7 +90,12 @@ class LogfireSettings(BaseModel):
 
 
 class LogfirePlugin(Plugin[LogfireSettings]):
-    """Core instrumentation, without changing the supplied agent or global OTel providers."""
+    """Core instrumentation for every agent, without changing the supplied agent or global OTel providers.
+
+    CLAI's own turns get the per-run `Instrumentation` capability. Agents built elsewhere, such as
+    the compaction summarizer and sub-agents, follow `Agent.instrument_all`, which the plugin points
+    at the same instance while it is loaded and restores when it unloads.
+    """
 
     _active_httpx: ClassVar[list['LogfirePlugin']] = []
     """Live opt-in instances, ordered so HTTPX instrumentation can move to a remaining instance on unload."""
@@ -159,6 +165,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     # The UI lifecycle goes only to this plugin's own instance: every enabled copy of the plugin hears these events.
     async def on_session_start(self, event: SessionStart) -> None:
         self._session_tracing.start(await _user_email(self.settings))
+        agent_instrumentation.claim(self.instrumentation.settings)
         if self.settings.httpx:
             if not self._active_httpx:
                 self._instrument_httpx()
@@ -218,6 +225,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
+        agent_instrumentation.release(self.instrumentation.settings)
         self._session_tracing.end(event.reason)
         with CancelScope(shield=True):
             finished = await to_thread.run_sync(_shutdown, self.instance)

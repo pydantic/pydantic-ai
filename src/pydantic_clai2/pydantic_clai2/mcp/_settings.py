@@ -63,10 +63,6 @@ class RemoteServer(ServerSettings):
             raise ValueError('OAuth URLs cannot carry credentials')
         return self
 
-    def init_timeout(self) -> float | None:
-        """The configured timeout, or enough time for a browser sign-in when using OAuth."""
-        return self.timeout or (OAUTH_TIMEOUT if self.auth else None)
-
 
 class HTTPServer(RemoteServer):
     """A Streamable HTTP MCP endpoint."""

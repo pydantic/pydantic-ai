@@ -6,23 +6,28 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
-from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
+from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
-from pydantic_clai2 import StreamRenderer
+from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
+from pydantic_clai2.builtin_plugins.coder import DEFAULT_SKILL_FOLDERS, CoderSettings
+from pydantic_clai2.builtin_plugins.day_ai import DayAISource
 from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireSettings, LogfireSource
 from pydantic_clai2.builtin_plugins.logfire_mcp import LogfireMCPSettings
-from pydantic_clai2.commands import config_command, plugins_command
+from pydantic_clai2.builtin_plugins.notion import NotionSource
+from pydantic_clai2.builtin_plugins.ordinal import OrdinalSource
+from pydantic_clai2.commands import Commands, config_command, plugins_command
 from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, Settings, features
 from pydantic_clai2.config.api_keys import KeyReference
 from pydantic_clai2.config.plugin_requirements import apply_requirements, stored_requirements
 from pydantic_clai2.config.settings_store import SettingsStore, StoredAccount
 from pydantic_clai2.models.model_settings import model_settings_from_json
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
@@ -751,3 +756,99 @@ def test_logfire_mcp_settings_from_older_builds_load_under_the_same_id(tmp_path:
     plugins_command(store, ['add', 'logfire', 'pydantic_clai2.builtin_plugins.logfire'])
     plugins_command(store, ['disable', 'logfire'])
     assert {plugin.id: plugin.enabled for plugin in store.plugins()} == {'logfire_mcp': True, 'observability': False}
+
+
+@pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'build-without-skill-folders'])
+async def test_saved_skill_folders_load_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool
+) -> None:
+    """A `coder` saved before skills existed gets the default folders; a build lacking the feature drops a saved list."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'coder',
+                '{"id": "coder", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "sub_agents": false, "skill_folders": ["team-skills"]}}',
+            ),
+        )
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'older',
+                '{"id": "older", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "sub_agents": false}}',
+            ),
+        )
+    store.save_plugin(store.plugins()[0], requires={'skill_folders': frozenset({'coder-skill-folders'})})
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    entries = {entry.name: entry for entry in loader.entries() if entry.name in {'coder', 'older'}}
+    # Through the host: an earlier `loader.reload('coder')` in this process may have replaced the module's class.
+    folders = {
+        name: entry.loaded.plugin.host.settings(CoderSettings).skill_folders
+        for name, entry in entries.items()
+        if entry.loaded is not None
+    }
+    assert folders == {
+        'coder': ['team-skills'] if supported else list(DEFAULT_SKILL_FOLDERS),
+        'older': list(DEFAULT_SKILL_FOLDERS),
+    }
+    # `/plugins` shows the notice; startup does not print it.
+    assert entries['coder'].ignored == (
+        None if supported else 'coder: ignored saved skill_folders (needs coder-skill-folders); using defaults.'
+    )
+    assert store.plugins() == saved
+    await loader.close('exit')
+
+
+@pytest.mark.parametrize(
+    ('name', 'previous', 'saved'),
+    [
+        ('day_ai', {'auth': None}, {'auth': 'oauth', 'include_instructions': False}),
+        (
+            'notion',
+            {'auth': None, 'read_only': True},
+            {'auth': 'oauth', 'read_only': True, 'include_instructions': False},
+        ),
+        ('ordinal', {'sign_in': 'auto'}, {'sign_in': 'browser', 'include_instructions': False}),
+    ],
+)
+async def test_automatic_sign_in_saved_by_older_builds_means_the_browser(
+    tmp_path: Path, name: str, previous: dict[str, JsonValue], saved: dict[str, JsonValue]
+) -> None:
+    store = SettingsStore(tmp_path / 'settings.db')
+    builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == name)
+    declaration = builtin.model_copy(update={'enabled': True, 'settings': previous})
+    store.save_plugin(declaration)
+    loader = PluginLoader[None](
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        builtin=(builtin,),
+    )
+    try:
+        await loader.load_all()
+        [entry] = loader.entries()
+        assert entry.loaded is not None, 'the automatic choice older builds saved still loads'
+        assert store.plugins() == [declaration], 'loading does not rewrite it'
+        host = entry.loaded.plugin.host
+        source = {'day_ai': DayAISource, 'notion': NotionSource, 'ordinal': OrdinalSource}[name](host)
+        [instructions] = [row for row in source.rows() if row.key == 'include_instructions']
+        source.apply(instructions, 'false')
+        # An unrelated edit saves the browser sign-in, a value older builds read too.
+        assert [plugin.settings for plugin in store.plugins()] == [saved]
+    finally:
+        await loader.close('exit')

@@ -23,6 +23,8 @@ pytestmark = [
 @pytest.mark.parametrize(
     'model_name',
     [
+        'mistral-large-4',
+        'mistral-large-4-0',
         'mistral-small-latest',
         'mistral-small-2603',
         'mistral-medium-latest',
@@ -75,6 +77,7 @@ _NON_REASONING_MODELS = [
     # exact-match must not over-match adjacent names
     'mistral-small-2603-preview',
     'mistral-medium-3-50',
+    'mistral-large-4-preview',
 ]
 
 
