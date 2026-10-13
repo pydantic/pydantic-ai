@@ -100,7 +100,7 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
         tools=['run_shell', 'delete_file'],
         question='Would running this destroy data, spend money, or leak secrets?',
     )
-    agent = Agent('anthropic:claude-fable-5', capabilities=[judge])
+    agent = Agent('anthropic:claude-fable-5-1', capabilities=[judge])
     ```
     """
 
