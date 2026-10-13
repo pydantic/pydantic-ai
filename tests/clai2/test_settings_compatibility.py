@@ -785,27 +785,30 @@ async def test_saved_skill_folders_load_in_builds_with_and_without_the_feature(
     saved = store.plugins()
     if not supported:
         monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
-    output = io.StringIO()
     loader: PluginLoader[None] = PluginLoader(
         store=store,
-        console=Console(file=output, width=200),
+        console=Console(file=io.StringIO(), width=200),
         commands=Commands(),
         session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
     )
 
     await loader.load_all()
 
+    entries = {entry.name: entry for entry in loader.entries() if entry.name in {'coder', 'older'}}
     # Through the host: an earlier `loader.reload('coder')` in this process may have replaced the module's class.
     folders = {
-        entry.name: entry.loaded.plugin.host.settings(CoderSettings).skill_folders
-        for entry in loader.entries()
-        if entry.loaded is not None and entry.name in {'coder', 'older'}
+        name: entry.loaded.plugin.host.settings(CoderSettings).skill_folders
+        for name, entry in entries.items()
+        if entry.loaded is not None
     }
     assert folders == {
         'coder': ['team-skills'] if supported else list(DEFAULT_SKILL_FOLDERS),
         'older': list(DEFAULT_SKILL_FOLDERS),
     }
-    assert ('coder: ignored saved skill_folders' in output.getvalue()) is not supported
+    # `/plugins` shows the notice; startup does not print it.
+    assert entries['coder'].ignored == (
+        None if supported else 'coder: ignored saved skill_folders (needs coder-skill-folders); using defaults.'
+    )
     assert store.plugins() == saved
     await loader.close('exit')
 
