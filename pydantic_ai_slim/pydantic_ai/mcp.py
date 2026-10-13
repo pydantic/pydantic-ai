@@ -90,6 +90,7 @@ else:
 
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, _utils, exceptions, messages, models
+from ._mcp_apps import MCP_APP_METADATA_KEY, MCPAppToolResult
 from ._mcp_compat import is_mcp_sdk_v2, mcp_field, mcp_optional_field, mcp_validated_field
 from .settings import ModelSettings
 
@@ -135,6 +136,8 @@ __all__ = (
     'EmbeddedResource',
     'ContentBlock',
     'PromptRole',
+    'ResourceContents',
+    'MCPAppToolResult',
 )
 
 
@@ -553,6 +556,45 @@ ContentBlock = messages.TextContent | messages.BinaryContent | ResourceLink | Em
 
 
 @dataclass(repr=False, kw_only=True)
+class ResourceContents:
+    """One content item read from a resource, with the MIME type and `_meta` the server sent alongside it.
+
+    Returned by [`MCPToolset.read_resource_contents`][pydantic_ai.mcp.MCPToolset.read_resource_contents].
+
+    See the [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/resources#reading-resources).
+    """
+
+    uri: str
+    """The URI of the content item."""
+
+    content: str | messages.BinaryContent
+    """The content: text as `str`, binary data as [`BinaryContent`][pydantic_ai.messages.BinaryContent]."""
+
+    mime_type: str | None = None
+    """The MIME type of the content, if known."""
+
+    metadata: dict[str, Any] | None = None
+    """
+    See [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic#_meta)
+    for notes on _meta usage.
+    """
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+    @classmethod
+    def from_mcp_sdk(
+        cls, resource: mcp_types.TextResourceContents | mcp_types.BlobResourceContents
+    ) -> ResourceContents:
+        """Convert from MCP SDK resource contents to Pydantic AI `ResourceContents`."""
+        return cls(
+            uri=str(resource.uri),
+            content=_resource_content_to_pai(resource),
+            mime_type=mcp_optional_field(resource, 'mime_type', str),
+            metadata=resource.meta,
+        )
+
+
+@dataclass(repr=False, kw_only=True)
 class PromptMessage:
     """A message returned as part of a prompt result."""
 
@@ -838,6 +880,15 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     used.
     """
 
+    include_app_data: bool
+    """Whether to keep what a UI needs to render an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) for a tool call.
+
+    Defaults to `False`. When `True`, a call to a tool whose `_meta.ui.resourceUri` names a UI resource
+    returns a [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose `metadata` holds an
+    [`MCPAppToolResult`][pydantic_ai.mcp.MCPAppToolResult] under the `'mcp_app'` key. The model sees the
+    same content either way.
+    """
+
     process_tool_call: ProcessToolCallback | None
     """Hook to wrap tool calls — useful for adding request-level metadata, custom retry policies,
     or telemetry. See [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback].
@@ -893,6 +944,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         cache_prompts: bool = True,
         include_instructions: bool = False,
         include_return_schema: bool | None = None,
+        include_app_data: bool = False,
         # Sampling — high-level shortcut and low-level escape hatch
         sampling_model: models.Model | None = None,
         sampling_handler: SamplingHandler[Any, Any] | None = None,
@@ -941,6 +993,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 [`MCPToolset.include_instructions`][pydantic_ai.mcp.MCPToolset.include_instructions].
             include_return_schema: Whether to include return schemas in tool definitions. See
                 [`MCPToolset.include_return_schema`][pydantic_ai.mcp.MCPToolset.include_return_schema].
+            include_app_data: Whether to keep MCP Apps data on tool returns. See
+                [`MCPToolset.include_app_data`][pydantic_ai.mcp.MCPToolset.include_app_data].
             sampling_model: A Pydantic AI model the server may sample from. Mutually exclusive with
                 `sampling_handler`.
             sampling_handler: A FastMCP-shaped sampling handler. Use for full control over the
@@ -1076,6 +1130,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self.cache_prompts = cache_prompts
         self.include_instructions = include_instructions
         self.include_return_schema = include_return_schema
+        self.include_app_data = include_app_data
         self.sampling_model = sampling_model
         self.log_level = log_level
 
@@ -1422,6 +1477,13 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 session, which has no task path.
             ImportError: If `use_task=True` on FastMCP 4 and `fastmcp-tasks` is not installed.
         """
+        result = await self._call_tool_checked(name, args, metadata=metadata, use_task=use_task)
+        return _map_mcp_call_tool_result(result)
+
+    async def _call_tool_checked(
+        self, name: str, args: dict[str, Any], *, metadata: dict[str, Any] | None, use_task: bool
+    ) -> CallToolResult:
+        """Call a tool and return its successful result, raising per `tool_error_behavior` otherwise."""
         async with self:
             try:
                 if use_task:
@@ -1475,19 +1537,19 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     error = error.exceptions[0]
                 _raise_mcp_tool_error(str(error), behavior, cause=eg)
 
-        mapped_result = _map_mcp_call_tool_result(result, prefer_structured=result.is_error)
         if result.is_error:
             if result.structured_content is None and not result.content:
                 message = f'Tool {name!r} returned an error'
             else:
-                message = messages.ToolReturnPart(tool_name=name, content=mapped_result).model_response_str(
+                mapped_error = _map_mcp_call_tool_result(result, prefer_structured=True)
+                message = messages.ToolReturnPart(tool_name=name, content=mapped_error).model_response_str(
                     wrap_if_error=False
                 )
                 if not message:
                     message = f'Tool {name!r} returned an error'
             _raise_mcp_tool_error(message, self.tool_error_behavior)
 
-        return mapped_result
+        return result
 
     async def call_tool(
         self,
@@ -1499,11 +1561,42 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # `get_tools()` resolves the server's `execution.taskSupport` and the client's
         # `prefer_tasks` preference into the effective task path for this tool.
         use_task = bool((tool.tool_def.metadata or {}).get('task'))
+        resource_uri = _app_resource_uri(tool.tool_def) if self.include_app_data else None
+        if resource_uri is None:
+            if self.process_tool_call is not None:
+                return await self.process_tool_call(
+                    ctx, functools.partial(self.direct_call_tool, use_task=use_task), name, tool_args
+                )
+            return await self.direct_call_tool(name, tool_args, use_task=use_task)
+
+        # Same call path as above, but keep the raw result of the last call to this tool: mapping it
+        # for the model drops `structuredContent` (when text mirrors it) and `_meta`, which the app needs.
+        tool_name = name
+        app_calls: list[tuple[dict[str, Any], CallToolResult]] = []
+
+        async def call_tool_func(
+            name: str, args: dict[str, Any], *, metadata: dict[str, Any] | None = None
+        ) -> ToolResult:
+            result = await self._call_tool_checked(name, args, metadata=metadata, use_task=use_task)
+            if name == tool_name:
+                app_calls.append((args, result))
+            return _map_mcp_call_tool_result(result)
+
         if self.process_tool_call is not None:
-            return await self.process_tool_call(
-                ctx, functools.partial(self.direct_call_tool, use_task=use_task), name, tool_args
-            )
-        return await self.direct_call_tool(name, tool_args, use_task=use_task)
+            return_value = await self.process_tool_call(ctx, call_tool_func, name, tool_args)
+        else:
+            return_value = await call_tool_func(name, tool_args)
+
+        if not app_calls:
+            return return_value
+        call_args, result = app_calls[-1]
+        app = MCPAppToolResult(
+            resource_uri=resource_uri,
+            tool_input=call_args,
+            result=_call_tool_result_to_wire(result),
+            toolset_id=self.id,
+        )
+        return messages.ToolReturn(return_value=return_value, metadata={MCP_APP_METADATA_KEY: app})
 
     async def list_prompts(self) -> list[Prompt]:
         """Retrieve the prompts currently exposed by the server.
@@ -1627,18 +1720,37 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         Raises:
             MCPError: If the server returns an error.
         """
-        resource_uri = uri if isinstance(uri, str) else uri.uri
-        async with self:
-            try:
-                contents = await self.client.read_resource(AnyUrl(resource_uri))
-            except McpError as e:
-                raise MCPError.from_mcp_sdk(e) from e
-
+        contents = await self._read_resource(uri)
         return (
             _resource_content_to_pai(contents[0])
             if len(contents) == 1
             else [_resource_content_to_pai(c) for c in contents]
         )
+
+    async def read_resource_contents(self, uri: str | Resource) -> list[ResourceContents]:
+        """Read a resource, keeping each content item's URI, MIME type and `_meta`.
+
+        Use this over [`read_resource`][pydantic_ai.mcp.MCPToolset.read_resource] when the metadata matters,
+        such as an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) UI resource, whose
+        `_meta.ui` carries the Content Security Policy and permissions its sandbox needs.
+
+        Args:
+            uri: The URI of the resource to read, or a [`Resource`][pydantic_ai.mcp.Resource] object.
+
+        Raises:
+            MCPError: If the server returns an error.
+        """
+        return [ResourceContents.from_mcp_sdk(c) for c in await self._read_resource(uri)]
+
+    async def _read_resource(
+        self, uri: str | Resource
+    ) -> list[mcp_types.TextResourceContents | mcp_types.BlobResourceContents]:
+        resource_uri = uri if isinstance(uri, str) else uri.uri
+        async with self:
+            try:
+                return await self.client.read_resource(AnyUrl(resource_uri))
+            except McpError as e:
+                raise MCPError.from_mcp_sdk(e) from e
 
     def __repr__(self) -> str:
         repr_args = [f'client={self.client!r}']
@@ -1815,6 +1927,27 @@ def _raise_mcp_tool_error(
         raise ToolError(message) from cause
     else:
         assert_never(behavior)
+
+
+def _app_resource_uri(tool_def: ToolDefinition) -> str | None:
+    """Return the MCP Apps UI resource a tool renders with, from `_meta.ui.resourceUri` or the deprecated flat key."""
+    match (tool_def.metadata or {}).get('meta'):
+        case {'ui': {'resourceUri': str(uri)}} | {'ui/resourceUri': str(uri)}:
+            return uri
+        case _:
+            return None
+
+
+def _call_tool_result_to_wire(result: CallToolResult) -> dict[str, Any]:
+    """Rebuild the MCP wire form of a successful `CallToolResult`, which MCP Apps hand to the app as is."""
+    wire: dict[str, Any] = {
+        'content': [block.model_dump(mode='json', by_alias=True, exclude_none=True) for block in result.content]
+    }
+    if result.structured_content is not None:
+        wire['structuredContent'] = result.structured_content
+    if result.meta is not None:
+        wire['_meta'] = result.meta
+    return wire
 
 
 def _map_mcp_call_tool_result(result: CallToolResult, *, prefer_structured: bool = False) -> Any:

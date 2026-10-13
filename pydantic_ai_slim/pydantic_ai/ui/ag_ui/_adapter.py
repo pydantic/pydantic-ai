@@ -19,6 +19,7 @@ from typing import (
 from pydantic import ValidationError
 
 from ... import ExternalToolset, ToolDefinition
+from ..._mcp_apps import MCP_APPS_UI_TYPE, get_mcp_app_tool_result, mcp_app_ui_payload
 from ..._utils import is_str_dict
 from ...messages import (
     AudioUrl,
@@ -749,6 +750,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         ),
                     )
                 )
+                if (app := get_mcp_app_tool_result(part.metadata)) is not None:
+                    result.append(
+                        ActivityMessage(
+                            id=_new_message_id(), activity_type=MCP_APPS_UI_TYPE, content=mcp_app_ui_payload(app)
+                        )
+                    )
             elif isinstance(part, ToolAvailabilityDeltaPart):
                 flush_user_content()
                 result.append(

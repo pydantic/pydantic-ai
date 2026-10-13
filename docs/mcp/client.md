@@ -426,6 +426,7 @@ MCP servers can provide [resources](https://modelcontextprotocol.io/docs/concept
 - [`list_resources()`][pydantic_ai.mcp.MCPToolset.list_resources] — list all available resources on the server
 - [`list_resource_templates()`][pydantic_ai.mcp.MCPToolset.list_resource_templates] — list resource templates with parameter placeholders
 - [`read_resource(uri)`][pydantic_ai.mcp.MCPToolset.read_resource] — read the contents of a specific resource by URI
+- [`read_resource_contents(uri)`][pydantic_ai.mcp.MCPToolset.read_resource_contents] — read a resource as [`ResourceContents`][pydantic_ai.mcp.ResourceContents], keeping each item's MIME type and `_meta`
 
 Text content is returned as `str`, and binary content as [`BinaryContent`][pydantic_ai.messages.BinaryContent].
 
@@ -477,6 +478,33 @@ if __name__ == '__main__':
 ```
 
 _(This example is complete, it can be run "as is")_
+
+## MCP Apps
+
+[MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) let a server ship an interactive UI with a tool: the tool's `_meta.ui.resourceUri` names a `ui://` resource holding an HTML page, and the host application shows that page with the tool's input and result. Pydantic AI doesn't render anything, but it can carry what your frontend needs to.
+
+Pass `include_app_data=True` to keep that data. A call to a tool that names a UI resource then returns a [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose `metadata` holds an [`MCPAppToolResult`][pydantic_ai.mcp.MCPAppToolResult] under the `'mcp_app'` key, with the resource URI, the tool input, and the full MCP result including `structuredContent` and `_meta`. The model sees the same content as without it.
+
+The [AG-UI](../ui/ag-ui.md#mcp-apps) and [Vercel AI](../ui/vercel-ai.md#mcp-apps) adapters forward this data to the frontend. Your application is the host: it fetches the page with [`read_resource_contents`][pydantic_ai.mcp.MCPToolset.read_resource_contents], whose `_meta.ui` holds the Content Security Policy and permissions the server asks for, renders it in a sandboxed iframe, and passes the tool input and result in. Requests the page makes back to the server, such as calling a tool, also go through your application, for example with [`direct_call_tool`][pydantic_ai.mcp.MCPToolset.direct_call_tool].
+
+```python {title="mcp_apps.py" test="skip"}
+from typing import Any
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPToolset
+
+weather = MCPToolset('http://localhost:8000/mcp', id='weather', include_app_data=True)
+agent = Agent('openai:gpt-5.2', toolsets=[weather])
+
+
+async def app_page(resource_uri: str) -> tuple[str, dict[str, Any]]:
+    """Return an app's HTML and the `_meta.ui` settings its sandbox needs."""
+    [contents] = await weather.read_resource_contents(resource_uri)
+    assert isinstance(contents.content, str)
+    return contents.content, (contents.metadata or {}).get('ui', {})
+```
+
+`MCPToolset` doesn't yet tell servers it supports MCP Apps (the `io.modelcontextprotocol/ui` client capability), so a server that only offers app tools to clients that do will not offer them.
 
 ## HTTP authentication
 

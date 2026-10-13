@@ -43,6 +43,7 @@ from pydantic_ai.messages import (
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -50,7 +51,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
-from .conftest import IsStr, try_import
+from .conftest import IsStr, iter_message_parts, try_import
 
 with try_import() as imports_successful:
     from fastmcp.client import Client
@@ -63,6 +64,7 @@ with try_import() as imports_successful:
     from fastmcp.exceptions import McpError, ToolError
     from fastmcp.prompts import Message
     from fastmcp.server import Context, FastMCP
+    from fastmcp.tools import ToolResult as FastMCPToolResult
 
     try:
         from fastmcp.server.tasks import TaskConfig
@@ -98,6 +100,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai._mcp_compat import is_mcp_sdk_v2, wire_name
     from pydantic_ai.mcp import (
+        CallToolFunc,
         MCPError,
         MCPToolset,
         Prompt,
@@ -105,8 +108,10 @@ with try_import() as imports_successful:
         PromptMessage,
         PromptResult,
         ResourceAnnotations,
+        ResourceContents,
         ResourceTemplate,
         ServerCapabilities,
+        ToolResult,
         _make_httpx_client_factory,  # pyright: ignore[reportPrivateUsage]
         load_mcp_toolsets,
     )
@@ -774,6 +779,160 @@ class TestMCPToolsetIntegration:
         async with toolset:
             tools = await toolset.get_tools(run_context)
         assert sorted(tools) == snapshot(['create_view', 'read_me'])
+
+    # FastMCP 4 servers stamp every result's `_meta` with their identity, which the app data passes through.
+    _APPS_SERVER_INFO: dict[str, Any] = (
+        {'io.modelcontextprotocol/serverInfo': {'name': 'apps_server', 'version': IsStr()}} if MCP_SDK_V2 else {}
+    )
+
+    @staticmethod
+    def _mcp_apps_server() -> FastMCP[None]:
+        """An MCP Apps (SEP-1865) server: two app tools, a plain tool, and the UI resource they render with."""
+        server: FastMCP[None] = FastMCP('apps_server')
+
+        @server.resource(
+            'ui://weather/forecast',
+            mime_type='text/html;profile=mcp-app',
+            meta={'ui': {'csp': {'connectDomains': ['https://api.weather.example']}}},
+        )
+        def forecast_view() -> str:
+            return '<!doctype html><html><body>forecast</body></html>'
+
+        @server.tool(meta={'ui': {'resourceUri': 'ui://weather/forecast'}})
+        def get_forecast(city: str) -> FastMCPToolResult:
+            """Returns structured content that mirrors its text, plus per-call state for the app in `_meta`."""
+            return FastMCPToolResult(
+                content=[McpTextContent(type='text', text=f'{city}: 14C')],
+                structured_content={'city': city, 'temp_c': 14},
+                meta={'selectedDay': 'tuesday'},
+            )
+
+        @server.tool(meta={'ui/resourceUri': 'ui://weather/forecast'})
+        def legacy_forecast(city: str) -> FastMCPToolResult:
+            """Uses the deprecated flat `_meta` key and returns plain text only."""
+            return FastMCPToolResult(content=[McpTextContent(type='text', text=f'{city}: 14C')])
+
+        @server.tool
+        def plain(city: str) -> FastMCPToolResult:
+            """Has no UI."""
+            return FastMCPToolResult(content=[McpTextContent(type='text', text=city)])
+
+        return server
+
+    @pytest.mark.parametrize(
+        ('include_app_data', 'expected'),
+        [
+            pytest.param(
+                False,
+                snapshot(
+                    {
+                        'get_forecast': ({'city': 'a', 'temp_c': 14}, None),
+                        'legacy_forecast': ('a: 14C', None),
+                        'plain': ('a', None),
+                    }
+                ),
+                id='off',
+            ),
+            pytest.param(
+                True,
+                {
+                    'get_forecast': (
+                        {'city': 'a', 'temp_c': 14},
+                        {
+                            'mcp_app': {
+                                'resource_uri': 'ui://weather/forecast',
+                                'tool_input': {'city': 'a'},
+                                'result': {
+                                    'content': [{'type': 'text', 'text': 'a: 14C'}],
+                                    'structuredContent': {'city': 'a', 'temp_c': 14},
+                                    '_meta': {'selectedDay': 'tuesday', **_APPS_SERVER_INFO},
+                                },
+                                'toolset_id': 'weather',
+                            }
+                        },
+                    ),
+                    'legacy_forecast': (
+                        'a: 14C',
+                        {
+                            'mcp_app': {
+                                'resource_uri': 'ui://weather/forecast',
+                                'tool_input': {'city': 'a'},
+                                'result': {
+                                    'content': [{'type': 'text', 'text': 'a: 14C'}],
+                                    **({'_meta': _APPS_SERVER_INFO} if _APPS_SERVER_INFO else {}),
+                                },
+                                'toolset_id': 'weather',
+                            }
+                        },
+                    ),
+                    'plain': ('a', None),
+                },
+                id='on',
+            ),
+        ],
+    )
+    async def test_include_app_data(self, include_app_data: bool, expected: dict[str, Any]):
+        """`include_app_data` keeps the full result of MCP Apps tools for the UI, without changing what the model sees."""
+        toolset = MCPToolset(self._mcp_apps_server(), id='weather', include_app_data=include_app_data)
+        agent = Agent(TestModel(call_tools=['get_forecast', 'legacy_forecast', 'plain']), toolsets=[toolset])
+        result = await agent.run('Forecast?')
+        returns = {
+            part.tool_name: (part.content, part.metadata)
+            for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        }
+        assert returns == expected
+
+    @pytest.mark.parametrize(
+        ('redirect_to', 'expected'),
+        [
+            pytest.param(
+                None,
+                {
+                    'resource_uri': 'ui://weather/forecast',
+                    'tool_input': {'city': 'a'},
+                    'result': {
+                        'content': [{'type': 'text', 'text': 'a: 14C'}],
+                        'structuredContent': {'city': 'a', 'temp_c': 14},
+                        '_meta': {'selectedDay': 'tuesday', **_APPS_SERVER_INFO},
+                    },
+                    'toolset_id': None,
+                },
+                id='passthrough',
+            ),
+            pytest.param('plain', None, id='other-tool'),
+        ],
+    )
+    async def test_include_app_data_with_process_tool_call(
+        self, run_context: RunContext, redirect_to: str | None, expected: dict[str, Any] | None
+    ):
+        """A `process_tool_call` hook still gets plain results; the app data describes only a call to the app tool itself."""
+
+        async def hook(ctx: RunContext[Any], call_tool: CallToolFunc, name: str, args: dict[str, Any]) -> ToolResult:
+            return await call_tool(redirect_to or name, args, metadata={'request': 'tag'})
+
+        toolset = MCPToolset(self._mcp_apps_server(), include_app_data=True, process_tool_call=hook)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            returned = await toolset.call_tool('get_forecast', {'city': 'a'}, run_context, tools['get_forecast'])
+        if expected is None:
+            assert returned == 'a'
+        else:
+            assert isinstance(returned, ToolReturn)
+            assert returned.return_value == {'city': 'a', 'temp_c': 14}
+            assert returned.metadata == {'mcp_app': expected}
+
+    async def test_read_resource_contents_keeps_mime_type_and_meta(self):
+        """`read_resource_contents` keeps what `read_resource` drops: an MCP App UI resource's MIME type and `_meta.ui`."""
+        toolset = MCPToolset(self._mcp_apps_server())
+        async with toolset:
+            [contents] = await toolset.read_resource_contents('ui://weather/forecast')
+            assert await toolset.read_resource('ui://weather/forecast') == contents.content
+        assert isinstance(contents, ResourceContents)
+        assert (contents.uri, contents.content, contents.mime_type) == snapshot(
+            ('ui://weather/forecast', '<!doctype html><html><body>forecast</body></html>', 'text/html;profile=mcp-app')
+        )
+        assert contents.metadata is not None
+        assert contents.metadata['ui'] == snapshot({'csp': {'connectDomains': ['https://api.weather.example']}})
 
     async def test_tool_annotations_keep_the_wire_spelling(
         self, fastmcp_server: FastMCP[None], run_context: RunContext
