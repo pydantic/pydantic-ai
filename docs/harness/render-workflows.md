@@ -5,17 +5,21 @@ description: Run agents in the background with separate retry, timeout, and comp
 
 # Render Workflows
 
-Run long-running Pydantic AI agents in the background with Render Workflows. When deployed, a workflow service groups your
-registered Python task definitions, and Render executes each task run in its own instance. Your application starts a root-level task run that
-calls `agent.run(...)`; the integration starts [chained task runs](https://render.com/docs/workflows-defining#chaining-task-runs) for supported model and tool operations. Each run
-has its own status, logs, and result, and you can set different retries, timeouts, and compute plans. For example,
-a document-processing tool can have a longer timeout than the model requests around it.
+Run Pydantic AI agents in the background with separate retries, timeouts, and compute settings for model requests and tools. For example, give a document-processing tool more time and memory than the model requests around it.
 
-The integration does not checkpoint agent progress. If the task run that calls `agent.run(...)` retries, the agent
-starts again and can repeat completed model requests and tool calls. Use it when your application can handle
-repeated work.
+Your application starts a task that calls `agent.run(...)`. The integration runs supported model and tool operations as separate Render tasks, called [chained task runs](https://render.com/docs/workflows-defining#chaining-task-runs), each with its own status, logs, and result.
 
-If you only need background execution, a native Render task around `agent.run(...)` may be enough.
+```mermaid
+flowchart TD
+    caller[Your app] --> root[Agent task]
+    root --> model[Model task]
+    root --> tool[Tool task]
+    model --> provider[Model provider]
+```
+
+Render runs the agent and tool code; the model provider generates responses. The local example below uses a fake model, so it makes no provider requests.
+
+**Retrying the task that calls `agent.run(...)` restarts the agent and can repeat completed work.** The integration does not save progress for later recovery. If you only need to run the whole agent in the background, a native Render task may be enough.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/render/) | [Detailed reference](#task-definitions-and-chained-task-runs)
 
@@ -43,31 +47,38 @@ The `render` extra supplies the Python SDK and its `render-workflows` executable
 Save the following as `app.py` in your project directory:
 
 ```python {title="app.py" names="defined"}
+# Pydantic AI runs the agent; TestModel supplies a fake response for local testing.
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
+
+# Render registers Python tasks and supplies information about each task run.
 from render import TaskContext, Workflows
 
+# This integration sends the agent's model and tool operations to Render tasks.
 from pydantic_ai_harness import RenderWorkflows
 
 
+# A tool is a function the agent can call; this example returns mock weather.
 async def get_weather(city: str) -> str:
     return f'It is sunny in {city}.'
 
 
+# Register this agent and its tools when the worker loads the file.
 app = Workflows()
 workflows = RenderWorkflows(app)
 agent = Agent(
-    TestModel(custom_output_text='The workflow completed.'),
-    name='support',
+    TestModel(custom_output_text='The workflow completed.'),  # No provider key needed.
+    name='support',  # Gives the generated tasks stable names.
     tools=[get_weather],
-    capabilities=[workflows],
+    capabilities=[workflows],  # Routes supported operations through Render.
 )
 
 
+# Callers submit this task with a prompt; Render supplies ctx automatically.
 @workflows.task
 async def support(ctx: TaskContext, prompt: str) -> str:
-    del ctx
-    return (await agent.run(prompt)).output
+    del ctx  # This example does not need the task information directly.
+    return (await agent.run(prompt)).output  # Return the agent's answer as the task result.
 ```
 
 If you already have an agent, keep its model, instructions, and tools. Add `workflows` to its `capabilities` list,
