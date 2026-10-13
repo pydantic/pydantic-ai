@@ -590,8 +590,8 @@ Snapshots that earlier releases saved with their history inline still load, so
 an existing store needs no migration: new snapshots reference stored messages
 and older ones keep their size. Harness releases before the one that stores each
 message once cannot read the new snapshots, so upgrade every process that reads a
-store before a newer one writes to it. An older release's `latest_snapshot` raises on such a snapshot,
-and its `list_snapshots` skips it.
+store before a newer one writes to it. An older release's `latest_snapshot`
+raises on such a snapshot, and its `list_snapshots` skips it.
 
 `deduplicate_messages=False` on any of the four stores keeps writing the whole
 history into each snapshot, for a deployment that still has older readers. It is
