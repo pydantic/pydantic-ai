@@ -69,8 +69,13 @@ _NONE_UNLESS_ATTACHED = (
 # dataclass default can't be mistaken for real run state here: empty means "no anchored evidence",
 # which is exactly what `is_tool_available` reads when the serving response has no provenance. A
 # custom `serialize_run_context` written before this field existed therefore keeps answering — with
-# the history-derived window — instead of raising for a field it never knew to carry.
-_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (('_anchored_evidence', AnchoredEvidence()),)
+# the history-derived window — instead of raising for a field it never knew to carry. Likewise, empty
+# `_tool_name_layers` means no prefixes or renames, so a toolset listed from such a payload looks its
+# tools' retry counts up by their own names, as it did before the field existed.
+_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (
+    ('_anchored_evidence', AnchoredEvidence()),
+    ('_tool_name_layers', ()),
+)
 
 # Payloads written by a worker running an older version, or by a custom `serialize_run_context` that
 # still spells the old name. An activity can be dispatched by one worker version and replayed by

@@ -3023,6 +3023,32 @@ async def test_temporal_run_context_without_anchored_evidence_still_answers_avai
     assert reconstructed.is_tool_available(ToolDefinition(name='hidden', defer_loading=True)) is False
 
 
+async def test_temporal_run_context_without_tool_name_layers_still_lists_tools():
+    """A payload without `_tool_name_layers` lists tools, looking retry counts up by the tools' own names.
+
+    A worker on an earlier version, or a custom `serialize_run_context`, doesn't carry the field. Guarding
+    it like the other omitted fields would make every `FunctionToolset` listed inside an activity raise.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), retries={'lookup': 1})
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    older_payload = {name: value for name, value in wire.items() if name != '_tool_name_layers'}
+    reconstructed = TemporalRunContext.deserialize_run_context(older_payload, deps=None)
+
+    toolset = FunctionToolset[None]()
+    prepare_retries: list[int] = []
+
+    async def prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        prepare_retries.append(ctx.retry)
+        return tool_def
+
+    @toolset.tool_plain(prepare=prepare)
+    def lookup() -> str:
+        return 'ok'  # pragma: no cover
+
+    assert list(await toolset.get_tools(reconstructed)) == ['lookup']
+    assert prepare_retries == [1]
+
+
 @pytest.mark.parametrize('carried', [True, False, None])
 async def test_temporal_run_context_accepts_the_legacy_capability_loaded_key(carried: bool | None):
     """A payload written under the old field name still lands on `capability_active`.

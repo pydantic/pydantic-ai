@@ -415,7 +415,10 @@ _NONE_UNLESS_ATTACHED = (
     '_run_capabilities_by_id',
     '_run_held_toolsets',
 )
-_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (('_anchored_evidence', AnchoredEvidence()),)
+_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (
+    ('_anchored_evidence', AnchoredEvidence()),
+    ('_tool_name_layers', ()),
+)
 _GUARDED_FIELDS = frozenset(RunContext.__dataclass_fields__) - {'deps', *_NONE_UNLESS_ATTACHED}
 
 
@@ -548,6 +551,7 @@ class RenderRunContext(RunContext[AgentDepsT]):
             'available_tool_names': ctx.available_tool_names,
             'active_capability_ids': ctx.active_capability_ids,
             '_deferred_capability_ids': ctx._deferred_capability_ids,
+            '_tool_name_layers': ctx._tool_name_layers,
             'capability_active': ctx.capability_active,
             'workspace_ref': ctx.workspace.ref,
         }

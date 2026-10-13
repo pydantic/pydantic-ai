@@ -2500,6 +2500,9 @@ def test_cache_key_run_context_projection_is_exhaustive():
         # Toolsets the run holds entered, built from `deps`, which is projected: they carry no
         # input the task's own resolution wouldn't reach, so they must not fork the key.
         '_run_held_toolsets',
+        # Set by the prefix and rename wrappers around the toolset, so fixed by the agent's toolset tree;
+        # the retry counts it is used to look up are projected as `retries`.
+        '_tool_name_layers',
     }
     projected_via_derived_key = {
         'workspace',  # projected as `workspace_id`, known without connecting a deferred workspace

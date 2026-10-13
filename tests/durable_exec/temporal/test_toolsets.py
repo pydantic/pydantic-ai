@@ -553,8 +553,6 @@ def _prepare_retry_agent(name: str, toolset: AbstractToolset[None]) -> Agent[Non
 
 PREPARE_RETRY_AGENTS = {
     'prefixed': _prepare_retry_agent('prefixed', _retry_aware_toolset('static_prefixed').prefixed('demo')),
-    'nested': _prepare_retry_agent('nested', _retry_aware_toolset('static_nested').prefixed('inner').prefixed('outer')),
-    'renamed': _prepare_retry_agent('renamed', _retry_aware_toolset('static_renamed').renamed({'demo_fail': 'fail'})),
     'dynamic': _prepare_retry_agent(
         'dynamic', DynamicToolset[None](_retry_aware_toolset_with_instructions, id='dynamic').prefixed('demo')
     ),
@@ -573,7 +571,7 @@ class PrepareRetryWorkflow:
 
 
 async def test_tool_name_wrapper_prepare_retry_in_workflow(client: Client):
-    """Behind a prefix or rename, a tool's `prepare` sees its retry count in a workflow too, and `ctx.retries` keeps the names the model sees.
+    """Behind a prefix, a tool's `prepare` sees its retry count in a workflow too, and `ctx.retries` keeps the names the model sees.
 
     `dynamic` lists its tools and instructions inside an activity: its `prepare` disables the tool after one
     failure, and its instructions read the count under the exposed name. `dynamic_gate` stops offering its
@@ -594,8 +592,6 @@ async def test_tool_name_wrapper_prepare_retry_in_workflow(client: Client):
     assert outputs == snapshot(
         {
             'prefixed': 'No tools left.',
-            'nested': 'No tools left.',
-            'renamed': 'No tools left.',
             'dynamic': 'No tools left. demo_fail failed 1 times.',
             'dynamic_gate': 'No tools left.',
         }

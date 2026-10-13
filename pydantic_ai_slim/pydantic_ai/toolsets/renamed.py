@@ -20,7 +20,7 @@ class RenamedToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_to_new_name_map = {v: k for k, v in self.name_map.items()}
-        original_tools = await super().get_tools(self._with_name_layer(ctx))
+        original_tools = await super().get_tools(self._with_name_layer(ctx, original_to_new_name_map))
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for original_name, tool in original_tools.items():
             new_name = original_to_new_name_map.get(original_name, None)
@@ -45,11 +45,13 @@ class RenamedToolset(WrapperToolset[AgentDepsT]):
     ) -> Any:
         original_name = self.name_map.get(name, name)
         # Calling a dynamic toolset durably lists its tools again, which needs the same retry counts.
-        ctx = replace(self._with_name_layer(ctx), tool_name=original_name)
+        original_to_new_name_map = {v: k for k, v in self.name_map.items()}
+        ctx = replace(self._with_name_layer(ctx, original_to_new_name_map), tool_name=original_name)
         tool = replace(tool, tool_def=replace(tool.tool_def, name=original_name))
         return await super().call_tool(original_name, tool_args, ctx, tool)
 
-    def _with_name_layer(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
-        original_to_new_name_map = {v: k for k, v in self.name_map.items()}
+    def _with_name_layer(
+        self, ctx: RunContext[AgentDepsT], original_to_new_name_map: dict[str, str]
+    ) -> RunContext[AgentDepsT]:
         layers = (*ctx._tool_name_layers, original_to_new_name_map)  # pyright: ignore[reportPrivateUsage]
         return replace(ctx, _tool_name_layers=layers)
