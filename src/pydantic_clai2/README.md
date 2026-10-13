@@ -1607,8 +1607,8 @@ on every turn. Sessions saved by earlier versions still resume. An earlier
 version of CLAI cannot read checkpoints this version writes, so upgrade every
 CLAI that shares a database.
 
-Deletion removes the conversation, its run records, and the checkpoint messages
-no other session uses in the same SQLite transaction. Shared content-addressed
+Deletion removes the conversation, its run records, and every checkpoint message
+no remaining checkpoint uses in the same SQLite transaction. Shared content-addressed
 media is retained; deletion is not secure erasure. Snapshot retention keeps eight
 recent checkpoints per run, plus the latest settled recovery point when needed.
 There is no whole-session TTL or media garbage collection.

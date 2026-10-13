@@ -144,16 +144,27 @@ async def test_delete_removes_run_data_but_not_other_conversations(tmp_path: Pat
     assert len(await store.listing()) == 1
 
 
-async def test_delete_removes_messages_only_its_checkpoints_reference(tmp_path: Path) -> None:
+async def test_delete_removes_every_message_no_checkpoint_references(tmp_path: Path) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
     second = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
-    steps = SqliteStepStore(database=store.database, media_store=None)
+    steps = SqliteStepStore(database=store.database, media_store=None, max_snapshots_per_run=1)
     shared = ModelRequest(parts=[UserPromptPart('shared prompt')])
     other: list[ModelMessage] = [shared, ModelResponse(parts=[TextPart('other reply')])]
-    for record, history in ((first, [shared, ModelResponse(parts=[TextPart('private reply')])]), (second, other)):
+    for record in (first, second):
         await steps.register_run(RunRecord(run_id=record.id, conversation_id=record.id))
-        await steps.save_snapshot(ContinuableSnapshot(run_id=record.id, step_index=0, messages=history))
+    await steps.save_snapshot(
+        ContinuableSnapshot(
+            run_id=first.id, step_index=0, messages=[shared, ModelResponse(parts=[TextPart('private reply')])]
+        )
+    )
+    # Compaction rewrote the second conversation's history; pruning dropped the only checkpoint holding the old one.
+    await steps.save_snapshot(
+        ContinuableSnapshot(
+            run_id=second.id, step_index=0, messages=[ModelRequest(parts=[UserPromptPart('compacted')])]
+        )
+    )
+    await steps.save_snapshot(ContinuableSnapshot(run_id=second.id, step_index=1, messages=other))
     with closing(sqlite3.connect(store.database)) as conn:
         # A damaged row in another run must not block the deletion.
         conn.execute(
@@ -167,7 +178,7 @@ async def test_delete_removes_messages_only_its_checkpoints_reference(tmp_path: 
     with closing(sqlite3.connect(store.database)) as conn:
         stored = [row[0] for row in conn.execute('SELECT message FROM snapshot_messages')]
     assert len(stored) == 2
-    assert not any('private reply' in message for message in stored)
+    assert not any('private reply' in message or 'compacted' in message for message in stored)
     snapshot = await steps.latest_snapshot(run_id=second.id)
     assert snapshot is not None
     assert snapshot.messages == other

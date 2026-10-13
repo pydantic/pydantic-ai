@@ -372,15 +372,14 @@ class PostgresStepStore:
                 rows = await connection.fetch(
                     f'SELECT sha256 FROM {self._messages_table} WHERE sha256 = ANY($1::text[])', list(texts)
                 )
-                known = {row[0] for row in rows}
-                for digest, text in texts.items():
-                    if digest not in known:
-                        await connection.execute(
-                            f'INSERT INTO {self._messages_table} (sha256, message) VALUES ($1, $2) '
-                            'ON CONFLICT (sha256) DO NOTHING',
-                            digest,
-                            text,
-                        )
+                # Sorted, so concurrent saves inserting the same new messages take their locks in one order.
+                for digest in sorted(texts.keys() - {row[0] for row in rows}):
+                    await connection.execute(
+                        f'INSERT INTO {self._messages_table} (sha256, message) VALUES ($1, $2) '
+                        'ON CONFLICT (sha256) DO NOTHING',
+                        digest,
+                        texts[digest],
+                    )
             await connection.execute(
                 f'INSERT INTO {self._snapshots_table} ({_SNAPSHOT_COLUMNS}) '
                 'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',

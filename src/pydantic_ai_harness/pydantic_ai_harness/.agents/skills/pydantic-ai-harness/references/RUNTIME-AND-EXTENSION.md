@@ -84,7 +84,7 @@ File, SQLite, Mongo, and Postgres stores move `BinaryContent` and any text part 
 inline, or `media_store=S3MediaStore(...)` from `pydantic_ai_harness.media`.
 
 The same four stores save each message once, keyed by the SHA-256 of its JSON, and a snapshot as the list of
-those keys, so a store grows with distinct messages, not snapshots times history length. They still read
+those keys, so a snapshot no longer copies the history before it. They still read
 snapshots that older releases saved inline, but older releases cannot read the new ones. Do not pass
 `deduplicate_messages=False` in new code: it is deprecated and writes the whole history into every snapshot.
 

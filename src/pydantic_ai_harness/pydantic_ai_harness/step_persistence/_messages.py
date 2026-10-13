@@ -1,11 +1,11 @@
 """Content-addressed message storage shared by the durable step stores.
 
 Every snapshot of a run, and every run continuing a conversation, repeats the history
-before it, so storing each snapshot's messages inline makes a store grow with the
-number of snapshots times the history length. The file, SQLite, Postgres, and Mongo
-stores instead store each message once, keyed by the SHA-256 of its JSON, and write a
-snapshot's messages as the ordered list of those keys: `{"message_refs": [...]}`.
-A message that appears twice in a history is stored once and referenced twice.
+before it, so storing each snapshot's messages inline copies every message once per
+snapshot that contains it. The file, SQLite, Postgres, and Mongo stores instead store
+each message once, keyed by the SHA-256 of its JSON, and write a snapshot's messages
+as the ordered list of those keys: `{"message_refs": [...]}`. A message that appears
+twice in a history is stored once and referenced twice.
 
 Readers accept that shape and the inline JSON list written before it, so data written
 by earlier releases stays readable. Hashing runs after media externalization, so a

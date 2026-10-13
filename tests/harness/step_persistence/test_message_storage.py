@@ -147,7 +147,11 @@ class TestMessageStorage:
 
     @pytest.mark.parametrize('kind', KINDS)
     async def test_reads_snapshots_with_inline_messages(self, kind: str, tmp_path: Path, pool: SqlitePool) -> None:
-        with pytest.warns(HarnessDeprecationWarning, match=r'\(deduplicate_messages=False\)` is deprecated'):
+        owner = {'file': 'FileStepStore', 'sqlite': 'SqliteStepStore', 'postgres': 'PostgresStepStore'}[kind]
+        with pytest.warns(
+            HarnessDeprecationWarning,
+            match=rf'`{owner}\(deduplicate_messages=False\)` is deprecated: .* Remove the argument',
+        ):
             inline = _store(kind, tmp_path, pool, deduplicate_messages=False)
         first, second = _conversation(2)
         await inline.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=first))

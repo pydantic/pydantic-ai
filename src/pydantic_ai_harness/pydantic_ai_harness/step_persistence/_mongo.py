@@ -4,10 +4,10 @@ Mirrors `SqliteStepStore`: an append-only event log, continuable snapshots,
 and a tool-effect ledger, keyed off one `AsyncMongoClient`. Binary and text
 parts at or above `media_threshold_bytes` are externalized to a `MediaStore`
 (default: a `MongoMediaStore` sharing the same client). This is a per-value
-offload, not an aggregate size cap: a snapshot made of many parts each below
-the threshold can still exceed MongoDB's 16MB BSON limit and fail on insert.
-Lower `media_threshold_bytes` if your snapshots accumulate many mid-sized
-parts.
+offload, not an aggregate size cap: a message made of many parts each below the
+threshold, or a snapshot written with `deduplicate_messages=False`, can still
+exceed MongoDB's 16MB BSON limit and fail on insert. Lower
+`media_threshold_bytes` if your messages accumulate many mid-sized parts.
 
 Collections (created lazily on first write):
 

@@ -190,7 +190,10 @@ def test_live_tests_run_on_asyncio_backend(anyio_backend: str) -> None:
 async def test_oversized_snapshot_fails_loudly_without_media_externalization(
     payload_bytes: int, expected: type[PyMongoError]
 ) -> None:
-    """A snapshot past the 16MB BSON cap raises instead of silently truncating."""
+    """A message past the 16MB BSON cap raises instead of silently truncating.
+
+    The oversized document is the stored message, so the snapshot itself is never written.
+    """
     async with _live_database() as db:
         store = MongoStepStore(client=db.client, database=db.name, media_store=None)
         snapshot = _text_snapshot('run-too-large', 'x' * payload_bytes)
@@ -209,11 +212,10 @@ async def test_media_externalization_saves_a_snapshot_past_the_bson_cap() -> Non
 
         await store.save_snapshot(_text_snapshot('run-externalized', text))
 
-        stored = await db['snapshots'].find_one({'run_id': 'run-externalized'})
-        assert stored is not None
-        messages_field = stored['messages']
-        assert isinstance(messages_field, str)
-        assert len(messages_field) < 64 * 1024
+        [stored] = [doc async for doc in db['snapshot_messages'].find()]
+        message = stored['message']
+        assert isinstance(message, str)
+        assert len(message) < 64 * 1024
 
         restored = await store.latest_snapshot(run_id='run-externalized')
         assert restored is not None

@@ -535,7 +535,10 @@ class TestMongoStepStoreMessageStorage:
 
     async def test_reads_snapshots_with_inline_messages(self) -> None:
         client = _mock_client()
-        with pytest.warns(HarnessDeprecationWarning, match=r'`MongoStepStore\(deduplicate_messages=False\)`'):
+        with pytest.warns(
+            HarnessDeprecationWarning,
+            match=r'`MongoStepStore\(deduplicate_messages=False\)` is deprecated: .* Remove the argument',
+        ):
             inline = MongoStepStore(client=client, database='t', media_store=None, deduplicate_messages=False)
         store = MongoStepStore(client=client, database='t', media_store=None)
         first, second = _conversation(2)
