@@ -23,6 +23,10 @@ Use `BinaryContent(...)` when the asset is already in memory instead of at a URL
 
 Not every model supports every input type. Keep provider expectations in mind when the user chooses a specific model.
 
+For Gemini agentic video processing, set `vendor_metadata={'media_processing': 'AGENTIC'}` on a `VideoUrl`, video `BinaryContent`, or video `UploadedFile`. See Google's [agentic video understanding guide](https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding).
+
+On follow-up requests, Pydantic AI omits Gemini media-processing response parts while keeping the ordinary final response and thought signature. The original video is sent again and processed again.
+
 ## Work with Message History
 
 Continue a conversation across runs with `conversation=result.conversation`. A `Conversation` carries the messages plus what lives outside them: the running `usage` (so `UsageLimits` budget the whole conversation), the `conversation_id`, and the `deferred_tool_requests` a paused run is waiting on. It is also the thing to store between requests.
