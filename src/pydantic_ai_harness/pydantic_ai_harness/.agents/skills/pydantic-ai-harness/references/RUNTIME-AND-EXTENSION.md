@@ -312,7 +312,7 @@ Gotchas:
 - Run `await Client.connect(url)` then `await client.migrate()` once per database before the first task.
 - The agent needs a `name` (or `name=`), and every function, MCP, or dynamic toolset needs a unique
   `id`. Both are part of every step name, so renaming either makes in-flight tasks re-run those steps.
-- Tool results are stored as JSON, `ModelRetry` included; `DynamicToolset` calls are checkpointed too.
+- Tool results are stored as JSON, `ModelRetry` and `ToolFailed` included; `DynamicToolset` calls are checkpointed too.
   A checkpoint that no longer decodes raises `CheckpointDecodeError` instead of re-running the tool.
 - Function, MCP, or dynamic toolsets passed with `run(toolsets=...)` inside a task raise `UserError`;
   `ExternalToolset` is fine.

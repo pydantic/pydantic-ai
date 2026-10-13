@@ -23,7 +23,7 @@ from pgtask import Task, get_current_task
 
 from pydantic_ai import Agent, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -43,8 +43,13 @@ from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ExternalToolset, FunctionToolset
 from pydantic_ai_harness.pgtask import CheckpointDecodeError, PGTaskDurability
+from tests.durable_exec.counting_mcp import counting_mcp_server
 
+from ...conftest import try_import
 from ._task import PGTaskDatabase, checkpoints, run_in_task
+
+with try_import() as code_mode_available:
+    from pydantic_ai_harness import CodeMode
 
 
 def _make_model(counter: dict[str, int] | None = None, text: str = 'ok') -> FunctionModel:
@@ -419,7 +424,8 @@ class TestRuntimeToolsets:
         assert calls['calls'] == 0
 
     async def test_override_tools_rejected(self, pgtask_db: PGTaskDatabase) -> None:
-        def late() -> str:  # pragma: no cover - rejected before it can run
+        # Rejected before it can run.
+        def late() -> str:  # pragma: no cover
             return 'late result'
 
         agent: Agent[object, str] = Agent(
@@ -551,8 +557,18 @@ class TestStreaming:
 
 
 class TestToolResults:
-    async def test_model_retry_is_checkpointed_and_replayed(self, pgtask_db: PGTaskDatabase) -> None:
-        # A `ModelRetry` is stored like any other tool result, so a replay serves the retry prompt
+    @pytest.mark.parametrize(
+        ('error', 'stored'),
+        [
+            (ModelRetry('nope, try again'), snapshot({'kind': 'model_retry', 'message': 'nope, try again'})),
+            (ToolFailed('no such record'), snapshot({'kind': 'tool_failed', 'message': 'no such record'})),
+        ],
+        ids=['model_retry', 'tool_failed'],
+    )
+    async def test_failed_tool_result_is_checkpointed_and_replayed(
+        self, pgtask_db: PGTaskDatabase, error: Exception, stored: object
+    ) -> None:
+        # A failure the model sees is stored like any other tool result, so a replay serves it
         # without running the tool again.
         model_calls = {'calls': 0}
         tool_calls = {'calls': 0}
@@ -561,7 +577,7 @@ class TestToolResults:
         @toolset.tool_plain
         def flaky() -> str:
             tool_calls['calls'] += 1
-            raise ModelRetry('nope, try again')
+            raise error
 
         model = _tool_calling_model(ToolCallPart('flaky'), counter=model_calls)
         agent = Agent(model, name='retry', toolsets=[toolset], capabilities=[PGTaskDurability()])
@@ -573,10 +589,7 @@ class TestToolResults:
 
         assert model_calls['calls'] == 2
         assert tool_calls['calls'] == 1
-        stored = await checkpoints(pgtask_db, task_id)
-        assert stored[('retry__function_toolset__tools.call_tool:flaky', 0)] == snapshot(
-            {'kind': 'model_retry', 'message': 'nope, try again'}
-        )
+        assert (await checkpoints(pgtask_db, task_id))[('retry__function_toolset__tools.call_tool:flaky', 0)] == stored
 
     async def test_tool_return_object_round_trips_through_replay(self, pgtask_db: PGTaskDatabase) -> None:
         toolset = FunctionToolset[object](id='tools')
@@ -608,7 +621,8 @@ class TestToolResults:
         toolset = FunctionToolset[object](id='tools')
 
         @toolset.tool_plain
-        def charge_card(amount: int) -> str:  # pragma: no cover - never re-run
+        # Never re-run: the stored checkpoint is used instead.
+        def charge_card(amount: int) -> str:  # pragma: no cover
             return 'charged again'
 
         agent = Agent(
@@ -791,8 +805,6 @@ class TestMcp:
         ]
 
     async def test_replay_opens_no_mcp_session(self, pgtask_db: PGTaskDatabase) -> None:
-        from tests.durable_exec.counting_mcp import counting_mcp_server
-
         server, counts = counting_mcp_server(instructions='Echo things.')
         agent = Agent(
             _tool_calling_model(ToolCallPart('echo', {'text': 'hi'})),
@@ -818,11 +830,9 @@ class TestMcp:
         assert requests[0].instructions is not None and 'Echo things.' in requests[0].instructions
 
 
+@pytest.mark.skipif(not code_mode_available(), reason='pydantic-monty not installed')
 class TestCodeMode:
     async def test_tool_call_inside_run_code_is_checkpointed(self, pgtask_db: PGTaskDatabase) -> None:
-        pytest.importorskip('pydantic_monty')
-        from pydantic_ai_harness import CodeMode
-
         calls = {'calls': 0}
         toolset = FunctionToolset[object](id='tools')
 

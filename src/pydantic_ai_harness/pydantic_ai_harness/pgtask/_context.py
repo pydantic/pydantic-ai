@@ -37,9 +37,10 @@ class TaskSteps:
         return await self.task.step(name, operation, occurrence=occurrence)
 
 
-# The counters are shared by every step of an attempt, wherever it runs, so they hang off the task
-# itself rather than a `ContextVar`: one set in a spawned subtask would not be seen by its siblings.
-# pgtask makes one `Task` per attempt, so a retry starts from zero, and the counters go with the task.
+# The counters are shared by every step of an attempt, wherever it runs, so they are keyed by the task
+# object rather than held in a `ContextVar`: one set in a spawned subtask would not be seen by its
+# siblings. pgtask makes one `Task` per attempt, so a retry starts from zero. A `Task` holds dicts and
+# so is unhashable, which rules out a `WeakKeyDictionary`; the entry is dropped when the task is.
 _occurrences: dict[int, Counter[str]] = {}
 
 

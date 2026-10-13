@@ -87,8 +87,8 @@ name that recurs, such as a second `agent.run()` in the same task or the same to
 the next pgtask `occurrence` in encounter order. Await one run before starting the next in the same
 task.
 
-A tool call that raises `ModelRetry` is checkpointed like any other result, so a replay serves the
-retry prompt without running the tool. A tool call that fails the attempt with another exception is
+A tool call that raises `ModelRetry` or `ToolFailed` is checkpointed like any other result, so a
+replay serves the failure to the model without running the tool. A tool call that fails the attempt with another exception is
 not, and runs again on the next attempt.
 
 MCP servers are connected in the first step that needs them, so a replay served entirely from
