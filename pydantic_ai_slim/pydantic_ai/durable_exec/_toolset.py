@@ -16,7 +16,7 @@ from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperTo
 from pydantic_ai._agent_graph import build_validation_context
 from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._enqueue import PendingMessage
-from pydantic_ai._run_context import ToolNamePath, without_tool_name_path
+from pydantic_ai._run_context import ToolNamePath, with_tool_name_path, without_tool_name_path
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
@@ -802,7 +802,7 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
         unit_ctx = super()._ctx_for_unit(ctx)
         if unit_ctx._tool_name_path == self._run_tool_name_path:  # pyright: ignore[reportPrivateUsage]
             return unit_ctx
-        return replace(unit_ctx, _tool_name_path=self._run_tool_name_path)
+        return with_tool_name_path(unit_ctx, self._run_tool_name_path)
 
     def _tool_for_info(self, name: str, info: DynamicToolInfo) -> ToolsetTool[AgentDepsT]:
         tool = ToolsetTool[AgentDepsT](

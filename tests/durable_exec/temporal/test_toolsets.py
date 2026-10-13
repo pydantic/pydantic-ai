@@ -2149,3 +2149,95 @@ async def test_wrapped_dynamic_toolset_activities_agree_on_retry(client: Client)
             ],
         )
     )
+
+
+_snapshot_reads: list[tuple[str, str, list[str], int]] = []
+
+
+def _record_snapshot_read(site: str, ctx: RunContext[None]) -> None:
+    _snapshot_reads.append(
+        (
+            activity.info().activity_type.rsplit('__', 1)[-1],
+            site,
+            sorted(ctx.available_tool_names),
+            len(ctx.active_capability_ids),
+        )
+    )
+
+
+def _snapshot_reading_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+    _record_snapshot_read('factory', ctx)
+    toolset = FunctionToolset[None](id='snapshot_inner')
+
+    @toolset.instructions
+    def instructions(ctx: RunContext[None]) -> str:
+        _record_snapshot_read('instructions', ctx)
+        return 'Call the probe once.'
+
+    def validate(ctx: RunContext[None]) -> None:
+        _record_snapshot_read('validator', ctx)
+
+    @toolset.tool(args_validator=validate)
+    async def probe(ctx: RunContext[None]) -> str:
+        _record_snapshot_read('body', ctx)
+        return 'Probed.'
+
+    return toolset
+
+
+def _call_probe_once(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        return ModelResponse(parts=[TextPart('Done.')])
+    return ModelResponse(parts=[ToolCallPart('demo_probe', {})])
+
+
+_snapshot_reading_agent = Agent(
+    FunctionModel(_call_probe_once),
+    name='prefixed_dynamic_snapshots',
+    deps_type=type(None),
+    toolsets=[DynamicToolset[None](_snapshot_reading_toolset, id='snapshots').prefixed('demo')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class PrefixedDynamicSnapshotsWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _snapshot_reading_agent.run('Probe.')).output
+
+
+async def test_prefixed_dynamic_toolset_activities_keep_context_snapshots(client: Client):
+    """Under `.prefixed()`, a dynamic toolset's activities still answer from the snapshots serialized at dispatch.
+
+    `available_tool_names` and `active_capability_ids` live outside `TemporalRunContext`'s dataclass fields,
+    so the context copies that carry or strip the tool name path have to keep them.
+    """
+    _snapshot_reads.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PrefixedDynamicSnapshotsWorkflow],
+        plugins=[AgentPlugin(_snapshot_reading_agent)],
+    ):
+        output = await client.execute_workflow(
+            PrefixedDynamicSnapshotsWorkflow.run,
+            id=f'{PrefixedDynamicSnapshotsWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert (output, _snapshot_reads) == snapshot(
+        (
+            'Done.',
+            [
+                ('get_tools', 'factory', [], 3),
+                ('get_tools', 'instructions', [], 3),
+                ('validate_args', 'factory', ['demo_probe'], 3),
+                ('validate_args', 'validator', ['demo_probe'], 3),
+                ('call_tool', 'factory', ['demo_probe'], 3),
+                ('call_tool', 'body', ['demo_probe'], 3),
+                ('get_tools', 'factory', ['demo_probe'], 3),
+                ('get_tools', 'instructions', ['demo_probe'], 3),
+            ],
+        )
+    )

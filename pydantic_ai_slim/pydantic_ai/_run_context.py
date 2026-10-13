@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import copy
 import dataclasses
 import sys
 import warnings
@@ -971,14 +972,26 @@ def _run_context_init_with_capability_loaded(
 RunContext.__init__ = _run_context_init_with_capability_loaded
 
 
+def with_tool_name_path(ctx: RunContext[AgentDepsT], path: ToolNamePath) -> RunContext[AgentDepsT]:
+    """A copy of the context with the given tool name path.
+
+    A shallow copy rather than `dataclasses.replace`, which rebuilds the context from its dataclass
+    fields: `TemporalRunContext` and `RenderRunContext` keep snapshots such as `available_tool_names`
+    outside them.
+    """
+    path_ctx = copy.copy(ctx)
+    path_ctx._tool_name_path = path  # pyright: ignore[reportPrivateUsage]
+    return path_ctx
+
+
 def with_tool_name_layer(ctx: RunContext[AgentDepsT], layer: str | Mapping[str, str]) -> RunContext[AgentDepsT]:
     """The context to list a wrapped toolset's tools with, for a wrapper that prefixes or renames them."""
-    return dataclasses.replace(ctx, _tool_name_path=(*ctx._tool_name_path, layer))  # pyright: ignore[reportPrivateUsage]
+    return with_tool_name_path(ctx, (*ctx._tool_name_path, layer))  # pyright: ignore[reportPrivateUsage]
 
 
 def without_tool_name_path(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
     """The context to hand user code that runs while tools are listed, without the listing's tool name path."""
-    return dataclasses.replace(ctx, _tool_name_path=()) if ctx._tool_name_path else ctx  # pyright: ignore[reportPrivateUsage]
+    return with_tool_name_path(ctx, ()) if ctx._tool_name_path else ctx  # pyright: ignore[reportPrivateUsage]
 
 
 def exposed_tool_name(ctx: RunContext[AgentDepsT], name: str) -> str:

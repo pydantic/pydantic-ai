@@ -10,6 +10,7 @@ from typing import Any, ParamSpec, TypeVar
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 from render.workflows import TaskContext, TaskDefinition, TaskRunMetadata, Workflows
 
@@ -253,6 +254,67 @@ async def test_prefixed_dynamic_tool_child_tasks_see_its_retry_count() -> None:
     )
 
     assert await run_agent_in_task(agent, runtime, RecordingTaskContext()) == 'No tools left.'
+
+
+async def test_prefixed_dynamic_tool_child_tasks_keep_context_snapshots() -> None:
+    """Under `.prefixed()`, a dynamic toolset's child tasks still answer from the snapshots serialized at dispatch.
+
+    `available_tool_names` and `active_capability_ids` live outside `RenderRunContext`'s dataclass fields, so the
+    context copies that carry or strip the tool name path have to keep them.
+    """
+    reads: list[tuple[str, list[str], int]] = []
+
+    def record(site: str, ctx: RunContext[None]) -> None:
+        reads.append((site, sorted(ctx.available_tool_names), len(ctx.active_capability_ids)))
+
+    def probe_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+        record('factory', ctx)
+        toolset = FunctionToolset[None](id='inner')
+
+        @toolset.instructions
+        def instructions(ctx: RunContext[None]) -> str:
+            record('instructions', ctx)
+            return 'Call the probe once.'
+
+        def validate(ctx: RunContext[None]) -> None:
+            record('validator', ctx)
+
+        @toolset.tool(args_validator=validate)
+        async def probe(ctx: RunContext[None]) -> str:
+            record('body', ctx)
+            return 'Probed.'
+
+        return toolset
+
+    def call_probe_once(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('Done.')])
+        return ModelResponse(parts=[ToolCallPart('demo_probe', {})])
+
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(call_probe_once),
+        name='prefixed-dynamic-snapshots',
+        deps_type=type(None),
+        toolsets=[DynamicToolset(probe_toolset, id='dynamic').prefixed('demo')],
+        capabilities=[runtime],
+    )
+
+    assert (await run_agent_in_task(agent, runtime, RecordingTaskContext()), reads) == snapshot(
+        (
+            'Done.',
+            [
+                ('factory', [], 3),
+                ('instructions', [], 3),
+                ('factory', ['demo_probe'], 3),
+                ('validator', ['demo_probe'], 3),
+                ('factory', ['demo_probe'], 3),
+                ('body', ['demo_probe'], 3),
+                ('factory', ['demo_probe'], 3),
+                ('instructions', ['demo_probe'], 3),
+            ],
+        )
+    )
 
 
 async def test_dynamic_tool_cannot_opt_out_of_render_child_task() -> None:
