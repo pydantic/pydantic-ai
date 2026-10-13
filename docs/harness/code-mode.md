@@ -215,6 +215,25 @@ explicit override. `run_code` is replayed in workflow code, so measuring elapsed
 make replay choose a different path from the recorded workflow. The memory and suspension caps still apply. Put
 time-bounded work behind a Temporal activity instead.
 
+## Concurrent tool calls
+
+Sandboxed tools render as `async def` functions, so generated code can start several calls and
+await them together with `asyncio.gather`. Whether those calls overlap follows the run's
+[parallel execution mode](../tools-advanced.md#parallel-tool-calls-concurrency):
+
+- `'parallel'` (the default) and `'parallel_ordered_events'` run gathered calls concurrently.
+  `'parallel_ordered_events'` only orders the result events of top-level tool calls, which nested
+  calls do not emit. It is the mode `DBOSDurability` uses by default.
+- `'sequential'` runs gathered calls one at a time, in the order the code started them.
+
+A tool marked `sequential=True` renders as a plain `def` and runs alone in every mode: calls the
+code started before it finish first.
+
+Durable engines that record nested calls as steps number them as they start. When a tool or a
+capability hook such as `before_tool_execute` awaits before its step starts, concurrent calls can
+start their steps in a different order on recovery. Pass `parallel_execution_mode='sequential'` to
+the durability capability to run nested calls one at a time.
+
 ## REPL state
 
 State persists between `run_code` calls within the same agent run -- variables, imports, and function definitions carry over. Pass `restart: true` in the tool call to reset state. If a worker crash or host-side execution failure invalidates the session, `run_code` returns a model retry that reports the reset and the nested calls that already started; the next snippet must recreate any required state.
@@ -648,13 +667,14 @@ Your callback's return value decides the call's fate, and the two outcomes are e
 
 Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python subset. Key restrictions:
 
-- No third-party imports. Allowed stdlib modules: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib` (each must be imported before use).
+- No third-party imports. Allowed stdlib modules: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii` (each must be imported before use).
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments. Other task creation and wait APIs are unavailable.
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` fail. They become available when an `os_access` handler implements them (the built-in `OSAccess` does). `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer.
 - No `import *`.
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv` / `os.environ` need an `os_access` handler.
 - Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability on the agent to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry.
 - Tool results reach the sandbox in the JSON shape their generated stub declares, since the stub is derived from the tool's JSON schema. `Decimal`, `UUID` and `datetime` arrive as strings, and mapping keys are stringified, so a `dict[int, str]` of `{1: 'a'}` arrives as `{'1': 'a'}`. `bytes` and `bytearray` are the exception: Monty carries binary natively, so they cross unchanged even though the stub declares `str` for them.
+- A tool without a return schema is still callable, but its generated signature shows `-> Any`, so the model has to guess the result's shape. `CodeMode` names such tools in one `CodeModeReturnSchemaWarning` (a `UserWarning` subclass) per run. Give a function tool a return annotation, or have your MCP server declare an `outputSchema`; when the server is not yours, silence just this category with `warnings.filterwarnings('ignore', category=CodeModeReturnSchemaWarning)`.
 
 ## Agent spec (YAML/JSON)
 

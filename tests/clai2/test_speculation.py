@@ -43,10 +43,21 @@ def speculation(tmp_path: Path, console: Console | None = None) -> Speculation:
     context = CommandContext(
         settings=store.load(),
         store=store,
-        clear_history=lambda: None,
         apply_setting=lambda key, settings: None,
     )
     return Speculation(context=context, console=console or Console(file=io.StringIO()))
+
+
+class TestDefaults:
+    @pytest.fixture
+    def native_tools(self) -> None:
+        """The shipped defaults, not the suite's code-mode-off stand-in."""
+
+    def test_code_mode_on_and_speculation_off(self) -> None:
+        assert (Settings().code_mode, Settings().speculative_code_mode) == (True, False)
+        # Older settings never saved `run.code_mode`, so they get it; a saved speculation choice stands.
+        assert resolve_settings({'run.speculative_code_mode': True}).code_mode is True
+        assert resolve_settings({'run.code_mode': False}).code_mode is False
 
 
 class TestSwitch:
@@ -60,7 +71,7 @@ class TestSwitch:
         assert switch.row() == ''
         assert switch.capabilities([]) == []
 
-        assert switch.toggle() == 'Speculative execution on from the next turn. Ctrl+X Ctrl+S toggles it.'
+        assert switch.toggle() == 'Speculative execution on. Ctrl+X Ctrl+S toggles it.'
         assert SettingsStore(tmp_path / 'config.db').overrides() == {'run.speculative_code_mode': True}
         assert plain(switch.row()).startswith('Speculative Execution  0 hits')
 
@@ -71,6 +82,22 @@ class TestSwitch:
         switch.toggle()
         assert plain(switch.row()).startswith('Speculative Execution  2 hits')
 
+    @pytest.mark.parametrize('bound', [False, True])
+    def test_toggle_during_a_turn_keeps_its_row_and_marks_the_next_prompt(self, tmp_path: Path, bound: bool) -> None:
+        switch = speculation(tmp_path)
+        if bound:
+            switch.toggle()
+        with switch.turn():
+            assert switch.toggle().endswith('from the next prompt; this turn keeps its tools.')
+            # The row stays while either the running turn or the next prompt speculates.
+            pending = 'off' if bound else 'on'
+            assert plain(switch.row()) == f'{plain(switch.counters.row())}    {pending} from the next prompt'
+            assert switch.toggle() == f'Speculative execution {"on" if bound else "off"}. Ctrl+X Ctrl+S toggles it.'
+            assert (switch.row() != '') is bound
+            switch.toggle()
+        assert (switch.row() == '') is bound
+        assert 'next prompt' not in plain(switch.row())
+
     def test_missing_sandbox_dependency_warns_and_runs_natively(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -79,7 +106,7 @@ class TestSwitch:
         switch.toggle()
         monkeypatch.setitem(sys.modules, 'pydantic_clai2.runtime.speculative_mode', None)
         assert switch.capabilities([]) == []
-        assert 'Speculative execution is unavailable' in output.getvalue()
+        assert 'Code mode is unavailable' in output.getvalue()
 
     def test_sandbox_dependency_ships_with_clai(self) -> None:
         """A plain `pydantic-clai2` install must bring Monty, not leave it behind a harness extra."""
@@ -183,6 +210,20 @@ class TestChord:
             assert toggles == ['toggled']
             assert live.buffer.text == 'a'
             assert plain(live.frame()[-1]).startswith('ready')
+
+    def test_a_single_key_chord_acts_at_once_and_keeps_the_draft(self) -> None:
+        presses: list[str] = []
+
+        def promote() -> str:
+            presses.append('ctrl-b')
+            return '1 task(s) moved to background. /tasks to inspect.'
+
+        with live_prompt(height=24, pinned=lambda: 'PINNED ROW', chords={'ctrl-b': promote}) as live:
+            live.feed('a')
+            live.feed('ctrl-b')
+            assert presses == ['ctrl-b']
+            assert live.buffer.text == 'a'
+            assert plain(live.frame()[-1]) == '1 task(s) moved to background. /tasks to inspect.'
 
     @pytest.mark.parametrize(('height', 'shown'), [(6, False), (7, True)])
     def test_pinned_row_only_takes_a_spare_row(self, height: int, shown: bool) -> None:

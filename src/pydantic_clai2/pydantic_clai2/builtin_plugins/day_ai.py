@@ -1,26 +1,33 @@
-"""The built-in `day_ai` plugin: harness `DayAI`, with a token from `/keys` or a browser sign-in.
+"""Use Day AI, signed in in the browser or with a token from /keys.
+
+The built-in `day_ai` plugin: harness `DayAI`, with a browser sign-in by default or a token from `/keys`.
 
 Settings hold `DayAI`'s non-secret options and at most the name of a `/keys` entry, never a token; the menu that
 `/plugins configure day_ai` opens edits them. The browser sign-in works the way `/mcp` does for an OAuth server:
 FastMCP's flow, with tokens kept in the keyring under `mcp-day_ai`. `/mcp` server names cannot contain underscores,
 so that credential never belongs to one of your servers. The environment is not read.
+
+The sign-in runs only from that menu or `/day_ai login`, never while loading or in a prompt; see
+`pydantic_clai2.plugins.sign_in`.
 """
 
 import asyncio
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Generic, Literal
 
 from anyio import to_thread
-from fastmcp import Client
-from fastmcp.client.transports import StreamableHttpTransport
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, field_validator
 
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.day_ai import DayAI
+from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyReference, SavedKey, load_keys
-from pydantic_clai2.mcp import TokenStore, http_client, sign_in
-from pydantic_clai2.plugins import DepsT, PluginHost, SessionStart
+from pydantic_clai2.mcp import OAuthSignIn
+from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.keys import choose_key, on_loop
+from pydantic_clai2.plugins.sign_in import sign_in_command, sign_in_now, warn_if_signed_out
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.rendering import theme
@@ -35,6 +42,8 @@ TOKEN_ACCOUNT = 'day_ai'
 """The `/mcp` token store name, so the keyring credential is `mcp-day_ai`."""
 
 SETUP = 'Run /plugins configure day_ai to choose a token in /keys or browser sign-in.'
+SIGN_IN = OAuthSignIn(name=TOKEN_ACCOUNT, service='Day AI', setup='/day_ai login', url=DAY_AI_MCP_URL)
+"""The browser sign-in; its tokens are the keyring credential `mcp-day_ai`."""
 RUNNERS: Runners = TERMINAL
 """How the settings menu's widgets are shown; tests swap in scripted ones."""
 
@@ -45,78 +54,70 @@ class DayAISettings(BaseModel):
     """The JSON a `day_ai` declaration may carry: `DayAI`'s non-secret options and the name of its token."""
 
     model_config = ConfigDict(extra='forbid', frozen=True, strict=True)
-    auth: Auth | None = Field(
-        default=None,
-        description=f"A saved API key in /keys, or 'oauth' for browser sign-in. Unset uses {KEY_NAME} when saved, "
-        'else a stored browser sign-in.',
+    auth: Auth = Field(
+        default='oauth', description="'oauth' (the default) for browser sign-in, or a saved API key in /keys."
     )
     include_instructions: bool = Field(default=True, description="Forward the server's instructions to the agent.")
 
-
-def resolve_auth(settings: DayAISettings) -> Auth | None:
-    """What an unset `auth` means now: the conventional key, a stored sign-in, or nothing chosen yet."""
-    if settings.auth is not None:
-        return settings.auth
-    if KEY_NAME in load_keys():
-        return KeyReference(name=KEY_NAME)
-    return 'oauth' if TokenStore(TOKEN_ACCOUNT).signed_in() else None
+    @field_validator('auth', mode='before')
+    @classmethod
+    def _automatic_is_browser(cls, value: object) -> object:
+        """Earlier builds saved `null` for an automatic choice; it now means the browser sign-in default."""
+        return 'oauth' if value is None else value
 
 
-def activate(host: PluginHost[DepsT]) -> None:
-    """Add `DayAI` with a `/keys` token resolved on every run, or sign in through the browser before loading."""
-    settings = host.settings(DayAISettings)
-    auth = resolve_auth(settings)
+class DayAIPlugin(Plugin[DayAISettings, DepsT]):
+    """`DayAI` with a browser sign-in made from the menu or `/day_ai login`, or a `/keys` token resolved per run."""
 
-    @host.configure
-    async def configure() -> str:
-        return await _configure(DayAISource(host))
-
-    if auth is None:
-        # Nothing to connect with; loading anyway keeps the menu available, and adds no broken capability.
-        host.console.print(f'Day AI is not connected. {SETUP}', style=theme.color(theme.WARNING), markup=False)
-        return
-    if isinstance(auth, KeyReference):
-        host.add(
-            DayAI[DepsT](auth=SavedKey(name=auth.name, setup=SETUP), include_instructions=settings.include_instructions)
-        )
-        if auth.name not in load_keys():
-            # Each run fails closed until the key is saved.
-            host.console.print(
-                f'Day AI has no token: {auth.name} is not in /keys. {SETUP}',
-                style=theme.color(theme.WARNING),
-                markup=False,
+    def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
+        auth = self.settings.auth
+        if isinstance(auth, KeyReference):
+            return (
+                DayAI[DepsT](
+                    auth=SavedKey(name=auth.name, setup=SETUP), include_instructions=self.settings.include_instructions
+                ),
             )
-        return
-    host.add(DayAI[DepsT](client=_transport(), include_instructions=settings.include_instructions))
+        return (self.for_run,)
 
-    @host.on('session_start')
-    async def sign_in(_: SessionStart) -> None:
-        if await to_thread.run_sync(TokenStore(TOKEN_ACCOUNT).signed_in):
+    def get_commands(self) -> Sequence[Command]:
+        return (sign_in_command('day_ai', SIGN_IN),)
+
+    async def for_run(self, ctx: RunContext[DepsT]) -> DayAI[DepsT] | None:
+        # Checked per run, so signing in from the menu or `/day_ai login` applies to the next prompt.
+        if not await to_thread.run_sync(SIGN_IN.signed_in, abandon_on_cancel=True):
+            return None
+        return DayAI[DepsT](client=SIGN_IN.client(), include_instructions=self.settings.include_instructions)
+
+    async def configure(self) -> str:
+        return await _configure(DayAISource(self.host))
+
+    async def on_session_start(self, event: SessionStart) -> None:
+        console = self.host.console
+        auth = self.settings.auth
+        if isinstance(auth, KeyReference):
+            if auth.name not in load_keys():
+                # Each run fails closed until the key is saved.
+                console.print(
+                    f'Day AI has no token: {auth.name} is not in /keys. {SETUP}',
+                    style=theme.color(theme.WARNING),
+                    markup=False,
+                )
             return
-        if not host.console.is_terminal:
-            raise UserError(f'Save {KEY_NAME} in /keys, or sign in to Day AI from an interactive CLAI session first.')
-        host.console.print('Opening your browser to sign in to Day AI.', style=theme.color(theme.MUTED))
-        # A throwaway connection runs the sign-in now, so a failure fails the load rather than the next prompt.
-        async with Client(_transport()):
-            pass
+        await warn_if_signed_out(SIGN_IN, console)
 
 
-_AUTOMATIC = 'automatic'
 _KEY = 'key'
 _AUTH = FieldRow(
     key='auth',
     label='Sign-in',
     description=(
-        'How Day AI connects. A key lives in /keys and plugin settings keep only its name, so any plugin '
-        f'naming the same key shares it. Automatic uses {KEY_NAME} when it is saved, else a stored browser sign-in.'
+        'How Day AI connects. Browser sign-in, the default, keeps its tokens in the keyring; choosing it signs in '
+        'now if needed, and /day_ai login signs in again later. A key lives in /keys and plugin settings keep only '
+        'its name, so any plugin naming the same key shares it.'
     ),
-    default=_AUTOMATIC,
-    choices=(_AUTOMATIC, _KEY, 'oauth'),
-    choice_labels={
-        _AUTOMATIC: 'automatic',
-        _KEY: 'choose or enter a key in /keys...',
-        'oauth': 'browser sign-in',
-    },
+    default='oauth',
+    choices=('oauth', _KEY),
+    choice_labels={'oauth': 'browser sign-in', _KEY: 'choose or enter a key in /keys...'},
     allow_custom=False,
 )
 _INSTRUCTIONS = FieldRow(
@@ -145,26 +146,17 @@ class DayAISource(Generic[DepsT]):
         return self._host.settings(DayAISettings)
 
     def rows(self) -> list[FieldRow]:
-        """Every option, with the sign-in annotated by what it resolves to."""
-        return [replace(_AUTH, note=self._auth_note()), _INSTRUCTIONS]
-
-    def _auth_note(self) -> str:
+        """Every option, with a chosen key marked when it is gone from `/keys`."""
         auth = self.settings.auth
-        if isinstance(auth, KeyReference):
-            return '' if auth.name in load_keys() else 'missing from /keys'
-        if auth == 'oauth':
-            return ''
-        resolved = resolve_auth(self.settings)
-        if resolved is None:
-            return 'not connected'
-        return f'uses {KEY_NAME}' if isinstance(resolved, KeyReference) else 'uses the stored browser sign-in'
+        missing = isinstance(auth, KeyReference) and auth.name not in load_keys()
+        return [replace(_AUTH, note='missing from /keys') if missing else _AUTH, _INSTRUCTIONS]
 
     def current(self, row: FieldRow) -> str:
-        """The value as the menu shows it: a key's name, `oauth`, or `automatic`."""
+        """The value as the menu shows it: a key's name or `oauth`."""
         settings = self.settings
         if row.key == 'auth':
             auth = settings.auth
-            return auth.name if isinstance(auth, KeyReference) else (auth or _AUTOMATIC)
+            return auth.name if isinstance(auth, KeyReference) else auth
         return str(settings.include_instructions).lower()
 
     def problem(self, row: FieldRow, text: str) -> str | None:
@@ -195,7 +187,7 @@ class DayAISource(Generic[DepsT]):
         data = self.settings.model_dump(mode='json')
         value: JsonValue = raw
         if row.key == 'auth':
-            value = None if raw == _AUTOMATIC else raw if raw == 'oauth' else {'name': raw}
+            value = raw if raw == 'oauth' else {'name': raw}
         elif raw in ('true', 'false'):
             value = raw == 'true'
         data[row.key] = value
@@ -210,8 +202,8 @@ async def _configure(source: DayAISource[DepsT]) -> str:
         pick = RUNNERS.run_choice(menu.build_choices(_AUTH))
         if pick.cancelled or pick.item is None:
             return []
-        if pick.item.value != _KEY:
-            return [source.apply(_AUTH, str(pick.item.value))]
+        if pick.item.value == 'oauth':
+            return [source.apply(_AUTH, 'oauth'), *sign_in()]
         label = f'Day AI access token (saved in /keys as {KEY_NAME})'
         reference = on_loop(lambda: choose_key(name=KEY_NAME, label=label, runners=RUNNERS), loop)
         if reference is None:
@@ -219,9 +211,11 @@ async def _configure(source: DayAISource[DepsT]) -> str:
         source.save(source.settings.model_copy(update={'auth': reference}))
         return [f'Day AI uses the saved key {reference.name}. Manage it in /keys.']
 
+    def sign_in() -> list[str]:
+        if SIGN_IN.signed_in():
+            return []
+        message = on_loop(lambda: sign_in_now(SIGN_IN, RUNNERS), loop)
+        return [] if message is None else [message]
+
     messages = await run_worker(lambda: run_flow(menu, RUNNERS, submenus={'auth': pick_auth}))
     return '\n'.join(messages) or 'Day AI settings unchanged.'
-
-
-def _transport() -> StreamableHttpTransport:
-    return StreamableHttpTransport(DAY_AI_MCP_URL, auth=sign_in(TOKEN_ACCOUNT), httpx_client_factory=http_client)

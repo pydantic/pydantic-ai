@@ -99,10 +99,11 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     browser-use chat model (e.g. `browser_use.ChatAnthropic(...)`) is used
     as-is.
 
-    With `None`, browser-use falls back to its own default model selection,
-    which ends at its hosted `ChatBrowserUse` model (a separate account and
-    `BROWSER_USE_API_KEY`). Pass an explicit model to keep inference in your
-    own stack.
+    With `None`, the sub-agent runs on the host run's model (`RunContext.model`),
+    wrapped in `PydanticAIChatModel`, and inherits the host run's instrumentation
+    settings, including its content-redaction policy. browser-use's hosted model is opt-in: pass
+    `browser_use.ChatBrowserUse()`, which needs a browser-use account and
+    `BROWSER_USE_API_KEY`.
     """
 
     browser_profile: BrowserProfile | None = field(default=None, repr=False)
@@ -236,6 +237,17 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     tests.
     """
 
+    browser_use_telemetry: bool = False
+    """Let the sub-agent send browser-use's product telemetry for its runs.
+
+    browser-use reports every agent run to its PostHog project, including the
+    task, the visited URLs, and the final result. `False` (the default) turns
+    that off for this capability's agents only, without changing
+    `ANONYMIZED_TELEMETRY` for the rest of the process. `True` restores
+    browser-use's own behavior, which still honors `ANONYMIZED_TELEMETRY=false`.
+    It applies to any `browser_use.Agent` a `browser_agent` factory returns.
+    """
+
     _toolset: BrowserUseToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
     """The cached toolset, so `'agent'`-scoped session state has one owner."""
 
@@ -308,6 +320,7 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
                 settings=self.agent_settings if self.agent_settings is not None else BrowserAgentSettings(),
                 session_scope=self.session_scope,
                 cdp_url=self.cdp_url,
+                browser_use_telemetry=self.browser_use_telemetry,
             )
         return self._toolset
 
@@ -352,12 +365,13 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
         session_scope: Literal['call', 'agent'] = 'call',
         cdp_url: str | None = None,
         guidance: str | None = None,
+        browser_use_telemetry: bool = False,
     ) -> BrowserUse[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
         The `llm`, `browser_profile`, `output_schema`, `agent_settings`, and
         `browser_agent` fields are not spec-serializable: spec-loaded instances
-        use browser-use's own default model selection, default browser and
+        run the sub-agent on the host run's model, with default browser and
         agent configuration, prose output, and the default agent factory.
         """
         return cls(
@@ -371,4 +385,5 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
             session_scope=session_scope,
             cdp_url=cdp_url,
             guidance=guidance,
+            browser_use_telemetry=browser_use_telemetry,
         )

@@ -3,7 +3,7 @@
 Three layers make up the catalogue, later layers winning on a name collision:
 
 1. The builtins below: CLAI2's own `working` braille (the default) plus every Code Puppy builtin.
-2. Spinners plugins register with `host.spinner(...)`.
+2. Spinners plugins return from `Plugin.get_spinners()`.
 3. The user's `spinners.json` next to CLAI2's settings (`/spinner init` writes a starter file).
    An entry without `frames` that names an existing spinner only changes its speed or description.
 

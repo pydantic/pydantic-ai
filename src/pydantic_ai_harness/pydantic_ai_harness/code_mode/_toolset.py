@@ -11,12 +11,12 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeGuard
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NotRequired, Self, TypeGuard
 from urllib.parse import urlsplit
 
 from pydantic import Field, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
-from typing_extensions import NotRequired, Self, TypedDict, TypeIs
+from typing_extensions import TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.capabilities import AbstractCapability
@@ -35,11 +35,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
 from pydantic_ai.tools import AgentDepsT, ToolDenied, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
-
-try:
-    from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME  # pyright: ignore[reportPrivateUsage]
-except ImportError:  # pragma: no cover
-    _SEARCH_TOOLS_NAME = 'search_tools'  # pyright: ignore[reportConstantRedefinition]
 
 try:
     from pydantic_monty import (
@@ -402,7 +397,7 @@ Write and run Python code in a sandboxed environment.
 
 The sandbox uses Monty, a subset of Python. Key restrictions:
 - **No third-party libraries**: only the standard library modules listed below can be used
-- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`. These must be imported before use, just like in regular Python."""
+- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`. These must be imported before use, just like in regular Python."""
 
 # Timing/OS restriction line, swapped depending on what host access the agent
 # configured. Three states, because `mount` and `os` enable different things:
@@ -505,11 +500,14 @@ _SEARCH_TOOLS_MODIFIER = (
     ' Note: discovered tools become callable as functions inside the run_code sandbox in subsequent invocations.'
 )
 
-_TOOL_SEARCH_ADDENDUM = (
-    f'\n\nNot all functions may be available initially.'
-    f' Use the `{_SEARCH_TOOLS_NAME}` tool to discover additional functions'
-    f' that will become callable in subsequent `run_code` invocations.'
-)
+
+def _tool_search_addendum(search_tool_name: str) -> str:
+    return (
+        f'\n\nNot all functions may be available initially.'
+        f' Use the `{search_tool_name}` tool to discover additional functions'
+        f' that will become callable in subsequent `run_code` invocations.'
+    )
+
 
 _INVALID_IDENT_CHARS = re.compile(r'[^a-zA-Z0-9_]')
 
@@ -544,12 +542,21 @@ def _sanitize_tool_name(name: str) -> str:
     return sanitized or '_'
 
 
+class CodeModeReturnSchemaWarning(UserWarning):
+    """A sandboxed tool has no return schema, so its generated signature shows `-> Any`.
+
+    The model then writes code against a result shape it has to guess. A function tool gets a
+    return schema from its return annotation; an MCP tool gets one when its server declares an
+    `outputSchema`. When the tools come from a server you do not control, silence this category
+    alone with `warnings.filterwarnings('ignore', category=CodeModeReturnSchemaWarning)`.
+    """
+
+
 def _warn_missing_return_schemas(names: Sequence[str]) -> None:
     """Warn once for every tool whose sandbox signature will show `-> Any`.
 
-    Without a return schema the model gets no type information about the return shape,
-    which limits code mode effectiveness. MCP servers commonly omit output schemas, so the
-    tools are named in one warning rather than one warning each.
+    MCP servers commonly omit output schemas, so the tools are named in one warning rather
+    than one warning each.
     """
     if not names:
         return
@@ -558,11 +565,21 @@ def _warn_missing_return_schemas(names: Sequence[str]) -> None:
     else:
         listed = ', '.join(repr(name) for name in names)
         message = f'CodeMode: {len(names)} tools have no return schema ({listed}); their signatures will show `-> Any`'
-    warnings.warn(f'{message}, which may reduce code mode effectiveness.', UserWarning, stacklevel=3)
+    warnings.warn(
+        f'{message}, which may reduce code mode effectiveness. Add a return annotation to a function tool, '
+        'or an `outputSchema` to an MCP tool; to silence this, filter `CodeModeReturnSchemaWarning`.',
+        CodeModeReturnSchemaWarning,
+        stacklevel=3,
+    )
 
 
 def global_mode_is_sequential(get_mode: Callable[..., ParallelExecutionMode]) -> bool:
     """Whether the run-scoped execution mode forces sandbox tool calls to run sequentially.
+
+    Only `'sequential'` does. `'parallel_ordered_events'` runs top-level tool calls concurrently and
+    orders only their result events, which nested sandbox calls do not emit, so it dispatches them
+    concurrently like `'parallel'`. `DBOSDurability` defaults to that mode, so serializing there
+    would make every `asyncio.gather` in a DBOS run cost the sum of its calls' latencies.
 
     pydantic-ai v1's `get_parallel_execution_mode` took the pending calls list
     and folded per-tool `sequential` flags into the result; v2 dropped the
@@ -576,8 +593,8 @@ def global_mode_is_sequential(get_mode: Callable[..., ParallelExecutionMode]) ->
     major's stubs pyright resolves.
     """
     if inspect.signature(get_mode).parameters:
-        return get_mode([]) != 'parallel'
-    return get_mode() != 'parallel'
+        return get_mode([]) == 'sequential'
+    return get_mode() == 'sequential'
 
 
 @dataclass(kw_only=True)
@@ -964,19 +981,22 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 f"Tool name '{_RUN_CODE_TOOL_NAME}' is reserved for code mode. Rename your tool to avoid conflicts."
             )
 
-        # When search_tools is present, append context about run_code to its
-        # description and add a discovery note to the run_code description.
-        has_search_tools = _SEARCH_TOOLS_NAME in native_tools
-        if has_search_tools:
-            search_tool = native_tools[_SEARCH_TOOLS_NAME]
-            native_tools[_SEARCH_TOOLS_NAME] = replace(
+        # When the tool search tool is present, append context about run_code to its
+        # description and add a discovery note to the run_code description. It is found by its
+        # `tool_kind`, since its name can be prefixed.
+        search_tool_name = next(
+            (name for name, tool in native_tools.items() if tool.tool_def.tool_kind == 'tool-search'), None
+        )
+        if search_tool_name is not None:
+            search_tool = native_tools[search_tool_name]
+            native_tools[search_tool_name] = replace(
                 search_tool,
                 tool_def=replace(
                     search_tool.tool_def,
                     description=(search_tool.tool_def.description or '') + _SEARCH_TOOLS_MODIFIER,
                 ),
             )
-            description += _TOOL_SEARCH_ADDENDUM
+            description += _tool_search_addendum(search_tool_name)
 
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(native_tools)
         result[_RUN_CODE_TOOL_NAME] = _RunCodeTool(

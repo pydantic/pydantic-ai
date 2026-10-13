@@ -614,8 +614,7 @@ It is a no-op by default, but you can subclass `WrapperToolset` to change the wr
 
 ```python {title="logging_toolset.py" requires="function_toolset.py,combined_toolset.py,renamed_toolset.py,prepared_toolset.py"}
 import asyncio
-
-from typing_extensions import Any
+from typing import Any
 
 from pydantic_ai import Agent, RunContext, ToolsetTool, WrapperToolset
 from pydantic_ai.models.test import TestModel

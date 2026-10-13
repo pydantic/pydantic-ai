@@ -6,7 +6,7 @@ name: Agent Spend Report
 # that die quietly — both failure modes from #6766 looked green on the Actions
 # tab. Cost data goes to Slack rather than a public issue.
 #
-# This workflow runs no model and consumes no MiniMax budget: it reads the
+# This workflow runs no model and consumes no model budget: it reads the
 # `agent` artifact each gh-aw run already uploads.
 
 on:

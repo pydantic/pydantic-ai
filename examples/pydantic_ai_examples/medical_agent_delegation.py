@@ -24,7 +24,7 @@ Run with:
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from textwrap import dedent
 from typing import Any
@@ -33,12 +33,14 @@ from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, RunContext
+from pydantic_ai.capabilities import Caching
 
 MODEL = 'openai:gpt-5.2'
 
 
 # Structured Outputs
-class Specialty(str, Enum):
+# Keep `Enum.__str__`; `StrEnum` changes the text returned for members.
+class Specialty(str, Enum):  # noqa: UP042
     general = 'general'
     cardiology = 'cardiology'
     neurology = 'neurology'
@@ -105,6 +107,7 @@ gp_agent = Agent(
         You are a general practitioner.
         """
     ),
+    capabilities=[Caching()],
 )
 
 cardiology_agent = Agent(
@@ -116,6 +119,7 @@ cardiology_agent = Agent(
         You are a cardiology specialist.
         """
     ),
+    capabilities=[Caching()],
 )
 
 neurology_agent = Agent(
@@ -127,6 +131,7 @@ neurology_agent = Agent(
         You are a neurology specialist.
         """
     ),
+    capabilities=[Caching()],
 )
 
 senior_doctor_agent = Agent(
@@ -139,6 +144,7 @@ senior_doctor_agent = Agent(
         Integrate all prior findings to produce a clear treatment plan.
         """
     ),
+    capabilities=[Caching()],
 )
 
 SPECIALIST_MAP = {
@@ -174,6 +180,7 @@ triage_agent = Agent(
         Always produce a structured TriageFinalOutput.
         """
     ),
+    capabilities=[Caching()],
 )
 
 
@@ -249,7 +256,7 @@ class MedicalTriageSystem:
     async def handle_patient(
         self, complaint: str, patient: PatientInfo
     ) -> dict[str, Any]:
-        timestamp = datetime.now(tz=timezone.utc).isoformat()
+        timestamp = datetime.now(tz=UTC).isoformat()
         print(f'\n[{timestamp}] Processing complaint: {complaint}')
 
         triage_prompt = (

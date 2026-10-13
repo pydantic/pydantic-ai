@@ -97,7 +97,7 @@ The tools act as the token's user, so messages the agent posts and canvases it e
 
 ## Tool selection and approval
 
-`read_only=True` keeps only the tools the server marks as read-only. If the server does not mark its read tools, this can leave none. The token is still what controls access.
+`read_only=True` keeps only the tools the server marks as read-only. If the server does not mark its read tools, the agent gets none and emits an `MCPReadOnlyNoToolsWarning`. The token is still what controls access.
 
 To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call:
 

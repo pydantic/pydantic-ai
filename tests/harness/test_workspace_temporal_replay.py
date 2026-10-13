@@ -28,6 +28,7 @@ from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkfl
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
 from pydantic_ai_harness.shell import Shell
 from tests.harness._temporal import skip_temporal_sandbox_on_314
+from tests.temporal_utils import temporal_dev_server_cache_dir
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), skip_temporal_sandbox_on_314]
 
@@ -87,7 +88,7 @@ async def test_temporal_history_replays_veto_and_background_job_once(tmp_path: P
     runner = SandboxedWorkflowRunner(
         restrictions=SandboxRestrictions.default.with_passthrough_modules(__name__, 'annotated_types')
     )
-    async with await WorkflowEnvironment.start_local() as env:  # pyright: ignore[reportUnknownMemberType]
+    async with await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir()) as env:  # pyright: ignore[reportUnknownMemberType]
         client = await Client.connect(env.client.service_client.config.target_host, plugins=[PydanticAIPlugin()])
         async with Worker(client, task_queue='replay-harness', workflows=[ReplayWorkflow], workflow_runner=runner):
             result = await client.execute_workflow(
