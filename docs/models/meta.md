@@ -69,7 +69,7 @@ Unlike OpenAI's reasoning models, Muse accepts `temperature` and `top_p` while r
 
 ## Tool choice
 
-Meta only accepts `tool_choice='auto'`. When Pydantic AI would force a tool itself, such as an [output tool](../output.md#tool-output), it falls back to `'auto'`. An explicit forcing `tool_choice` (`'required'` or specific tools) raises a `UserError`, and `tool_choice='none'` is rejected by the API.
+Meta only accepts `tool_choice='auto'`. When Pydantic AI would force a tool itself, such as an [output tool](../output.md#tool-output), it falls back to `'auto'`. An explicit forcing `tool_choice` (`'required'` or specific tools) raises a `UserError`, and `tool_choice='none'` is rejected by the API: it's sent as `'none'`, or as an `allowed_tools` restriction to the output tools when the Responses API has some, and the API only takes `'auto'`.
 
 ## Web search
 
