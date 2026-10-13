@@ -90,8 +90,39 @@ _REPLS = frozenset(
 )
 """Programs that start an interactive session when given no arguments."""
 
-_WRAPPERS = frozenset({'command', 'doas', 'env', 'exec', 'nice', 'sudo', 'time'})
-"""Programs that run the command after their options, so the command decides."""
+_WRAPPERS: dict[str, frozenset[str]] = {
+    'command': frozenset(),
+    'doas': frozenset({'-C', '-u'}),
+    'env': frozenset({'-C', '-S', '-u', '--chdir', '--split-string', '--unset'}),
+    'exec': frozenset({'-a'}),
+    'nice': frozenset({'-n', '--adjustment'}),
+    'sudo': frozenset(
+        {
+            '-C',
+            '-D',
+            '-g',
+            '-p',
+            '-R',
+            '-r',
+            '-T',
+            '-t',
+            '-U',
+            '-u',
+            '--chdir',
+            '--chroot',
+            '--close-from',
+            '--command-timeout',
+            '--group',
+            '--other-user',
+            '--prompt',
+            '--role',
+            '--type',
+            '--user',
+        }
+    ),
+    'time': frozenset({'-f', '-o', '--format', '--output'}),
+}
+"""Programs that run the command after their options, so the command decides; each with its options that take a value."""
 
 _GIT_PROMPTS: dict[str, tuple[str, tuple[str, ...]]] = {
     'add': ('eip', ('--edit', '--interactive', '--patch')),
@@ -149,11 +180,17 @@ def _program(word: str) -> str:
 
 def _interactive(words: list[str]) -> bool:
     index = 0
-    while index < len(words) and (_ASSIGNMENT.match(words[index]) or _program(words[index]) in _WRAPPERS):
+    while index < len(words):
+        if _ASSIGNMENT.match(words[index]):
+            index += 1
+            continue
+        valued = _WRAPPERS.get(_program(words[index]))
+        if valued is None:
+            break
         index += 1
         while index < len(words) and words[index].startswith('-'):
-            index += 1
-    if index == len(words):
+            index += 2 if words[index] in valued else 1
+    if index >= len(words):
         return False
     name, arguments = _program(words[index]), words[index + 1 :]
     if name == 'git':

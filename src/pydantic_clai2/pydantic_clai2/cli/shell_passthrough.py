@@ -226,7 +226,11 @@ async def _wait_in_terminal(command: str) -> int:
         process = await asyncio.shield(spawn)
         return await process.wait()
     except asyncio.CancelledError:
-        # Nothing is left to kill when spawning failed or the process was already reaped.
+        # Only the shell is killed, not a process tree: the command shares CLAI's process group, which
+        # keeps it in the terminal's foreground for Ctrl-C, Ctrl-Z, and resizes, so `killpg` would kill
+        # CLAI too. Ctrl-C is the command's, so this runs only when CLAI's own task is cancelled; a
+        # terminal hangup still signals the whole group. Nothing is left to kill when spawning failed
+        # or the process was already reaped.
         with contextlib.suppress(OSError, ValueError):
             process = await spawn
             process.kill()
