@@ -19,21 +19,18 @@ ProviderMetadata = dict[str, dict[str, JSONValue]]
 """Provider metadata."""
 
 
-_NULLABLE_PART_FIELDS = frozenset({'input', 'output', 'data'})
-"""Part fields the AI SDK types as `unknown`, so `null` is a real value there."""
-
-
 class BaseUIPart(CamelBaseModel, ABC):
     """Abstract base class for all UI parts."""
 
     # The AI SDK types optional part fields as `field?: T`, so `validateUIMessages` rejects `null` for them.
+    # `input`, `output` and `data` are typed `unknown`, so `null` is a real value there.
     # No return annotation: one would replace the part's serialization JSON schema with a bare `object`.
     @model_serializer(mode='wrap')
     def _omit_unset_optional_fields(self, handler: SerializerFunctionWrapHandler):
         return {
             key: value
             for key, value in handler(self).items()
-            if value is not None or key in _NULLABLE_PART_FIELDS
+            if value is not None or key in ('input', 'output', 'data')
         }
 
 

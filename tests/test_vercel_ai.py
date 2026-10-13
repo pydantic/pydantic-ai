@@ -5063,15 +5063,49 @@ async def test_adapter_dump_messages_omits_unset_optional_fields(tiny_image: Bin
     assert null_keys == snapshot([('tool-noop', 'output')])
     # A `metadataSchema` passed to `validateUIMessages` rejects `null` message metadata too.
     assert 'metadata' not in dumped[0]
-    # As does a client-sent approval without a reason, when it's serialized back to the browser.
-    approval = ToolApprovalResponded(id='approval_1', approved=True)
-    assert approval.model_dump(by_alias=True) == snapshot({'id': 'approval_1', 'approved': True})
 
     reloaded = VercelAIAdapter.load_messages([UIMessage.model_validate(msg) for msg in dumped])
     noop_return = next(
         part for part in iter_message_parts(reloaded, ModelRequest, ToolReturnPart) if part.tool_call_id == 'call_2'
     )
     assert noop_return.content is None
+
+
+def test_client_approval_without_reason_serializes_without_null():
+    """A client-sent approval without a reason, stored and sent back, must not gain `reason: null`.
+
+    Not a `dump_messages` test: the adapter always sets `reason` on the approvals it builds.
+    """
+    message = UIMessage.model_validate(
+        {
+            'id': 'msg_1',
+            'role': 'assistant',
+            'parts': [
+                {
+                    'type': 'tool-delete_file',
+                    'toolCallId': 'call_1',
+                    'state': 'approval-responded',
+                    'input': {'path': 'a.txt'},
+                    'approval': {'id': 'approval_1', 'approved': True},
+                }
+            ],
+        }
+    )
+    assert message.model_dump(by_alias=True) == snapshot(
+        {
+            'id': 'msg_1',
+            'role': 'assistant',
+            'parts': [
+                {
+                    'type': 'tool-delete_file',
+                    'toolCallId': 'call_1',
+                    'state': 'approval-responded',
+                    'input': {'path': 'a.txt'},
+                    'approval': {'id': 'approval_1', 'approved': True},
+                }
+            ],
+        }
+    )
 
 
 async def test_adapter_dump_messages_with_tools():
