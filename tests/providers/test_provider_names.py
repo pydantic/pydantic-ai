@@ -19,9 +19,11 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.cohere import CohereProvider
+    from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
     from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
+    from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.groq import GroqProvider
@@ -37,6 +39,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.snowflake import SnowflakeProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
+    from pydantic_ai.providers.vllm import VLLMProvider
     from pydantic_ai.providers.xai import XaiProvider
 
     test_infer_provider_params = [
@@ -58,8 +61,11 @@ with try_import() as imports_successful:
         ('together', TogetherProvider, 'TOGETHER_API_KEY'),
         ('heroku', HerokuProvider, 'HEROKU_INFERENCE_KEY'),
         ('github', GitHubProvider, 'GITHUB_API_KEY'),  # pyright: ignore[reportDeprecated]
+        ('github-copilot', GitHubCopilotProvider, 'GITHUB_COPILOT_API_KEY'),
         ('ollama', OllamaProvider, 'OLLAMA_BASE_URL'),
         ('litellm', LiteLLMProvider, None),
+        ('vllm', VLLMProvider, 'VLLM_BASE_URL'),
+        ('crusoe', CrusoeProvider, 'CRUSOE_API_KEY'),
         ('nebius', NebiusProvider, 'NEBIUS_API_KEY'),
         ('ovhcloud', OVHcloudProvider, 'OVHCLOUD_API_KEY'),
         ('snowflake', SnowflakeProvider, 'SNOWFLAKE_ACCOUNT'),
@@ -76,6 +82,10 @@ if not imports_successful():
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='need to install all extra packages'),
 ]
+
+
+def test_provider_default_realtime_profile_is_unknown() -> None:
+    assert Provider.realtime_model_profile('voice') is None
 
 
 @pytest.fixture(autouse=True)

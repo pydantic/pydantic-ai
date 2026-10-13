@@ -1,0 +1,90 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '408'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Say hi.
+        role: user
+      model: deepseek-v4-flash
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              text:
+                type: string
+            required:
+            - text
+            type: object
+          strict: true
+        type: function
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '925'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: ''
+          reasoning_content: The user just says "Say hi." This is a simple greeting request. I should respond with a greeting.
+            No tools needed beyond final_result.
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: "{\"text\": \"Hi! \U0001F44B How can I help you today?\"}"
+              name: final_result
+            id: call_00_iM9Opu3f4GbJSlevGql85768
+            index: 0
+            type: function
+      created: 1786656318
+      id: 7d122f20-a47c-4cba-abd8-dd4f1c4ee3fe
+      model: deepseek-v4-flash
+      object: chat.completion
+      system_fingerprint: a26a7955944dc5c60445bff77fac9c8e
+      usage:
+        completion_tokens: 82
+        completion_tokens_details:
+          reasoning_tokens: 29
+        prompt_cache_hit_tokens: 256
+        prompt_cache_miss_tokens: 104
+        prompt_tokens: 360
+        prompt_tokens_details:
+          cached_tokens: 256
+        total_tokens: 442
+    status:
+      code: 200
+      message: OK
+version: 1

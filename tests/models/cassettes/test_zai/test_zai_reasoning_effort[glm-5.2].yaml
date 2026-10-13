@@ -1,0 +1,533 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '187'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.2
+      reasoning_effort: minimal
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '447'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - e7b9e60a3e8427812d9fc0989ef2be8c
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 = 4
+          role: assistant
+      created: 1788037016
+      id: 2026083004565440a371eeea384331
+      model: glm-5.2
+      object: chat.completion
+      request_id: 2026083004565440a371eeea384331
+      usage:
+        completion_tokens: 8
+        completion_tokens_details:
+          reasoning_tokens: 0
+        prompt_tokens: 14
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 22
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '183'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.2
+      reasoning_effort: low
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '701'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - 4d80ce7327dcc2f316191426d781b050
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 = 4
+          reasoning_content: |-
+            1.  **Analyze the Input:** The user is asking "What is 2 + 2?".
+            2.  **Identify the Core Task:** Perform basic arithmetic addition.
+            3.  **Perform Calculation:** 2 + 2 = 4.
+            4.  **Formulate Output:** State the answer clearly.
+          role: assistant
+      created: 1788037018
+      id: 2026083004565716d5d81c721d44f4
+      model: glm-5.2
+      object: chat.completion
+      request_id: 2026083004565716d5d81c721d44f4
+      usage:
+        completion_tokens: 76
+        completion_tokens_details:
+          reasoning_tokens: 67
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 96
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '186'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.2
+      reasoning_effort: medium
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '717'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - f5b76adf534fa12018354f6c70b3765b
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 equals 4.
+          reasoning_content: |-
+            1.  Identify the core question: The user is asking for the result of the mathematical expression "2 + 2".
+            2.  Perform the calculation: 2 + 2 = 4.
+            3.  Formulate the response: State the answer clearly and concisely. "2 + 2 equals 4."
+          role: assistant
+      created: 1788037020
+      id: 2026083004565936067dcf660140c9
+      model: glm-5.2
+      object: chat.completion
+      request_id: 2026083004565936067dcf660140c9
+      usage:
+        completion_tokens: 76
+        completion_tokens_details:
+          reasoning_tokens: 68
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 96
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '184'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.2
+      reasoning_effort: high
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '788'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - 2146bacbea7ff08125e21cd5f02ca367
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 equals 4.
+          reasoning_content: |-
+            1.  **Identify the core question:** The user is asking for the result of the mathematical expression $2 + 2$.
+            2.  **Perform the calculation:** $2 + 2 = 4$.
+            3.  **Formulate the response:** State the answer clearly and concisely. "2 + 2 equals 4." or simply "4." Let's go with a friendly, direct answer.
+          role: assistant
+      created: 1788037022
+      id: 20260830045701d209b64d9a1b485c
+      model: glm-5.2
+      object: chat.completion
+      request_id: 20260830045701d209b64d9a1b485c
+      usage:
+        completion_tokens: 98
+        completion_tokens_details:
+          reasoning_tokens: 88
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 118
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '185'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.2
+      reasoning_effort: xhigh
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '877'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - 685d6ce2e4770230ba0f4c9531c0648d
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 = 4.
+          reasoning_content: |-
+            1.  **Analyze the Input:** The user is asking "What is 2 + 2?".
+            2.  **Identify the core task:** Perform a basic arithmetic addition.
+            3.  **Perform the calculation:** 2 + 2 = 4.
+            4.  **Formulate the response:** State the answer clearly and concisely. "2 + 2 = 4" or simply "4".
+            5.  **Check constraints:** Ensure the response is helpful, harmless, and honest. No special constraints violated.
+          role: assistant
+      created: 1788037025
+      id: 202608300457034cc3c7d0d6204dbe
+      model: glm-5.2
+      object: chat.completion
+      request_id: 202608300457034cc3c7d0d6204dbe
+      usage:
+        completion_tokens: 121
+        completion_tokens_details:
+          reasoning_tokens: 111
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 141
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '156'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.2
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '706'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - 3f6569fc42662c799424c5a64a64ce2e
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 = 4
+          reasoning_content: |-
+            1.  **Analyze the Input:** The user is asking a basic arithmetic question: "What is 2 + 2?".
+            2.  **Compute the Result:** 2 + 2 = 4.
+            3.  **Formulate the Output:** State the answer clearly and concisely.
+            4.  **Final Answer:** 4.
+          role: assistant
+      created: 1788037026
+      id: 2026083004570538b79abb4f6c4d5b
+      model: glm-5.2
+      object: chat.completion
+      request_id: 2026083004570538b79abb4f6c4d5b
+      usage:
+        completion_tokens: 82
+        completion_tokens_details:
+          reasoning_tokens: 73
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 102
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '157'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.2
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: disabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '393'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - 7a0f9d72505be499af8e3fff08179457
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 = 4
+          role: assistant
+      created: 1788037027
+      id: 20260830045707bc72011b72964374
+      model: glm-5.2
+      object: chat.completion
+      request_id: 20260830045707bc72011b72964374
+      usage:
+        completion_tokens: 7
+        prompt_tokens: 14
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 21
+    status:
+      code: 200
+      message: OK
+version: 1

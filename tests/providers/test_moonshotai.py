@@ -1,6 +1,5 @@
 import re
 
-import httpx
 import pytest
 
 from pydantic_ai.exceptions import UserError
@@ -39,13 +38,6 @@ def test_moonshotai_provider_need_api_key(env: TestEnv) -> None:
         MoonshotAIProvider()
 
 
-def test_moonshotai_provider_pass_http_client() -> None:
-    """Test passing a custom HTTP client to MoonshotAI provider."""
-    http_client = httpx.AsyncClient()
-    provider = MoonshotAIProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
-
-
 def test_moonshotai_pass_openai_client() -> None:
     """Test passing a custom OpenAI client to MoonshotAI provider."""
     openai_client = openai.AsyncOpenAI(api_key='api-key')
@@ -65,7 +57,7 @@ def test_moonshotai_model_profile():
     model = OpenAIChatModel('kimi-k2-0711-preview', provider=provider)
     assert isinstance(model.profile, dict)
     assert model.profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
-    assert model.profile.get('openai_supports_tool_choice_required', True) is False
+    assert model.profile.get('supports_forced_tool_choice', True) is False
     assert model.profile.get('supports_json_object_output', False) is True
 
 

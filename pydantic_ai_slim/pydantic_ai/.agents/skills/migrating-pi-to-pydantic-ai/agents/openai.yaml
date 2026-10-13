@@ -1,0 +1,4 @@
+interface:
+  display_name: "Migrate Pi to Pydantic AI"
+  short_description: "Split Pi extensions by responsibility"
+  default_prompt: "Use $migrating-pi-to-pydantic-ai to migrate the smallest complete Pi slice to Pydantic AI, splitting extension behavior between capabilities and application/interface ownership while preserving observed contracts."

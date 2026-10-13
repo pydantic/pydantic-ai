@@ -1,6 +1,10 @@
+---
+description: "Add ready-made tools to a Pydantic AI agent, such as DuckDuckGo and Tavily web search and web fetch, implemented in Pydantic AI and runnable with any model."
+---
+
 # Common Tools
 
-Pydantic AI ships with native tools that can be used to enhance your agent's capabilities.
+Pydantic AI ships with common tools that extend your agent's capabilities.
 
 ## DuckDuckGo Search Tool
 

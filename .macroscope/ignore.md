@@ -1,13 +1,15 @@
+---
+ignoreTests: false
+---
+
 # Repository-wide Macroscope ignore (code review + any check-run agents).
 #
 # A custom ignore file REPLACES Macroscope's built-in defaults, so this copies
 # their default "base" patterns verbatim to preserve them, then adds this repo's
 # own recorded/generated files on top. https://docs.macroscope.com/
 #
-# Macroscope's default *test-file* patterns are deliberately NOT copied here: we
-# want Macroscope to review test code. Recorded cassettes and binary fixtures
-# under tests/ stay ignored via the base binary/data patterns plus the explicit
-# cassettes rule below, so only real test *code* is reviewed.
+# Test code is reviewed because `ignoreTests` is false. Recorded cassettes and
+# binary fixtures under tests/ remain ignored by the patterns below.
 
 # ---- Macroscope default base patterns (copied to preserve them) ----
 **/.git/**
@@ -29,15 +31,21 @@
 **/jspm_packages/**
 **/.next/**
 **/.svelte-kit/**
+**/.nuxt/**
+**/.output/**
+**/.vercel/**
+**/.angular/**
 **/vendor/**
 **/_vendor/**
 **/third_party/**
 **/Pods/**
 **/.bundle/**
 build/**
+out/**
 env/**
 ENV/**
 **/target/**
+**/dist/**
 **/generated/**
 **/intermediates/**
 **/generated_sources/**
@@ -46,6 +54,9 @@ ENV/**
 **/src/main/generated/**
 **/*.min.js
 **/*.min.css
+**/*.bundle.js
+**/.pnp.cjs
+**/.pnp.loader.mjs
 **/*_pb.d.ts
 **/*_pb.js
 **/*.pb.go
@@ -59,6 +70,11 @@ ENV/**
 **/*.g.dart
 **/*.pb.dart
 **/*_pb.rb
+**/*.d.ts
+**/*.gen.ts
+**/*.gen.tsx
+**/*.gen.js
+**/*.gen.jsx
 **/go.mod
 **/package.json
 **/*.pbxproj

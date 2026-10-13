@@ -1,15 +1,11 @@
 from __future__ import annotations as _annotations
 
-import inspect
-import re
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 from itertools import chain
-from typing import Any, TypeAlias
-
-from typing_extensions import assert_never, overload
+from typing import Any, TypeAlias, assert_never, overload
 
 from .. import _utils, usage
 from .._instrumentation import get_instructions
@@ -26,6 +22,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -114,7 +111,8 @@ class FunctionModel(Model):
         Args:
             function: The function to call for non-streamed requests.
             stream_function: The function to call for streamed requests.
-            model_name: The name of the model. If not provided, a name is generated from the function names.
+            model_name: The name of the model. If not provided, a name is generated from the function names,
+                falling back to the class name for a callable that has no `__name__`.
             profile: The model profile to use.
             settings: Model-specific settings that will be used as defaults for this model.
         """
@@ -124,8 +122,14 @@ class FunctionModel(Model):
         self.function = function
         self.stream_function = stream_function
 
-        function_name = self.function.__name__ if self.function is not None else ''
-        stream_function_name = self.stream_function.__name__ if self.stream_function is not None else ''
+        function_name = (
+            getattr(self.function, '__name__', type(self.function).__name__) if self.function is not None else ''
+        )
+        stream_function_name = (
+            getattr(self.stream_function, '__name__', type(self.stream_function).__name__)
+            if self.stream_function is not None
+            else ''
+        )
         self._model_name = model_name or f'function:{function_name}:{stream_function_name}'
 
         # Use a default profile that supports JSON schema and object output if none provided
@@ -157,12 +161,14 @@ class FunctionModel(Model):
 
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
 
-        if inspect.iscoroutinefunction(self.function):
-            response = await self.function(messages, agent_info)
+        result: ModelResponse | Awaitable[ModelResponse]
+        if _utils.is_async_callable(self.function):
+            result = self.function(messages, agent_info)
         else:
-            response_ = await _utils.run_in_executor(self.function, messages, agent_info)
-            assert isinstance(response_, ModelResponse), response_
-            response = response_
+            result = await _utils.run_in_executor(self.function, messages, agent_info)
+        # A plain `def` may also return an awaitable, which `run_in_executor` would leave un-awaited.
+        response = await _utils.await_maybe(result)
+        assert isinstance(response, ModelResponse), response
         response.model_name = self._model_name
         # Add usage data if not already present
         if not response.usage.has_values():  # pragma: no branch
@@ -303,12 +309,21 @@ DeltaThinkingCalls: TypeAlias = dict[int, DeltaThinkingPart]
 BuiltinToolCallsReturns: TypeAlias = dict[int, NativeToolCallPart | NativeToolReturnPart]
 
 FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], ModelResponse | Awaitable[ModelResponse]]
-"""A function used to generate a non-streamed response."""
+"""A function used to generate a non-streamed response.
+
+Any callable with this signature works: a plain `def`, an `async def`, or an instance with a `__call__`
+method of either kind. An async callable is awaited directly; a sync one is run in a worker thread.
+"""
 
 StreamFunctionDef: TypeAlias = Callable[
     [list[ModelMessage], AgentInfo], AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns]
 ]
 """A function used to generate a streamed response.
+
+Any callable with this signature works: an async generator function, a plain `def` returning an async
+iterator, or an instance with a `__call__` of either kind. What matters is the value returned, not the
+callable — an `async def __call__` that *returns* an async iterator instead of yielding does not match,
+and its coroutine is never awaited.
 
 While this is defined as having return type of `AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinTools]`, it should
 really be considered as `AsyncIterator[str] | AsyncIterator[DeltaToolCalls] | AsyncIterator[DeltaThinkingCalls]`,
@@ -425,6 +440,11 @@ def _estimate_usage(  # noqa: C901
                     if not allow_tool_availability_deltas:
                         raise _unsynthesized_tool_availability_delta_error()
                     request_tokens += _estimate_string_tokens(' '.join(part.tools_added))
+                elif isinstance(part, SpeechPart):
+                    # A direct `FunctionModel.request()` doesn't run `Model.prepare_messages`, so
+                    # user speech can arrive unconverted; estimate from the transcript like the
+                    # response side below rather than undercounting the turn to zero.
+                    request_tokens += _estimate_string_tokens(part.content)
                 else:
                     assert_never(part)
         elif isinstance(message, ModelResponse):
@@ -441,6 +461,8 @@ def _estimate_usage(  # noqa: C901
                     response_tokens += _estimate_string_tokens([part.content])
                 elif isinstance(part, CompactionPart):
                     pass
+                elif isinstance(part, SpeechPart):
+                    response_tokens += _estimate_string_tokens(part.content)
                 else:
                     assert_never(part)
         else:
@@ -456,18 +478,15 @@ def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
         return 0
 
     if isinstance(content, str):
-        return len(_TOKEN_SPLIT_RE.split(content.strip()))
+        return _utils.estimate_string_tokens(content)
 
     tokens = 0
     for part in content:
         if isinstance(part, str | TextContent):
             text = part if isinstance(part, str) else part.content
-            tokens += len(_TOKEN_SPLIT_RE.split(text.strip()))
+            tokens += _utils.estimate_string_tokens(text)
         elif isinstance(part, BinaryContent):
             tokens += len(part.data)
         # TODO(Marcelo): We need to study how we can estimate the tokens for AudioUrl or ImageUrl.
 
     return tokens
-
-
-_TOKEN_SPLIT_RE = re.compile(r'[\s",.:]+')

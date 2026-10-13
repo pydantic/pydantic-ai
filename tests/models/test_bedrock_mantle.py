@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+from decimal import Decimal
 
+import httpx2
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import Agent, BinaryImage, RequestUsage, UserError
 from pydantic_ai.capabilities import NativeTool
@@ -22,26 +24,30 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import NativeOutput
 
 from ..conftest import IsDatetime, IsStr, try_import
+from .conftest import RequestCapture
 
 with try_import() as imports_successful:
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
 ]
 
 
-def _provider() -> BedrockMantleProvider:
-    return BedrockMantleProvider(region_name='us-east-1', api_key=os.getenv('AWS_BEARER_TOKEN_BEDROCK', 'mock-api-key'))
+def _provider(http_client: httpx2.AsyncClient | None = None) -> BedrockMantleProvider:
+    return BedrockMantleProvider(
+        region_name='us-east-1',
+        api_key=os.getenv('AWS_BEARER_TOKEN_BEDROCK', 'mock-api-key'),
+        http_client=http_client,
+    )
 
 
 @pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
 @pytest.mark.moves_cache_prefix(reason='replay uses a fresh agent without the original instructions and tools')
-async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) -> None:
-    """Mantle GPT-5.6 resets Responses tool-call IDs per response; pydantic-ai must re-qualify them."""
-    model = infer_model('bedrock-mantle:openai.gpt-5.6-luna', lambda _: _provider())
+async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None, request_capture: RequestCapture) -> None:
+    """Mantle IDs stay unique in normalized history and return to their raw form on the wire."""
+    model = infer_model('bedrock-mantle:openai.gpt-5.6-luna', lambda _: _provider(request_capture.client))
     agent = Agent(
         model,
         instructions=(
@@ -105,12 +111,17 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) ->
                         output_tokens=14,
                         output_reasoning_tokens=0,
                         details={'reasoning_tokens': 0},
+                        cost=Decimal('0.00004257'),
                     ),
                     model_name='openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),
                     provider_name='bedrock-mantle',
                     provider_url='https://bedrock-mantle.us-east-1.api.aws/openai/v1/',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='resp_43amfn3g3uar3i4sa5b7sz35cukuufaisldkwel5v6o47xzpr5va',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -146,12 +157,17 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) ->
                         output_tokens=14,
                         output_reasoning_tokens=0,
                         details={'reasoning_tokens': 0},
+                        cost=Decimal('0.000045265'),
                     ),
                     model_name='openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),
                     provider_name='bedrock-mantle',
                     provider_url='https://bedrock-mantle.us-east-1.api.aws/openai/v1/',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='resp_cizhrpixixp4ylkykezegmnkbgixq2qteaqq2gigeu5aluj6dhva',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -196,12 +212,17 @@ Second tool result: `second result`\
                         output_tokens=33,
                         output_reasoning_tokens=11,
                         details={'reasoning_tokens': 11},
+                        cost=Decimal('0.000076285'),
                     ),
                     model_name='openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),
                     provider_name='bedrock-mantle',
                     provider_url='https://bedrock-mantle.us-east-1.api.aws/openai/v1/',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='resp_m2q7figv7bk4ec5owiamz4wtafpld75shl3qo4mkcnrzfeghzetq',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -214,6 +235,43 @@ Second tool result: `second result`\
         assert all(call.tool_call_id.endswith(':call_0') for _, call in tool_calls)
         replay_result = await Agent(model).run('Reply with exactly OK.', message_history=messages)
         assert replay_result.output == 'OK'
+
+    input_adapter = TypeAdapter(list[dict[str, object]])
+    wire_call_ids: list[tuple[str, str]] = []
+    for body in request_capture.bodies('/responses'):
+        for item in input_adapter.validate_python(body['input']):
+            item_type = item.get('type')
+            call_id = item.get('call_id')
+            if isinstance(item_type, str) and isinstance(call_id, str):
+                wire_call_ids.append((item_type, call_id))
+    expected_wire_call_ids = (
+        snapshot(
+            [
+                ('function_call', 'call_0'),
+                ('function_call_output', 'call_0'),
+                ('function_call', 'call_0'),
+                ('function_call_output', 'call_0'),
+                ('function_call', 'call_1'),
+                ('function_call_output', 'call_1'),
+            ]
+        )
+        if stream
+        else snapshot(
+            [
+                ('function_call', 'call_0'),
+                ('function_call_output', 'call_0'),
+                ('function_call', 'call_0'),
+                ('function_call_output', 'call_0'),
+                ('function_call', 'call_0'),
+                ('function_call_output', 'call_0'),
+                ('function_call', 'call_0'),
+                ('function_call_output', 'call_0'),
+                ('function_call', 'call_0'),
+                ('function_call_output', 'call_0'),
+            ]
+        )
+    )
+    assert wire_call_ids == expected_wire_call_ids
 
 
 @pytest.mark.moves_cache_prefix(reason='replay uses a fresh agent without the original instructions and tools')

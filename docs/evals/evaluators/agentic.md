@@ -1,22 +1,28 @@
+---
+description: "Evaluate AI agent tool calls with Pydantic Evals: check the agent called the right tools, in the right order, with the right arguments and within budget."
+---
+
 # Agentic Evaluators
 
 Deterministic, span-based evaluators that grade an agent's *trajectory* — the sequence and arguments of tool calls — rather than just its final output.
 
-!!! note "Requires Logfire"
-    These evaluators read from the OpenTelemetry span tree captured during
-    task execution, so [`logfire`](../how-to/logfire-integration.md) must be
-    installed and configured:
+!!! note "Requires the logfire SDK"
+    These evaluators read the OpenTelemetry span tree captured during the run, so the
+    [`logfire`](../how-to/logfire-integration.md) SDK must be installed and configured. No Pydantic Logfire
+    account is needed: the SDK captures spans locally.
+
     ```bash
     pip install 'pydantic-evals[logfire]'
     ```
+
     If spans aren't available, each evaluator returns a failing result
     (`False` for the boolean evaluators, `0.0` for `TrajectoryMatch`) with
     a reason pointing at logfire configuration, rather than raising.
 
 !!! warning "Locally-executed tools only"
     These evaluators see tools whose execution produces a local OpenTelemetry
-    span — i.e. tools that Pydantic AI invokes itself. Provider-native or
-    server-side builtin tools (such as OpenAI's file search or Anthropic's
+    span — i.e. tools that Pydantic AI invokes itself. Native tools
+    (such as OpenAI's file search or Anthropic's
     web search) don't produce local spans and are therefore invisible to
     these evaluators. Use [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan]
     against the provider's own spans, or the model's output, to assess those.
@@ -42,7 +48,7 @@ Deterministic, span-based evaluators that grade an agent's *trajectory* — the 
 Agentic evaluators answer a class of "did the agent do the right thing?" questions that pure input/output checks can't:
 
 - **Tool coverage** — did the agent call the specific tools it was supposed to? ([`ToolCorrectness`][pydantic_evals.evaluators.ToolCorrectness])
-- **Trajectory shape** — did it call them in the right order, or at least use the right set? ([`TrajectoryMatch`][pydantic_evals.evaluators.TrajectoryMatch])
+- **Tool-call sequence** — did it call them in the right order, or at least use the right set? ([`TrajectoryMatch`][pydantic_evals.evaluators.TrajectoryMatch])
 - **Argument quality** — did the tool receive the expected inputs? ([`ArgumentCorrectness`][pydantic_evals.evaluators.ArgumentCorrectness])
 - **Budget discipline** — did the agent finish within a tool-call and/or model-request budget? ([`MaxToolCalls`][pydantic_evals.evaluators.MaxToolCalls], [`MaxModelRequests`][pydantic_evals.evaluators.MaxModelRequests])
 
@@ -151,7 +157,7 @@ dataset = Dataset(
 
 ## MaxToolCalls and MaxModelRequests
 
-Assert that the agent stayed within a tool-call and/or model-request budget. These follow the same shape as [`MaxDuration`][pydantic_evals.evaluators.MaxDuration]: one budget per evaluator, each reported as its own boolean assertion.
+Assert that the agent stayed within a tool-call and/or model-request budget. These work like [`MaxDuration`][pydantic_evals.evaluators.MaxDuration]: one budget per evaluator, each reported as its own boolean assertion.
 
 ```python
 from pydantic_evals import Case, Dataset

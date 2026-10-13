@@ -1,3 +1,7 @@
+---
+description: "Hide, filter or modify the tools the model sees on each step of a Pydantic AI run with the PrepareTools and PrepareOutputTools capabilities."
+---
+
 # Prepare Tools
 
 [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] and [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] wrap a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a [capability](overview.md), for filtering or modifying [tool definitions](../tools.md) per step. `PrepareTools` handles function tools; `PrepareOutputTools` handles [output tools][pydantic_ai.output.ToolOutput].

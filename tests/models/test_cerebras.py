@@ -1,17 +1,21 @@
 from __future__ import annotations as _annotations
 
-import json
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ThinkingPart
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.direct import model_request
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
+from pydantic_ai.settings import ServiceTier
+from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import iter_message_parts, try_import
+from ..cassette_utils import request_json
+from ..conftest import RequestCapture, iter_message_parts, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.cerebras import (
@@ -19,12 +23,12 @@ with try_import() as imports_successful:
         CerebrasModelSettings,
         _cerebras_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.models.openai import OpenAIChatModelSettings
     from pydantic_ai.providers.cerebras import CerebrasProvider
 
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -36,6 +40,87 @@ async def test_cerebras_model_simple(allow_model_requests: None, cerebras_api_ke
     agent = Agent(model=model)
     result = await agent.run('What is 2 + 2?')
     assert '4' in result.output
+
+
+WEATHER_TOOL = ToolDefinition(
+    name='get_weather',
+    description='Get the current weather in a city.',
+    parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']},
+)
+"""`parallel_tool_calls` only reaches the wire when the request carries tools."""
+
+TRACKED_SETTINGS = ('frequency_penalty', 'presence_penalty', 'parallel_tool_calls', 'service_tier', 'logit_bias')
+"""The settings the Cerebras profile chooses between forwarding and stripping."""
+
+
+async def test_cerebras_forwards_settings_the_api_honors(
+    allow_model_requests: None, cerebras_api_key: str, request_capture: RequestCapture
+):
+    """Settings Cerebras honors reach the wire; `logit_bias` is stripped because Cerebras ignores it.
+
+    Cerebras accepts and validates `logit_bias` — a map over 100 entries is a 400 — but never applies it:
+    biasing a token by 100 in either direction leaves the returned logprobs bit-identical. Forwarding it
+    would buy a hard error on large bias maps in exchange for a no-op, so the profile drops it.
+
+    The drop happens while the request is built, not in `prepare_request`, so the outgoing body is the only
+    place it is observable — hence `request_capture` rather than an assertion about the profile.
+    """
+    provider = CerebrasProvider(api_key=cerebras_api_key, http_client=request_capture.client)
+    model = CerebrasModel('gemma-4-31b', provider=provider)
+    params = ModelRequestParameters(function_tools=[WEATHER_TOOL])
+    prompt = [ModelRequest.user_text_prompt('What is the weather in Paris?')]
+
+    settings = CerebrasModelSettings(
+        frequency_penalty=0.5,
+        presence_penalty=0.25,
+        parallel_tool_calls=False,
+        service_tier='flex',
+        logit_bias={'424243': 7},
+    )
+    await model_request(model, prompt, model_settings=settings, model_request_parameters=params)
+
+    body = request_capture.body('/chat/completions')
+    assert {name: body.get(name, '<stripped>') for name in TRACKED_SETTINGS} == snapshot(
+        {
+            'frequency_penalty': 0.5,
+            'presence_penalty': 0.25,
+            'parallel_tool_calls': False,
+            'service_tier': 'flex',
+            'logit_bias': '<stripped>',
+        }
+    )
+
+    # `openai_service_tier` is forwarded too, and takes precedence over the unified `service_tier`.
+    # It lives on `OpenAIChatModelSettings` rather than `CerebrasModelSettings`, which extends `ModelSettings`.
+    tier_settings = OpenAIChatModelSettings(service_tier='default', openai_service_tier='priority')
+    await model_request(model, prompt, model_settings=tier_settings, model_request_parameters=params)
+
+    assert request_capture.body('/chat/completions', index=1)['service_tier'] == snapshot('priority')
+
+
+async def test_cerebras_accepts_every_service_tier(
+    allow_model_requests: None, cerebras_api_key: str, vcr: Cassette, request_capture: RequestCapture
+):
+    """Every `ServiceTier` value is HTTP 200 on an ordinary Cerebras key.
+
+    Tiers are in Private Preview, so whether a request *gets* that tier is gated. Acceptance is
+    not: `auto` / `default` / `flex` / `priority` all 200 rather than 400.
+
+    `request_capture` pins the four values on the live outgoing body; the cassette's interactions pin
+    the recorded HTTP 200s. Cassette matching ignores the body, so asserting on `vcr.requests` would
+    keep passing after the code stopped sending `service_tier`.
+    """
+    provider = CerebrasProvider(api_key=cerebras_api_key, http_client=request_capture.client)
+    model = CerebrasModel('gemma-4-31b', provider=provider)
+    prompt = [ModelRequest.user_text_prompt('Reply with the single word ok.')]
+    tiers = get_args(ServiceTier)
+
+    for tier in tiers:
+        await model_request(model, prompt, model_settings=CerebrasModelSettings(service_tier=tier))
+
+    sent = [body.get('service_tier') for body in request_capture.bodies('/chat/completions')]
+    assert sent == list(tiers)
+    assert [interaction.response.status for interaction in vcr.interactions] == [200] * len(tiers)
 
 
 async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, cerebras_api_key: str, vcr: Cassette):
@@ -55,7 +140,7 @@ async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, ce
     text_part = cast(TextPart, response.parts[0])
     assert '4' in text_part.content
 
-    body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    body = request_json(vcr.requests[0])
     assert body.get('reasoning_effort') == 'none'
     assert 'disable_reasoning' not in body
     # zai replays prior reasoning as `<think>` tags, so `clear_thinking=false` is injected by default.
@@ -87,7 +172,7 @@ async def test_cerebras_thinking_part_survives_multiturn(
     assert any(p.content == turn1_thinking[0].content for p in preserved)
 
     # On the wire, the decorative thinking is replayed as the assistant message's `reasoning` field.
-    turn2_body = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    turn2_body = request_json(vcr.requests[1])
     assistant_messages = [m for m in turn2_body['messages'] if m.get('role') == 'assistant']
     assert any(m.get('reasoning') == turn1_thinking[0].content for m in assistant_messages)
 
@@ -112,7 +197,7 @@ async def test_cerebras_zai_reasoning_replayed_as_think_tags(
 
     await agent.run('Now divide that by 2.', message_history=result1.all_messages())
 
-    turn2_body = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    turn2_body = request_json(vcr.requests[1])
     assistant_messages = [m for m in turn2_body['messages'] if m.get('role') == 'assistant']
     start_tag, end_tag = model.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
     assert any(

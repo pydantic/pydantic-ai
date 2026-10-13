@@ -1,0 +1,4 @@
+interface:
+  display_name: "Migrate OpenAI Agents SDK"
+  short_description: "Migrate OpenAI Agents SDK safely"
+  default_prompt: "Use $migrating-openai-agents-sdk-to-pydantic-ai to migrate the smallest complete OpenAI Agents SDK slice to Pydantic AI while preserving its observed contracts with proportionate tests."

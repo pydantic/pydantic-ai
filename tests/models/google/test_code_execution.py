@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from datetime import timezone
+from datetime import UTC
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -46,7 +46,6 @@ if TYPE_CHECKING:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings('ignore:.*is deprecated and will reach end-of-life.*:DeprecationWarning'),
 ]
@@ -83,7 +82,7 @@ async def test_code_execution_stream(
                     )
                 ],
                 instructions='Be concise and always use Python to do calculations no matter how small.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -228,7 +227,7 @@ async def test_code_execution(allow_model_requests: None, google_model: GoogleMo
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What day is today in Utrecht?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -328,7 +327,7 @@ print(datetime.datetime.now())
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),

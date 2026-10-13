@@ -22,6 +22,7 @@ __all__ = (
     'ImageGenerationModelName',
     'ImageGenerationTool',
     'ImageAspectRatio',
+    'ImageSize',
     'MemoryTool',
     'MCPServerTool',
     'FileSearchTool',
@@ -39,20 +40,32 @@ This dict is populated automatically via `__init_subclass__` when tool classes a
 """
 
 ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5']
-"""Supported aspect ratios for image generation tools."""
+"""Supported aspect ratios for image generation tools.
+
+The direct image API takes the wider
+[`ImageGenerationAspectRatio`][pydantic_ai.images.ImageGenerationAspectRatio], of which these ten are a subset.
+"""
+
+ImageSize = Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K']
+"""Supported sizes for image generation tools."""
 
 ImageGenerationModelName = Literal['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'] | str
 """Known OpenAI image generation model names, or another OpenAI image model ID."""
 
 AdvisorModelName = (
     Literal[
+        'claude-fable-5-1',
         'claude-fable-5',
+        'claude-mythos-5-1',
         'claude-mythos-5',
+        'claude-opus-5-5',
         'claude-opus-5',
         'claude-opus-4-8',
         'claude-opus-4-7',
         'claude-opus-4-6',
+        'claude-sonnet-5-5',
         'claude-sonnet-4-6',
+        'claude-haiku-5-5',
     ]
     | str
 )
@@ -62,6 +75,7 @@ These are the models Anthropic currently accepts as the *advisor* — the strong
 executor consults mid-generation. The executor/advisor pairing is validated by the API, not here.
 The literals are Anthropic model IDs; on OpenRouter, pass a catalog slug string instead
 (e.g. `anthropic/claude-opus-4.8` or the `~anthropic/claude-opus-latest` alias).
+See [Anthropic's model compatibility list](https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool#model-compatibility).
 """
 
 
@@ -130,6 +144,9 @@ class WebSearchTool(AbstractNativeTool):
     """A native tool that allows your agent to search the web for information.
 
     The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
+    OpenRouter uses its Beta web-search server tool, which lets the model decide whether to search and how often.
+    It accepts the portable settings below, though their effect depends on OpenRouter's selected
+    search engine and downstream provider.
 
     Supported by:
 
@@ -158,6 +175,7 @@ class WebSearchTool(AbstractNativeTool):
     * Anthropic
     * OpenAI Responses
     * xAI, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
+    * OpenRouter, see <https://openrouter.ai/docs/guides/features/server-tools/web-search#configuration>
     """
 
     blocked_domains: list[str] | None = None
@@ -169,7 +187,9 @@ class WebSearchTool(AbstractNativeTool):
 
     * Anthropic, see <https://docs.anthropic.com/en/docs/build-with-claude/tool-use/web-search-tool#domain-filtering>
     * Groq, see <https://console.groq.com/docs/agentic-tooling#search-settings>
+    * OpenAI Responses, see <https://developers.openai.com/api/docs/guides/tools-web-search#domain-filtering>
     * xAI, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
+    * OpenRouter, see <https://openrouter.ai/docs/guides/features/server-tools/web-search#configuration>
     """
 
     allowed_domains: list[str] | None = None
@@ -183,14 +203,19 @@ class WebSearchTool(AbstractNativeTool):
     * Groq, see <https://console.groq.com/docs/agentic-tooling#search-settings>
     * OpenAI Responses, see <https://platform.openai.com/docs/guides/tools-web-search>
     * xAI, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
+    * OpenRouter, see <https://openrouter.ai/docs/guides/features/server-tools/web-search#configuration>
     """
 
     max_uses: int | None = None
     """If provided, the tool will stop searching the web after the given number of uses.
 
+    For OpenRouter, this limit is enforced with a non-native search engine or Anthropic's native
+    search. Other native providers ignore it.
+
     Supported by:
 
     * Anthropic
+    * OpenRouter
     """
 
     external_web_access: bool | None = None
@@ -218,6 +243,7 @@ class WebSearchUserLocation(TypedDict, total=False):
     * Anthropic
     * OpenAI Responses
     * xAI
+    * OpenRouter
     """
 
     city: str
@@ -242,7 +268,7 @@ class XSearchTool(AbstractNativeTool):
     See <https://docs.x.ai/developers/tools/x-search> for more details.
 
     When used via the [`XSearch`][pydantic_ai.capabilities.XSearch] capability with a
-    `fallback_model` set, this tool also works with non-xAI models by delegating to a
+    `fallback_subagent_model` set, this tool also works with non-xAI models by delegating to a
     subagent running the specified xAI model.
 
     Supported by:
@@ -511,7 +537,7 @@ class ImageGenerationTool(AbstractNativeTool):
     * OpenAI Responses
     """
 
-    size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None = None
+    size: ImageSize | None = None
     """The size of the generated image.
 
     * OpenAI Responses: 'auto' (default: model selects the size based on the prompt), '1024x1024', '1024x1536', '1536x1024'

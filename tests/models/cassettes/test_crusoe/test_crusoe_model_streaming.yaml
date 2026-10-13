@@ -1,0 +1,76 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '187'
+      content-type:
+      - application/json
+      host:
+      - api.inference.crusoecloud.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Count from 1 to 5, comma separated.
+        role: user
+      model: meta-llama/Llama-3.3-70B-Instruct
+      stream: true
+      stream_options:
+        include_usage: true
+    uri: https://api.inference.crusoecloud.com/v1/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"chatcmpl-bcfbe349402eb3d2","object":"chat.completion.chunk","created":1786479604,"model":"meta-llama/Llama-3.3-70B-Instruct","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"prompt_token_ids":null,"prompt_text":null}
+
+        data: {"id":"chatcmpl-bcfbe349402eb3d2","object":"chat.completion.chunk","created":1786479604,"model":"meta-llama/Llama-3.3-70B-Instruct","choices":[{"index":0,"delta":{"content":"1"},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+        data: {"id":"chatcmpl-bcfbe349402eb3d2","object":"chat.completion.chunk","created":1786479604,"model":"meta-llama/Llama-3.3-70B-Instruct","choices":[{"index":0,"delta":{"content":","},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+        data: {"id":"chatcmpl-bcfbe349402eb3d2","object":"chat.completion.chunk","created":1786479604,"model":"meta-llama/Llama-3.3-70B-Instruct","choices":[{"index":0,"delta":{"content":" "},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+        data: {"id":"chatcmpl-bcfbe349402eb3d2","object":"chat.completion.chunk","created":1786479604,"model":"meta-llama/Llama-3.3-70B-Instruct","choices":[{"index":0,"delta":{"content":"2"},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+        data: {"id":"chatcmpl-bcfbe349402eb3d2","object":"chat.completion.chunk","created":1786479604,"model":"meta-llama/Llama-3.3-70B-Instruct","choices":[{"index":0,"delta":{"content":","},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+        data: {"id":"chatcmpl-bcfbe349402eb3d2","object":"chat.completion.chunk","created":1786479604,"model":"meta-llama/Llama-3.3-70B-Instruct","choices":[{"index":0,"delta":{"content":" "},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+        data: {"id":"chatcmpl-bcfbe349402eb3d2","object":"chat.completion.chunk","created":1786479604,"model":"meta-llama/Llama-3.3-70B-Instruct","choices":[{"index":0,"delta":{"content":"3"},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+        data: {"id":"chatcmpl-bcfbe349402eb3d2","object":"chat.completion.chunk","created":1786479604,"model":"meta-llama/Llama-3.3-70B-Instruct","choices":[{"index":0,"delta":{"content":","},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+        data: {"id":"chatcmpl-bcfbe349402eb3d2","object":"chat.completion.chunk","created":1786479604,"model":"meta-llama/Llama-3.3-70B-Instruct","choices":[{"index":0,"delta":{"content":" "},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+        data: {"id":"chatcmpl-bcfbe349402eb3d2","object":"chat.completion.chunk","created":1786479604,"model":"meta-llama/Llama-3.3-70B-Instruct","choices":[{"index":0,"delta":{"content":"4"},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+        data: {"id":"chatcmpl-bcfbe349402eb3d2","object":"chat.completion.chunk","created":1786479604,"model":"meta-llama/Llama-3.3-70B-Instruct","choices":[{"index":0,"delta":{"content":","},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+        data: {"id":"chatcmpl-bcfbe349402eb3d2","object":"chat.completion.chunk","created":1786479604,"model":"meta-llama/Llama-3.3-70B-Instruct","choices":[{"index":0,"delta":{"content":" "},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+        data: {"id":"chatcmpl-bcfbe349402eb3d2","object":"chat.completion.chunk","created":1786479604,"model":"meta-llama/Llama-3.3-70B-Instruct","choices":[{"index":0,"delta":{"content":"5"},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+        data: {"id":"chatcmpl-bcfbe349402eb3d2","object":"chat.completion.chunk","created":1786479604,"model":"meta-llama/Llama-3.3-70B-Instruct","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop","stop_reason":null,"token_ids":null}]}
+
+        data: {"id":"chatcmpl-bcfbe349402eb3d2","object":"chat.completion.chunk","created":1786479604,"model":"meta-llama/Llama-3.3-70B-Instruct","choices":[],"usage":{"prompt_tokens":46,"total_tokens":60,"completion_tokens":14,"prompt_tokens_details":{"cached_tokens":0}},"system_fingerprint":"vllm-0.24.0-tp4-6d31f84d"}
+
+        data: [DONE]
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

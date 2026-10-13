@@ -1,339 +1,666 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '5637'
+      - "5617"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      cache_control:
-        ttl: 5m
-        type: ephemeral
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: 'Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
-            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
-            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
-            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
-            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
-            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
-            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
-            its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its
-            main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main
-            use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use
-            cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
-            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
-            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
-            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
-            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
-            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
-            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
-            its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its
-            main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main
-            use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use
-            cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
-            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
-            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
-            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
-            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
-            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
-            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
-            its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its
-            main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main
-            use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use
-            cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
-            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
-            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
-            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
-            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
-            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
-            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
-            its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its
-            main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main
-            use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use
-            cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
-            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
-            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
-            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
-            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
-            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
-            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
-            its main use cases. Please explain what Python is and its main use cases. '
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      system: You are a helpful assistant.
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases.
+            type: text
+        model: claude-sonnet-4-5
+        cache_control:
+          type: ephemeral
+          ttl: 5m
+        stream: true
+        system: You are a helpful assistant.
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '2081'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
-      server-timing:
-      - x-originResponse;dur=7107
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-4fdee70f35212872cee80062d7bef201-80a8f6fb01b52569-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - text: |-
-          # What is Python?
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY88eXE1SR7wxmqNGr97","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":3,"cache_creation_input_tokens":1111,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":1111,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}}
 
-          Python is a high-level, interpreted programming language created by Guido van Rossum and first released in 1991. It's designed with an emphasis on code readability and simplicity, using significant whitespace (indentation) to define code blocks.
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""} }
 
-          ## Key Characteristics:
-          - **Easy to learn and read** - Clean, English-like syntax
-          - **Interpreted** - Code runs without compilation
-          - **Dynamically typed** - No need to declare variable types
-          - **Multi-paradigm** - Supports procedural, object-oriented, and functional programming
-          - **Extensive libraries** - Vast ecosystem of packages and frameworks
+        event: ping
+        data: {"type": "ping"}
 
-          ## Main Use Cases:
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"#"}            }
 
-          ### 1. **Web Development**
-             - Frameworks: Django, Flask, FastAPI
-             - Backend services and APIs
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" What"}      }
 
-          ### 2. **Data Science & Analytics**
-             - Libraries: Pandas, NumPy, Matplotlib
-             - Data manipulation and visualization
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is Python?\n\n**"}              }
 
-          ### 3. **Machine Learning & AI**
-             - Libraries: TensorFlow, PyTorch, scikit-learn
-             - Model development and deployment
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Python** is a high"}             }
 
-          ### 4. **Automation & Scripting**
-             - Task automation
-             - System administration
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-level, interpreted programming language created by"}       }
 
-          ### 5. **Scientific Computing**
-             - Research and simulations
-             - Libraries: SciPy, SymPy
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Guido van Rossum and"}       }
 
-          ### 6. **Software Development**
-             - Prototyping
-             - Application development
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" first released in 1991. It"}          }
 
-          ### 7. **Cybersecurity**
-             - Penetration testing
-             - Security analysis tools
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s designed with"}  }
 
-          ### 8. **Game Development**
-             - Library: Pygame
-             - Prototyping game logic
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" an emphasis on code readability and simpl"}     }
 
-          Python's versatility and beginner-friendly nature make it one of the most popular programming languages today, used by companies like Google, Netflix, NASA, and Instagram.
-        type: text
-      id: msg_01UUPT9QdZnZSRzcQJkjG25U
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 1111
-        inference_geo: not_available
-        input_tokens: 3
-        output_tokens: 406
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"icity, using"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" significant"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" whitespace ("}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"indentation) to define code blocks."}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n## Key"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Characteristics:"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **Easy"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to learn"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" read"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" - Clean"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" English"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-like syntax\n- **Interpreted"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** - Code"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" runs"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" directly"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" without compilation\n- **Dynamically"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" typed** - No need to declare variable"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" types\n- **Multi"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-paradigm** - Supports proced"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ural, object-oriented, and functional"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" programming"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **Extensive"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" standard library** - \""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Batteries included\" philosophy"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n## Main Use Cases:\n\n### "}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"1. **Data"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Science &"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Machine Learning**\n- Data"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" analysis"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and visualization ("}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Pandas"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Matplotlib"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":")"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- Machine learning models"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ("}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"scikit-learn, TensorFlow"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" PyTorch)\n- Statistical computing"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n### 2. **Web Development**"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- Backend"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" web applications"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" (Django"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", Flask,"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" FastAPI)\n- RE"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"STful APIs and"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" microservices"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n### 3. **"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Automation & Scripting**\n-"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Task"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" automation"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- System administration\n- File"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" processing and"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" manipulation"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n### 4. **Scientific Computing"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**\n- Research"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and academia"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- Numerical computing (NumP"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"y, SciPy)"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- Sim"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ulations and modeling\n\n### 5."}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **Software"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Development**\n- Prot"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"otyping\n- Testing"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and quality"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" assurance\n- Desktop"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" applications ("} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Tkinter, PyQt)"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n### 6. **"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Artificial"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Intelligence**\n- Natural"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" language processing\n- Computer vision\n-"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Deep"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" learning applications"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n### 7. **Dev"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Ops & Cloud**\n- Infrastructure"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" automation"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- CI"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"/CD pipelines\n- Cloud service"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" management"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nPython"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s versat"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ility,"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" large"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" community"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", and rich"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ecosystem make it one"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of the most popular programming languages today"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"."}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":3,"cache_creation_input_tokens":1111,"cache_read_input_tokens":0,"output_tokens":408} }
+
+        event: message_stop
+        data: {"type":"message_stop"          }
+
+  recorded_at: 2026-09-29T17:27:29.001059+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '7409'
+      - "7445"
       content-type:
       - application/json
-      cookie:
-      - _cfuvid=C5t3XUEZEFy8GuwgjiLQFR5itH1z9IW4VIXv3ktJkR0-1774621758.8210778-1.0.1.1-7RHFAdyTyQQ6_7DL_iGE_O_MhCEvrxg_70RebHwK3Ac
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      cache_control:
-        ttl: 5m
-        type: ephemeral
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: 'Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
-            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
-            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
-            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
-            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
-            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
-            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
-            its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its
-            main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main
-            use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use
-            cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
-            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
-            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
-            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
-            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
-            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
-            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
-            its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its
-            main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main
-            use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use
-            cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
-            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
-            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
-            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
-            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
-            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
-            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
-            its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its
-            main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main
-            use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use
-            cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
-            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
-            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
-            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
-            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
-            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
-            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
-            its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its
-            main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main
-            use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use
-            cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
-            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
-            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
-            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
-            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
-            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
-            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
-            its main use cases. Please explain what Python is and its main use cases. '
-          type: text
-        role: user
-      - content:
-        - text: |-
-            # What is Python?
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases.
+            type: text
+        - role: assistant
+          content:
+          - text: |-
+              # What is Python?
 
-            Python is a high-level, interpreted programming language created by Guido van Rossum and first released in 1991. It's designed with an emphasis on code readability and simplicity, using significant whitespace (indentation) to define code blocks.
+              **Python** is a high-level, interpreted programming language created by Guido van Rossum and first released in 1991. It's designed with an emphasis on code readability and simplicity, using significant whitespace (indentation) to define code blocks.
 
-            ## Key Characteristics:
-            - **Easy to learn and read** - Clean, English-like syntax
-            - **Interpreted** - Code runs without compilation
-            - **Dynamically typed** - No need to declare variable types
-            - **Multi-paradigm** - Supports procedural, object-oriented, and functional programming
-            - **Extensive libraries** - Vast ecosystem of packages and frameworks
+              ## Key Characteristics:
+              - **Easy to learn and read** - Clean, English-like syntax
+              - **Interpreted** - Code runs directly without compilation
+              - **Dynamically typed** - No need to declare variable types
+              - **Multi-paradigm** - Supports procedural, object-oriented, and functional programming
+              - **Extensive standard library** - "Batteries included" philosophy
 
-            ## Main Use Cases:
+              ## Main Use Cases:
 
-            ### 1. **Web Development**
-               - Frameworks: Django, Flask, FastAPI
-               - Backend services and APIs
+              ### 1. **Data Science & Machine Learning**
+              - Data analysis and visualization (Pandas, Matplotlib)
+              - Machine learning models (scikit-learn, TensorFlow, PyTorch)
+              - Statistical computing
 
-            ### 2. **Data Science & Analytics**
-               - Libraries: Pandas, NumPy, Matplotlib
-               - Data manipulation and visualization
+              ### 2. **Web Development**
+              - Backend web applications (Django, Flask, FastAPI)
+              - RESTful APIs and microservices
 
-            ### 3. **Machine Learning & AI**
-               - Libraries: TensorFlow, PyTorch, scikit-learn
-               - Model development and deployment
+              ### 3. **Automation & Scripting**
+              - Task automation
+              - System administration
+              - File processing and manipulation
 
-            ### 4. **Automation & Scripting**
-               - Task automation
-               - System administration
+              ### 4. **Scientific Computing**
+              - Research and academia
+              - Numerical computing (NumPy, SciPy)
+              - Simulations and modeling
 
-            ### 5. **Scientific Computing**
-               - Research and simulations
-               - Libraries: SciPy, SymPy
+              ### 5. **Software Development**
+              - Prototyping
+              - Testing and quality assurance
+              - Desktop applications (Tkinter, PyQt)
 
-            ### 6. **Software Development**
-               - Prototyping
-               - Application development
+              ### 6. **Artificial Intelligence**
+              - Natural language processing
+              - Computer vision
+              - Deep learning applications
 
-            ### 7. **Cybersecurity**
-               - Penetration testing
-               - Security analysis tools
+              ### 7. **DevOps & Cloud**
+              - Infrastructure automation
+              - CI/CD pipelines
+              - Cloud service management
 
-            ### 8. **Game Development**
-               - Library: Pygame
-               - Prototyping game logic
-
-            Python's versatility and beginner-friendly nature make it one of the most popular programming languages today, used by companies like Google, Netflix, NASA, and Instagram.
-          type: text
-        role: assistant
-      - content:
-        - text: Can you summarize that in one sentence?
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      system: You are a helpful assistant.
-    uri: https://api.anthropic.com/v1/messages?beta=true
+              Python's versatility, large community, and rich ecosystem make it one of the most popular programming languages today.
+            type: text
+        - role: user
+          content:
+          - text: Can you summarize that in one sentence?
+            type: text
+        model: claude-sonnet-4-5
+        cache_control:
+          type: ephemeral
+          ttl: 5m
+        stream: true
+        system: You are a helpful assistant.
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '642'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
-      server-timing:
-      - x-originResponse;dur=979
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-b08f8ae9ae78f64aa3d1849e4fbf1d83-28d461765d2c6c5d-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - text: Python is a beginner-friendly, versatile programming language widely used for web development, data science,
-          machine learning, automation, and scientific computing.
-        type: text
-      id: msg_01KPaKTJSqAKoZri7Ujrny58
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 418
-        cache_creation_input_tokens: 418
-        cache_read_input_tokens: 1111
-        inference_geo: not_available
-        input_tokens: 3
-        output_tokens: 33
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY89B5kookNbqGp8B3kS","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":3,"cache_creation_input_tokens":420,"cache_read_input_tokens":1111,"cache_creation":{"ephemeral_5m_input_tokens":420,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Python"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is a beg"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"inner-friendly,"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" versat"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ile programming language widely"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" used for web development, data science,"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" machine"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" learning, automation"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", and scientific computing."}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":3,"cache_creation_input_tokens":420,"cache_read_input_tokens":1111,"output_tokens":33}        }
+
+        event: message_stop
+        data: {"type":"message_stop"       }
+
+  recorded_at: 2026-09-29T17:27:30.535108+00:00

@@ -1,6 +1,5 @@
 import re
 
-import httpx
 import pytest
 from pytest_mock import MockerFixture
 
@@ -35,7 +34,6 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
-    pytest.mark.anyio,
 ]
 
 
@@ -100,12 +98,6 @@ def test_openrouter_provider_need_api_key(env: TestEnv) -> None:
         ),
     ):
         OpenRouterProvider()
-
-
-def test_openrouter_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = OpenRouterProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 
 
 def test_openrouter_pass_openai_client() -> None:
@@ -308,7 +300,7 @@ def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: s
     provider = OpenRouterProvider(api_key='api-key')
     profile = provider.model_profile(model_name)
     assert profile is not None
-    assert profile.get('openrouter_supports_forced_tool_choice_with_thinking') is expected
+    assert profile.get('supports_forced_tool_choice_with_thinking') is expected
 
 
 def test_openrouter_model_profile_requires_provider_prefix() -> None:

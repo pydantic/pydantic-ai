@@ -1,23 +1,28 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Sequence
-from typing import cast
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
+import httpx
+import httpx2
 import pytest
+
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from google.auth import crypt
     from google.auth.credentials import AnonymousCredentials
-    from google.genai.types import HttpRetryOptions
+    from google.genai import Client
+    from google.genai.types import HttpOptions, HttpRetryOptions
     from google.oauth2 import service_account
 
     from pydantic_ai.exceptions import UserError
     from pydantic_ai.models import infer_model
     from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google import BaseGoogleProvider, GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
     class FakeSigner(crypt.Signer):
@@ -39,6 +44,10 @@ with try_import() as imports_successful:
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
 
+if TYPE_CHECKING:
+    GoogleProviderFactory = Callable[[httpx.AsyncClient | httpx2.AsyncClient | None], BaseGoogleProvider]
+
+
 # `retry_options` only changes behavior on transient 429/5xx responses, which a recorded cassette
 # can't reliably reproduce, so these unit tests assert the resolved HTTP config directly via the
 # SDK's `get_read_only_http_options()` accessor rather than running an agent against a cassette.
@@ -54,7 +63,21 @@ def test_google_provider_without_api_key_raises_error(env: TestEnv):
             r" to use the Gemini API\. To try Pydantic AI without an API key, use the built-in test model: `Agent\('test'\)`\."
         ),
     ):
-        GoogleProvider()  # pyright: ignore[reportCallIssue]  # deliberately no api_key, to test the missing-key error
+        GoogleProvider()
+
+
+@pytest.mark.parametrize('api_key_env_var', ['GOOGLE_API_KEY', 'GEMINI_API_KEY'])
+def test_google_provider_api_key_from_env(env: TestEnv, api_key_env_var: str):
+    """The current and legacy environment API keys both authenticate the Gemini API.
+
+    This is a unit test because authentication happens before any request a cassette could record.
+    """
+    for name in {'GOOGLE_API_KEY', 'GEMINI_API_KEY'} - {api_key_env_var}:
+        env.remove(name)
+    env.set(api_key_env_var, 'your-api-key')
+
+    provider = GoogleProvider()
+    assert provider.client._api_client.api_key == 'your-api-key'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_google_provider_retry_options(env: TestEnv):
@@ -89,6 +112,87 @@ def test_google_cloud_provider_no_retry_options():
     provider = GoogleCloudProvider(project='pydantic-ai', location='us-central1')
     opts = provider.client._api_client.get_read_only_http_options()  # pyright: ignore[reportPrivateUsage]
     assert opts['retry_options'] is None
+
+
+def _google_provider(http_client: httpx.AsyncClient | httpx2.AsyncClient | None = None) -> BaseGoogleProvider:
+    return GoogleProvider(api_key='test-key', http_client=http_client)
+
+
+def _google_cloud_provider(http_client: httpx.AsyncClient | httpx2.AsyncClient | None = None) -> BaseGoogleProvider:
+    return GoogleCloudProvider(api_key='test-key', http_client=http_client)
+
+
+@pytest.fixture(params=[_google_provider, _google_cloud_provider], ids=['google', 'google-cloud'])
+def provider_factory(request: pytest.FixtureRequest) -> GoogleProviderFactory:
+    return request.param
+
+
+async def test_google_provider_owned_httpx2_client_lifecycle(provider_factory: GoogleProviderFactory) -> None:
+    provider = provider_factory(None)
+    first_client = provider.client._api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(first_client, httpx2.AsyncClient)
+
+    async with provider:
+        assert not first_client.is_closed
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider.client._api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(second_client, httpx2.AsyncClient)
+        assert second_client is not first_client
+        assert not second_client.is_closed
+    assert second_client.is_closed
+
+
+async def test_google_provider_preserves_caller_owned_httpx2_client(provider_factory: GoogleProviderFactory) -> None:
+    async with httpx2.AsyncClient() as http_client:
+        provider = provider_factory(http_client)
+        assert provider.client._api_client._async_httpx_client is http_client  # pyright: ignore[reportPrivateUsage]
+
+        async with provider:
+            pass
+        assert not http_client.is_closed
+
+
+async def test_google_provider_deprecates_caller_owned_httpx_client(provider_factory: GoogleProviderFactory) -> None:
+    async with httpx.AsyncClient() as http_client:
+        with pytest.warns(
+            PydanticAIDeprecationWarning,
+            match=r'`httpx\.AsyncClient`.*removed in v3.*`httpx2\.AsyncClient`',
+        ) as warnings:
+            provider = provider_factory(http_client)
+
+        assert warnings[0].filename == __file__
+        assert provider.client._api_client._async_httpx_client is http_client  # pyright: ignore[reportPrivateUsage]
+        async with provider:
+            pass
+        assert not http_client.is_closed
+
+
+def _google_provider_from_client(client: Client) -> BaseGoogleProvider:
+    return GoogleProvider(client=client)
+
+
+def _google_cloud_provider_from_client(client: Client) -> BaseGoogleProvider:
+    return GoogleCloudProvider(client=client)
+
+
+@pytest.mark.parametrize(
+    'provider_factory',
+    [_google_provider_from_client, _google_cloud_provider_from_client],
+    ids=['google', 'google-cloud'],
+)
+async def test_google_provider_preserves_caller_owned_sdk_client(
+    provider_factory: Callable[[Client], BaseGoogleProvider],
+) -> None:
+    async with httpx2.AsyncClient() as http_client:
+        client = Client(api_key='test-key', http_options=HttpOptions(httpx_async_client=http_client))
+        provider = provider_factory(client)
+
+        assert provider.client is client
+        async with provider:
+            pass
+        assert not http_client.is_closed
 
 
 def test_google_cloud_provider_scopes_credentials():
