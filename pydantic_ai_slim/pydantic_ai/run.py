@@ -1,15 +1,18 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from copy import deepcopy
+from copy import copy, deepcopy
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
+from functools import cache
+from typing import TYPE_CHECKING, Any, Generic, Literal, NotRequired, Required, cast, overload
 
-from pydantic import model_serializer, model_validator
+import anyio
+from pydantic import ConfigDict, GetJsonSchemaHandler, TypeAdapter, model_serializer, model_validator, with_config
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_graph import BaseNode, End, EndMarker, ErrorMarker, GraphRun, GraphRunContext, GraphTaskRequest, JoinItem
 from pydantic_graph.step import NodeStep
@@ -23,17 +26,27 @@ from . import (
 )
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
-from ._run_context import CustomEventT
+from ._run_context import (
+    CustomEventT,
+    no_workspace,
+)
 from .capabilities._pending_messages import drain_pending_messages_at_end
+from .conversation import Conversation
 from .output import OutputDataT
-from .tools import AgentDepsT
+from .tools import AgentDepsT, DeferredToolRequests
 
 if TYPE_CHECKING:
     from ._run_context import RunContext
     from .result import FinalResult
+    from .workspaces import Workspace
 
 
+@with_config(ConfigDict(title='AgentRunResult'))
 class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
+    """The final result of an agent run."""
+
+    # The serialized shape. Its title and docstring are what the published serialization JSON schema
+    # shows, so they name the public class rather than this one.
     output: NotRequired[OutputDataT]
     messages: list[_messages.ModelMessage]
     new_message_index: NotRequired[int]
@@ -43,6 +56,54 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     conversation_id: NotRequired[str]
     metadata: NotRequired[dict[str, Any] | None]
     traceparent: NotRequired[str | None]
+
+
+@with_config(ConfigDict(title='AgentRunResult'))
+class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
+    """The final result of an agent run."""
+
+    # The shape `AgentRunResult` validates, as its published validation JSON schema describes it: the
+    # serialized shape with only `output` required, since `_validate_serialized` fills in a default for
+    # every other key. The legacy private-field shape it also accepts is deliberately not described,
+    # so nothing new is built against it. Title and docstring are what the published schema shows.
+    output: Required[OutputDataT]
+    messages: list[_messages.ModelMessage]
+    new_message_index: int
+    output_tool_name: str | None
+    usage: _usage.RunUsage
+    run_id: str
+    conversation_id: str
+    metadata: dict[str, Any] | None
+    traceparent: str | None
+
+
+@cache
+def _input_core_schema() -> CoreSchema:
+    """The core schema of `_AgentRunResultInput`, with `output` left as `Any` for each caller to fill in."""
+    return TypeAdapter(_AgentRunResultInput[Any]).core_schema
+
+
+def _with_output_schema(schema: CoreSchema, output_schema: CoreSchema) -> CoreSchema:
+    """Return a copy of the `_AgentRunResultInput` schema whose `output` field validates as `output_schema`."""
+    schema = deepcopy(schema)
+    typed_dict = schema
+    while typed_dict['type'] != 'typed-dict':
+        # Wrapped in `definitions` when any field's type is recursive, as a message history is.
+        typed_dict = cast('CoreSchema', typed_dict['schema'])  # pyright: ignore[reportGeneralTypeIssues,reportTypedDictNotRequiredAccess]
+    # Each parameterization has its own `output`, so it can't share one definition: published under
+    # this schema's own ref, `AgentRunResult[str]` and `AgentRunResult[City]` in one API would both
+    # point at whichever was generated first. Without it, the shape is inlined into the definition of
+    # the `AgentRunResult[...]` it belongs to.
+    typed_dict.pop('ref', None)
+    typed_dict['fields']['output']['schema'] = output_schema
+    return schema
+
+
+def _output_field_schema(schema: CoreSchema) -> CoreSchema:
+    """Find the schema of the dataclass's `output` field, resolved for this parameterization."""
+    while schema['type'] != 'dataclass-args':
+        schema = cast('CoreSchema', schema['schema'])  # pyright: ignore[reportGeneralTypeIssues,reportTypedDictNotRequiredAccess]
+    return next(field['schema'] for field in schema['fields'] if field['name'] == 'output')
 
 
 _STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'metadata')
@@ -165,6 +226,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             End(data=FinalResult(output='The capital of France is Paris.')),
         ]
         '''
+        assert agent_run.result is not None
         print(agent_run.result.output)
         #> The capital of France is Paris.
     ```
@@ -225,18 +287,22 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Once the run returns an [`End`][pydantic_graph.basenode.End] node, `result` is populated
         with an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult].
         """
-        if self._result_override is not None:
-            return self._result_override
-        graph_run_output = self._graph_run.output
-        if graph_run_output is None:
-            return None
-        return AgentRunResult(
-            graph_run_output.output,
-            graph_run_output.tool_name,
-            self._graph_run.state,
-            self._graph_run.deps.new_message_index,
-            self._traceparent(required=False),
-        )
+        result = self._result_override
+        if result is None:
+            graph_run_output = self._graph_run.output
+            if graph_run_output is None:
+                return None
+            result = AgentRunResult(
+                graph_run_output.output,
+                graph_run_output.tool_name,
+                self._graph_run.state,
+                self._graph_run.deps.new_message_index,
+                self._traceparent(required=False),
+            )
+        # Not a dataclass field: Temporal serializes a result's dataclass fields, and a live workspace can't be.
+        # Always this run's: a result an `after_run` hook returns may come from another run.
+        result.__dict__['_workspace'] = self._graph_run.deps.workspace
+        return result
 
     def all_messages(self) -> list[_messages.ModelMessage]:
         """Return all messages for the run so far.
@@ -298,10 +364,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             # Honor a first-party cancellation (`cancel()` on this run, possibly from the caller's
             # previous loop body) before yielding another node the caller would go on to run. The
             # first node is yielded before it runs, so unlike `self.next(previous)` this boundary
-            # has no awaited step to carry the pending `task.cancel()`: yield to the event loop so
+            # has no awaited step to carry the pending `task.cancel()`: yield to the scheduler so
             # it's delivered here on every Python version (`raise_if_cancelling` only re-asserts on
             # 3.11+, and neither path awaits).
-            await asyncio.sleep(0)
+            await anyio.lowlevel.checkpoint()
         _utils.raise_if_cancelling()
 
         if previous is None:
@@ -347,8 +413,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """Synchronize the graph runner's state to match a hook-modified result.
 
         After a capability hook changes the result (e.g. `on_node_run_error` recovering,
-        or `after_node_run` converting End↔node), the graph runner's internal `_next` must
-        be updated so that `output` and `next_node` reflect the hook's decision.
+        `after_node_run` converting `End` ↔ node, or `wrap_node_run` replacing the handler result),
+        the graph runner's internal `_next` must be updated so that `output` and `next_node`
+        reflect the hook's decision.
         """
         if isinstance(result, End):
             self._graph_run.override_next(EndMarker(result.data))
@@ -372,6 +439,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 ] = node
                 if _agent_graph.is_agent_node(base_node):  # pragma: no branch
                     return base_node
+        # Defensive fallback, like the two guarded branches above: reached only if a wrapper
+        # returns a *node* while the graph holds an `EndMarker`/`ErrorMarker` or an unrecognised
+        # shape — no streamed node's handler can produce that state in the current lifecycle.
         return None
 
     def _graph_reflects(self, result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]) -> bool:
@@ -398,7 +468,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             pass
         return self._task_to_node(task)
 
-    async def _wrap_and_advance(
+    async def _wrap_and_advance_streaming(
         self,
         run_context: RunContext[AgentDepsT],
         node: _agent_graph.AgentNode[AgentDepsT, Any],
@@ -407,11 +477,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-        """Execute `wrap_node_run(step_fn)` → `on_node_run_error` → `after_node_run`.
+        """Run the post-stream portion of the node lifecycle.
 
-        This is the portion of the hook lifecycle after `before_node_run` has already fired.
-        Used by both `_run_node_with_hooks` and directly by `run_stream()` which calls
-        `before_node_run` separately (before streaming).
+        This is the documented `run_stream()` exception to wrap-outermost ordering:
+        `before_node_run` has already fired before streaming, so `wrap_node_run` encloses only
+        graph advancement, followed by `on_node_run_error` recovery and `after_node_run`.
         """
         self.ctx.deps.cancellation.bind()
         cap = self.ctx.deps.root_capability
@@ -457,10 +527,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-        """Run a node through the full capability hook lifecycle with a custom step function.
+        """Run the complete node lifecycle inside `wrap_node_run`.
 
-        Fires hooks in order: `before_node_run` → `wrap_node_run(step_fn)` → `after_node_run`,
-        with `on_node_run_error` handling exceptions from `wrap_node_run`.
+        The wrapped handler runs `before_node_run`, the step with `on_node_run_error` recovery,
+        and `after_node_run`.
         """
         # Bind before `before_node_run` awaits: when the run is driven from a different task than
         # the previous step (manual `next()` from another task), the controller must target this
@@ -469,11 +539,42 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self.ctx.deps.cancellation.bind()
         run_context = _agent_graph.build_run_context(self.ctx)
         cap = self.ctx.deps.root_capability
-        node = await cap.before_node_run(run_context, node=node)
-        # A `before_node_run` hook that absorbed an external cancellation must not
-        # let the node itself start.
-        _utils.raise_if_cancelling()
-        return await self._wrap_and_advance(run_context, node, step_fn)
+
+        async def lifecycle(
+            lifecycle_node: _agent_graph.AgentNode[AgentDepsT, Any],
+        ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+            lifecycle_node = await cap.before_node_run(run_context, node=lifecycle_node)
+            # A `before_node_run` hook that absorbed an external cancellation must not
+            # let the node itself start.
+            _utils.raise_if_cancelling()
+            try:
+                result = await step_fn(lifecycle_node)
+            except Exception as e:
+                if not cap._has_on_node_run_error:  # pyright: ignore[reportPrivateUsage]
+                    raise
+                result = await cap.on_node_run_error(run_context, node=lifecycle_node, error=e)
+                # The graph runner is in `ErrorMarker` state; update it to match the recovery.
+                self._sync_graph_state(result)
+            # If the step or recovery absorbed an external cancellation, re-assert it before
+            # `after_node_run` fires; the step's messages are already recorded.
+            _utils.raise_if_cancelling()
+            pre_hook_result = result
+            result = await cap.after_node_run(run_context, node=lifecycle_node, result=result)
+            if result is not pre_hook_result:
+                self._sync_graph_state(result)
+            _utils.raise_if_cancelling()
+            return result
+
+        if cap._has_wrap_node_run:  # pyright: ignore[reportPrivateUsage]
+            result = await cap.wrap_node_run(run_context, node=node, handler=lifecycle)
+        else:
+            result = await lifecycle(node)
+        # After every capability hook, `wrap_node_run` included, so a message a hook enqueued while
+        # the run was ending still gets its turn instead of being lost.
+        result = drain_pending_messages_at_end(run_context, result)
+        if not self._graph_reflects(result):
+            self._sync_graph_state(result)
+        return result
 
     async def next(
         self,
@@ -538,6 +639,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     End(data=FinalResult(output='The capital of France is Paris.')),
                 ]
                 '''
+                assert agent_run.result is not None
                 print('Final result:', agent_run.result.output)
                 #> Final result: The capital of France is Paris.
         ```
@@ -722,6 +824,37 @@ class AgentRunResult(Generic[OutputDataT]):
     _new_message_index: int = dataclasses.field(repr=False, compare=False, default=0)
     _traceparent_value: str | None = dataclasses.field(repr=False, compare=False, default=None)
 
+    @property
+    def workspace(self) -> Workspace:
+        """The [`Workspace`][pydantic_ai.workspaces.Workspace] the run used, still usable after it.
+
+        Pass it as `workspace=` to continue in it. A result not produced by a run has a placeholder.
+        """
+        # Set by `AgentRun.result`; see there.
+        workspace = self.__dict__.get('_workspace')
+        return workspace if workspace is not None else no_workspace()
+
+    def __getstate__(self) -> dict[str, Any]:
+        # DBOS pickles workflow results. The live workspace can hold secrets (`LocalWorkspace(env=)`) and
+        # means nothing in another process; its ref stays in the messages' `workspace_ref`.
+        state = self.__dict__.copy()
+        state.pop('_workspace', None)
+        return state
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Publish the shape `_validate_serialized` accepts, not the private dataclass fields.
+
+        The validator replaces the dataclass fields with the public ones, but the JSON schema is
+        generated from the dataclass, so without this an `AgentRunResult` in an API request model
+        advertises `_state` and everything it references. `__get_pydantic_core_schema__` isn't
+        called for a parameterized generic dataclass, so the schema can't be replaced at the core
+        level; this hook is called for both forms, with `output` already resolved.
+        """
+        if handler.mode != 'validation':
+            return handler(core_schema)
+        return handler(_with_output_schema(_input_core_schema(), _output_field_schema(core_schema)))
+
     @model_validator(mode='before')
     @classmethod
     def _validate_serialized(cls, value: Any) -> Any:
@@ -902,6 +1035,31 @@ class AgentRunResult(Generic[OutputDataT]):
     def usage(self) -> _usage.RunUsage:
         """Return the usage of the whole run."""
         return self._state.usage
+
+    @property
+    def conversation(self) -> Conversation:
+        """This run's [`Conversation`][pydantic_ai.conversation.Conversation], ready to carry into the next one.
+
+        Bundles the messages, usage and conversation ID that a following run — text, streamed, or
+        realtime — needs, so none of them is dropped on the way, and, when this run paused with
+        [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] as its output, the requests
+        it is waiting on. The messages list and the usage are copies, so the returned conversation
+        can be stored, carried into another run, and mutated without touching this result's own
+        accounting.
+        """
+        output = self.output
+        return Conversation(
+            messages=list(self.all_messages()),
+            usage=copy(self.usage),
+            conversation_id=self.conversation_id,
+            deferred_tool_requests=(
+                DeferredToolRequests(
+                    calls=list(output.calls), approvals=list(output.approvals), metadata=dict(output.metadata)
+                )
+                if isinstance(output, DeferredToolRequests)
+                else None
+            ),
+        )
 
     @property
     def timestamp(self) -> datetime:

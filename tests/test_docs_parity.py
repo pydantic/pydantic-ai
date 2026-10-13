@@ -13,8 +13,8 @@ ROOT = Path(__file__).parent.parent
 # Each marker identifies one example that must stay code-identical between the
 # docs index and the README (comments and annotation markers excluded).
 MIRRORED_EXAMPLE_MARKERS = [
-    "Advisor('openai:gpt-5.6-sol')",
-    'ClearToolResults(), WarnNearLimits(), ToolOutputLimits()',
+    "Advisor('openai:gpt-6-sol')",
+    'ClearToolResults(), ToolOutputLimits(), RepairToolArguments()',
     'class Sentiment(BaseModel):',
     'class ResearchWorkflow(PydanticAIWorkflow):',
     "ImageGenerator('openai:gpt-image-2')",

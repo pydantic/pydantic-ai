@@ -14,7 +14,7 @@ from pydantic_core import SchemaSerializer, core_schema
 
 from . import _utils
 from ._genai_prices import iter_provider_references
-from ._warnings import CostNotFoundWarning
+from ._warnings import CostNotFoundWarning, UsageExtractionFailedWarning
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
@@ -120,6 +120,15 @@ class UsageBase:
     """Number of audio tokens read from the cache. Included in `cache_read_tokens` and `input_audio_tokens`."""
     output_audio_tokens: int = 0
     """Number of audio output tokens. Included in `output_tokens`."""
+
+    audio_seconds: float = 0
+    """Seconds of audio billed, for models priced by duration rather than by token.
+
+    Some realtime models (xAI's Grok Voice, for instance) have no token prices at all and bill per
+    second of audio, so their token counts price to zero. Reporting the duration here is what makes such a
+    call priceable, and is why this is a field rather than a `details` entry: `details` is deliberately
+    not priced, and is typed `dict[str, int]` while these durations are fractional.
+    """
 
     details: Annotated[
         dict[str, int],
@@ -280,6 +289,11 @@ class RequestUsage(UsageBase):
 
     @property
     def requests(self):
+        """Always `1`, as this is the usage of a single request, which is how genai-prices prices it.
+
+        Adding a `RequestUsage` to a [`RunUsage`][pydantic_ai.usage.RunUsage] doesn't change
+        [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests], which counts the model responses the agent acted on.
+        """
         return 1
 
     def incr(self, incr_usage: RequestUsage) -> None:
@@ -326,15 +340,30 @@ class RequestUsage(UsageBase):
             details: Becomes the `details` field on the returned `RequestUsage` for convenience.
         """
         details = details or {}
+        extraction_error: Exception | None = None
         for provider_id, provider_api_url in iter_provider_references(
             provider_api_url=provider_url, provider_id=provider, provider_fallback=provider_fallback
         ):
             try:
                 provider_obj = get_snapshot().find_provider(None, provider_id, provider_api_url)
+            except LookupError:
+                continue
+            except Exception as e:
+                extraction_error = e
+                continue
+
+            try:
                 _model_ref, extracted_usage = provider_obj.extract_usage(data, api_flavor=api_flavor)
                 return cls(**{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details)
-            except Exception:
-                pass
+            except Exception as e:
+                extraction_error = e
+
+        if extraction_error is not None:
+            warnings.warn(
+                f'Failed to extract usage with `genai-prices`: {type(extraction_error).__name__}: {extraction_error}',
+                UsageExtractionFailedWarning,
+                stacklevel=2,
+            )
         return cls(details=details)
 
 
@@ -346,7 +375,16 @@ class RunUsage(UsageBase):
     """
 
     requests: int = 0
-    """Number of requests made to the LLM API."""
+    """Number of model responses the agent acted on, one per step of the agent loop.
+
+    This is what [`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit] bounds. It can be
+    lower than the number of requests sent to the provider: attempts a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] moved on from, the continuation requests that
+    complete a suspended response, and retries made by the provider SDK or HTTP transport aren't counted.
+    The tokens and cost of a response a `FallbackModel` rejected, and of continuation requests, are still added
+    to this usage. The attempts before a response are listed in its
+    [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts].
+    """
 
     tool_calls: int = 0
     """Number of successful tool calls executed during the run."""
@@ -413,6 +451,7 @@ class RunUsage(UsageBase):
             input_audio_tokens=self.input_audio_tokens - other.input_audio_tokens,
             cache_audio_read_tokens=self.cache_audio_read_tokens - other.cache_audio_read_tokens,
             output_audio_tokens=self.output_audio_tokens - other.output_audio_tokens,
+            audio_seconds=self.audio_seconds - other.audio_seconds,
             details=details,
             cost=self.cost - (other.cost or 0) if self.cost is not None and self.cost != other.cost else None,
         )
@@ -446,8 +485,8 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
 class UsageLimits:
     """Limits on model usage.
 
-    The request count is tracked by pydantic_ai, and the request limit is checked before each request to the model.
-    Token counts are provided in responses from the model, and the token limits are checked after each response.
+    The request count is tracked by Pydantic AI, and the request limit is checked at the start of each step of the
+    agent loop. Token counts are provided in responses from the model, and the token limits are checked after each response.
 
     Each of the limits can be set to `None` to disable that limit.
     """
@@ -455,7 +494,14 @@ class UsageLimits:
     cost_limit: Decimal | None = None
     """The maximum cost allowed in USD."""
     request_limit: int | None = 50
-    """The maximum number of requests allowed to the model."""
+    """The maximum number of model responses the agent acts on, as counted by [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests].
+
+    This bounds the number of turns of the agent loop, not the number of requests sent to the provider: attempts a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] moved on from, continuation requests, and
+    provider SDK or HTTP transport retries aren't counted. The tokens and cost of a response a `FallbackModel`
+    rejected, and of continuation requests, do count towards the token and cost limits. It's checked at the start
+    of each step, including a step answered without a request to the model.
+    """
     tool_calls_limit: int | None = None
     """The maximum number of successful tool calls allowed to be executed."""
     input_tokens_limit: int | None = None

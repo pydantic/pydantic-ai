@@ -1,3 +1,7 @@
+---
+description: "Chat with LLMs from your terminal using clai, the Pydantic AI command line interface, or serve your own Pydantic AI agents in a browser chat UI."
+---
+
 # Command Line Interface (CLI)
 
 **Pydantic AI** comes with a CLI, `clai` (pronounced "clay"). You can use it to chat with various LLMs and quickly get answers, right from the command line, or spin up a uvicorn server to chat with your Pydantic AI agents from your browser.

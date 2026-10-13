@@ -1,3 +1,7 @@
+---
+description: "Stream PCM microphone audio, text and images into a Pydantic AI realtime session, play back the spoken reply, and show live captions and input transcription."
+---
+
 # Audio, images, and transcripts
 
 A realtime session accepts live audio, text, and supported images while exposing separate views for
@@ -10,7 +14,11 @@ You send and receive raw audio samples; there is no container or codec in the li
 [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] accepts raw, signed 16-bit
 little-endian mono PCM — a single chunk, or an async iterable of chunks (a microphone stream, a
 WebSocket receive loop) that it forwards until the iterable ends, so a whole capture loop can be
-one task. [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
+one task. If the session is closed while consuming the iterable, that task returns cleanly as soon
+as the source yields again, without sending that chunk. Cancel the task in application code if the
+source can stall indefinitely. Sending a single chunk after close still raises
+[`UserError`][pydantic_ai.exceptions.UserError].
+[`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
 returns the same format. Capture at
 [`session.audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
 and play at
@@ -67,8 +75,11 @@ async def main():
     await asyncio.gather(audio_task, transcript_task)
 ```
 
-Each view is independently bounded; a slow consumer drops its oldest item rather than stalling
-tools, turn tracking, or other consumers.
+Each view is independently bounded; a consumer that falls too far behind drops its oldest item rather
+than stalling tools, turn tracking, or other consumers. Models generate speech several times faster
+than it plays, so a `stream_audio()` view buffers up to five minutes of audio: a speaker-paced loop
+like `play_audio` above receives a long reply in full, well before it finishes playing it. A
+`stream_transcripts()` view buffers up to 512 items.
 A subscription begins when `stream_audio()` or `stream_transcripts()` is called, so a view handed to
 a task with `asyncio.create_task` misses nothing while it waits for its first turn on the event loop,
 up to its buffer bound. Call the method where the task is created and pass the iterator in, as
@@ -159,9 +170,15 @@ bound local history; they do not change which frames the provider receives. See
 [Retaining images](history.md#retaining-images). Gemini-specific live-video settings belong on the
 [Gemini provider page](gemini.md#settings).
 
+A model whose profile reports
+[`image_input_requires_response`][pydantic_ai.realtime.RealtimeModelProfile.image_input_requires_response]
+takes an image only with `respond=True`, and a context-only image raises. OpenAI GPT-Live works this way,
+because only its delegated backend sees images; see [Images go to the backend](openai.md#images-go-to-the-backend).
+
 ## Edge cases
 
-- Audio and transcript iterators deliberately drop old buffered items when consumers fall behind.
+- Audio and transcript iterators deliberately drop old buffered items when consumers fall behind
+  their bound (five minutes of audio, or 512 transcript items).
   [Logfire attributes](observability.md#logfire-instrumentation) report those drops.
 - Session failures have different propagation paths when only these views are consumed; see
   [Errors](lifecycle.md#errors).

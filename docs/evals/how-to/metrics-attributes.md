@@ -1,3 +1,7 @@
+---
+description: "Track tokens, cost, API calls and custom metrics per case in Pydantic Evals, check them in evaluators, and tag experiments with model and prompt metadata."
+---
+
 # Metrics & Attributes
 
 Track custom metrics and attributes during task execution for richer evaluation insights.
@@ -307,7 +311,7 @@ def call_api(ctx: RunContext, endpoint: str) -> str:
 # Evaluate tool usage
 @dataclass
 class ToolUsageEvaluator(Evaluator):
-    def evaluate(self, ctx: EvaluatorContext) -> dict[str, bool | int]:
+    def evaluate(self, ctx: EvaluatorContext) -> dict[str, bool | float]:
         db_searches = ctx.metrics.get('db_searches', 0)
         api_calls = ctx.metrics.get('api_calls', 0)
 

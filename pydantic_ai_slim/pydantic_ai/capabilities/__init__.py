@@ -35,6 +35,7 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
+from .caching import Caching
 from .capability import Capability
 from .combined import CombinedCapability
 from .content_filter import RaiseContentFilterError
@@ -45,6 +46,7 @@ from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
 from .instrumentation import Instrumentation
+from .local_workspace import LocalWorkspace
 from .mcp import MCP
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
@@ -76,11 +78,13 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         NativeTool,
+        Caching,
         RaiseContentFilterError,
         FileUnderstanding,
         ImageGeneration,
         IncludeToolReturnSchemas,
         Instrumentation,
+        LocalWorkspace,
         MCP,
         PrefixTools,
         PrepareTools,
@@ -129,12 +133,14 @@ __all__ = [
     'on_event',
     'NativeOrLocalTool',
     'RaiseContentFilterError',
+    'Caching',
     'Capability',
     'CAPABILITY_TYPES',
     'FileUnderstanding',
     'ImageGeneration',
     'Instrumentation',
     'IncludeToolReturnSchemas',
+    'LocalWorkspace',
     'MCP',
     'PrefixTools',
     'PrepareOutputTools',

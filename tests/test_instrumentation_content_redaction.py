@@ -18,17 +18,21 @@ from a user, and is expected to appear on spans; content in there is the caller'
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
+from opentelemetry.context import Context
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
-from pydantic_ai._instrumentation import ContentPolicy, include_content_ctx, span_include_content
+from pydantic_ai._instrumentation import ContentPolicy, include_content_ctx, open_request_policy, span_include_content
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput
 from pydantic_ai.tools import Tool
 
@@ -42,7 +46,6 @@ with try_import() as otel_sdk_installed:
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed'),
 ]
 
@@ -91,6 +94,22 @@ def redacted_setup(include_content: bool = False) -> tuple[InstrumentationSettin
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     return InstrumentationSettings(include_content=include_content, tracer_provider=provider), exporter
+
+
+async def test_workspace_identity_is_recorded_without_content(tmp_path: Path) -> None:
+    settings, exporter = redacted_setup(include_content=False)
+    agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path), Instrumentation(settings=settings)])
+    await agent.run('go')
+    run_spans = [
+        span
+        for span in exporter.get_finished_spans()
+        if span.attributes and span.attributes.get('gen_ai.operation.name') == 'invoke_agent'
+    ]
+    assert len(run_spans) == 1
+    attributes = run_spans[0].attributes
+    assert attributes is not None
+    assert attributes['pydantic_ai.workspace.provider'] == 'local'
+    assert attributes['pydantic_ai.workspace.id'] == str(tmp_path)
 
 
 def check(exporter: InMemorySpanExporter, include_content: bool, drives: set[str]) -> None:
@@ -296,6 +315,33 @@ async def test_no_content_reaches_telemetry_through_a_fallback_refresh(include_c
 
 
 @pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_a_failed_fallback_attempt(include_content: bool) -> None:
+    """An error `FallbackModel` fell back from gets its own span even though the run succeeds.
+
+    The error is also kept in the answering response's `failed_attempts`, so the history a later run
+    continues from carries it too.
+    """
+    settings, exporter = redacted_setup(include_content)
+
+    def fail(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(status_code=500, model_name='first', body=SECRETS['provider_error_body'])
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
+
+    agent = Agent(
+        FallbackModel(FunctionModel(fail), FunctionModel(respond)), capabilities=[Instrumentation(settings=settings)]
+    )
+    result = await agent.run(SECRETS['user_prompt'])
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse) and response.failed_attempts
+    assert SECRETS['provider_error_body'] in (response.failed_attempts[0].error or '')
+    await agent.run('again', message_history=result.all_messages())
+
+    check(exporter, include_content, {'user_prompt', 'model_text', 'provider_error_body'})
+
+
+@pytest.mark.parametrize('include_content', [True, False])
 async def test_no_content_reaches_telemetry_when_request_parameters_cannot_be_serialized(
     include_content: bool,
 ) -> None:
@@ -344,19 +390,49 @@ def test_a_content_policy_from_another_span_is_not_trusted() -> None:
     checked here where it is expressed.
     """
     settings, _ = redacted_setup(include_content=False)
-    with settings.tracer.start_as_current_span('chat') as span:
-        own_span_id = span.get_span_context().span_id
+    tracer = settings.tracer
+    with tracer.start_as_current_span('chat') as span:
+        with tracer.start_as_current_span('finished chat') as other_span:
+            pass
 
         # What a cross-context finalization leaves behind: capture enabled, but for another span.
-        include_content_ctx.set(ContentPolicy(span_id=own_span_id ^ 1, include_content=True))
+        include_content_ctx.set(ContentPolicy(other_span, include_content=True, tracer=tracer))
         assert span_include_content(span) is False
 
         # This span's own policy is honoured, in both directions.
-        include_content_ctx.set(ContentPolicy(span_id=own_span_id, include_content=True))
+        include_content_ctx.set(ContentPolicy(span, include_content=True, tracer=tracer))
         assert span_include_content(span) is True
-        include_content_ctx.set(ContentPolicy(span_id=own_span_id, include_content=False))
+        include_content_ctx.set(ContentPolicy(span, include_content=False, tracer=tracer))
         assert span_include_content(span) is False
 
         # No request open at all.
         include_content_ctx.set(None)
         assert span_include_content(span) is False
+
+
+def test_a_span_inside_a_request_needs_the_request_still_open() -> None:
+    """A span opened inside a request honours its policy while that request's span is open, in its trace.
+
+    A decision model's `decide` span reads the policy of the `chat` span above it, with any number of spans in
+    between (a durable engine's step, say), so it cannot ask for the policy's own span the way a `chat` span's
+    refresh does. What it can ask still fails closed on a stale value: a finished request's span has ended, and a
+    span in another trace is not inside the request at all.
+    """
+    settings, _ = redacted_setup(include_content=True)
+    tracer = settings.tracer
+    with tracer.start_as_current_span('chat') as chat_span:
+        policy = ContentPolicy(chat_span, include_content=True, tracer=tracer)
+        include_content_ctx.set(policy)
+        with tracer.start_as_current_span('durable step'):
+            assert open_request_policy() is policy
+
+        # The current span is in another trace, so this is not inside the request.
+        with tracer.start_as_current_span('elsewhere', context=Context()):
+            assert open_request_policy() is None
+
+    # What a cross-context finalization leaves behind: the policy of a request whose span has ended.
+    with tracer.start_as_current_span('next request'):
+        assert open_request_policy() is None
+
+    include_content_ctx.set(None)
+    assert open_request_policy() is None

@@ -5,11 +5,11 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from pydantic_ai._deferred_capabilities import LoadCapabilityArgs, LoadCapabilityReturn
+from pydantic_ai._deferred_capabilities import LoadCapabilityArgs, LoadCapabilityCallPart, LoadCapabilityReturn
 from pydantic_ai._instructions import resolve_sourced_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import InstructionPart, ToolReturn
+from pydantic_ai.messages import InstructionPart, ModelResponse, ToolReturn
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._instruction_collection import collect_toolset_instructions
@@ -24,6 +24,10 @@ LOAD_CAPABILITY_TOOL_DESCRIPTION = (
 LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE = (
     'Capability {capability_id!r} is already active. '
     'Use its existing instructions and any tools it provides; do not call `load_capability` for it again.'
+)
+LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE = (
+    'Capability {capability_id!r} is already being loaded by an earlier `load_capability` call in this response; '
+    'do not call `load_capability` for it again.'
 )
 
 _load_capability_args_ta = TypeAdapter(LoadCapabilityArgs)
@@ -78,6 +82,8 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             raise ModelRetry(f'No capability found with id {capability_id!r}.')
         if capability_id in ctx.active_capability_ids:
             raise ModelRetry(LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id=capability_id))
+        if _is_duplicate_load_in_response(ctx, capability_id):
+            raise ModelRetry(LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE.format(capability_id=capability_id))
 
         # Sourced through `_collect_instructions` rather than `get_instructions` so a loaded
         # capability's parts carry the same `capability:<id>` keys they would have had if the
@@ -112,3 +118,26 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         for ts in owned:
             parts.extend(await collect_toolset_instructions(ts.wrapped, ctx))
         return parts
+
+
+def _is_duplicate_load_in_response(ctx: RunContext[Any], capability_id: str) -> bool:
+    """Whether an earlier call in the response being executed already loads `capability_id`.
+
+    A load only counts as loaded once its return reaches history at the end of the step, so sibling
+    calls for the same id in one response can't see each other through `active_capability_ids`.
+    Ownership is instead derived from the response itself — the last one in history, whose calls are
+    the ones executing — in model call order, like `_prune_duplicate_tool_reveals` gives the first
+    call to name a tool its reveal, so which call delivers the instructions doesn't depend on task
+    scheduling.
+    """
+    response = next((message for message in reversed(ctx.messages) if isinstance(message, ModelResponse)), None)
+    parts = response.parts if response is not None else ()
+    owner_tool_call_id = next(
+        (
+            part.tool_call_id
+            for part in parts
+            if isinstance(part, LoadCapabilityCallPart) and part.capability_id == capability_id
+        ),
+        ctx.tool_call_id,
+    )
+    return owner_tool_call_id != ctx.tool_call_id

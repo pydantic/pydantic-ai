@@ -4,11 +4,18 @@ Read this file when the user needs the core `Agent` workflow: creating agents, c
 
 ## Create a Basic Agent
 
+Include Logfire instrumentation in new applications from the start, so every run is visible; see [Debug and Validate Agent Behavior](./TESTING-AND-DEBUGGING.md#debug-and-validate-agent-behavior) for credentials and other OpenTelemetry backends.
+
 ```python
+import logfire
+
 from pydantic_ai import Agent
 
+logfire.configure()
+logfire.instrument_pydantic_ai()
+
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'anthropic:claude-fable-5-1',
     name='hello_world_agent',
     instructions='Be concise, reply with one sentence.',
 )
@@ -51,7 +58,7 @@ If the user is choosing between output modes:
 Use `Choices({key: description})` when the model has to pick one of a set that only exists once the run is under
 way — the records a search returned, the actions available on a screen. Each option carries its meaning into the
 schema, the output is validated against the keys, and it is a type, so the same value also works as a model field
-or a tool parameter. For a set you know when you write the code, use a `Literal` or an `Enum` (with
+or a tool parameter — there, write `Annotated[str, Intent]` so type checkers see a `str`. For a set you know when you write the code, use a `Literal` or an `Enum` (with
 `UseEnumMemberDocstrings` for per-member descriptions), which give exhaustiveness checking.
 
 ```python
@@ -130,6 +137,11 @@ Examples:
 - `openai:gpt-5.2`
 - `anthropic:claude-sonnet-4-6`
 - `google:gemini-3-pro-preview`
+
+Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/), one `PYDANTIC_AI_GATEWAY_API_KEY` reaches models from several providers, with spending limits and cost monitoring in Logfire. Prefix the model string with `gateway/`, using the provider's API format:
+
+- `gateway/anthropic:claude-fable-5-1`
+- `gateway/openai:gpt-6-sol`
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 
@@ -218,3 +230,9 @@ Good defaults:
 - primary expensive/strong model, cheaper fallback for resilience
 - same prompt/output contract across both models
 - per-model settings only when the user actually needs them
+
+The answering response's `failed_attempts` lists the attempts the fallback moved on from (model, provider,
+`'error'` or `'rejected'` outcome, error, start time, duration, usage); when every model fails they're on
+`FallbackExceptionGroup.attempts`. A rejected response's tokens and cost count in `RunUsage` and towards token and
+cost limits, but not in the answering response's `usage`. Neither they nor failed attempts count towards
+`UsageLimits.request_limit`, which bounds the model responses the agent acts on, not requests sent to the provider.

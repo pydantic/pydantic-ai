@@ -10,9 +10,9 @@ bigger bill and higher latency (the PR #4338 class of bug).
 Each test records a real conversation, round-trips the resulting history through an adapter,
 then sends the same follow-up prompt twice — once with the original history, once with the
 round-tripped one — and compares the two recorded request bodies. Note the comparison is over
-the re-serialized JSON, not the raw wire bytes: the project's cassette serializer stores each
-JSON body as a parsed structure and replays it via `json.dumps` (see `tests/json_body_serializer`),
-so whitespace-only differences are normalized away. What survives — and what these tests guard —
+the re-serialized JSON, not the raw wire bytes: cassetter stores each JSON body as a parsed
+structure and `tests/cassette_utils.py` reads it back through `json.dumps`, so whitespace-only
+differences are normalized away. What survives — and what these tests guard —
 is the structural and field-value drift a lossy round-trip actually produces: dropped or reordered
 blocks, a changed tool-arg representation, a missing thinking signature. Coverage targets the
 PR #5873 wire-fidelity risks: tool-call arg serialization and thinking signatures.
@@ -27,7 +27,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
@@ -51,12 +51,12 @@ with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 
-def _post_bodies(vcr: Cassette) -> list[bytes | str]:
+def _post_bodies(vcr: Cassette) -> list[bytes | str | None]:
     """Bodies of the POST requests recorded in `vcr`, in order."""
-    return [request.body for request in vcr.requests if request.method == 'POST']  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    return [request.body for request in vcr.requests if request.method == 'POST']
 
 
 def _vercel_roundtrip(history: list[ModelMessage]) -> list[ModelMessage]:

@@ -15,6 +15,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     tool_return_ta,
 )
+from pydantic_ai.ui._utils import INTERNAL_METADATA_KEY
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolApprovalRequestedPart,
     DynamicToolApprovalRespondedPart,
@@ -50,7 +51,6 @@ COMPACTION_DATA_TYPE = 'data-compaction'
 """Data chunk type for compaction parts."""
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'
-_INTERNAL_METADATA_KEY = '__pydantic_ai__'
 
 
 class _PydanticAIMessageMetadata(BaseModel):
@@ -129,7 +129,7 @@ def dump_message_metadata(message: ModelMessage) -> dict[str, Any]:
     silently ignore the field rather than reject the message.
     """
     metadata = (
-        {key: value for key, value in message.metadata.items() if key != _INTERNAL_METADATA_KEY}
+        {key: value for key, value in message.metadata.items() if key != INTERNAL_METADATA_KEY}
         if message.metadata
         else {}
     )
@@ -154,7 +154,7 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 
     raw_pydantic_metadata = metadata.get(PROVIDER_METADATA_KEY)
     if application_metadata := {
-        key: value for key, value in metadata.items() if key not in (PROVIDER_METADATA_KEY, _INTERNAL_METADATA_KEY)
+        key: value for key, value in metadata.items() if key not in (PROVIDER_METADATA_KEY, INTERNAL_METADATA_KEY)
     }:
         message.metadata = application_metadata
 

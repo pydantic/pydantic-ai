@@ -35,7 +35,7 @@ on:
 # only here resolves to empty there, `activation` skips, and `detect` — which the
 # compiler makes depend on `activation` — skips with it, taking the agent down
 # too. That is why this workflow had never once run its agent (#6766 item 7).
-if: ${{ needs.detect.outputs.touched == 'true' }}
+if: ${{ needs.provider_health.outputs.ready == 'true' && (needs.detect.outputs.touched == 'true') }}
 permissions:
   contents: read
   # safe-outputs perform the actual writes in a separate conclusion job; the
@@ -54,7 +54,15 @@ tools:
 safe-outputs:
   footer: false
   activation-comments: false
+  report-failure-as-issue: false
   noop:
+    report-as-issue: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   create-pull-request-review-comment:
     max: 30
   # Non-voting by design, because both this workflow and pydantic-ai-pr-review
@@ -84,9 +92,11 @@ imports:
   - shared/rigor.md
   - shared/review-context.md
   - shared/checkout.md
-  - shared/engine-minimax.md
+  - shared/engine-zai.md
+  - shared/provider-health.md
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
+  - shared/security-findings.md
 pre-agent-steps:
   # Pre-fetch PR context into `$GITHUB_WORKSPACE/.review-context/` (pr-details, diffs,
   # comments, review threads, related issues, AGENTS.md excerpts). The agent
@@ -142,6 +152,26 @@ jobs:
           else
             echo 'touched=false' >> "$GITHUB_OUTPUT"
           fi
+  flag_failed_review:
+    # Labels the PR when this run posted no review; a later run that does clears it.
+    needs: [agent, safe_outputs]
+    if: (!cancelled()) && needs.agent.result != 'skipped' && github.event.pull_request.number
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          LABELS: repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels
+          FAILED: ${{ needs.safe_outputs.result != 'success' || !(contains(needs.agent.outputs.output_types, 'submit_pull_request_review') || contains(needs.agent.outputs.output_types, 'noop')) }}
+        run: |
+          if [ "$FAILED" = true ]; then
+            gh api "$LABELS" -f 'labels[]=ui-security-review-failed' --silent
+          else
+            gh api -X DELETE "$LABELS/ui-security-review-failed" --silent || true
+          fi
+
   fetch_dynamic_prompt:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -167,6 +197,8 @@ jobs:
           logfire-read-key: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
           logfire-base-url: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
 ---
+<!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
+
 
 <!-- Keeps `detect` in `activation.needs` — see the `if:` comment in the frontmatter.
      UI security surface touched: ${{ needs.detect.outputs.touched }} -->

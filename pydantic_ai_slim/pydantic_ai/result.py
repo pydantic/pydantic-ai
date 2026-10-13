@@ -7,11 +7,10 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Generic, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Self, cast, overload
 
 import anyio
 from pydantic import ValidationError
-from typing_extensions import Self
 
 from . import _utils, exceptions, messages as _messages, models
 from ._genai_prices import best_effort_price
@@ -24,7 +23,7 @@ from ._output import (
     run_image_process_hooks,
     run_output_with_hooks,
 )
-from ._run_context import AgentDepsT, RunContext, dispatch_event_stream
+from ._run_context import AgentDepsT, RunContext, dispatch_event_stream, recorded_workspace_ref
 from ._sync_stream import SyncStreamBridge
 from .messages import AgentStreamEvent, ModelResponseStreamEvent
 from .output import (
@@ -34,6 +33,7 @@ from .output import (
 from .tool_manager import ToolManager
 from .tools import DeferredToolRequests
 from .usage import RunUsage, UsageLimits
+from .workspaces import Workspace, WorkspaceRef
 
 if TYPE_CHECKING:
     from .capabilities.abstract import AbstractCapability
@@ -55,6 +55,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _model_request_parameters: models.ModelRequestParameters
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _run_ctx: RunContext[AgentDepsT]
+    _carried_workspace_ref: WorkspaceRef | None = field(default=None, repr=False)
     _usage_limits: UsageLimits | None
     _tool_manager: ToolManager[AgentDepsT]
     _root_capability: AbstractCapability[AgentDepsT]
@@ -68,8 +69,23 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _anext_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
     _pull_scopes: set[anyio.CancelScope] = field(default_factory=lambda: set[anyio.CancelScope](), init=False)
 
+    # Set by `_abandon_model_stream()`: awaited for the response that replaces the abandoned model stream.
+    _replacement_response: Callable[[], Awaitable[_messages.ModelResponse | None]] | None = field(
+        default=None, init=False, repr=False
+    )
+    _model_pull_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
+    _model_pull_scope: anyio.CancelScope | None = field(default=None, init=False)
+    _model_stream_finished: bool = field(default=False, init=False)
+
     def __post_init__(self):
+        self._refresh_initial_run_ctx_usage()
+
+    def _refresh_initial_run_ctx_usage(self) -> None:
+        """Snapshot the run's usage so far, which `usage` adds this response's usage on top of."""
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
+        # The step being streamed is counted in the run's usage once its response is committed, after
+        # the stream; count it here already so the stream's usage includes it.
+        self._initial_run_ctx_usage.requests += 1  # usage-attribution: a deepcopy, for the live usage view
 
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
@@ -198,7 +214,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     @property
     def response(self) -> _messages.ModelResponse:
         """Get the current state of the response."""
-        return self._raw_stream_response.get()
+        response = self._raw_stream_response.get()
+        response.workspace_ref = recorded_workspace_ref(self._run_ctx.workspace, self._carried_workspace_ref)
+        return response
 
     @property
     def usage(self) -> RunUsage:
@@ -296,13 +314,18 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 return await self._validate_image_output(message.images[0], allow_partial=allow_partial)
             elif text_processor := self._output_schema.text_processor:
                 text = ''
+                text_before_native_tool_call = ''
                 for part in message.parts:
                     if isinstance(part, _messages.TextPart):
                         text += part.content
                     elif isinstance(part, _messages.NativeToolCallPart):
                         # Text parts before a built-in tool call are essentially thoughts,
                         # not part of the final result output, so we reset the accumulated text
+                        text_before_native_tool_call = text or text_before_native_tool_call
                         text = ''
+                # Unless no text or function tool call follows the last native tool call (see `CallToolsNode`).
+                if not message.tool_calls:
+                    text = text or text_before_native_tool_call
 
                 run_ctx = replace(self._run_ctx, partial_output=allow_partial)
                 return await run_output_with_hooks(
@@ -397,9 +420,15 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 # a quick benchmark shows it's faster to build up a string with concat when we're
                 # yielding at each step
                 deltas: list[str] = []
+                live_stream = self._raw_stream_response
                 async for text in deltas_iter:
-                    deltas.append(text)
-                    yield ''.join(deltas)
+                    if self._raw_stream_response is live_stream:
+                        deltas.append(text)
+                        yield ''.join(deltas)
+                    else:
+                        # The model stream was replaced mid-stream (see `_abandon_model_stream`), voiding its text.
+                        parts = self.response.parts
+                        yield ''.join(part.content for part in parts if isinstance(part, _messages.TextPart))
 
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
         """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s, interleaving events emitted into the run's event buffer."""
@@ -407,9 +436,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             # Token-limit checks run after every event and only look at token counts, so skip the per-event
             # cost calculation that the `usage` property does and pass the cheaper token-only usage.
             base_iter = _get_usage_checking_stream_response(
-                self._raw_stream_response,
+                self._model_events(),
                 self._usage_limits,
                 lambda: self._initial_run_ctx_usage + self._raw_stream_response.usage,
+                lambda: self._raw_stream_response.usage.input_tokens,
             )
             # Wrap once, so a capability's `wrap_run_event_stream` sees each event exactly once no
             # matter how many times this stream is iterated (e.g. `stream_text()` then a drain).
@@ -440,6 +470,54 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             with anyio.CancelScope(shield=True):
                 async with self._anext_lock:
                     await _utils.aclose_if_supported(events_iterator)
+
+    async def _abandon_model_stream(
+        self, replacement_response: Callable[[], Awaitable[_messages.ModelResponse | None]]
+    ) -> bool:
+        """Stop pulling the model stream, because its request is being torn down mid-stream.
+
+        A capability's `wrap_model_request` can stop its handler while the stream is being consumed, for
+        example a parallel input guardrail that blocks the prompt. Any in-flight pull is cancelled and drained,
+        so the model stream can be closed without racing it. The consumer's iteration then continues with the
+        events of the response `replacement_response` returns, ends if it returns `None`, or raises what it raises.
+
+        Returns whether the stream was cut short: `False` if the consumer had already received all of it.
+        """
+        if self._model_stream_finished:
+            return False
+        self._replacement_response = replacement_response
+        if self._model_pull_scope is not None:
+            self._model_pull_scope.cancel()
+        with anyio.CancelScope(shield=True):
+            async with self._model_pull_lock:
+                pass
+        return True
+
+    async def _model_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        """The model stream's events, followed by its replacement's if the stream was abandoned."""
+        events = aiter(self._raw_stream_response)
+        while self._replacement_response is None:
+            event: ModelResponseStreamEvent | None = None
+            with anyio.CancelScope() as self._model_pull_scope:
+                async with self._model_pull_lock:
+                    try:
+                        event = await anext(events)
+                    except StopAsyncIteration:
+                        pass
+            if self._replacement_response is not None:
+                break
+            if event is None:
+                self._model_stream_finished = True
+                return
+            yield event
+
+        response = await self._replacement_response()
+        if response is not None:
+            self._raw_stream_response = models.CompletedStreamedResponse(
+                response, model_request_parameters=self._model_request_parameters, replay_events=True
+            )
+            async for event in self._raw_stream_response:
+                yield event
 
     async def _pull_shared(self, events_iterator: AsyncIterator[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
         # Serialize access to the shared iterator. An early break from stream_text() can leave a
@@ -577,7 +655,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     '`stream_text()`, `stream_response()` or `get_output()` first.'
                 )
             output, output_tool_name = self._stream_response._settled_output()  # pyright: ignore[reportPrivateUsage]
-            return AgentRunResult(
+            result = AgentRunResult(
                 output=output,
                 _output_tool_name=output_tool_name,
                 _state=GraphAgentState(
@@ -590,6 +668,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 _new_message_index=self._new_message_index,
                 _traceparent_value=self._traceparent_value,
             )
+            # As in AgentRun.result, this isn't a dataclass field because a live workspace can't be serialized.
+            result.__dict__['_workspace'] = self.workspace
+            return result
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
@@ -776,6 +857,16 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             return self._stream_response.metadata
         else:
             return None
+
+    @property
+    def workspace(self) -> Workspace:
+        """The workspace used by this run."""
+        if self._run_result is not None:
+            return self._run_result.workspace
+        elif self._stream_response is not None:
+            return self._stream_response._run_ctx.workspace  # pyright: ignore[reportPrivateUsage]
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     @property
     def usage(self) -> RunUsage:
@@ -1081,6 +1172,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         """Metadata associated with this agent run, if configured."""
         return self._streamed_run_result.metadata
 
+    @property
+    def workspace(self) -> Workspace:
+        """The workspace used by this run."""
+        return self._streamed_run_result.workspace
+
     def validate_response_output(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""
         return self._bridge.call(
@@ -1117,21 +1213,22 @@ class FinalResult(Generic[OutputDataT]):
 
 
 def _get_usage_checking_stream_response(
-    stream_response: models.StreamedResponse,
+    events: AsyncIterator[ModelResponseStreamEvent],
     limits: UsageLimits | None,
     get_usage: Callable[[], RunUsage],
+    get_request_input_tokens: Callable[[], int],
 ) -> AsyncIterator[ModelResponseStreamEvent]:
     if limits is not None and limits.has_token_limits():
 
         async def _usage_checking_iterator():
-            async for item in stream_response:
+            async for item in events:
                 limits.check_tokens(get_usage())
-                limits.check_per_request_input_tokens(stream_response.usage.input_tokens)
+                limits.check_per_request_input_tokens(get_request_input_tokens())
                 yield item
 
         return _usage_checking_iterator()
     else:
-        return aiter(stream_response)
+        return events
 
 
 def _get_deferred_tool_requests(

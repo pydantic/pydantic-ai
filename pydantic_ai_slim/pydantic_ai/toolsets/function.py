@@ -218,14 +218,14 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         ```python
         from pydantic_ai import Agent, FunctionToolset, RunContext
 
-        toolset = FunctionToolset()
+        toolset = FunctionToolset[int]()
 
         @toolset.tool
         def foobar(ctx: RunContext[int], x: int) -> int:
             return ctx.deps + x
 
         @toolset.tool(retries=2)
-        async def spam(ctx: RunContext[str], y: float) -> float:
+        async def spam(ctx: RunContext[int], y: float) -> float:
             return ctx.deps + y
 
         agent = Agent('test', toolsets=[toolset], deps_type=int)

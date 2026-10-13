@@ -1,3 +1,7 @@
+---
+description: "Start Pydantic AI voice sessions from earlier text or voice history, continue them later, or hand the conversation to a text model for summaries and extraction."
+---
+
 # History and handoff
 
 A realtime session builds the same [`ModelMessage`][pydantic_ai.messages.ModelMessage] history as a
@@ -39,19 +43,33 @@ async def main(prior_history=()):
         await session.send('Continue where we left off.')
 ```
 
-Providers replay native function calls where their protocol permits. Gemini represents seeded tool
-calls and results as readable text because Live cannot put function parts in seeded turns. Thinking
-signatures and provider-native execution metadata are omitted because they belong to the session
-that produced them.
+To continue a text run's conversation, pass its
+[`conversation`][pydantic_ai.agent.AgentRunResult.conversation] as `conversation=` instead. It seeds the
+history and also carries the running [`usage`][pydantic_ai.usage.RunUsage] and the `conversation_id`, so
+[usage limits](../agent.md#usage-limits) keep counting across the handoff and the session correlates with the run
+in telemetry. Going the other way, [`session.conversation`][pydantic_ai.realtime.RealtimeSession.conversation]
+is the bundle to hand to the next text run.
+
+Seeded tool calls and results are replayed as native function calls where the provider's protocol
+permits, and as readable text where it doesn't. Thinking signatures and provider-native execution
+metadata are omitted because they belong to the session that produced them.
 
 Content-less speech parts are skipped because they carry no replayable content. Unsupported content
 raises [`UserError`][pydantic_ai.exceptions.UserError] instead of being silently dropped. Video,
 documents, uploaded-file references, and model-generated files cannot be seeded.
 
-Speech transcripts are preferred over retained audio. OpenAI and Azure OpenAI can replay retained
-user audio when no transcript exists; Gemini and xAI cannot. Assistant speech always needs a
-transcript for seeding. Check `supports_session_seeding`, `supports_seeding_images`, and
-`supports_seeding_audio` on the
+!!! warning "Seeded history is trusted"
+    As in a standard run, `message_history` is treated as trusted server-side state: its system
+    prompts become session instructions, and its image URLs are downloaded by your server
+    according to the [download settings](../input.md#user-side-download-vs-direct-file-url) each URL
+    carries. If the history came from a browser or another untrusted client, pass it through
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] before seeding the session; see
+    [Loading untrusted history](../message-history.md#loading-untrusted-history).
+
+Speech transcripts are preferred over retained audio. Where no transcript exists, retained user
+audio is replayed on models whose profile sets `supports_seeding_audio`, as long as it was recorded
+at the model's input sample rate. Assistant speech always needs a transcript for seeding. Check
+`supports_session_seeding`, `supports_seeding_images`, and `supports_seeding_audio` on the
 [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] (see
 [Provider support](overview.md#provider-support) for how profiles resolve) before constructing
 portable flows.
@@ -90,6 +108,30 @@ request.
 For structured work that must finish while the call remains open, expose a delegated text agent as
 a [realtime function tool](tools.md#delegating-work-during-a-call).
 
+## Context window
+
+[`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used]
+reports the fraction of the model's context window in use, and
+[`RunContext.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] returns the same
+value inside a session's tools and hooks. Where the provider reports the fraction itself, the session
+keeps the latest value; otherwise it is computed as in a standard run, from the latest response's
+token usage over the model's
+[`context_window`][pydantic_ai.realtime.RealtimeModelProfile.context_window]:
+
+| Provider | Source |
+| --- | --- |
+| OpenAI | GPT-Live: reported by Live. gpt-realtime: latest response's `total_tokens` over the context window, when the window is known |
+| Azure OpenAI, Gemini Live | Latest response's `total_tokens` over the context window, when the window is known |
+| xAI Grok Voice | `None`: a response's usage counts only the input it added, not the whole conversation |
+
+The value is `None` until it can be calculated, and it can go down during a session: providers
+compact or truncate the conversation server-side as it grows, and none of them report when that
+happens. To control how the provider manages a long conversation, use
+[`openai_truncation`](openai.md#gpt-realtime-settings) on OpenAI gpt-realtime and Azure OpenAI or
+[`google_context_compression`](gemini.md#settings) on Gemini. To carry a long conversation on
+elsewhere, [hand it off to a text agent](#handing-off-to-a-text-agent) or seed a new session with a
+summary.
+
 ## Retaining audio
 
 By default, only transcripts are retained and `SpeechPart.audio` is `None`. Pass `audio_retention=`
@@ -104,6 +146,26 @@ to [`session()`][pydantic_ai.agent.AgentRealtime.session] to retain finalized WA
 
 Retention affects history only. Live input and output remain raw PCM16; finalized retained audio is
 wrapped in a WAV container.
+
+Retained audio is bounded the same way as [retained images](#retaining-images). Pass
+`retain_audio_max_seconds=` to [`session()`][pydantic_ai.agent.AgentRealtime.session] to set how many
+seconds of audio the session keeps, counting both speakers and the turns still being spoken. It
+defaults to `1800` (30 minutes, about 86 MB at 24 kHz) and evicts the oldest retained audio when the
+budget is reached: that turn's `SpeechPart` keeps its transcript and its `audio` becomes `None`, so the
+history stays valid to [hand off](#handing-off-to-a-text-agent) or seed a session with. A single turn
+longer than the budget keeps only its most recent audio. Set it to `0` to retain none or `None` to
+remove the bound. Like the image settings, this bounds local history, not provider context: the
+provider still receives all of the audio. Audio in the `message_history` you seed a session with is
+kept as given; the budget covers only the audio the session retains itself. Events the session hasn't
+delivered to your app yet, such as a queued [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] or a part
+waiting in a [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts] view, keep
+their part's audio until they are consumed.
+
+On OpenAI, Azure OpenAI, and xAI, retained audio is kept in the history
+[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] returns. The conversation a
+tool sees as [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], and the input recorded on
+each response's [span](observability.md), carry transcripts without that audio for now; the events and
+the response a span records keep it.
 
 Input retention follows provider-reported boundaries rather than locally trimming speech. OpenAI,
 Azure OpenAI, and xAI normally retain microphone input between reported speech-end boundaries.
@@ -144,14 +206,46 @@ sends one frame per second — so for camera and screen streams, use both delibe
 
 Input transcription defaults to `'auto'`; see [Input transcription](audio.md#input-transcription)
 and each provider page for configuration. Transcripts are recorded with the user turn they describe,
-even when they arrive after that turn's response or overlap the following turn. If a reported speech
-segment never receives a transcript, the session still records its retained audio or a content-less
-`SpeechPart` when the session closes.
+even when they arrive after that turn's response or overlap the following turn.
+
+On OpenAI, Azure OpenAI, and xAI, history follows the order of the provider's own conversation:
+
+- A spoken turn sits where the provider added it, and text, images, and tool results where they reached
+  it. A turn the user started while the model was still answering, but which the provider only committed
+  after that answer ended, is recorded after the answer.
+- A message appears in `all_messages()` once everything before it is final. A reply waits for the
+  transcript of the spoken turn before it, which can arrive after the reply itself is done, for up to 30
+  seconds after that; past that, the turn is recorded with the transcript it has so far.
+- Nothing is inserted ahead of messages already returned, so each snapshot starts with the one before it.
+  The one exception is a tool's return, which always directly follows the response that called it: a tool
+  that finishes after later messages were recorded has its return inserted ahead of them.
+
+- Assistant messages from `gpt-realtime-2` models carry their `phase` (`'commentary'` on the way to a tool
+  call, or `'final_answer'`) as `'phase'` in the part's `provider_details`, the way a standard OpenAI run
+  records [text phases](../models/openai.md#text-phases).
+
+On Gemini Live and GPT-Live, a turn the user starts while the model is still answering, whether they
+[barge in](turns.md#barge-in) or push to talk over it, is recorded after that answer. Such a turn joins
+history once the provider ends the answer it cut off, or after a few seconds if the provider never does.
+In that fallback the turn is recorded where history stands, so it lands before the answer it interrupted,
+and ahead of anything sent with [`send()`][pydantic_ai.realtime.RealtimeSession.send] while that answer was
+still in flight.
+
+If a reported speech segment never receives a transcript, the session still records its retained audio or
+a content-less `SpeechPart`, at the latest when the session closes.
 
 With transcription disabled:
 
 - retained input audio creates an audio-only user `SpeechPart`;
 - without input retention, the session records a content-less user `SpeechPart`;
+- on providers that report speech boundaries (OpenAI, Azure, and xAI with server VAD), each turn is
+  the speech between them: the silence an always-on microphone streams between utterances is no turn.
+  Gemini Live reports none, so a turn there runs to the response that answers it, and audio sent after
+  the last response is recorded as one more turn when the session closes;
+- with [push-to-talk](turns.md#push-to-talk), each `commit_audio()` after sending audio is a turn once the
+  provider has it (on xAI, commits made while a reply is still under way go out together after it, as one turn,
+  and one still held back when the session closes records nothing); a commit with no audio since the last one
+  records nothing;
 - content-less parts preserve the local turn boundary but contribute no words to a text handoff and
   are skipped when seeding another realtime session;
 - transcript-less assistant audio cannot be handed off or seeded on any provider.

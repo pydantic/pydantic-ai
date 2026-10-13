@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
@@ -39,7 +39,7 @@ with try_import() as mistral_imports:
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 # Per-provider skip mark, keyed by a case's `provider`. A case naming a provider missing from this
 # map fails loudly at collection (KeyError) rather than silently skipping on the wrong SDK's presence.
@@ -257,6 +257,24 @@ CASES = [
         model_name='gemini-3.1-flash-lite-image',
         thinking='medium',
         # `medium` snaps up to `high`, the higher of the model's two documented levels.
+        present={'generationConfig.thinkingConfig.thinking_level': 'HIGH'},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-31-flash-image-low-snaps-down',
+        provider='google',
+        model_name='gemini-3.1-flash-image',
+        thinking='low',
+        # Documented levels are `minimal, high` only; the Gemini API 400s on `LOW`.
+        present={'generationConfig.thinkingConfig.thinking_level': 'MINIMAL'},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-31-flash-image-medium-snaps-up',
+        provider='google',
+        model_name='gemini-3.1-flash-image',
+        thinking='medium',
+        # The Gemini API 400s on `MEDIUM`; it snaps up to `high`.
         present={'generationConfig.thinkingConfig.thinking_level': 'HIGH'},
         match_body=True,
     ),

@@ -12,9 +12,10 @@ sibling's — concurrent delegates absorb each other.
 
 Which run is producing is a property of the call stack, so that is what this follows. [`accumulate`]
 [] makes a run's `RunUsage` the one credited for as long as its span is open, and restores the
-enclosing run's on the way out; the `record_*` functions credit only that innermost run. Asyncio
-copies the context when a task is created, so concurrent delegates each start from the parent's and
-replace it with their own, never seeing each other's.
+enclosing run's on the way out; the `record_*` functions credit only that innermost run. Every run
+enters it with `None` when it starts, so a run without a span credits no one rather than the
+enclosing run. Asyncio copies the context when a task is created, so concurrent delegates each start
+from the parent's and replace it with their own, never seeing each other's.
 
 This module owns the *only* in-place mutation of a run's usage. Incrementing a `RunUsage` field
 directly leaves its tokens off the run's span, so `tests/test_usage_attribution.py` fails on a bare
@@ -36,11 +37,13 @@ _active: ContextVar[RunUsage | None] = ContextVar['RunUsage | None']('pydantic_a
 
 
 @contextmanager
-def accumulate(run_usage: RunUsage) -> Generator[None]:
+def accumulate(run_usage: RunUsage | None) -> Generator[None]:
     """Credit `run_usage` with what is recorded in this context, until the block exits.
 
     A nested run replaces it for the length of its own span, so what the nested run records is its
-    own; resetting on the way out hands crediting back to the enclosing run.
+    own; resetting on the way out hands crediting back to the enclosing run. `None` credits no run:
+    each run enters that when it starts, so a run that never opens a span of its own doesn't have
+    its usage reported on its caller's.
     """
     token = _active.set(run_usage)
     try:

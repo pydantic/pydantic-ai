@@ -1,8 +1,8 @@
 # `pydantic_ai.realtime`
 
-Support for **realtime, bidirectional speech-to-speech models** (OpenAI Realtime, Azure OpenAI,
-Gemini Live, xAI Grok Voice, and any other provider that streams audio in and out over a
-persistent connection).
+Support for **realtime, bidirectional speech-to-speech models** (OpenAI Realtime, OpenAI GPT-Live,
+Azure OpenAI, Gemini Live, xAI Grok Voice, and any other provider that streams audio in and out over
+a persistent connection).
 
 Unlike [`Model`][pydantic_ai.models.Model], which is request-response, a realtime model opens a
 long-lived connection: you stream audio (or text/images) in, and consume audio, transcripts, and
@@ -76,11 +76,21 @@ audio chunks ready for playback, while
 [`RealtimeSession.stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts]
 yields finalized speech from both speakers or live deltas with `delta=True`. These bounded views can
 run concurrently with each other and with the session's raw event iterator.
+[`RealtimeSession.wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] waits
+until the model has finished the reply it owes, spanning the whole of a tool-calling turn, and runs
+alongside an active event iterator rather than competing with it.
 [`RealtimeSession.wait_for_playback()`][pydantic_ai.realtime.RealtimeSession.wait_for_playback]
 waits until the single audio view has accounted for all audio emitted so far, whether it was
 played or discarded.
 [`RealtimeSession.close()`][pydantic_ai.realtime.RealtimeSession.close] ends the session and every
 live view; [`RealtimeSession.closed`][pydantic_ai.realtime.RealtimeSession.closed] exposes its state.
+The session starts receiving at whichever comes first: the first outbound call, the first
+`stream_audio()` or `stream_transcripts()` view, or the first `async for` over the session. It does
+not start on entry, so a view created inside the session block — as every example here does — cannot
+miss output the model produced before it subscribed. A fatal receive or tool failure is raised
+from active event iteration; without an active iterator, the views end and context exit raises it.
+The next outbound session method raises an already-ended receive side's failure first, and the same
+failure is never delivered twice.
 
 The low-level [`RealtimeConnection.send`][pydantic_ai.realtime.codec.RealtimeConnection.send] accepts the
 normalized [`RealtimeInput`][pydantic_ai.realtime.codec.RealtimeInput] — a `str` text turn, a
@@ -112,6 +122,7 @@ vocabulary yielded by a connection:
 [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent],
 [`ConversationCreated`][pydantic_ai.realtime.codec.ConversationCreated],
 [`ConversationItemCreated`][pydantic_ai.realtime.codec.ConversationItemCreated],
+[`InputRejected`][pydantic_ai.realtime.codec.InputRejected],
 [`PartStartEvent`][pydantic_ai.messages.PartStartEvent],
 [`PartEndEvent`][pydantic_ai.messages.PartEndEvent],
 [`SessionUsage`][pydantic_ai.realtime.codec.SessionUsage],
@@ -127,7 +138,7 @@ session. The session translates codec events into the shared vocabulary from
 [`ToolCallPart`][pydantic_ai.messages.ToolCallPart], and
 [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]), tool execution as
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] /
-[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], inline deferred handling as
+[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], deferred calls and their inline resolution as
 [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] /
 [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent], enqueued-message delivery as
 [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], and the rest as the
@@ -139,7 +150,8 @@ session synthesizes rather than reading off the wire. Usage updates are accumula
 
 The lower-level codec vocabulary is documented in
 [`pydantic_ai.realtime.codec`](realtime/codec.md), and each provider in its own module:
-[`pydantic_ai.realtime.openai`](realtime/openai.md), [`pydantic_ai.realtime.google`](realtime/google.md),
-[`pydantic_ai.realtime.xai`](realtime/xai.md), and [`pydantic_ai.realtime.azure`](realtime/azure.md).
+[`pydantic_ai.realtime.openai`](realtime/openai.md), [`pydantic_ai.realtime.openai_live`](realtime/openai_live.md),
+[`pydantic_ai.realtime.google`](realtime/google.md), [`pydantic_ai.realtime.xai`](realtime/xai.md),
+and [`pydantic_ai.realtime.azure`](realtime/azure.md).
 
 ::: pydantic_ai.realtime

@@ -1,3 +1,7 @@
+---
+description: "Chat with your Pydantic AI agents in a browser using the built-in web chat UI, launched from the clai CLI or served from your own Python application."
+---
+
 # Web Chat UI
 
 Pydantic AI includes a built-in web chat interface that you can use to interact with your agents through a browser.

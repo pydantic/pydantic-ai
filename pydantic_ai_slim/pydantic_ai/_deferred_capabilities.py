@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 from dataclasses import KW_ONLY, dataclass
-from typing import TYPE_CHECKING, Annotated, Literal, Union, cast
+from typing import TYPE_CHECKING, Annotated, Literal, NotRequired, Union, cast
 
 import pydantic
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from ._utils import copy_dataclass_fields
 
