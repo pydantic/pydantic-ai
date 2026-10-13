@@ -24,6 +24,13 @@ from pydantic_ai_harness.media import (
     externalize_media,
     restore_media,
 )
+from pydantic_ai_harness.step_persistence._messages import (
+    join_messages,
+    message_refs,
+    split_messages,
+    unknown_refs,
+    warn_full_history_deprecated,
+)
 from pydantic_ai_harness.step_persistence._types import (
     ContinuableSnapshot,
     EventKind,
@@ -477,6 +484,8 @@ class FileStepStore:
         tool_effects.jsonl
         snapshots/
           <seq>.json
+      messages/
+        <sha256>.json
     ```
 
     Snapshot filenames are a per-run monotonic counter assigned at write
@@ -499,6 +508,12 @@ class FileStepStore:
     `max_snapshots_per_run` (default `None`, unbounded) bounds per-run
     snapshot growth: after each write, `{seq}.json` files outside the retain
     set are unlinked (see `_sync_prune_snapshots`).
+
+    Each message is written once to `<root>/messages/<sha256>.json`, and a
+    snapshot file lists its messages as `{"message_refs": [...]}`. Snapshot
+    files with inline messages, written by earlier releases, still load.
+    `deduplicate_messages=False` writes inline messages instead and is
+    deprecated.
     """
 
     def __init__(
@@ -508,9 +523,13 @@ class FileStepStore:
         media_store: MediaStore | None | _AutoMedia = 'auto',
         media_threshold_bytes: int = _DEFAULT_MEDIA_THRESHOLD_BYTES,
         max_snapshots_per_run: int | None = None,
+        deduplicate_messages: bool = True,
     ) -> None:
         _validate_max_snapshots(max_snapshots_per_run)
+        if not deduplicate_messages:
+            warn_full_history_deprecated('FileStepStore')
         self._max_snapshots_per_run = max_snapshots_per_run
+        self._deduplicate_messages = deduplicate_messages
         self._root = Path(directory)
         resolved: MediaStore | None
         if media_store == 'auto':
@@ -628,6 +647,15 @@ class FileStepStore:
                     continue
                 if prior.get('idempotency_key') == snapshot.idempotency_key:
                     return
+        stored: object = messages_json
+        if self._deduplicate_messages:
+            stored, texts = split_messages(messages_json)
+            messages_dir = self._root / 'messages'
+            messages_dir.mkdir(parents=True, exist_ok=True)
+            for digest, text in texts.items():
+                path = messages_dir / f'{digest}.json'
+                if not path.exists():
+                    _atomic_write_text(path, text)
         payload: dict[str, object] = {
             'run_id': snapshot.run_id,
             'step_index': snapshot.step_index,
@@ -636,7 +664,7 @@ class FileStepStore:
             'agent_name': snapshot.agent_name,
             'timestamp': snapshot.timestamp.isoformat(),
             'state': snapshot.state,
-            'messages': messages_json,
+            'messages': stored,
             'idempotency_key': snapshot.idempotency_key,
         }
         seq = self._next_snapshot_seq(snap_dir)
@@ -765,8 +793,19 @@ class FileStepStore:
             if not _snapshot_fields_ok(data):
                 continue
             if include_interrupted or _snapshot_state(data.get('state')) == 'complete':
-                return data, data['messages']
+                return data, self._sync_expand_messages(data['messages'], {})
         return None
+
+    def _sync_expand_messages(self, stored: object, cache: dict[str, str]) -> object:
+        """Return a snapshot's message list, reading referenced messages into `cache` as needed."""
+        refs = message_refs(stored)
+        if refs is None:
+            return stored
+        for digest in unknown_refs(refs, cache):
+            path = self._root / 'messages' / f'{digest}.json'
+            if path.exists():
+                cache[digest] = path.read_text(encoding='utf-8')
+        return join_messages(refs, cache)
 
     async def list_snapshots(self, *, run_id: str, include_interrupted: bool = False) -> list[ContinuableSnapshot]:
         """Return retained snapshots for `run_id` in write order.
@@ -780,13 +819,14 @@ class FileStepStore:
         """
         texts = await anyio.to_thread.run_sync(self._sync_read_snapshot_texts, run_id)
         snapshots: list[ContinuableSnapshot] = []
+        cache: dict[str, str] = {}
         for text in texts:
             try:
                 data = _load_json_object(text)
                 state = _snapshot_state(data.get('state'))
                 if state == 'interrupted' and not include_interrupted:
                     continue
-                messages_json = data['messages']
+                messages_json = await anyio.to_thread.run_sync(self._sync_expand_messages, data['messages'], cache)
                 if self._media_store is not None:
                     messages_json = await restore_media(messages_json, media_store=self._media_store)
                 messages: list[ModelMessage] = ModelMessagesTypeAdapter.validate_python(messages_json)
@@ -921,6 +961,10 @@ CREATE TABLE IF NOT EXISTS snapshot_idempotency_keys (
     idempotency_key TEXT NOT NULL,
     PRIMARY KEY (run_id, idempotency_key)
 );
+CREATE TABLE IF NOT EXISTS snapshot_messages (
+    sha256 TEXT PRIMARY KEY,
+    message TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tool_effects (
     run_id TEXT NOT NULL,
     tool_call_id TEXT NOT NULL,
@@ -968,6 +1012,8 @@ class SqliteStepStore:
     - `snapshots(seq PK AUTOINCREMENT, run_id, step_index, ..., messages)` --
       the `AUTOINCREMENT` `seq` mirrors `FileStepStore._next_snapshot_seq`
       so `ctx.run_step` resets across `Agent.run` cannot collide.
+    - `snapshot_messages(sha256 PK, message)` -- each message once; a
+      snapshot's `messages` column holds `{"message_refs": [...]}`.
     - `snapshot_idempotency_keys(run_id, idempotency_key PK)` -- survives pruning.
     - `tool_effects(run_id, tool_call_id PK)` -- upsert per
       `(run_id, tool_call_id)`, matching `InMemoryStepStore` semantics.
@@ -982,6 +1028,12 @@ class SqliteStepStore:
     `max_snapshots_per_run` (default `None`, unbounded) bounds per-run
     snapshot growth: after each write, one indexed `DELETE` prunes rows
     outside the retain set (see `_sync_prune_snapshots`).
+
+    Rows with inline messages, written by earlier releases, still load.
+    `deduplicate_messages=False` writes inline messages instead and is
+    deprecated. On a connection the store opens, a snapshot's new messages,
+    its row, and the prune commit in one transaction; a caller-owned
+    `connection=` keeps transaction control with the caller.
     """
 
     def __init__(
@@ -992,11 +1044,15 @@ class SqliteStepStore:
         media_store: MediaStore | None | _AutoMedia = 'auto',
         media_threshold_bytes: int = _DEFAULT_MEDIA_THRESHOLD_BYTES,
         max_snapshots_per_run: int | None = None,
+        deduplicate_messages: bool = True,
     ) -> None:
         if (database is None) == (connection is None):
             raise ValueError('provide exactly one of `database=` or `connection=`')
         _validate_max_snapshots(max_snapshots_per_run)
+        if not deduplicate_messages:
+            warn_full_history_deprecated('SqliteStepStore')
         self._max_snapshots_per_run = max_snapshots_per_run
+        self._deduplicate_messages = deduplicate_messages
         self._database = Path(database) if database is not None else None
         self._connection = connection
         self._schema_ready = False
@@ -1230,8 +1286,30 @@ class SqliteStepStore:
 
     def _sync_save_snapshot(self, snapshot: ContinuableSnapshot, messages_json: object) -> None:
         conn = self._open()
+        # Closing a store-opened connection without `COMMIT` rolls the messages back with the row.
+        own_transaction = self._deduplicate_messages and self._connection is None
         try:
             self._ensure_schema(conn)
+            if own_transaction:
+                conn.execute('BEGIN IMMEDIATE')
+            stored: object = messages_json
+            if self._deduplicate_messages:
+                # The idempotency trigger's `RAISE(IGNORE)` drops only the snapshot row, so
+                # check first, or a retried save's messages would stay with nothing referencing them.
+                if (
+                    snapshot.idempotency_key is not None
+                    and conn.execute(
+                        'SELECT 1 FROM snapshot_idempotency_keys WHERE run_id = ? AND idempotency_key = ?',
+                        (snapshot.run_id, snapshot.idempotency_key),
+                    ).fetchone()
+                ):
+                    if own_transaction:
+                        conn.execute('COMMIT')
+                    return
+                stored, texts = split_messages(messages_json)
+                conn.executemany(
+                    'INSERT OR IGNORE INTO snapshot_messages (sha256, message) VALUES (?, ?)', texts.items()
+                )
             conn.execute(
                 'INSERT INTO snapshots ('
                 'run_id, step_index, conversation_id, parent_run_id, agent_name, timestamp, state, messages, '
@@ -1244,11 +1322,13 @@ class SqliteStepStore:
                     snapshot.agent_name,
                     snapshot.timestamp.isoformat(),
                     snapshot.state,
-                    json.dumps(messages_json),
+                    json.dumps(stored),
                     snapshot.idempotency_key,
                 ),
             )
             self._sync_prune_snapshots(conn, snapshot.run_id)
+            if own_transaction:
+                conn.execute('COMMIT')
         finally:
             self._maybe_close(conn)
 
@@ -1282,8 +1362,7 @@ class SqliteStepStore:
         row = await anyio.to_thread.run_sync(self._sync_load_latest_snapshot, run_id, include_interrupted)
         if row is None:
             return None
-        step_index, conv_id, parent_id, agent_name, timestamp_iso, state, messages_json_text, idempotency_key = row
-        messages_json: object = json.loads(messages_json_text)
+        step_index, conv_id, parent_id, agent_name, timestamp_iso, state, messages_json, idempotency_key = row
         if self._media_store is not None:
             messages_json = await restore_media(messages_json, media_store=self._media_store)
         messages: list[ModelMessage] = ModelMessagesTypeAdapter.validate_python(messages_json)
@@ -1301,7 +1380,7 @@ class SqliteStepStore:
 
     def _sync_load_latest_snapshot(
         self, run_id: str, include_interrupted: bool
-    ) -> tuple[int, str | None, str | None, str | None, str, SnapshotState, str, str | None] | None:
+    ) -> tuple[int, str | None, str | None, str | None, str, SnapshotState, object, str | None] | None:
         conn = self._open()
         try:
             self._ensure_schema(conn)
@@ -1313,13 +1392,14 @@ class SqliteStepStore:
             if not include_interrupted:
                 sql += " AND state = 'complete'"
             row = conn.execute(sql + ' ORDER BY seq DESC LIMIT 1', (run_id,)).fetchone()
+            if row is None:
+                return None
+            step_index, conv_id, parent_id, agent_name, timestamp_iso, state_raw, messages_json_text, key = row
+            if not (isinstance(step_index, int) and isinstance(timestamp_iso, str)):
+                raise ValueError('snapshot row has wrong types')
+            messages_json = self._sync_expand_messages(conn, messages_json_text, {})
         finally:
             self._maybe_close(conn)
-        if row is None:
-            return None
-        step_index, conv_id, parent_id, agent_name, timestamp_iso, state_raw, messages_json_text, key = row
-        if not (isinstance(step_index, int) and isinstance(timestamp_iso, str) and isinstance(messages_json_text, str)):
-            raise ValueError('snapshot row has wrong types')
         return (
             step_index,
             _opt_str(conv_id),
@@ -1327,9 +1407,27 @@ class SqliteStepStore:
             _opt_str(agent_name),
             timestamp_iso,
             _snapshot_state(state_raw),
-            messages_json_text,
+            messages_json,
             _opt_str(key),
         )
+
+    @staticmethod
+    def _sync_expand_messages(conn: sqlite3.Connection, messages_json_text: object, cache: dict[str, str]) -> object:
+        """Parse a row's `messages` column, reading referenced messages into `cache` as needed."""
+        if not isinstance(messages_json_text, str):
+            raise ValueError('snapshot row has wrong types')
+        stored: object = json.loads(messages_json_text)
+        refs = message_refs(stored)
+        if refs is None:
+            return stored
+        unknown = unknown_refs(refs, cache)
+        # Chunked to stay under SQLite's lowest default limit on bound parameters (999).
+        for start in range(0, len(unknown), 500):
+            chunk = unknown[start : start + 500]
+            placeholders = ','.join('?' * len(chunk))
+            query = f'SELECT sha256, message FROM snapshot_messages WHERE sha256 IN ({placeholders})'
+            cache.update(conn.execute(query, chunk).fetchall())
+        return join_messages(refs, cache)
 
     async def list_snapshots(self, *, run_id: str, include_interrupted: bool = False) -> list[ContinuableSnapshot]:
         """Return retained snapshots for `run_id` in write order.
@@ -1344,14 +1442,9 @@ class SqliteStepStore:
         snapshots: list[ContinuableSnapshot] = []
         for row in rows:
             try:
-                step_index, conv_id, parent_id, agent_name, timestamp_iso, state_raw, messages_json_text, key = row
-                if not (
-                    isinstance(step_index, int)
-                    and isinstance(timestamp_iso, str)
-                    and isinstance(messages_json_text, str)
-                ):
+                step_index, conv_id, parent_id, agent_name, timestamp_iso, state_raw, messages_json, key = row
+                if not (isinstance(step_index, int) and isinstance(timestamp_iso, str)):
                     raise ValueError('snapshot row has wrong types')
-                messages_json: object = json.loads(messages_json_text)
                 if self._media_store is not None:
                     messages_json = await restore_media(messages_json, media_store=self._media_store)
                 messages: list[ModelMessage] = ModelMessagesTypeAdapter.validate_python(messages_json)
@@ -1383,7 +1476,13 @@ class SqliteStepStore:
             )
             if not include_interrupted:
                 sql += " AND state = 'complete'"
-            rows = conn.execute(sql + ' ORDER BY seq ASC', (run_id,)).fetchall()
+            rows: list[tuple[object, ...]] = []
+            cache: dict[str, str] = {}
+            for row in conn.execute(sql + ' ORDER BY seq ASC', (run_id,)).fetchall():
+                try:
+                    rows.append((*row[:6], self._sync_expand_messages(conn, row[6], cache), row[7]))
+                except ValueError:
+                    _logger.warning('Skipping unparsable snapshot row for run %s', run_id, exc_info=True)
         finally:
             self._maybe_close(conn)
         return rows

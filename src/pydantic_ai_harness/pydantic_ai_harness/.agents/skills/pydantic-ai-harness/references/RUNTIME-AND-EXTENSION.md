@@ -83,6 +83,11 @@ File, SQLite, Mongo, and Postgres stores move `BinaryContent` and any text part 
 `MediaStore` (disk, same DB, same Mongo client, or same pool by default). Pass `media_store=None` to keep them
 inline, or `media_store=S3MediaStore(...)` from `pydantic_ai_harness.media`.
 
+The same four stores save each message once, keyed by the SHA-256 of its JSON, and a snapshot as the list of
+those keys, so a store grows with distinct messages, not snapshots times history length. They still read
+snapshots that older releases saved inline, but older releases cannot read the new ones. Do not pass
+`deduplicate_messages=False` in new code: it is deprecated and writes the whole history into every snapshot.
+
 Reading back:
 
 - `continue_run(store, run_id=...)` / `fork_run(...)` return `list[ModelMessage]` from the latest
@@ -125,7 +130,7 @@ Gotchas:
 - A derived `run_id` longer than 200 characters raises `ValueError`, so keep `agent_name` short.
   `FileStepStore` only accepts ids matching `[A-Za-z0-9_.-]{1,200}`.
 - Events are never pruned. Snapshots are pruned only with `max_snapshots_per_run`, and pruning never
-  deletes media blobs.
+  deletes media blobs or stored messages.
 - Put `StepPersistence` before capabilities whose `after_run` rewrites history. After-hooks run in
   reverse order.
 - The default `id` is `'step_persistence'`, and store writes are durable operations, so it works

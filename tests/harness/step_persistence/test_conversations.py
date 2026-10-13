@@ -144,6 +144,35 @@ async def test_delete_removes_run_data_but_not_other_conversations(tmp_path: Pat
     assert len(await store.listing()) == 1
 
 
+async def test_delete_removes_messages_only_its_checkpoints_reference(tmp_path: Path) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
+    second = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
+    steps = SqliteStepStore(database=store.database, media_store=None)
+    shared = ModelRequest(parts=[UserPromptPart('shared prompt')])
+    other: list[ModelMessage] = [shared, ModelResponse(parts=[TextPart('other reply')])]
+    for record, history in ((first, [shared, ModelResponse(parts=[TextPart('private reply')])]), (second, other)):
+        await steps.register_run(RunRecord(run_id=record.id, conversation_id=record.id))
+        await steps.save_snapshot(ContinuableSnapshot(run_id=record.id, step_index=0, messages=history))
+    with closing(sqlite3.connect(store.database)) as conn:
+        # A damaged row in another run must not block the deletion.
+        conn.execute(
+            'INSERT INTO snapshots (run_id, step_index, timestamp, messages) '
+            "VALUES ('damaged', 0, '2026-01-01T00:00:00+00:00', '{not json')"
+        )
+        conn.commit()
+
+    await store.delete(source=first)
+
+    with closing(sqlite3.connect(store.database)) as conn:
+        stored = [row[0] for row in conn.execute('SELECT message FROM snapshot_messages')]
+    assert len(stored) == 2
+    assert not any('private reply' in message for message in stored)
+    snapshot = await steps.latest_snapshot(run_id=second.id)
+    assert snapshot is not None
+    assert snapshot.messages == other
+
+
 async def test_stale_naming_usage_is_still_accounted(tmp_path: Path) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])

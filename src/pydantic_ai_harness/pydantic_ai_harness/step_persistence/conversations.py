@@ -28,6 +28,21 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai_harness.media import SqliteMediaStore, externalize_media, restore_media
+from pydantic_ai_harness.step_persistence._messages import message_refs
+
+# `snapshots.messages` values that reference `snapshot_messages`; inline message lists start with `[`.
+_REFERENCING_SNAPSHOTS = "SELECT messages FROM snapshots WHERE messages LIKE '{%'"
+
+
+def _snapshot_refs(rows: Sequence[tuple[str]]) -> set[str]:
+    """Collect the message references in `snapshots.messages` values, skipping rows that do not parse."""
+    refs: set[str] = set()
+    for (messages,) in rows:
+        try:
+            refs.update(message_refs(json.loads(messages)) or ())
+        except ValueError:
+            continue
+    return refs
 
 
 class ConversationConflict(ValueError):
@@ -127,7 +142,9 @@ def conversation_text(messages: Sequence[ModelMessage]) -> str:
 class SqliteConversationStore:
     """Local conversation heads with atomic compare-and-swap writes.
 
-    Messages share the step store's media format. Deletion removes associated top-level run records and checkpoints but leaves shared blobs; only explicitly catalogued conversations are browsable.
+    Messages share the step store's media format. Deletion removes associated top-level run records and checkpoints,
+    and the stored step messages no remaining checkpoint references, but leaves shared media blobs; only explicitly
+    catalogued conversations are browsable.
     Connections are short-lived and all SQL runs off the caller's event loop.
     """
 
@@ -314,6 +331,16 @@ class SqliteConversationStore:
                 raise ConversationConflict('Session changed or was deleted. Refresh the browser.')
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             if 'runs' in tables:
+                # A message can be shared with another conversation's checkpoints (a fork copies
+                # history), so only the ones nothing else references are deleted with these.
+                orphaned: set[str] = set()
+                if 'snapshot_messages' in tables:
+                    orphaned = _snapshot_refs(
+                        conn.execute(
+                            f'{_REFERENCING_SNAPSHOTS} AND run_id IN (SELECT run_id FROM runs WHERE conversation_id=?)',
+                            (source.id,),
+                        ).fetchall()
+                    )
                 for table in ('events', 'snapshots', 'snapshot_idempotency_keys', 'tool_effects'):
                     if table in tables:
                         # Fixed internal table names, never user input. Keep the catalog and
@@ -323,3 +350,6 @@ class SqliteConversationStore:
                             (source.id,),
                         )
                 conn.execute('DELETE FROM runs WHERE conversation_id=?', (source.id,))
+                if orphaned:
+                    orphaned -= _snapshot_refs(conn.execute(_REFERENCING_SNAPSHOTS).fetchall())
+                    conn.executemany('DELETE FROM snapshot_messages WHERE sha256=?', [(digest,) for digest in orphaned])

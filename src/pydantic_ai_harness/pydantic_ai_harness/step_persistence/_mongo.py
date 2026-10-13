@@ -18,6 +18,8 @@ Collections (created lazily on first write):
   `seq`, matching `SqliteStepStore`'s `AUTOINCREMENT seq` so a reused
   `run_id` whose `step_index` reset to 0 cannot clobber an earlier snapshot.
 - `snapshot_idempotency_keys` -- replay suppression retained after pruning.
+- `snapshot_messages` -- each message once, `_id` = the SHA-256 of its JSON; a
+  snapshot's `messages` field holds `{"message_refs": [...]}`.
 - `tool_effects` -- upsert per `(run_id, tool_call_id)`.
 - `counters` -- one document per sequence name, incremented atomically with
   `$inc` to allocate `seq` values.
@@ -36,6 +38,13 @@ from pymongo.errors import DuplicateKeyError
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai_harness.media import MediaStore, externalize_media, restore_media
 from pydantic_ai_harness.media._mongo import MongoMediaStore
+from pydantic_ai_harness.step_persistence._messages import (
+    join_messages,
+    message_refs,
+    split_messages,
+    unknown_refs,
+    warn_full_history_deprecated,
+)
 from pydantic_ai_harness.step_persistence._store import (
     _DEFAULT_MEDIA_THRESHOLD_BYTES,  # pyright: ignore[reportPrivateUsage]
     _AutoMedia,  # pyright: ignore[reportPrivateUsage]
@@ -80,6 +89,14 @@ class MongoStepStore:
     `max_snapshots_per_run` (default `None`, unbounded) bounds per-run
     snapshot growth: after each write, one `delete_many` prunes the documents
     outside the retain set (see `_prune_snapshots`).
+
+    A snapshot's new messages are upserted into `snapshot_messages` before its
+    document is inserted. MongoDB writes here are not transactional, so a
+    failed insert, or a keyed save that loses a race with a duplicate, can
+    leave messages that no snapshot references. Documents with inline
+    messages, written by earlier releases, still load.
+    `deduplicate_messages=False` writes inline messages instead and is
+    deprecated.
     """
 
     def __init__(
@@ -91,13 +108,17 @@ class MongoStepStore:
         media_store: MediaStore | None | _AutoMedia = 'auto',
         media_threshold_bytes: int = _DEFAULT_MEDIA_THRESHOLD_BYTES,
         max_snapshots_per_run: int | None = None,
+        deduplicate_messages: bool = True,
     ) -> None:
         if (client is None) == (db_url is None):
             raise ValueError('provide exactly one of `client=` or `db_url=`')
         if database is None:
             raise ValueError('`database=` is required')
         _validate_max_snapshots(max_snapshots_per_run)
+        if not deduplicate_messages:
+            warn_full_history_deprecated('MongoStepStore')
         self._max_snapshots_per_run = max_snapshots_per_run
+        self._deduplicate_messages = deduplicate_messages
 
         if client is not None:
             self._client = client
@@ -215,6 +236,10 @@ class MongoStepStore:
                 media_store=self._media_store,
                 threshold_bytes=self._media_threshold_bytes,
             )
+        stored: object = messages_json
+        texts: dict[str, str] = {}
+        if self._deduplicate_messages:
+            stored, texts = split_messages(messages_json)
         doc: _MongoDocument = {
             'run_id': snapshot.run_id,
             'step_index': snapshot.step_index,
@@ -223,17 +248,19 @@ class MongoStepStore:
             'agent_name': snapshot.agent_name,
             'timestamp': snapshot.timestamp.isoformat(),
             'state': snapshot.state,
-            'messages': json.dumps(messages_json),
+            'messages': json.dumps(stored),
             'idempotency_key': snapshot.idempotency_key,
         }
         if snapshot.idempotency_key is None:
             del doc['idempotency_key']
+            await self._store_messages(texts)
             doc['seq'] = await self._next_seq('snapshots')
             await self._db['snapshots'].insert_one(doc)
         else:
             key_id: _MongoDocument = {'run_id': snapshot.run_id, 'key': snapshot.idempotency_key}
             if await self._db['snapshot_idempotency_keys'].find_one({'_id': key_id}) is not None:
                 return
+            await self._store_messages(texts)
             doc['seq'] = await self._next_seq('snapshots')
             try:
                 await self._db['snapshots'].insert_one(doc)
@@ -272,7 +299,17 @@ class MongoStepStore:
         retained = _retained_seqs(entries, self._max_snapshots_per_run)
         await self._db['snapshots'].delete_many({'run_id': run_id, 'seq': {'$nin': sorted(retained)}})
 
-    async def _snapshot_from_doc(self, run_id: str, doc: _MongoDocument) -> ContinuableSnapshot:
+    async def _store_messages(self, texts: dict[str, str]) -> None:
+        """Insert the messages `snapshot_messages` lacks."""
+        if not texts:
+            return
+        collection = self._db['snapshot_messages']
+        known = {doc['_id'] async for doc in collection.find({'_id': {'$in': list(texts)}}, {'_id': 1})}
+        for digest, text in texts.items():
+            if digest not in known:
+                await collection.update_one({'_id': digest}, {'$setOnInsert': {'message': text}}, upsert=True)
+
+    async def _snapshot_from_doc(self, run_id: str, doc: _MongoDocument, cache: dict[str, str]) -> ContinuableSnapshot:
         messages_text = doc['messages']
         step_index = doc['step_index']
         timestamp_raw = doc['timestamp']
@@ -280,6 +317,12 @@ class MongoStepStore:
             raise ValueError('snapshot document has wrong types')
 
         messages_json: object = json.loads(messages_text)
+        refs = message_refs(messages_json)
+        if refs is not None:
+            if unknown := unknown_refs(refs, cache):
+                async for message_doc in self._db['snapshot_messages'].find({'_id': {'$in': unknown}}):
+                    cache[str(message_doc['_id'])] = str(message_doc['message'])
+            messages_json = join_messages(refs, cache)
         if self._media_store is not None:
             messages_json = await restore_media(messages_json, media_store=self._media_store)
         messages: list[ModelMessage] = ModelMessagesTypeAdapter.validate_python(messages_json)
@@ -302,7 +345,7 @@ class MongoStepStore:
         doc = await self._db['snapshots'].find_one(query, sort=[('seq', -1)])
         if doc is None:
             return None
-        return await self._snapshot_from_doc(run_id, doc)
+        return await self._snapshot_from_doc(run_id, doc, {})
 
     async def list_snapshots(self, *, run_id: str, include_interrupted: bool = False) -> list[ContinuableSnapshot]:
         """Return retained snapshots for `run_id` in write order.
@@ -318,9 +361,10 @@ class MongoStepStore:
         if not include_interrupted:
             query['state'] = 'complete'
         snapshots: list[ContinuableSnapshot] = []
+        cache: dict[str, str] = {}
         async for doc in self._db['snapshots'].find(query).sort('seq', 1):
             try:
-                snapshots.append(await self._snapshot_from_doc(run_id, doc))
+                snapshots.append(await self._snapshot_from_doc(run_id, doc, cache))
             except Exception:
                 _logger.warning('Skipping unparsable snapshot document for run %s', run_id, exc_info=True)
         return snapshots

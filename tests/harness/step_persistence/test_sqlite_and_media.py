@@ -376,12 +376,12 @@ class TestFileStepStoreMedia:
         assert len(blobs) == 1
         assert blobs[0].stat().st_size == 70_000
 
-        # Snapshot JSON references the URI, not the inline base64.
+        # The stored message references the URI, not the inline base64.
         snap_files = list((tmp_path / 'runs' / 'r1' / 'snapshots').glob('*.json'))
         assert len(snap_files) == 1
-        snap_text = snap_files[0].read_text(encoding='utf-8')
-        assert '__harness_external_media__' in snap_text
-        assert base64.b64encode(b'\xab' * 70_000).decode('ascii') not in snap_text
+        stored_text = ''.join(p.read_text(encoding='utf-8') for p in (tmp_path / 'runs' / 'messages').glob('*.json'))
+        assert '__harness_external_media__' in stored_text
+        assert base64.b64encode(b'\xab' * 70_000).decode('ascii') not in stored_text
 
     async def test_round_trip_restores_original_bytes(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path / 'runs')
@@ -421,8 +421,9 @@ class TestFileStepStoreMedia:
             ContinuableSnapshot(run_id='r1', step_index=0, messages=_sample_messages_with_media(70_000))
         )
         assert not (tmp_path / 'runs' / 'media').exists()
-        snap_text = next((tmp_path / 'runs' / 'r1' / 'snapshots').glob('*.json')).read_text(encoding='utf-8')
-        assert '__harness_external_media__' not in snap_text
+        stored_text = ''.join(p.read_text(encoding='utf-8') for p in (tmp_path / 'runs' / 'messages').glob('*.json'))
+        assert base64.b64encode(b'\xab' * 70_000).decode('ascii') in stored_text
+        assert '__harness_external_media__' not in stored_text
 
         # Loading also works with media_store=None — no restore_media walk.
         snap = await store.latest_snapshot(run_id='r1')
@@ -727,6 +728,14 @@ class TestSqliteListSnapshots:
                 'INSERT INTO snapshots (run_id, step_index, timestamp, messages) VALUES (?, ?, ?, ?)',
                 ('r1', 2, '2026-01-01T00:00:00+00:00', b'\x00bin'),
             )
+            conn.execute(
+                'INSERT INTO snapshots (run_id, step_index, timestamp, messages) VALUES (?, ?, ?, ?)',
+                ('r1', 3, b'\x00bin', '[]'),
+            )
+            conn.execute(
+                'INSERT INTO snapshots (run_id, step_index, timestamp, messages) VALUES (?, ?, ?, ?)',
+                ('r1', 4, '2026-01-01T00:00:00+00:00', '[{"kind": "not-a-message"}]'),
+            )
         finally:
             conn.close()
 
@@ -734,7 +743,7 @@ class TestSqliteListSnapshots:
             snaps = await store.list_snapshots(run_id='r1')
 
         assert [s.step_index for s in snaps] == [0]
-        assert sum('unparsable' in record.message for record in caplog.records) == 2
+        assert sum('unparsable' in record.message for record in caplog.records) == 4
 
     async def test_default_skips_interrupted_include_flag_returns_them(self, tmp_path: Path) -> None:
         store = SqliteStepStore(database=tmp_path / 'runs.db', media_store=None)

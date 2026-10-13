@@ -1601,11 +1601,17 @@ result. An older settled checkpoint does not undo later file writes or commands.
 There is no automatic tool replay, side-effect deduplication, workspace rollback,
 or restoration of arbitrary plugin state.
 
-Deletion removes the conversation and associated run records in the same SQLite
-transaction. Shared content-addressed media is retained; deletion is not secure
-erasure. Snapshot retention keeps eight recent checkpoints per run, plus the
-latest settled recovery point when needed. There is no whole-session TTL or media
-garbage collection.
+Step checkpoints store each message once and refer to it from every checkpoint
+that contains it, so a long session's checkpoints do not repeat its whole history
+on every turn. Sessions saved by earlier versions still resume. An earlier
+version of CLAI cannot read checkpoints this version writes, so upgrade every
+CLAI that shares a database.
+
+Deletion removes the conversation, its run records, and the checkpoint messages
+no other session uses in the same SQLite transaction. Shared content-addressed
+media is retained; deletion is not secure erasure. Snapshot retention keeps eight
+recent checkpoints per run, plus the latest settled recovery point when needed.
+There is no whole-session TTL or media garbage collection.
 
 ## Usage and cost
 
