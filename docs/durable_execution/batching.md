@@ -122,9 +122,6 @@ and accepts at most 500 queued requests. Compact completed records are retained 
 A full queue applies backpressure; enqueue retries are bounded to 30 minutes.
 Temporal's [payload and history limits](https://docs.temporal.io/evaluate/cloud/limits) apply to the manager
 as well as the agent workflow. Large documents and generated files need a durable payload-offload strategy.
-
-
-
 ## Other Durable Execution Backends
 
 [`BaseDurabilityCapability`][pydantic_ai.durable_exec.BaseDurabilityCapability] exposes an optional

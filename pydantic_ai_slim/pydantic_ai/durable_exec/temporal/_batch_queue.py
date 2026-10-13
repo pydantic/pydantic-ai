@@ -1,6 +1,6 @@
 """The Temporal workflow that collects `BatchModel` requests into provider batches.
 
-One queue workflow runs per agent, registered model and request group, with an ID derived from them,
+One queue workflow runs per agent, registered model, request group and task queue, with an ID derived from them,
 so every worker feeds the same queue. Requests arrive as updates, which the server records before
 acknowledging them, so an accepted request survives any crash. The queue submits a batch at the
 policy's request count, at its byte limit, or when its oldest request has waited `max_wait`, then

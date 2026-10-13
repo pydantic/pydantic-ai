@@ -190,6 +190,19 @@ def test_an_engine_without_batch_support_rejects_the_model() -> None:
         Agent(BatchModel(BatchCapableTestModel()), name='unsupported-batch-agent', capabilities=[JournalDurability()])
 
 
+async def test_an_engine_without_batch_support_rejects_a_runtime_model() -> None:
+    from pydantic_ai.capabilities import ResolveModelId
+    from tests.durable_exec.test_durable_exec_compat import JournalDurability
+
+    agent = Agent(
+        TestModel(),
+        name='unsupported-runtime-batch',
+        capabilities=[ResolveModelId(lambda ctx, model_id: BatchModel(BatchCapableTestModel())), JournalDurability()],
+    )
+    with pytest.raises(UserError, match='Journal compatibility stub does not provide'):
+        await agent.run('hello', model='test:runtime-batch')
+
+
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 async def test_anthropic_batch_refuses_a_different_registered_client(allow_model_requests: None) -> None:
     first = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='first-key')).batch_provider

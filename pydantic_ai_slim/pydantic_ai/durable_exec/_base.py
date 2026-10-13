@@ -1735,8 +1735,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if batch_model is None:
             return None
         binding = self.get_durable_batch_binding()
+        if binding is None:
+            raise UserError(
+                f'`BatchModel` requests need a durable batch queue, which {self.engine_name} does not provide. '
+                'Use the wrapped model directly, or a durable execution engine with batch support, such as Temporal.'
+            )
         registered, model_id = self._registered_model_id(batch_model)
-        if binding is None or not registered:
+        if not registered:
             # The queue rebuilds the model on the worker, outside any run, so only the registry can supply it.
             raise UserError(
                 f'A `BatchModel` used inside a {self.engine_name} {self.durable_container_noun} must be registered '
