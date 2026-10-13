@@ -13,7 +13,7 @@ import json
 import warnings
 from collections.abc import Iterable, Sequence
 from decimal import Decimal
-from typing import Any, cast
+from typing import cast
 
 from anthropic import AsyncAnthropic, Omit, omit as OMIT
 from anthropic.types.beta.message_create_params import MessageCreateParamsNonStreaming
@@ -32,9 +32,7 @@ from .anthropic import (
     _BATCH_UNSUPPORTED_CLIENTS,  # pyright: ignore[reportPrivateUsage]
     AnthropicModel,
     AnthropicModelSettings,
-    _build_extra_body,  # pyright: ignore[reportPrivateUsage]
     _map_api_errors,  # pyright: ignore[reportPrivateUsage]
-    _resolve_anthropic_service_tier,  # pyright: ignore[reportPrivateUsage]
 )
 from .batch import BatchRequest, BatchResult, BatchStatus
 
@@ -84,43 +82,20 @@ async def batch_encode(
     settings = cast(AnthropicModelSettings, prepared_settings or {})
     if 'timeout' in settings:
         raise UserError(
-            'Per-request `timeout` is not supported for `BatchModel`; configure the registered Anthropic client timeout instead.'
+            'Anthropic Message Batches do not support per-request `timeout`; configure the client timeout instead.'
         )
     if settings.get('anthropic_speed') is not None:
         raise UserError('Anthropic Message Batches do not support `anthropic_speed`.')
     prepared = await model._prepare_messages_create(messages, settings, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
     if set(prepared.extra_headers) != {'User-Agent'}:
         # A batch is created with one set of headers, so per-request ones can't be honored.
-        raise UserError('`extra_headers` are not supported for `BatchModel` requests; set them on the client.')
+        raise UserError('Anthropic Message Batches do not support per-request `extra_headers`; set them on the client.')
 
-    params: MessageCreateParamsNonStreaming = {
-        'max_tokens': prepared.max_tokens,
-        'messages': prepared.anthropic_messages,
-        'model': model.model_name,
-    }
-    body: dict[str, Any] = {**params}
-    for name, value in {
-        'system': prepared.system_prompt,
-        'tools': prepared.tools,
-        'tool_choice': prepared.tool_choice,
-        'mcp_servers': prepared.mcp_servers,
-        'output_config': prepared.output_config,
-        'cache_control': prepared.auto_cache_control,
-        'thinking': prepared.initial_thinking,
-        'context_management': prepared.context_management,
-        'container': prepared.container,
-    }.items():
-        if value and not isinstance(value, Omit):
-            body[name] = value
-    if (stop_sequences := settings.get('stop_sequences')) is not None:
-        body['stop_sequences'] = stop_sequences
-    if (metadata := settings.get('anthropic_metadata')) is not None:
-        body['metadata'] = metadata
-    if not isinstance(service_tier := _resolve_anthropic_service_tier(settings), Omit):
-        body['service_tier'] = service_tier
-    if not isinstance(diagnostics := model._cache_diagnostics(messages, settings), Omit):  # pyright: ignore[reportPrivateUsage]
-        body['diagnostics'] = diagnostics
-    if is_str_dict(extra_body := _build_extra_body(settings, prepared.initial_thinking_override)):
+    params = model._messages_create_params(  # pyright: ignore[reportPrivateUsage]
+        messages, settings, prepared, prepared.container, prepared.initial_thinking, prepared.initial_thinking_override
+    )
+    body = {name: value for name, value in params.items() if name != 'extra_body' and not isinstance(value, Omit)}
+    if is_str_dict(extra_body := params['extra_body']):
         body.update(extra_body)
 
     if 'speed' in body or body.get('stream') is True or body.get('max_tokens') == 0:
@@ -137,7 +112,7 @@ async def batch_create(self: AnthropicModel, requests: Sequence[BatchRequest]) -
     group = _GROUP_ADAPTER.validate_json(requests[0].group)
     if any(request.group != requests[0].group for request in requests):
         raise UserError(
-            'The registered Anthropic client does not match the batch request group. Deploy compatible client settings on every worker in the task queue.'
+            'The Anthropic client does not match the batch request group. Use the same client configuration for every request in a batch.'
         )
     _validate_batch_group(self, requests[0].group)
     with _map_api_errors(self.model_name):
@@ -260,7 +235,7 @@ def _validate_batch_group(self: AnthropicModel, group: str) -> None:
     expected = _GROUP_ADAPTER.validate_json(group)
     if group != _batch_group(self, expected['betas']):
         raise UserError(
-            'The registered Anthropic client does not match the batch request group. Deploy compatible client settings on every worker in the task queue.'
+            'The Anthropic client does not match the batch request group. Use the same client configuration for every request in a batch.'
         )
 
 
@@ -269,5 +244,5 @@ def _batch_client(model: AnthropicModel) -> AsyncAnthropic:
     if isinstance(client, _BATCH_UNSUPPORTED_CLIENTS):
         raise UserError('This Anthropic endpoint does not support Message Batches.')
     if not (client.api_key or client.auth_token):
-        raise UserError('`BatchModel` requires static Anthropic API credentials on the registered client.')
+        raise UserError('Anthropic Message Batches require static Anthropic API credentials on the client.')
     return client

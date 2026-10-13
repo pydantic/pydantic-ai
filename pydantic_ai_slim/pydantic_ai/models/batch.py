@@ -26,10 +26,6 @@ __all__ = (
     'BatchStatus',
 )
 
-_DEFAULT_MAX_REQUESTS = 100
-_DEFAULT_MAX_WAIT = timedelta(seconds=30)
-_DEFAULT_POLL_INTERVAL = timedelta(minutes=1)
-
 BatchStatus: TypeAlias = Literal['in_progress', 'canceling', 'ended']
 """The job's processing state; an ended job can contain mixed per-request outcomes."""
 
@@ -56,6 +52,12 @@ class BatchSettings(TypedDict, total=False):
 
     poll_interval: timedelta
     """How often a submitted batch is checked for results. Defaults to one minute."""
+
+
+class _ResolvedBatchSettings(TypedDict):
+    max_requests: int
+    max_wait: timedelta
+    poll_interval: timedelta
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -103,19 +105,24 @@ class BatchModel(WrapperModel):
     or in `models=`, since the queue rebuilds it on the worker from its registered name.
     """
 
-    batch_settings: BatchSettings
-    """When the queue submits a batch."""
+    batch_settings: _ResolvedBatchSettings
+    """When the queue submits a batch, with defaults resolved at construction."""
 
     def __init__(self, wrapped: Model, *, batch_settings: BatchSettings | None = None) -> None:
         super().__init__(wrapped)
         if self.wrapped.batch_max_requests is None:
             raise UserError(f'{type(self.wrapped).__name__} {self.wrapped.model_name!r} has no batch API.')
-        self.batch_settings = batch_settings.copy() if batch_settings is not None else {}
-        if self.batch_settings.get('max_requests', _DEFAULT_MAX_REQUESTS) <= 0:
+        settings: BatchSettings = batch_settings or {}
+        self.batch_settings = {
+            'max_requests': settings.get('max_requests', 100),
+            'max_wait': settings.get('max_wait', timedelta(seconds=30)),
+            'poll_interval': settings.get('poll_interval', timedelta(minutes=1)),
+        }
+        if self.batch_settings['max_requests'] <= 0:
             raise UserError('`BatchSettings.max_requests` must be positive.')
-        if self.batch_settings.get('max_wait', _DEFAULT_MAX_WAIT) <= timedelta(0):
+        if self.batch_settings['max_wait'] <= timedelta(0):
             raise UserError('`BatchSettings.max_wait` must be positive.')
-        if self.batch_settings.get('poll_interval', _DEFAULT_POLL_INTERVAL) <= timedelta(0):
+        if self.batch_settings['poll_interval'] <= timedelta(0):
             raise UserError('`BatchSettings.poll_interval` must be positive.')
 
     async def request(
@@ -139,4 +146,5 @@ class BatchModel(WrapperModel):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
         raise UserError('`BatchModel` does not support streaming: a batch result arrives all at once.')
-        yield  # pragma: no cover - required to type the context manager; streaming always raises
+        # Required to type the context manager; streaming always raises.
+        yield  # pragma: no cover

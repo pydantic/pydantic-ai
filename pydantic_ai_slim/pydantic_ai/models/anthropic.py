@@ -13,6 +13,7 @@ import httpx2
 import pydantic_core
 from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
+from typing_extensions import TypedDict
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._http import to_httpx2_timeout
@@ -783,6 +784,26 @@ _AnthropicEventStream: TypeAlias = _utils.PeekableAsyncStream[
 """A streamed response whose first event has been read, so an error that stops it is raised before it's processed."""
 
 
+class _MessageCreateParams(TypedDict):
+    max_tokens: int
+    system: str | list[BetaTextBlockParam] | Omit
+    messages: list[BetaMessageParam]
+    model: str
+    tools: list[BetaToolUnionParam] | Omit
+    tool_choice: BetaToolChoiceParam | Omit
+    mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] | Omit
+    output_config: BetaOutputConfigParam | Omit
+    cache_control: BetaCacheControlEphemeralParam | Omit
+    thinking: BetaThinkingConfigParam | Omit
+    stop_sequences: list[str] | Omit
+    metadata: BetaMetadataParam | Omit
+    context_management: BetaContextManagementConfigParam | Omit
+    container: BetaContainerParams | str | Omit
+    service_tier: Literal['auto', 'standard_only'] | Omit
+    diagnostics: BetaDiagnosticsParam | Omit
+    extra_body: object | None
+
+
 @dataclass(kw_only=True)
 class _PreparedMessagesCreate:
     """The `messages.create` parameters of one request, before any recovery retry changes them.
@@ -1422,28 +1443,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
             async def send(stream: bool) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
                 return await self.client.beta.messages.create(
-                    max_tokens=max_tokens,
-                    system=prepared.system_prompt or OMIT,
-                    messages=prepared.anthropic_messages,
-                    model=self._model_name,
-                    tools=prepared.tools or OMIT,
-                    tool_choice=prepared.tool_choice or OMIT,
-                    mcp_servers=prepared.mcp_servers or OMIT,
-                    output_config=prepared.output_config or OMIT,
+                    **self._messages_create_params(
+                        messages, model_settings, prepared, container_param, thinking, thinking_override
+                    ),
                     betas=sorted(betas) or OMIT,
                     stream=stream,
-                    cache_control=prepared.auto_cache_control or OMIT,
-                    thinking=thinking,
-                    stop_sequences=model_settings.get('stop_sequences', OMIT),
                     timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
-                    metadata=model_settings.get('anthropic_metadata', OMIT),
-                    context_management=prepared.context_management or OMIT,
-                    container=container_param or OMIT,
-                    service_tier=_resolve_anthropic_service_tier(model_settings),
                     speed=self._effective_speed(model_settings, anthropic_profile),
-                    diagnostics=self._cache_diagnostics(messages, model_settings),
                     extra_headers=prepared.extra_headers,
-                    extra_body=_build_extra_body(model_settings, thinking_override),
                 )
 
             async def open_stream() -> _AnthropicEventStream:
@@ -1512,6 +1519,35 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
             _warn_stale_thinking_block_recovery(self.model_name)
             return result
+
+    def _messages_create_params(
+        self,
+        messages: list[ModelMessage],
+        model_settings: AnthropicModelSettings,
+        prepared: _PreparedMessagesCreate,
+        container: BetaContainerParams | str | None,
+        thinking: BetaThinkingConfigParam | Omit,
+        thinking_override: dict[str, object] | None,
+    ) -> _MessageCreateParams:
+        return {
+            'max_tokens': prepared.max_tokens,
+            'system': prepared.system_prompt or OMIT,
+            'messages': prepared.anthropic_messages,
+            'model': self._model_name,
+            'tools': prepared.tools or OMIT,
+            'tool_choice': prepared.tool_choice or OMIT,
+            'mcp_servers': prepared.mcp_servers or OMIT,
+            'output_config': prepared.output_config or OMIT,
+            'cache_control': prepared.auto_cache_control or OMIT,
+            'thinking': thinking,
+            'stop_sequences': model_settings.get('stop_sequences', OMIT),
+            'metadata': model_settings.get('anthropic_metadata', OMIT),
+            'context_management': prepared.context_management or OMIT,
+            'container': container or OMIT,
+            'service_tier': _resolve_anthropic_service_tier(model_settings),
+            'diagnostics': self._cache_diagnostics(messages, model_settings),
+            'extra_body': _build_extra_body(model_settings, thinking_override),
+        }
 
     async def _prepare_messages_create(
         self,

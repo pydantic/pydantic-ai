@@ -33,12 +33,7 @@ from pydantic_ai.durable_exec._operation import ModelRequestParams
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
-from pydantic_ai.models.batch import (
-    _DEFAULT_MAX_REQUESTS,  # pyright: ignore[reportPrivateUsage]
-    _DEFAULT_MAX_WAIT,  # pyright: ignore[reportPrivateUsage]
-    _DEFAULT_POLL_INTERVAL,  # pyright: ignore[reportPrivateUsage]
-    BatchModel,
-)
+from pydantic_ai.models.batch import BatchModel
 from pydantic_ai.settings import ModelSettings
 
 from ._activity_execution import execute_activity
@@ -257,9 +252,9 @@ class TemporalBatchBinding:
             agent_name=self._agent_name,
             group=group,
             model_id=model_id,
-            max_requests=min(settings.get('max_requests', _DEFAULT_MAX_REQUESTS), provider_limit),
-            max_wait=settings.get('max_wait', _DEFAULT_MAX_WAIT),
-            poll_interval=settings.get('poll_interval', _DEFAULT_POLL_INTERVAL),
+            max_requests=min(settings['max_requests'], provider_limit),
+            max_wait=settings['max_wait'],
+            poll_interval=settings['poll_interval'],
         )
 
     async def _enqueue_activity(self, params: EnqueueParams) -> BatchTicket:

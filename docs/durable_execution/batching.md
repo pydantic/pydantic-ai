@@ -6,7 +6,6 @@ description: "Run durable agents through provider Batch APIs with automatic subm
 
 ```python {title="temporal_batching.py" test="skip"}
 import asyncio
-import os
 import uuid
 from datetime import timedelta
 
@@ -22,7 +21,7 @@ from pydantic_ai.models.batch import BatchModel, BatchSettings
 
 agent = Agent(
     BatchModel(
-        AnthropicModel(os.environ['ANTHROPIC_MODEL']),
+        AnthropicModel('claude-sonnet-5-5'),
         batch_settings=BatchSettings(max_requests=100, max_wait=timedelta(seconds=30)),
     ),
     name='ticket-classifier',
@@ -60,7 +59,7 @@ if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-Set `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL`, and start a [Temporal server](temporal.md#durable-agent).
+Set `ANTHROPIC_API_KEY`, and start a [Temporal server](temporal.md#durable-agent).
 Install `pydantic-ai[temporal]` before running the example.
 
 [`BatchModel`][pydantic_ai.models.batch.BatchModel] queues each model request instead of sending it immediately.
@@ -93,10 +92,11 @@ Workers on another task queue have their own manager, so retiring an old queue d
 Requests with incompatible provider configuration stay in separate groups.
 Deploy the same registered client configuration on every worker polling a task queue.
 Changing a live group's `BatchSettings` requires draining it or using a new registered agent/model name.
-Configure transport timeouts and custom headers on that client; per-request `timeout` and `extra_headers` are unsupported.
+See [Anthropic batch limitations](../models/anthropic.md#batch-api) for client configuration and supported parameters.
 
 This implementation supports Anthropic Message Batches with Temporal. It requires a registered provider model
-and non-streaming agent execution. Anthropic batches reject `anthropic_speed` and `max_tokens=0` cache pre-warming. `FallbackModel` containing a `BatchModel` is not supported. Other durable execution integrations reject batch mode before submission.
+and non-streaming agent execution. `FallbackModel` containing a `BatchModel` is not supported.
+Other durable execution integrations reject batch mode before submission.
 
 !!! warning "Batch turns can take hours"
     Each tool turn or output-validation retry can require another provider batch.

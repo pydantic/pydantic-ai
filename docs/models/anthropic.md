@@ -563,6 +563,11 @@ settings, cancellation behavior and payload limits.
 Anthropic charges batch usage at [50% of standard API prices](https://platform.claude.com/docs/en/build-with-claude/batch-processing#pricing).
 Batching and prompt-caching discounts can apply together.
 
+Message Batches do not support `anthropic_speed`, `max_tokens=0` cache pre-warming,
+or streaming. Configure transport timeouts and custom headers on the Anthropic client;
+per-request `timeout` and `extra_headers` are unsupported. Use static API credentials
+and the same client configuration when submitting and retrieving a batch.
+
 ## Mid-conversation system messages
 
 Adding an instruction to the agent's `system_prompt` partway through a long session rewrites the front of the prompt, which invalidates every cached prefix behind it. Anthropic avoids that by accepting a system message *inside* the conversation, at the instruction's own position in the history rather than ahead of it, so everything cached up to that point stays cached.

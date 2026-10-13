@@ -14,18 +14,22 @@ from datetime import timedelta
 import pytest
 
 from pydantic_ai import Agent, ModelRequest, UserPromptPart
+from pydantic_ai.capabilities import ResolveModelId
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.batch import BatchModel, BatchResult, BatchSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
+from tests.durable_exec.test_durable_exec_compat import JournalDurability
 
 from ..conftest import try_import
 
 with try_import() as anthropic_available:
     from anthropic import AsyncAnthropic, AsyncAnthropicBedrock
 
-    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 
@@ -65,6 +69,7 @@ async def test_batch_model_rejects_streaming() -> None:
 
     with pytest.raises(UserError, match='`BatchModel` does not support streaming'):
         async with agent.run_stream('Hello'):
+            # Streaming rejects before entering the context.
             pass  # pragma: no cover
 
 
@@ -94,7 +99,6 @@ async def test_anthropic_batch_request_carries_the_messages_params_without_secre
     model = AnthropicModel(
         'claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=AsyncAnthropic(api_key='secret-key'))
     )
-    assert model is not None
 
     request = await model.batch_encode(
         [ModelRequest(parts=[UserPromptPart('Hello')])],
@@ -117,9 +121,8 @@ async def test_anthropic_batch_request_carries_the_messages_params_without_secre
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 async def test_anthropic_batch_rejects_per_request_headers() -> None:
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
-    assert model is not None
 
-    with pytest.raises(UserError, match='`extra_headers` are not supported for `BatchModel` requests'):
+    with pytest.raises(UserError, match='do not support per-request `extra_headers`'):
         await model.batch_encode(
             [ModelRequest(parts=[UserPromptPart('Hello')])],
             {'extra_headers': {'X-Tenant': 'a'}},
@@ -132,7 +135,6 @@ async def test_anthropic_batch_rejects_per_request_headers() -> None:
 @pytest.mark.parametrize('status', ['expired', 'canceled'])
 def test_anthropic_batch_request_that_never_ran_is_a_model_error(status: str) -> None:
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
-    assert model is not None
 
     with pytest.raises(ModelAPIError, match=f'The batch request was {status} before the model ran it.'):
         model.batch_decode(
@@ -143,15 +145,12 @@ def test_anthropic_batch_request_that_never_ran_is_a_model_error(status: str) ->
 
 
 def test_an_engine_without_batch_support_rejects_the_model() -> None:
-    from tests.durable_exec.test_durable_exec_compat import JournalDurability
 
     with pytest.raises(UserError, match='Journal compatibility stub does not provide'):
         Agent(BatchModel(BatchCapableTestModel()), name='unsupported-batch-agent', capabilities=[JournalDurability()])
 
 
 async def test_an_engine_without_batch_support_rejects_a_runtime_model() -> None:
-    from pydantic_ai.capabilities import ResolveModelId
-    from tests.durable_exec.test_durable_exec_compat import JournalDurability
 
     agent = Agent(
         TestModel(),
@@ -166,7 +165,6 @@ async def test_an_engine_without_batch_support_rejects_a_runtime_model() -> None
 async def test_anthropic_batch_refuses_a_different_registered_client(allow_model_requests: None) -> None:
     first = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='first-key'))
     second = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='second-key'))
-    assert first is not None and second is not None
     request = await first.batch_encode(
         [ModelRequest(parts=[UserPromptPart('hello')])], None, ModelRequestParameters(), custom_id='item'
     )
@@ -199,22 +197,18 @@ async def test_anthropic_batch_refuses_a_different_registered_client(allow_model
     ],
 )
 async def test_anthropic_batch_rejects_synchronous_only_parameters(settings: ModelSettings) -> None:
-    provider = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key='test'))
-    assert provider is not None
+    model = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key='test'))
     with pytest.raises(UserError, match='not support'):
-        await provider.batch_encode(
+        await model.batch_encode(
             [ModelRequest(parts=[UserPromptPart('hello')])], settings, ModelRequestParameters(), custom_id='item'
         )
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 async def test_anthropic_batch_preserves_supported_settings() -> None:
-    from pydantic_ai.models.anthropic import AnthropicModelSettings
-    from pydantic_ai.tools import ToolDefinition
 
-    provider = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
-    assert provider is not None
-    request = await provider.batch_encode(
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
+    request = await model.batch_encode(
         [ModelRequest(parts=[UserPromptPart('hello')], instructions='Answer briefly')],
         AnthropicModelSettings(
             max_tokens=100,
@@ -241,13 +235,11 @@ async def test_anthropic_batch_preserves_supported_settings() -> None:
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 def test_anthropic_batch_requires_static_credentials() -> None:
     client = AsyncAnthropic(api_key='')
-    with pytest.raises(UserError, match='requires static Anthropic API credentials'):
+    with pytest.raises(UserError, match='require static Anthropic API credentials'):
         BatchModel(AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client)))
 
 
 async def test_wrapped_non_batch_model_keeps_durable_execution() -> None:
-    from pydantic_ai.models.wrapper import WrapperModel
-    from tests.durable_exec.test_durable_exec_compat import JournalDurability
 
     result = await Agent(WrapperModel(TestModel()), name='wrapped-plain', capabilities=[JournalDurability()]).run(
         'hello'

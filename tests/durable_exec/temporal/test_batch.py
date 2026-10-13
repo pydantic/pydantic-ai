@@ -1188,7 +1188,8 @@ class AutomaticBatchWorkflow(PydanticAIWorkflow):
     async def run(self, stream: bool) -> str:
         if stream:
             async with registry_agent.run_stream('streaming', model='batch') as result:
-                return await result.get_output()  # pragma: no cover - batching rejects streaming before yielding
+                # Batching rejects streaming before yielding.
+                return await result.get_output()  # pragma: no cover
         return (await registry_agent.run('worker-registry', model='batch')).output
 
 
