@@ -185,7 +185,7 @@ orchestrator = Agent('openai:gpt-5', deps_type=MyDeps, capabilities=[workflow])
 workflow.reveal(fixer)
 ```
 
-The revealed sub-agent becomes callable on the next step; the model learns about it through a short announcement message that carries the new function's signature. The `run_workflow` description itself stays frozen at the agents present when the run started, so a runtime reveal never moves the prompt-cache prefix. `reveal()` is append-only and validates immediately -- a missing name, an invalid identifier, a reserved keyword, or a name collision raises `UserError` at the call site.
+The revealed sub-agent becomes callable on the next step; the model learns about it through a short system-level announcement message that carries the new function's signature. The `run_workflow` description itself stays frozen at the agents present when the run started, so a runtime reveal never moves the prompt-cache prefix. If compaction or a history processor removes the announcement, the capability announces the sub-agent again on the next step. `reveal()` is append-only and validates immediately -- a missing name, an invalid identifier, a reserved keyword, or a name collision raises `UserError` at the call site.
 
 ## Loading it only when needed: `defer_loading`
 

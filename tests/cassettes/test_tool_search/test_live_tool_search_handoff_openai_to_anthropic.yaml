@@ -1,662 +1,704 @@
+version: 1
 interactions:
 - request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br
-      connection:
-      - keep-alive
-      content-length:
-      - '626'
-      content-type:
-      - application/json
-      host:
-      - api.openai.com
     method: POST
-    parsed_body:
-      include:
-      - reasoning.encrypted_content
-      input:
-      - content: What is the USD/EUR exchange rate?
-        role: user
-      instructions: Always use get_exchange_rate to answer exchange-rate questions.
-      model: gpt-5.4
-      reasoning:
-        context: all_turns
-      stream: false
-      tool_choice: auto
-      tools:
-      - type: tool_search
-      - defer_loading: true
-        description: Look up the exchange rate for a currency pair.
-        name: get_exchange_rate
-        parameters:
-          additionalProperties: false
-          properties:
-            pair:
-              type: string
-          required:
-          - pair
-          type: object
-        strict: true
-        type: function
-    uri: https://api.openai.com/v1/responses
-  response:
-    headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      - CF-Ray
-      - CF-Ray
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '2761'
-      content-type:
-      - application/json
-      openai-processing-ms:
-      - '2322'
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      background: false
-      billing:
-        payer: developer
-      completed_at: 1785271013
-      created_at: 1785271011
-      error: null
-      frequency_penalty: 0.0
-      id: resp_014bb72ece6164a9006a6912e30ad88194bb45ff1f6105c6fa
-      incomplete_details: null
-      instructions: Always use get_exchange_rate to answer exchange-rate questions.
-      max_output_tokens: null
-      max_tool_calls: null
-      metadata: {}
-      model: gpt-5.4-2026-03-05
-      moderation: null
-      object: response
-      output:
-      - arguments:
-          paths:
-          - get_exchange_rate
-        call_id: null
-        execution: server
-        id: tsc_014bb72ece6164a9006a6912e449808194b322911256159cff
-        status: completed
-        type: tool_search_call
-      - call_id: null
-        execution: server
-        id: tso_014bb72ece6164a9006a6912e46b0481948902f173a4dcb65b
-        status: completed
-        tools:
-        - defer_loading: true
-          description: Look up the exchange rate for a currency pair.
-          name: get_exchange_rate
-          output_schema: null
-          parameters:
-            additionalProperties: false
-            properties:
-              pair:
-                type: string
-            required:
-            - pair
-            type: object
-          strict: true
-          type: function
-        type: tool_search_output
-      - arguments: '{"pair":"USD/EUR"}'
-        call_id: call_gKnoVx3jEQlwl5zC2TbCdVHW
-        id: fc_014bb72ece6164a9006a6912e4ea6481949b304a5c47238e6c
-        name: get_exchange_rate
-        namespace: get_exchange_rate
-        status: completed
-        type: function_call
-      parallel_tool_calls: true
-      presence_penalty: 0.0
-      previous_response_id: null
-      prompt_cache_key: null
-      prompt_cache_retention: 24h
-      reasoning:
-        context: all_turns
-        effort: none
-        mode: standard
-        summary: null
-      safety_identifier: null
-      service_tier: default
-      status: completed
-      store: true
-      temperature: 1.0
-      text:
-        format:
-          type: text
-        verbosity: medium
-      tool_choice: auto
-      tool_usage:
-        image_gen:
-          input_tokens: 0
-          input_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          output_tokens: 0
-          output_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          total_tokens: 0
-        web_search:
-          num_requests: 0
-      tools:
-      - defer_loading: true
-        description: Look up the exchange rate for a currency pair.
-        name: get_exchange_rate
-        output_schema: null
-        parameters:
-          additionalProperties: false
-          properties:
-            pair:
-              type: string
-          required:
-          - pair
-          type: object
-        strict: true
-        type: function
-      - description: null
-        parameters: null
-        type: tool_search
-      top_logprobs: 0
-      top_p: 0.98
-      truncation: disabled
-      usage:
-        input_tokens: 580
-        input_tokens_details:
-          cache_write_tokens: 0
-          cached_tokens: 0
-        output_tokens: 43
-        output_tokens_details:
-          reasoning_tokens: 21
-        total_tokens: 623
-      user: null
-    status:
-      code: 200
-      message: OK
-- request:
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1629'
-      content-type:
-      - application/json
-      host:
-      - api.openai.com
-    method: POST
-    parsed_body:
-      include:
-      - reasoning.encrypted_content
-      input:
-      - content: What is the USD/EUR exchange rate?
-        role: user
-      - arguments:
-          queries:
-          - get_exchange_rate
-        call_id: null
-        execution: server
-        id: tsc_014bb72ece6164a9006a6912e449808194b322911256159cff
-        status: completed
-        type: tool_search_call
-      - call_id: null
-        execution: server
-        id: tso_014bb72ece6164a9006a6912e46b0481948902f173a4dcb65b
-        status: completed
-        tools:
-        - defer_loading: true
-          description: Look up the exchange rate for a currency pair.
-          name: get_exchange_rate
-          parameters:
-            additionalProperties: false
-            properties:
-              pair:
-                type: string
-            required:
-            - pair
-            type: object
-          strict: true
-          type: function
-        type: tool_search_output
-      - arguments: '{"pair":"USD/EUR"}'
-        call_id: call_gKnoVx3jEQlwl5zC2TbCdVHW
-        id: fc_014bb72ece6164a9006a6912e4ea6481949b304a5c47238e6c
-        name: get_exchange_rate
-        namespace: get_exchange_rate
-        type: function_call
-      - call_id: call_gKnoVx3jEQlwl5zC2TbCdVHW
-        output: 'USD/EUR: 0.92'
-        type: function_call_output
-      instructions: Always use get_exchange_rate to answer exchange-rate questions.
-      model: gpt-5.4
-      reasoning:
-        context: all_turns
-      stream: false
-      tool_choice: auto
-      tools:
-      - type: tool_search
-      - defer_loading: true
-        description: Look up the exchange rate for a currency pair.
-        name: get_exchange_rate
-        parameters:
-          additionalProperties: false
-          properties:
-            pair:
-              type: string
-          required:
-          - pair
-          type: object
-        strict: true
-        type: function
-    uri: https://api.openai.com/v1/responses
-  response:
-    headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      - CF-Ray
-      - CF-Ray
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '2178'
-      content-type:
-      - application/json
-      openai-processing-ms:
-      - '2658'
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      background: false
-      billing:
-        payer: developer
-      completed_at: 1785271015
-      created_at: 1785271014
-      error: null
-      frequency_penalty: 0.0
-      id: resp_014bb72ece6164a9006a6912e5d0f08194af21ed2074569a82
-      incomplete_details: null
-      instructions: Always use get_exchange_rate to answer exchange-rate questions.
-      max_output_tokens: null
-      max_tool_calls: null
-      metadata: {}
-      model: gpt-5.4-2026-03-05
-      moderation: null
-      object: response
-      output:
-      - content:
-        - annotations: []
-          logprobs: []
-          text: USD/EUR is 0.92.
-          type: output_text
-        id: msg_014bb72ece6164a9006a6912e6e810819482d707d6995a61e0
-        phase: final_answer
-        role: assistant
-        status: completed
-        type: message
-      parallel_tool_calls: true
-      presence_penalty: 0.0
-      previous_response_id: null
-      prompt_cache_key: null
-      prompt_cache_retention: 24h
-      reasoning:
-        context: all_turns
-        effort: none
-        mode: standard
-        summary: null
-      safety_identifier: null
-      service_tier: default
-      status: completed
-      store: true
-      temperature: 1.0
-      text:
-        format:
-          type: text
-        verbosity: medium
-      tool_choice: auto
-      tool_usage:
-        image_gen:
-          input_tokens: 0
-          input_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          output_tokens: 0
-          output_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          total_tokens: 0
-        web_search:
-          num_requests: 0
-      tools:
-      - description: null
-        parameters: null
-        type: tool_search
-      - description: Look up the exchange rate for a currency pair.
-        name: get_exchange_rate
-        tools:
-        - description: Look up the exchange rate for a currency pair.
-          name: get_exchange_rate
-          output_schema: null
-          parameters:
-            additionalProperties: false
-            properties:
-              pair:
-                type: string
-            required:
-            - pair
-            type: object
-          strict: true
-          type: function
-        type: namespace
-      top_logprobs: 0
-      top_p: 0.98
-      truncation: disabled
-      usage:
-        input_tokens: 243
-        input_tokens_details:
-          cache_write_tokens: 0
-          cached_tokens: 0
-        output_tokens: 13
-        output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 256
-      user: null
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br
-      connection:
-      - keep-alive
-      content-length:
-      - '1609'
+      - "1501"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the USD/EUR exchange rate?
-          type: text
-        role: user
-      - content:
-        - id: tsc_014bb72ece6164a9006a6912e449808194b322911256159cff
-          input:
-            queries:
-            - get_exchange_rate
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - tool_name: get_exchange_rate
-            type: tool_reference
-          is_error: false
-          tool_use_id: tsc_014bb72ece6164a9006a6912e449808194b322911256159cff
-          type: tool_result
-        role: user
-      - content:
-        - id: call_gKnoVx3jEQlwl5zC2TbCdVHW
-          input:
-            pair: USD/EUR
-          name: get_exchange_rate
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: 'USD/EUR: 0.92'
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What is the USD/EUR exchange rate?
             type: text
-          is_error: false
-          tool_use_id: call_gKnoVx3jEQlwl5zC2TbCdVHW
-          type: tool_result
-        role: user
-      - content:
-        - text: USD/EUR is 0.92.
-          type: text
-        role: assistant
-      - content:
-        - text: Now call get_exchange_rate for GBP/USD without searching again.
-          type: text
-        role: user
-      model: claude-sonnet-4-6
-      stream: false
-      system:
-      - text: Always use get_exchange_rate to answer exchange-rate questions.
-        type: text
-      tool_choice:
-        type: auto
-      tools:
-      - defer_loading: true
-        description: Look up the exchange rate for a currency pair.
-        input_schema:
-          additionalProperties: false
-          properties:
-            pair:
-              type: string
-          required:
-          - pair
-          type: object
-        name: get_exchange_rate
-      - name: tool_search_tool_bm25
-        type: tool_search_tool_bm25_20251119
-    uri: https://api.anthropic.com/v1/messages?beta=true
+        - role: assistant
+          content:
+          - id: tsc_0fd6d5a152ee119c006abbe76e32c087d197e462925de8dab7
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - get_exchange_rate
+        - role: user
+          content:
+          - tool_use_id: tsc_0fd6d5a152ee119c006abbe76e32c087d197e462925de8dab7
+            type: tool_result
+            content:
+            - tool_name: get_exchange_rate
+              type: tool_reference
+            is_error: false
+        - role: assistant
+          content:
+          - id: call_E0MWBuO7BkQyVcDnMWXGydXt
+            type: tool_use
+            name: get_exchange_rate
+            input:
+              pair: USD/EUR
+        - role: user
+          content:
+          - tool_use_id: call_E0MWBuO7BkQyVcDnMWXGydXt
+            type: tool_result
+            content:
+            - text: "USD/EUR: 0.92"
+              type: text
+            is_error: false
+        - role: assistant
+          content:
+          - text: USD/EUR is 0.92.
+            type: text
+        - role: user
+          content:
+          - text: Now call get_exchange_rate for GBP/USD without searching again.
+            type: text
+        model: claude-sonnet-4-6
+        stream: true
+        system:
+        - type: text
+          text: Always use get_exchange_rate to answer exchange-rate questions.
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_exchange_rate
+          description: Look up the exchange rate for a currency pair.
+          input_schema:
+            additionalProperties: false
+            properties:
+              pair:
+                type: string
+            required:
+            - pair
+            type: object
+          defer_loading: true
+        - type: tool_search_tool_bm25_20251119
+          name: tool_search_tool_bm25
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '635'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-d0025fdf42e8ead2f830495c68a5a8f3-1cebb877b27cec52-01
+      - 00-37de7ab5c92b09df02fc658eae8364d6-2b3a208d00a39448-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CfY3jErbBh9zpH1rWoQSv","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":972,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_016pRLrwTGP4zxPRRJz3Pv8s","name":"get_exchange_rate","input":{},"caller":{"type":"direct"}}             }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"pair\""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"GBP/"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"USD\"}"}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":972,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":59}    }
+
+        event: message_stop
+        data: {"type":"message_stop"         }
+
+  recorded_at: 2026-09-29T16:29:41.506634+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1812"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
       content:
-      - text: Sure!
-        type: text
-      - caller:
-          type: direct
-        id: toolu_01LEMkEQysdpGt7VTHXcMwhc
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What is the USD/EUR exchange rate?
+            type: text
+        - role: assistant
+          content:
+          - id: tsc_0fd6d5a152ee119c006abbe76e32c087d197e462925de8dab7
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - get_exchange_rate
+        - role: user
+          content:
+          - tool_use_id: tsc_0fd6d5a152ee119c006abbe76e32c087d197e462925de8dab7
+            type: tool_result
+            content:
+            - tool_name: get_exchange_rate
+              type: tool_reference
+            is_error: false
+        - role: assistant
+          content:
+          - id: call_E0MWBuO7BkQyVcDnMWXGydXt
+            type: tool_use
+            name: get_exchange_rate
+            input:
+              pair: USD/EUR
+        - role: user
+          content:
+          - tool_use_id: call_E0MWBuO7BkQyVcDnMWXGydXt
+            type: tool_result
+            content:
+            - text: "USD/EUR: 0.92"
+              type: text
+            is_error: false
+        - role: assistant
+          content:
+          - text: USD/EUR is 0.92.
+            type: text
+        - role: user
+          content:
+          - text: Now call get_exchange_rate for GBP/USD without searching again.
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_016pRLrwTGP4zxPRRJz3Pv8s
+            type: tool_use
+            name: get_exchange_rate
+            input:
+              pair: GBP/USD
+        - role: user
+          content:
+          - tool_use_id: toolu_016pRLrwTGP4zxPRRJz3Pv8s
+            type: tool_result
+            content:
+            - text: "GBP/USD: 0.92"
+              type: text
+            is_error: false
+        model: claude-sonnet-4-6
+        stream: true
+        system:
+        - type: text
+          text: Always use get_exchange_rate to answer exchange-rate questions.
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_exchange_rate
+          description: Look up the exchange rate for a currency pair.
+          input_schema:
+            additionalProperties: false
+            properties:
+              pair:
+                type: string
+            required:
+            - pair
+            type: object
+          defer_loading: true
+        - type: tool_search_tool_bm25_20251119
+          name: tool_search_tool_bm25
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-ff36b6bcce680faeb4529b71083f4fb8-79953312ac2972c5-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CfY3jaBBEMqVSS5TXhDY5","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1054,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}           }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" G"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"BP/USD exchange rate is"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"0.92**,"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" meaning"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" "}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"1 British"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Pound is currently"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" worth 0.92 US"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Dollars."}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0       }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1054,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":36}  }
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+  recorded_at: 2026-09-29T16:29:44.529586+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "585"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
         input:
-          pair: GBP/USD
-        name: get_exchange_rate
-        type: tool_use
-      id: msg_011CdV6dR1Vwp7KPizow5swh
-      model: claude-sonnet-4-6
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 972
-        output_tokens: 62
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+        - role: user
+          content: What is the USD/EUR exchange rate?
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        model: gpt-5.4
+        reasoning:
+          context: all_turns
+        stream: false
+        tool_choice: auto
+        tools:
+        - type: tool_search
+        - name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              pair:
+                type: string
+            required:
+            - pair
+            type: object
+          type: function
+          description: Look up the exchange rate for a currency pair.
+          strict: true
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1712"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0fd6d5a152ee119c006abbe76d737887d1a71edc13b18ec2d2
+        object: response
+        created_at: 1790699373
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1790699374
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-2026-03-05
+        moderation: null
+        output:
+        - id: tsc_0fd6d5a152ee119c006abbe76e32c087d197e462925de8dab7
+          type: tool_search_call
+          status: completed
+          arguments:
+            paths:
+            - get_exchange_rate
+          call_id: null
+          execution: server
+        - id: tso_0fd6d5a152ee119c006abbe76e5c1c87d1a174c15329e4852b
+          type: tool_search_output
+          status: completed
+          call_id: null
+          execution: server
+          tools:
+          - type: function
+            defer_loading: true
+            description: Look up the exchange rate for a currency pair.
+            name: get_exchange_rate
+            output_schema: null
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            strict: true
+        - id: fc_0fd6d5a152ee119c006abbe76ec00087d1baf5b7787ce67023
+          type: function_call
+          status: completed
+          arguments: "{\"pair\":\"USD/EUR\"}"
+          call_id: call_E0MWBuO7BkQyVcDnMWXGydXt
+          name: get_exchange_rate
+          namespace: get_exchange_rate
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          defer_loading: true
+          description: Look up the exchange rate for a currency pair.
+          name: get_exchange_rate
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              pair:
+                type: string
+            required:
+            - pair
+            type: object
+          strict: true
+        - type: tool_search
+          description: null
+          parameters: null
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 580
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 43
+          output_tokens_details:
+            reasoning_tokens: 21
+          total_tokens: 623
+        user: null
+        metadata: {}
+  recorded_at: 2026-09-29T16:29:35.203285+00:00
 - request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1981'
+      - "1525"
       content-type:
       - application/json
       host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the USD/EUR exchange rate?
-          type: text
-        role: user
-      - content:
-        - id: tsc_014bb72ece6164a9006a6912e449808194b322911256159cff
-          input:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the USD/EUR exchange rate?
+        - call_id: null
+          arguments:
             queries:
             - get_exchange_rate
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - tool_name: get_exchange_rate
-            type: tool_reference
-          is_error: false
-          tool_use_id: tsc_014bb72ece6164a9006a6912e449808194b322911256159cff
-          type: tool_result
-        role: user
-      - content:
-        - id: call_gKnoVx3jEQlwl5zC2TbCdVHW
-          input:
-            pair: USD/EUR
-          name: get_exchange_rate
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: 'USD/EUR: 0.92'
-            type: text
-          is_error: false
-          tool_use_id: call_gKnoVx3jEQlwl5zC2TbCdVHW
-          type: tool_result
-        role: user
-      - content:
-        - text: USD/EUR is 0.92.
-          type: text
-        role: assistant
-      - content:
-        - text: Now call get_exchange_rate for GBP/USD without searching again.
-          type: text
-        role: user
-      - content:
-        - text: Sure!
-          type: text
-        - id: toolu_01LEMkEQysdpGt7VTHXcMwhc
-          input:
-            pair: GBP/USD
-          name: get_exchange_rate
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: 'GBP/USD: 0.92'
-            type: text
-          is_error: false
-          tool_use_id: toolu_01LEMkEQysdpGt7VTHXcMwhc
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-6
-      stream: false
-      system:
-      - text: Always use get_exchange_rate to answer exchange-rate questions.
-        type: text
-      tool_choice:
-        type: auto
-      tools:
-      - defer_loading: true
-        description: Look up the exchange rate for a currency pair.
-        input_schema:
-          additionalProperties: false
-          properties:
-            pair:
-              type: string
-          required:
-          - pair
-          type: object
-        name: get_exchange_rate
-      - name: tool_search_tool_bm25
-        type: tool_search_tool_bm25_20251119
-    uri: https://api.anthropic.com/v1/messages?beta=true
+          type: tool_search_call
+          execution: server
+          status: completed
+          id: tsc_0fd6d5a152ee119c006abbe76e32c087d197e462925de8dab7
+        - type: tool_search_output
+          execution: server
+          tools:
+          - name: get_exchange_rate
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            type: function
+            description: Look up the exchange rate for a currency pair.
+            strict: true
+            defer_loading: true
+          call_id: null
+          status: completed
+          id: tso_0fd6d5a152ee119c006abbe76e5c1c87d1a174c15329e4852b
+        - name: get_exchange_rate
+          arguments: "{\"pair\":\"USD/EUR\"}"
+          call_id: call_E0MWBuO7BkQyVcDnMWXGydXt
+          type: function_call
+          id: fc_0fd6d5a152ee119c006abbe76ec00087d1baf5b7787ce67023
+          namespace: get_exchange_rate
+        - type: function_call_output
+          call_id: call_E0MWBuO7BkQyVcDnMWXGydXt
+          output: "USD/EUR: 0.92"
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        model: gpt-5.4
+        reasoning:
+          context: all_turns
+        stream: false
+        tool_choice: auto
+        tools:
+        - type: tool_search
+        - name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              pair:
+                type: string
+            required:
+            - pair
+            type: object
+          type: function
+          description: Look up the exchange rate for a currency pair.
+          strict: true
+          defer_loading: true
   response:
+    status: 200
     headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
-      content-length:
-      - '578'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
-      server-timing:
-      - x-originResponse;dur=1304
+      openai-processing-ms:
+      - "1583"
+      openai-version:
+      - 2020-10-01
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-7698027324cbba33560ac1cb1ca29456-4d1fe6d9a2c3f8db-01
       transfer-encoding:
       - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
+    body:
+      type: json
       content:
-      - text: The GBP/USD exchange rate is **0.92**, meaning 1 British Pound is currently worth 0.92 US Dollars.
-        type: text
-      id: msg_011CdV6dXRi9ksM2rNyCa5na
-      model: claude-sonnet-4-6
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 1056
-        output_tokens: 36
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        id: resp_0fd6d5a152ee119c006abbe76f4b8487d1b620c4c0682f9023
+        object: response
+        created_at: 1790699375
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1790699376
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-2026-03-05
+        moderation: null
+        output:
+        - id: msg_0fd6d5a152ee119c006abbe7708a4087d1bee88e9b53dca5d3
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: USD/EUR is 0.92.
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: tool_search
+          description: null
+          parameters: null
+        - type: namespace
+          description: Look up the exchange rate for a currency pair.
+          name: get_exchange_rate
+          tools:
+          - type: function
+            description: Look up the exchange rate for a currency pair.
+            name: get_exchange_rate
+            output_schema: null
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 624
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 13
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 637
+        user: null
+        metadata: {}
+  recorded_at: 2026-09-29T16:29:36.922237+00:00

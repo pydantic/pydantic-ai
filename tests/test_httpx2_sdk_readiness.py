@@ -32,8 +32,8 @@ with try_import() as google_imports_successful:
 with try_import() as mistral_imports_successful:
     from mistralai.client import Mistral
 
-# Prepended to every subprocess script below: legacy HTTPX is installed in the test environment, so the
-# scripts have to make it unimportable to stand in for an install that never had it.
+# Runs first in the subprocess below: legacy HTTPX is installed in the test environment, so the
+# script has to make it unimportable to stand in for an install that never had it.
 _BLOCK_HTTPX = """
 import sys
 
@@ -47,9 +47,7 @@ class BlockHttpx:
 sys.meta_path.insert(0, BlockHttpx())
 """
 
-_HTTPX_FREE_CORE = (
-    _BLOCK_HTTPX
-    + """
+_HTTPX_FREE_CORE = """
 import asyncio
 import typing
 
@@ -76,12 +74,13 @@ async def break_out_of_stream():
 
 asyncio.run(break_out_of_stream())
 assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), 'the SDK-less core imported httpx'
+# `pydantic_ai.mcp` pulls in `fastmcp` and `mcp`, which used to account for about half of `import pydantic_ai`.
+assert not any(
+    name in ('pydantic_ai.mcp', 'mcp', 'fastmcp') or name.startswith(('mcp.', 'fastmcp.')) for name in sys.modules
+), 'the SDK-less core imported MCP'
 """
-)
 
-_HTTPX_FREE_OPENAI = (
-    _BLOCK_HTTPX
-    + """
+_HTTPX_FREE_OPENAI = """
 import asyncio
 import warnings
 
@@ -124,12 +123,9 @@ with warnings.catch_warnings():
 
 assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), 'OpenAI providers imported httpx'
 """
-)
 
 
-_HTTPX_FREE_ANTHROPIC = (
-    _BLOCK_HTTPX
-    + """
+_HTTPX_FREE_ANTHROPIC = """
 import asyncio
 
 import httpx2
@@ -155,38 +151,106 @@ asyncio.run(construct_providers())
 
 assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), 'Anthropic providers imported httpx'
 """
-)
 
 
-def test_core_runs_without_httpx() -> None:
-    result = subprocess.run(
-        [sys.executable, '-W', 'error', '-c', _HTTPX_FREE_CORE],
-        capture_output=True,
-        text=True,
+# The public download boundary, with `_ssrf`'s resolver and client stood in for: it patches module
+# globals, so it runs last.
+_HTTPX_FREE_SAFE_DOWNLOAD = """
+import asyncio
+
+import httpx2
+
+from pydantic_ai import _ssrf
+
+
+class FailingClient:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    def build_request(self, method, url, **kwargs):
+        return httpx2.Request(method, url, **kwargs)
+
+    async def send(self, request, **kwargs):
+        raise httpx2.ConnectError('Connection failed', request=request)
+
+
+async def validate_and_resolve_url(url, allow_local):
+    return _ssrf.ResolvedUrl(
+        resolved_ip='93.184.216.34',
+        hostname='example.com',
+        port=80,
+        is_https=False,
+        path='/',
     )
-    assert result.returncode == 0, result.stderr
-    assert result.stderr == ''
 
 
-def test_openai_providers_run_without_httpx() -> None:
-    result = subprocess.run(
-        [sys.executable, '-W', 'error', '-c', _HTTPX_FREE_OPENAI],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    assert result.stderr == ''
+def create_async_httpx2_client(*, timeout):
+    return FailingClient()
 
 
+_ssrf.validate_and_resolve_url = validate_and_resolve_url
+_ssrf.create_async_httpx2_client = create_async_httpx2_client
+
+
+async def main():
+    try:
+        await _ssrf.safe_download('http://example.com')
+    except httpx2.RequestError as error:
+        assert type(error) is httpx2.RequestError
+    else:
+        raise AssertionError('safe_download did not raise the failed request')
+
+
+asyncio.run(main())
+assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), '`safe_download` imported httpx'
+"""
+
+
+@pytest.fixture(scope='module')
+def httpx_free_run() -> subprocess.CompletedProcess[str]:
+    """Run every stage in one interpreter, printing each stage's name once it passes.
+
+    Each interpreter spawn cold-imports `pydantic_ai` under coverage, which takes seconds in CI. The
+    stages share one: every stage only adds imports, and each re-checks that none of them is HTTPX,
+    so the core stage runs first and later stages can't hide what an earlier one imported.
+    """
+    stages = {'core': _HTTPX_FREE_CORE, 'openai': _HTTPX_FREE_OPENAI}
+    if anthropic_imports_successful():
+        stages['anthropic'] = _HTTPX_FREE_ANTHROPIC
+    stages['safe_download'] = _HTTPX_FREE_SAFE_DOWNLOAD
+    script = _BLOCK_HTTPX + ''.join(f'{code}\nprint({name!r}, flush=True)\n' for name, code in stages.items())
+    return subprocess.run([sys.executable, '-W', 'error', '-c', script], capture_output=True, text=True)
+
+
+def _assert_stage_passed(run: subprocess.CompletedProcess[str], stage: str) -> None:
+    assert stage in run.stdout.splitlines(), run.stderr
+    # A later stage's traceback is that stage's failure; anything else on stderr is every stage's.
+    assert run.returncode != 0 or run.stderr == '', run.stderr
+
+
+@pytest.mark.xdist_group(name='httpx_free_run')
+def test_core_runs_without_httpx(httpx_free_run: subprocess.CompletedProcess[str]) -> None:
+    _assert_stage_passed(httpx_free_run, 'core')
+
+
+@pytest.mark.xdist_group(name='httpx_free_run')
+def test_openai_providers_run_without_httpx(httpx_free_run: subprocess.CompletedProcess[str]) -> None:
+    _assert_stage_passed(httpx_free_run, 'openai')
+
+
+@pytest.mark.xdist_group(name='httpx_free_run')
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
-def test_anthropic_providers_run_without_httpx() -> None:
-    result = subprocess.run(
-        [sys.executable, '-W', 'error', '-c', _HTTPX_FREE_ANTHROPIC],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    assert result.stderr == ''
+def test_anthropic_providers_run_without_httpx(httpx_free_run: subprocess.CompletedProcess[str]) -> None:
+    _assert_stage_passed(httpx_free_run, 'anthropic')
+
+
+@pytest.mark.xdist_group(name='httpx_free_run')
+def test_safe_download_works_without_legacy_httpx(httpx_free_run: subprocess.CompletedProcess[str]) -> None:
+    """The public download boundary remains usable when only httpx2 is installed."""
+    _assert_stage_passed(httpx_free_run, 'safe_download')
 
 
 async def test_httpx2_client_constructs_without_blocking() -> None:

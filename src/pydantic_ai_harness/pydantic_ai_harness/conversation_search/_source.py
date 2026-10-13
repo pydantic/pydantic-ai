@@ -13,7 +13,7 @@ originals, so reconciling each snapshot's carried-forward prefix against the
 accumulated history and excluding compaction artifacts recovers the durable record.
 The overlap is reconciled by sequence position, so byte-identical messages at
 distinct positions remain in the record. A substrate that keeps an append-only
-entry log (the session-tree direction of pydantic-ai-harness#321) can implement
+entry log (the session-tree direction of pydantic/pydantic-ai#9001) can implement
 `HistorySource` directly via replay and replace the adapter without touching the
 search layer.
 """
@@ -79,7 +79,7 @@ class SnapshotStore(Protocol):
     `FileStepStore`, `SqliteStepStore`, and `MongoStepStore` all satisfy it.
     `list_snapshots` is not part of the `StepStore` protocol yet -- the shipped
     stores implement it as a plain method; promoting it into the protocol is
-    proposed alongside the session-tree evolution (pydantic-ai-harness#321).
+    proposed alongside the session-tree evolution (pydantic/pydantic-ai#9001).
     """
 
     async def list_runs(

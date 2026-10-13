@@ -176,7 +176,7 @@ class SessionInstrumentation:
     ) -> str | None:
         """Finalize and end the session span, returning its traceparent (for `AgentRunResult`).
 
-        Attaches cumulative usage, run context, and the conversation to the span, mirroring the
+        Attaches the session's own usage, run context, and the conversation to the span, mirroring the
         classic agent-run span's end-of-run contract. No-op (returning `None`) when instrumentation
         is disabled or no span was started.
         """
@@ -186,7 +186,7 @@ class SessionInstrumentation:
             return None
         if error is not None:
             self.record_error(span, error)
-        # Report cumulative usage under `gen_ai.aggregated_usage.*` (mirroring the classic agent-run
+        # Report the session's own usage under `gen_ai.aggregated_usage.*` (mirroring the classic agent-run
         # span) so backends that sum span attributes don't double-count it against the per-turn `chat`
         # spans, which carry each response's usage under `gen_ai.usage.*`. Shared with the classic span.
         attributes: dict[str, Any] = {
@@ -365,6 +365,20 @@ class SessionInstrumentation:
             self._session_span_attributes['gen_ai.output.type'] = output_type
         if self.chat_span is not None:
             self.chat_span.set_attribute('gen_ai.output.type', output_type)
+
+    def set_conversation_id(self, conversation_id: str) -> None:
+        """Adopt an id the session minted after this helper was constructed.
+
+        A session opened without a `conversation_id` mints one the first time its `conversation` is
+        taken, which can happen after the session span is already open. The span has to carry the
+        same id the session's messages do, or the spoken conversation can't be correlated with the
+        text runs that continue it.
+        """
+        self.conversation_id = conversation_id
+        if self.session_span is not None:
+            self.session_span.set_attribute('gen_ai.conversation.id', conversation_id)
+        if self._session_span_attributes is not None:
+            self._session_span_attributes['gen_ai.conversation.id'] = conversation_id
 
     def _request_config_attributes(self, settings: InstrumentationSettings) -> dict[str, Any]:
         """OTel attribute *values* for the request config the session was opened with.

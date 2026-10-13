@@ -112,6 +112,20 @@ What can I help you with today?\
     assert response.provider_details['finish_reason'] == 'stop'
 
 
+async def test_openrouter_provider_quantization_and_sort(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+) -> None:
+    """`nvfp4` and `exacto` are accepted by OpenRouter's provider routing and must type-check here too."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel('z-ai/glm-5.3-flash', provider=provider)
+    settings = OpenRouterModelSettings(
+        max_tokens=300,
+        openrouter_provider={'quantizations': ['nvfp4'], 'sort': 'exacto'},
+    )
+    await model_request(model, [ModelRequest.user_text_prompt('Who are you? One sentence.')], model_settings=settings)
+    assert request_capture.body()['provider'] == {'quantizations': ['nvfp4'], 'sort': 'exacto'}
+
+
 async def test_openrouter_stream_with_native_options(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
@@ -133,7 +147,7 @@ async def test_openrouter_stream_with_native_options(allow_model_requests: None,
         assert stream.provider_details is not None
         assert stream.provider_details == snapshot(
             {
-                'timestamp': datetime.datetime(2025, 11, 2, 6, 14, 57, tzinfo=datetime.timezone.utc),
+                'timestamp': datetime.datetime(2025, 11, 2, 6, 14, 57, tzinfo=datetime.UTC),
                 'finish_reason': 'completed',
                 'cost': 0.00333825,
                 'upstream_inference_cost': None,
@@ -630,9 +644,31 @@ async def test_openrouter_with_provider_details_but_no_parent_details(openrouter
         {
             'downstream_provider': 'TestProvider',
             'finish_reason': 'stop',
-            'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc),
+            'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.UTC),
         }
     )
+
+
+@pytest.mark.parametrize('native_finish_reason', ['end_turn', 'stop'])
+async def test_openrouter_missing_finish_reason_keeps_native_finish_reason(
+    openrouter_api_key: str, native_finish_reason: str
+) -> None:
+    """A missing finish reason is treated as `'stop'`, without hiding the downstream provider's own one."""
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key=openrouter_api_key))
+
+    choice = Choice.model_construct(
+        index=0,
+        message={'role': 'assistant', 'content': 'test'},
+        finish_reason=None,
+        native_finish_reason=native_finish_reason,
+    )
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=0, object='chat.completion', model='test', provider='TestProvider'
+    )
+    result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+
+    assert result.finish_reason == 'stop'
+    assert result.provider_details == {'downstream_provider': 'TestProvider', 'finish_reason': native_finish_reason}
 
 
 async def test_openrouter_map_messages_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
@@ -841,7 +877,7 @@ async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None
 
     # With empty openrouter_details, we should still get the parent's provider_details (timestamp + finish_reason)
     assert result.provider_details == snapshot(
-        {'finish_reason': 'stop', 'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)}
+        {'finish_reason': 'stop', 'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.UTC)}
     )
 
 
@@ -855,13 +891,13 @@ async def test_openrouter_google_nested_schema(allow_model_requests: None, openr
 
     provider = OpenRouterProvider(api_key=openrouter_api_key)
 
-    class LevelType(str, Enum):
+    class LevelType(str, Enum):  # noqa: UP042
         ground = 'ground'
         basement = 'basement'
         floor = 'floor'
         attic = 'attic'
 
-    class SpaceType(str, Enum):
+    class SpaceType(str, Enum):  # noqa: UP042
         entryway = 'entryway'
         living_room = 'living-room'
         kitchen = 'kitchen'
@@ -1910,7 +1946,7 @@ def test_openrouter_nested_provider_response() -> None:
         {
             'downstream_provider': 'Google',
             'finish_reason': 'STOP',
-            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.timezone.utc),
+            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.UTC),
         }
     )
 
@@ -1950,7 +1986,7 @@ def test_openrouter_nested_provider_null_name() -> None:
         {
             'downstream_provider': 'unknown',
             'finish_reason': 'STOP',
-            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.timezone.utc),
+            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.UTC),
         }
     )
 

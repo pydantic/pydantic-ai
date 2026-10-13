@@ -17,10 +17,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ..credential_store import write_private
-from ..project_settings import find_project_file
-from ..settings_store import config_dir
-from ._settings import HTTPServer, Server, Servers, SSEServer, StdioServer
+from pydantic_clai2.config.credential_store import write_private
+from pydantic_clai2.config.project_settings import find_project_file
+from pydantic_clai2.config.settings_store import config_dir
+from pydantic_clai2.mcp._settings import HTTPServer, Server, Servers, SSEServer, StdioServer
 
 PROJECT_MCP_FILE = Path('.clai') / 'mcp_servers.json'
 CLAUDE_MCP_FILE = Path('.mcp.json')
