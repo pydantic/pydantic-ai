@@ -543,9 +543,10 @@ class Plugin(Generic[SettingsT, DepsT]):
     def get_status_segments(self) -> Sequence[StatusSegment]:
         """Short fragments for the status row, such as the working directory.
 
-        The shell repaints the row about ten times a second, so keep each fragment cheap and
-        synchronous: it is called for every frame, not once per turn. Fragments are appended in
-        load order, painted `MUTED`, and truncated from the right on a narrow terminal.
+        The shell repaints the row about ten times a second while it works and once a second while
+        the editor sits idle, so keep each fragment cheap and synchronous: it is called for every
+        frame, not once per turn. Fragments are appended in load order, painted `MUTED`, and
+        truncated from the right on a narrow terminal.
         """
         return ()
 

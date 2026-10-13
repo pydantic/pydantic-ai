@@ -463,6 +463,14 @@ over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings;
 whose write token then replaces `LOGFIRE_TOKEN` and the credential file, so its
 project receives the telemetry. If that key is missing, the plugin warns and
 exports nothing rather than falling back to another project.
+`variables_key` likewise takes the name of a `/keys` entry, holding a Logfire API
+key with the `project:read_variables` scope, which the plugin passes to
+`logfire.configure(api_key=...)` instead of `LOGFIRE_API_KEY`. A capability that
+reads Logfire managed variables through the plugin's instance then reads them
+from that key's project; write tokens cannot read variables. The key is used only
+when something reads a variable. If it is missing, the plugin warns and the SDK
+reads `LOGFIRE_API_KEY` as if no key were chosen. The **Variables API key** row
+sets it. The stock agent is named `clai2`, the name its run spans carry.
 Content flags do not suppress all metadata: tool names and definitions may still
 be recorded. Logfire's usual scrubbing is enabled. Set `httpx` to `true` to
 instrument `httpx` and `httpx2` requests process-wide while this plugin is loaded.
@@ -2513,8 +2521,9 @@ then receives `on_conversation_changed`; when the ID changed, the status row sta
 Resuming the conversation already held changes nothing. An in-memory `Transcript` has nothing
 saved, so its `resume` raises `LookupError`.
 Local `!command` executions append a user message with the command, stdout, stderr, and
-completion status. They do not start an agent turn or fire turn hooks; the context reaches the
-model on the next prompt.
+completion status. A command that gets the terminal (a full-screen program such as `!vim`, or
+`!!command`) appends only the command and its completion status. They do not start an agent turn or fire turn hooks;
+the context reaches the model on the next prompt.
 
 `host.session_id` is the current saved conversation ID, following `/clear` and
 `/resume`. During a run it identifies that run's conversation, including a
@@ -2558,12 +2567,13 @@ class Where(Plugin):
         return (os.getcwd,)
 ```
 
-The row is repainted about ten times a second, so `fn` runs that often: keep it
-cheap, synchronous, and free of blocking IO. Return `''` to contribute nothing
-for a frame. Fragments are truncated from the right on a narrow terminal and are
-readable text only; the colours in the row belong to CLAI. A fragment that raises
-shows its error name in the row instead, so one broken plugin cannot take the
-footer down.
+The row is repainted about ten times a second while CLAI works and once a second
+while the editor sits idle, so `fn` runs that often: keep it cheap, synchronous,
+and free of blocking IO. Return `''` to contribute nothing for a frame.
+Fragments are truncated from the right on a narrow terminal and are readable
+text only; the colours in the row belong to CLAI. A fragment that raises shows
+its error name in the row instead, so one broken plugin cannot take the footer
+down.
 
 ### Offer a spinner: `get_spinners()`
 

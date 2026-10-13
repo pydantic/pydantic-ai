@@ -192,7 +192,10 @@ settings with:
 Other options are service_name (default pydantic-clai2), send_to_logfire
 (default "if-token-present", or false), token (the name of a /keys entry
 holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
-then receives the telemetry), httpx (default false; set true to trace httpx and httpx2 requests process-wide, with headers and bodies captured when include_content is true), and ui_events (default true; set false to opt out: also record UI
+then receives the telemetry), variables_key (the name of a /keys entry holding a
+Logfire API key with the project:read_variables scope, used instead of
+LOGFIRE_API_KEY when a capability reads managed variables through this plugin's
+Logfire instance), httpx (default false; set true to trace httpx and httpx2 requests process-wide, with headers and bodies captured when include_content is true), and ui_events (default true; set false to opt out: also record UI
 interactions such as menus, commands, settings, plugin actions, keys, and prompt
 submissions, by name; while include_content is on, a submitted prompt also
 carries its text, but ! lines and slash-command arguments never do).
@@ -490,11 +493,12 @@ class Where(Plugin):
 ```
 
 The fragment is appended after the built-in figures and painted muted. The row
-repaints about ten times a second, so it runs that often: no blocking IO, no
-awaits, no printing. Return an empty string to contribute nothing that frame.
-Fragments are truncated from the right on narrow terminals and cannot set their
-own colours. get_status_segments adds to the row; replacing the row, prompt
-editor, splash, or adding custom palettes is still a CLAI source change.
+repaints about ten times a second while CLAI works and once a second while idle,
+so it runs that often: no blocking IO, no awaits, no printing. Return an empty
+string to contribute nothing that frame. Fragments are truncated from the right
+on narrow terminals and cannot set their own colours. get_status_segments adds
+to the row; replacing the row, prompt editor, splash, or adding custom palettes
+is still a CLAI source change.
 
 Offer a working animation with get_spinners; the user selects it with /spinner:
 

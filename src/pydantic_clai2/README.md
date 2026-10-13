@@ -254,19 +254,28 @@ Done (0.1s)
 
 The command runs through the system shell (`/bin/sh -c` on POSIX, `cmd.exe` on
 Windows), not your login shell, so zsh or fish syntax and shell aliases are not
-available. It runs in CLAI's working directory with the terminal's input. Stdout
-and stderr are captured separately and displayed as they arrive. Because output
-is piped, programs that require a terminal for their output, such as full-screen
-editors, may not work. CLAI reports `Done` or the exit code with the elapsed time.
+available. It runs in CLAI's working directory. Stdout and stderr are captured
+separately and displayed as they arrive. CLAI reports `Done` or the exit code
+with the elapsed time.
+
+When CLAI runs on a terminal on macOS or Linux, the command runs on a
+pseudo-terminal of its own, as it would in your shell. What you type while it
+runs goes to it and, as in a shell, is echoed into its output, so prompts such as
+`read`, `rm -i`, or a `sudo` password work.
+Programs see a terminal: CLAI sets `PAGER` and `GIT_PAGER` to `cat` so `git log`
+prints instead of paging, and drops colours and other terminal control sequences
+from the transcript. Elsewhere, such as on Windows or with input piped into CLAI,
+the command's stdout and stderr are pipes and it reads the terminal's input
+directly.
+
 Ctrl-C interrupts the
 command and returns to the prompt. On POSIX the command runs in its own session,
 so CLAI forwards the Ctrl-C to its process group, and 0.25 seconds later (as
 `subprocess.run` waits) kills whatever is still running there, including
 background jobs and programs that ignore Ctrl-C. Only a process that detaches
 on purpose with `setsid()`, as daemons do, outlives the command. Detached jobs
-should redirect stdout and stderr: CLAI stops collecting their output after the
-shell exits. Without a controlling terminal, programs that prompt through `/dev/tty`, such as `sudo`
-or `ssh` password prompts, cannot read your input. On Windows the console
+should redirect stdout and stderr: CLAI stops collecting their output shortly
+after the shell exits. On Windows the console
 delivers the Ctrl-C, and `taskkill` then ends the command's process tree. As at other times, a second Ctrl-C within two seconds exits
 CLAI. The command, stdout, stderr, and completion status are saved in the
 conversation for the model's next turn, including partial output from interrupted
@@ -276,8 +285,52 @@ Running a command does not request a model reply. This context survives
 `/resume` without re-running the command; `/new` starts without it. Do not use `!`
 for output you do not want saved or shared with the model.
 
-A bare `!` is sent to the agent as an ordinary prompt. Queued `!` lines run in
-order with other queued input. `/help` lists the syntax.
+### Full-screen and interactive commands
+
+A full-screen program, such as `!nano .env`, `!vim`, `!git log | less`, `!htop`,
+or the editor `!git commit` opens, gets the terminal to itself:
+
+```text
+> !nano .env
+$ nano .env
+Shell command and output saved for the next prompt
+Full-screen command: only its exit status is saved
+Done (12.4s)
+```
+
+CLAI needs no list of programs for this. Full-screen programs switch the
+terminal to its alternate screen when they start, and on the pseudo-terminal
+above CLAI sees that happen. At that moment CLAI takes its own display off the
+screen and passes the program's output and your keys, Ctrl-C included, straight
+through. Window size changes reach the program too. When it exits, CLAI redraws
+its screen. Output printed before the switch appears in the transcript; nothing
+is saved for the next prompt but the command and its exit status.
+
+A program that is interactive without a full screen, such as the `python` REPL
+or `ssh`, runs in the transcript, where line editing shows as redrawn text. Start
+it with `!!` to give it the terminal from the start: `!!python`, `!!ssh host`,
+`!!./install.sh`.
+
+```text
+> !!python
+$ python
+Interactive command: it has the terminal, and its output is not saved
+Done (42.0s)
+```
+
+CLAI leaves its screen, restores the terminal's normal input mode, and runs the
+command with its own input, output, and error streams, in CLAI's process group.
+The command gets Ctrl-C and window size changes itself; CLAI ignores Ctrl-C
+until it exits. When it exits, CLAI restores the terminal's modes and redraws
+its screen. Anything the command printed outside a full screen stays on the
+terminal's main screen, which CLAI covers again. Only the command and its exit
+status are saved. On Windows, the command shares CLAI's console in the same way.
+Without `!!`, a full-screen program on Windows cannot draw, because its output
+is a pipe.
+
+A bare `!` or `!!` is sent to the agent as an ordinary prompt. Queued `!` lines
+run in order with other queued input. `/help` lists the syntax.
+
 
 ## Prompt area
 
@@ -2416,10 +2469,18 @@ scrubbing remains enabled. Set `httpx` to `true` to trace HTTP requests made wit
 Logfire also captures HTTP headers and request and response bodies; with it off,
 those are not captured. HTTP instrumentation is process-wide, unlike agent tracing.
 
-Two more options choose where telemetry goes and what it covers. `token` names a
+More options choose where telemetry goes, what it covers, and what it reads. `token` names a
 `/keys` entry holding a Logfire write token, which then takes the place of
 `LOGFIRE_TOKEN` and the credential file; a missing key stops export with a warning
-rather than falling back. `ui_events` (default `true`; set `false` to opt out) adds spans and logs in the
+rather than falling back. `variables_key` names a `/keys` entry holding a Logfire
+API key with the `project:read_variables` scope (write tokens cannot read
+variables), which the plugin's Logfire instance then reads
+[managed variables](https://logfire.pydantic.dev/docs/reference/advanced/managed-variables/)
+with instead of `LOGFIRE_API_KEY`. Nothing reads them unless a capability asks the
+instance for one, so the key is only used then. A missing key is reported, and
+the SDK falls back to `LOGFIRE_API_KEY` as if none were chosen. CLAI's own agent
+is named `clai2`, so its runs are `invoke_agent clai2` spans and Logfire Agent
+Control can address it by that name. `ui_events` (default `true`; set `false` to opt out) adds spans and logs in the
 `clai2` scope for UI interactions: menus, slash commands, `/set`, plugin actions,
 `/keys`, prompt submissions, steering, interrupts, completions, and session start,
 clear, and resume. They record names and listed choices, never typed values or

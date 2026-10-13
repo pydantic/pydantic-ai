@@ -281,6 +281,7 @@ class StockAgent(Agent[DepsT, OutputT]):
         deps_type: type[DepsT],
         output_type: OutputSpec[OutputT],
         capabilities: Sequence[AgentCapability[DepsT]],
+        name: str | None = None,
         defer_model_check: bool = False,
     ) -> None:
         super().__init__(
@@ -288,6 +289,7 @@ class StockAgent(Agent[DepsT, OutputT]):
             deps_type=deps_type,
             output_type=output_type,
             capabilities=capabilities,
+            name=name,
             defer_model_check=defer_model_check,
         )
         self._stock_deps_type = deps_type
@@ -304,6 +306,7 @@ class StockAgent(Agent[DepsT, OutputT]):
             deps_type=self._stock_deps_type,
             output_type=self.output_type,
             capabilities=[self.root_capability, *plugins],
+            name=self.name,
             defer_model_check=model is not None,
         )
 
