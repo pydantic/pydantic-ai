@@ -306,8 +306,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `plugins/describe.py` | a plugin's description from its docstring, parsed with `ast`, never imported |
 | `plugins/_git.py` | Git installation for `/plugins add GIT_URL`, with checkout rollback until its declaration is saved |
 | `runtime/_processes.py` | process-tree cleanup shared by shell passthrough and Git cloning |
-| `cli/shell_passthrough.py` | `!command`: captured runs, and `run_in_terminal`, which hands the terminal to an interactive command (`full_terminal()` hold, terminal modes kept, Ctrl-C left to the child) and saves only its exit status |
-| `cli/interactive_commands.py` | `needs_terminal`: the allowlist of editors, pagers, REPLs, and Git prompts that get the terminal; `!!command` forces it for anything else |
+| `cli/shell_passthrough.py` | `!command`: captured runs (pipes, or a `PtyRun` on CLAI's terminal), and `run_in_terminal` for `!!command`, which hands the terminal over from the start (`full_terminal()` hold, terminal modes kept, Ctrl-C left to the child) and saves only its exit status |
+| `cli/shell_terminal.py` | `PtyRun`: a `!` command on a pseudo-terminal (controlling terminal, `PAGER=cat`, keys relayed, Ctrl-C to CLAI's interrupt), `TerminalText` for transcript text, and the hand-over when the program switches to the alternate screen; no list of programs |
 | `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu`, `TerminalAnswerer`, the transcript renderer |
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |

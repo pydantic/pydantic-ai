@@ -2466,8 +2466,8 @@ then receives `on_conversation_changed`; when the ID changed, the status row sta
 Resuming the conversation already held changes nothing. An in-memory `Transcript` has nothing
 saved, so its `resume` raises `LookupError`.
 Local `!command` executions append a user message with the command, stdout, stderr, and
-completion status. An interactive command that gets the terminal (`!vim`, `!!command`) appends
-only the command and its completion status. They do not start an agent turn or fire turn hooks;
+completion status. A command that gets the terminal (a full-screen program such as `!vim`, or
+`!!command`) appends only the command and its completion status. They do not start an agent turn or fire turn hooks;
 the context reaches the model on the next prompt.
 
 `host.session_id` is the current saved conversation ID, following `/clear` and

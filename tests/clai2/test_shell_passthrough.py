@@ -38,6 +38,12 @@ from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from tests.clai2.test_app_edges import inputs
 
 
+@pytest.fixture(autouse=True)
+def piped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Commands here use pipes even when the tests run on a terminal; `test_shell_terminal.py` covers terminals."""
+    monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough.attached_terminal', lambda: None)
+
+
 @pytest.mark.parametrize(
     ('text', 'command'),
     [

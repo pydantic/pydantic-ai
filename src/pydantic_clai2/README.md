@@ -254,19 +254,28 @@ Done (0.1s)
 
 The command runs through the system shell (`/bin/sh -c` on POSIX, `cmd.exe` on
 Windows), not your login shell, so zsh or fish syntax and shell aliases are not
-available. It runs in CLAI's working directory with the terminal's input. Stdout
-and stderr are captured separately and displayed as they arrive, except for
-interactive programs, which get the terminal itself (see below). CLAI reports
-`Done` or the exit code with the elapsed time.
+available. It runs in CLAI's working directory. Stdout and stderr are captured
+separately and displayed as they arrive. CLAI reports `Done` or the exit code
+with the elapsed time.
+
+When CLAI runs on a terminal on macOS or Linux, the command runs on a
+pseudo-terminal of its own, as it would in your shell. What you type while it
+runs goes to it and, as in a shell, is echoed into its output, so prompts such as
+`read`, `rm -i`, or a `sudo` password work.
+Programs see a terminal: CLAI sets `PAGER` and `GIT_PAGER` to `cat` so `git log`
+prints instead of paging, and drops colours and other terminal control sequences
+from the transcript. Elsewhere, such as on Windows or with input piped into CLAI,
+the command's stdout and stderr are pipes and it reads the terminal's input
+directly.
+
 Ctrl-C interrupts the
 command and returns to the prompt. On POSIX the command runs in its own session,
 so CLAI forwards the Ctrl-C to its process group, and 0.25 seconds later (as
 `subprocess.run` waits) kills whatever is still running there, including
 background jobs and programs that ignore Ctrl-C. Only a process that detaches
 on purpose with `setsid()`, as daemons do, outlives the command. Detached jobs
-should redirect stdout and stderr: CLAI stops collecting their output after the
-shell exits. Without a controlling terminal, programs that prompt through `/dev/tty`, such as
-`sudo` password prompts, cannot read your input; start them with `!!` instead. On Windows the console
+should redirect stdout and stderr: CLAI stops collecting their output shortly
+after the shell exits. On Windows the console
 delivers the Ctrl-C, and `taskkill` then ends the command's process tree. As at other times, a second Ctrl-C within two seconds exits
 CLAI. The command, stdout, stderr, and completion status are saved in the
 conversation for the model's next turn, including partial output from interrupted
@@ -276,47 +285,52 @@ Running a command does not request a model reply. This context survives
 `/resume` without re-running the command; `/new` starts without it. Do not use `!`
 for output you do not want saved or shared with the model.
 
-### Interactive commands
+### Full-screen and interactive commands
 
-Editors, pagers, and other programs that draw on or read from the terminal get
-it to themselves, so `!nano .env`, `!vim`, `!git log | less`, or `!python` work
-as they do in your shell:
+A full-screen program, such as `!nano .env`, `!vim`, `!git log | less`, `!htop`,
+or the editor `!git commit` opens, gets the terminal to itself:
 
 ```text
 > !nano .env
 $ nano .env
-Interactive command: it has the terminal, and its output is not saved
+Shell command and output saved for the next prompt
+Full-screen command: only its exit status is saved
 Done (12.4s)
 ```
 
+CLAI needs no list of programs for this. Full-screen programs switch the
+terminal to its alternate screen when they start, and on the pseudo-terminal
+above CLAI sees that happen. At that moment CLAI takes its own display off the
+screen and passes the program's output and your keys, Ctrl-C included, straight
+through. Window size changes reach the program too. When it exits, CLAI redraws
+its screen. Output printed before the switch appears in the transcript; nothing
+is saved for the next prompt but the command and its exit status.
+
+A program that is interactive without a full screen, such as the `python` REPL
+or `ssh`, runs in the transcript, where line editing shows as redrawn text. Start
+it with `!!` to give it the terminal from the start: `!!python`, `!!ssh host`,
+`!!./install.sh`.
+
+```text
+> !!python
+$ python
+Interactive command: it has the terminal, and its output is not saved
+Done (42.0s)
+```
+
 CLAI leaves its screen, restores the terminal's normal input mode, and runs the
-command with its own input, output, and error streams. The command gets Ctrl-C
-and window size changes itself; CLAI ignores Ctrl-C until it exits. When it
-exits, CLAI restores the terminal's modes and redraws its screen. Anything the
-command printed outside its own full screen, such as a REPL session, stays on the
+command with its own input, output, and error streams, in CLAI's process group.
+The command gets Ctrl-C and window size changes itself; CLAI ignores Ctrl-C
+until it exits. When it exits, CLAI restores the terminal's modes and redraws
+its screen. Anything the command printed outside a full screen stays on the
 terminal's main screen, which CLAI covers again. Only the command and its exit
-status are saved for the next prompt; its output is not captured.
-
-CLAI hands over the terminal when any command in the line is one of:
-
-- an editor (`vi`, `vim`, `nvim`, `nano`, `emacs`, `micro`, `hx`, ...), a pager
-  (`less`, `more`, `man`), a monitor (`top`, `htop`, `watch`, ...), `ssh`,
-  `tmux`, `screen`, or a terminal app such as `tig`, `lazygit`, or `fzf`
-- a shell or REPL started without arguments (`python`, `ipython`, `node`,
-  `bash`, `psql`, `sqlite3`, ...)
-- a Git command that opens an editor or prompts: `git commit` without `-m`,
-  `-F`, `-C`, `--fixup`, or `--no-edit`, `git rebase -i`, and `git add`,
-  `checkout`, `reset`, `restore`, or `stash` with `-p`
-
-Leading `VAR=value` assignments and `sudo`, `env`, `exec`, `command`, `nice`,
-`doas`, or `time` (with their options) are skipped, so `!sudo vim /etc/hosts`
-counts. Start any other command with `!!` to give it the terminal, such as
-`!!./install.sh` for a script that asks questions, or `!!python -i app.py`.
-Everything else is captured, because captured output is what the model sees.
-On Windows, the command shares CLAI's console in the same way.
+status are saved. On Windows, the command shares CLAI's console in the same way.
+Without `!!`, a full-screen program on Windows cannot draw, because its output
+is a pipe.
 
 A bare `!` or `!!` is sent to the agent as an ordinary prompt. Queued `!` lines
 run in order with other queued input. `/help` lists the syntax.
+
 
 ## Prompt area
 
