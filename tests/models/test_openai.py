@@ -3605,13 +3605,13 @@ def tool_with_heterogeneous_tuple(x: tuple[int, str]) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {
-                        'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
+                        'x': {'maxItems': 1, 'minItems': 1, 'type': 'array', 'items': {'type': 'integer'}},
                         'y': {
                             'default': ['abc'],
                             'maxItems': 1,
                             'minItems': 1,
-                            'prefixItems': [{'type': 'string'}],
                             'type': 'array',
+                            'items': {'type': 'string'},
                         },
                     },
                     'required': ['x'],
@@ -3708,6 +3708,24 @@ async def test_strict_mode_cannot_infer_strict(
             {
                 'additionalProperties': False,
                 'properties': {'x': {'type': 'string', 'description': 'minLength=1, format=uri'}},
+                'required': ['x'],
+                'type': 'object',
+            }
+        )
+    elif tool is tool_with_tuples and tool_strict is None:
+        profile_expected_params = snapshot(
+            {
+                'additionalProperties': False,
+                'properties': {
+                    'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
+                    'y': {
+                        'default': ['abc'],
+                        'maxItems': 1,
+                        'minItems': 1,
+                        'prefixItems': [{'type': 'string'}],
+                        'type': 'array',
+                    },
+                },
                 'required': ['x'],
                 'type': 'object',
             }
