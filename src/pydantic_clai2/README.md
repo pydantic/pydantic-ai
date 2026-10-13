@@ -17,11 +17,12 @@ The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive wit
 token kept in `/keys`. `/google_workspace` opens its settings menu: the `/keys`
 entry to use (`GOOGLE_ACCESS_TOKEN` by default), products, and read-only tools; see
 [its settings](PLUGINS.md#google_workspace-gmail-calendar-and-drive-tools).
-`/plugins enable logfire_mcp` lets the agent query your Logfire telemetry and opens
-a settings menu (region, tools, and a key picked from `/keys`, never stored in plugin
-settings; otherwise browser sign-in, which also signs new users up and works over SSH:
-`/logfire_mcp login`). Reopen it with `/plugins configure logfire_mcp`; see
-[Logfire MCP](PLUGINS.md#logfire-mcp-query-your-telemetry).
+`/plugins enable logfire_mcp` turns on the Logfire plugin, which lets the agent query
+your Logfire telemetry through Logfire's MCP server, and opens a settings menu (which
+Logfire, tools, and a key picked from `/keys`, never stored in plugin settings;
+otherwise browser sign-in, which also signs new users up and works over SSH:
+`/logfire login`). Reopen it with `/plugins configure logfire_mcp`; see
+[Logfire](PLUGINS.md#logfire-query-your-telemetry).
 `/mcp` manages MCP servers the way Code Puppy's `/mcp` does. Bare `/mcp` shows a
 status dashboard. `/mcp install` opens a form where you name the server, pick
 `stdio`, `http`, or `sse`, type its URL or command, edit the rest of its JSON
@@ -32,7 +33,8 @@ configuration in your editor, and switch on OAuth sign-in for remote servers.
 lists them all. Saved servers are available to the agent from the next prompt,
 with tool names prefixed by the server name. A server connects on the first
 prompt that needs it (or `/mcp start`) and stays connected; one that cannot
-connect is marked `error` and left out rather than failing the prompt. A
+connect is marked `error` and left out rather than failing the prompt. An OAuth
+server signs in only with `/mcp auth NAME`, never in the middle of a prompt. A
 repository's Claude Code-style `.mcp.json` (or `.clai/mcp_servers.json`) loads
 once you review it and run `/mcp trust accept`. See
 [Connect MCP servers](PLUGINS.md#connect-mcp-servers) for storage, secrets, OAuth,
@@ -99,6 +101,22 @@ CLAI2's state, session reference, model/token metadata, and conversation title.
 It starts disabled and does nothing outside herdr. See
 [the plugin guide](PLUGINS.md#herdr-integration) for details and limitations.
 
+## Agent of Empires integration
+
+Run `clai2 plugins enable aoe` once to let [Agent of Empires](https://github.com/agent-of-empires/agent-of-empires)
+(AoE) show CLAI2 sessions as `running`, `waiting`, `idle`, or `error`, reopen a
+restarted session's conversation, and title the session after the conversation.
+Register CLAI2 with AoE as a custom agent:
+
+```toml
+# ~/.config/agent-of-empires/config.toml
+[session.custom_agents]
+clai2 = "clai2"
+```
+
+Then `aoe add --tool clai2 -l`. The plugin does nothing outside an AoE session.
+See [the plugin guide](PLUGINS.md#agent-of-empires-integration) for details and limitations.
+
 ## Desktop notifications
 
 The built-in `notifications` plugin is enabled by default. Interactive sessions
@@ -138,6 +156,34 @@ Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W
 including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
 this shortcut; legacy and modified-key encodings are supported.
+
+## Undo and redo
+
+Ctrl+Z undoes the last change to your draft on macOS, Linux, and Windows. It
+brings back text removed with Backspace, Delete, word deletion, Ctrl+U, Ctrl+K,
+or Ctrl+C, and takes back a paste or a history recall. Typing undoes a word at a
+time, and a run of Backspace or Delete presses undoes in one step. Ctrl+Y or
+Ctrl+Shift+Z redoes. CLAI keeps the last 100 steps; submitting a message starts
+the next draft with none.
+
+The editor reads keys in raw mode, so Ctrl+Z reaches CLAI instead of suspending
+it to the shell. CLAI has no suspend shortcut; quit with Ctrl+D or `/exit`.
+Without kitty or xterm modified-key reporting, a terminal sends Ctrl+Shift+Z
+as Ctrl+Z, so use Ctrl+Y to redo there.
+
+Cmd+Z and Cmd+Shift+Z undo and redo too, when the terminal passes them on. CLAI
+asks for kitty keyboard reporting, which reports Cmd as Super, but most macOS
+terminals keep Cmd shortcuts for their own menus:
+
+- kitty passes Cmd+Z on with no setup.
+- Ghostty uses Cmd+Z to reopen a closed tab or split. Add
+  `keybind = cmd+z=text:\x1a` and `keybind = cmd+shift+z=csi:122;10u` to its config.
+- WezTerm: set `config.enable_kitty_keyboard = true`, or map SUPER+z to
+  `wezterm.action.SendString '\x1a'`.
+- iTerm2: in Settings > Profiles > Keys > Key Mappings, map Cmd+Z to
+  *Send Hex Codes* `0x1a`, and Cmd+Shift+Z to *Send Escape Sequence* `[122;10u`.
+- Terminal.app, VS Code, and tmux: use Ctrl+Z, or map Cmd+Z to `0x1a` in the
+  outer terminal as above.
 
 ## Option keys on macOS
 
@@ -372,6 +418,7 @@ in a workspace you trust. CLAI does not add a sandbox or approval layer.
 
 The startup splash adapts Code Puppy's stdlib-only, alternate-screen Pydantic
 pyramid, with CLAI lettering. The persistent `CLAI 2.0` banner uses `ansi_shadow`.
+Below it, CLAI prints its version, or the short commit for a `bleeding` build.
 The splash is disabled for redirected output, CLI arguments, small terminals,
 Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
 
@@ -480,7 +527,8 @@ and runs one turn through tools to completion. Only the final answer is printed
 to stdout, without Markdown rendering, wrapping, banners, thinking, or tool output.
 Errors go to stderr with a nonzero exit status; Ctrl-C exits with status 130.
 The turn is saved and can be resumed. With `-p`, `--resume` requires an explicit
-session ID; the browser cannot open. Prompt text is literal, not a slash command.
+session ID; the browser cannot open. `--session-id` and `--fork-session` work as
+interactively. Prompt text is literal, not a slash command.
 
 `-m` is the short form of `--model`. It overrides the saved, project, and
 `CLAI_MODEL` model for this invocation without changing your saved preference.
@@ -521,7 +569,7 @@ takes its place, and a run's own `workspace=` replaces it for that run. Commands
 this process's environment minus LLM provider API keys. Model names resolve as in
 `clai2`, the agent's own and any a run passes, so `openai-codex:` and `github-copilot:`
 use the sign-ins saved with `/login`. CLAI's per-model defaults apply too, such as
-Anthropic prompt caching. Without `model`, every run must pass one.
+prompt caching. Without `model`, every run must pass one.
 
 Nothing else you saved for `clai2` applies: no saved, drop-in, or project plugins, no
 `.clai/settings.json`, no `/model settings`, and no `chain:` fallback chains. `ask_user`
@@ -990,10 +1038,12 @@ from the model's next request, even in a running turn. `r` resets a field; Esc
 or Ctrl-C goes back. Fixed choices
 open a picker; numeric fields accept typed values, and empty input resets.
 
-CLAI2 enables Anthropic conversation, static-instruction, and tool-schema caching by default:
-`anthropic:` and `gateway/anthropic:` use a 5-minute TTL, while `claude-code:` uses 1 hour.
-These are CLI defaults only; plain Pydantic AI agents are unchanged. Saved cache settings override
-the defaults. Automatic caching advances to the last cacheable block, including tool results.
+CLAI2 enables prompt caching by default for every model, with the unified `Prompt Caching`
+setting (`cache`). It covers Claude on the Anthropic API, `claude-code:`, Amazon Bedrock and
+OpenRouter, Nova on Bedrock, OpenRouter's Gemini routes, and OpenAI's GPT-5.6 and later; providers
+that cache implicitly or not at all ignore it. Set it to `false` to turn caching off for a model, or
+to `1h` to keep the cache longer. Saved `anthropic_cache*` settings still apply and take precedence
+over it. These are CLI defaults only; plain Pydantic AI agents are unchanged.
 
 `/effort` shows the active model's configured reasoning effort and supported values.
 `/effort high` (or another listed value) saves it for that model; `/effort reset`
@@ -1032,13 +1082,13 @@ Older branches must receive this fix too. The minimum read-side backport is
 `model_settings_from_json`; keep the form itself strict. Also backport preservation
 of unknown keys on save and the shell's model-settings validation error handler.
 
-The editor offers OpenAI reasoning effort, Responses reasoning context, mode,
-summary, and verbosity, and Claude classic/adaptive thinking and effort.
+The editor offers OpenAI reasoning effort and verbosity, Responses reasoning
+context, mode, and summary, and Claude classic/adaptive thinking and effort.
 The editor hides generic request fields such as timeouts and penalties.
 Reasoning GPT models do not show sampling controls. Previously saved overrides
 remain visible so they can be reset. Choices depend on the model and API: Chat Completions does not get Responses
-controls. OpenRouter and vLLM GPT routes expose Chat Completions reasoning effort
-and service tier, not Responses-only controls. `all_turns` appears only on compatible models, and adaptive Claude
+controls. OpenRouter and vLLM GPT routes expose Chat Completions reasoning effort,
+verbosity, and service tier, not Responses-only controls. `all_turns` appears only on compatible models, and adaptive Claude
 models do not get a token budget. Classic thinking budgets must be at least
 1024 and below an explicit `max_tokens`. Without one, Pydantic AI
 leaves room for the answer beyond the budget. Other unset fields
@@ -1348,7 +1398,17 @@ to a fresh session ID; it does not delete the previous session.
 ```bash
 clai2 --resume                 # browse saved sessions
 clai2 --resume SESSION-ID      # restore one session
+clai2 --session-id UUID        # start a new session saved under this ID
+clai2 --resume SESSION-ID --fork-session [--session-id UUID]  # continue in a copy
 ```
+
+These flags take the same shapes as Claude Code's, so tools that drive several
+coding agents can manage CLAI sessions the same way. `--session-id` must be a UUID
+that no saved session uses yet; the session is saved under it with its first
+prompt. `--fork-session` copies the restored session to a new ID, the given
+`--session-id` or a random one, and continues there; the original stays as it was.
+With the browser (`--resume` without an ID), the selected session is copied.
+`--session-id` combines with `--resume` only together with `--fork-session`.
 
 Inside CLAI, `/resume` opens the same browser and `/resume SESSION-ID` restores a
 session directly. Opening or restoring a session does not call the coding model
@@ -1518,7 +1578,7 @@ The built-in `compaction` plugin is on by default, with or without `coder`.
 It uses harness's `FallbackCompaction` with
 `SummarizingCompaction` first and `SlidingWindowCompaction` as the fallback.
 It protects the most recent 50,000 tokens (`protected_tokens`) from summarising and
-truncation. `coder`'s own tool-result clearing is separate: above 70% of the window it
+truncation, counted as the provider reported them, thinking included. `coder`'s own tool-result clearing is separate: above 70% of the window it
 still empties tool results older than its last three tool calls. `ModelAPIError`,
 `FallbackExceptionGroup`, and `UsageLimitExceeded` during summarisation fall
 back to truncation; other exceptions propagate. The summary request is billed
@@ -1530,8 +1590,8 @@ threshold, but it protects at most half the conversation, so it always has older
 messages to summarise. Add free text to say what the summary must keep, for example
 `/compact don't lose the "auth" decisions`. The focus is passed to the summariser
 as written, including quotes, backslashes, and line breaks; no shell escaping is needed.
-You get one line with the message counts before and after and an estimate of the
-tokens saved out of the total. When compacting would not make the conversation
+You get one line with the message counts before and after and the tokens saved out
+of the total, counted as the provider reported them where the history has them. When compacting would not make the conversation
 smaller, for example because the summary is longer than what it replaces, the
 conversation is left as it was and you are told so. An empty or one-message
 conversation sends nothing.
@@ -1638,15 +1698,38 @@ activity, and failures each have their own role colour.
 
 CLAI loads custom agents from disk, in Claude Markdown (`*.md`) or Codex TOML
 (`*.toml`) format. Choose folders in `/plugins configure coder` under
-**Agent folders**, as a JSON list. Each entry is a folder name or a path:
+**Agent folders**. The list saves each change immediately; no JSON editing is
+needed. These folders contain sub-agent definitions, not files for code search.
+
+- **Add directory path** (`a`) accepts one local directory. An unprefixed
+  directory name is saved as a path, so entering `agents` here means
+  `./agents`, not the folder-name shortcut below.
+- The list is saved once for all projects. A relative path such as
+  `./team-agents` resolves against whichever project CLAI runs in, so every
+  repository can keep its own copy; it is saved even if the current project
+  lacks it, and projects without it skip it. Absolute and `~/...` paths name
+  one fixed directory for every project, so they must exist when you add them.
+- **Browse local directories** (`b`) includes hidden folders. Type to filter,
+  Enter to open a folder, Left to go to its parent, and **Use this directory**
+  to select it. The choice is saved as an absolute path, used in every project;
+  type a relative path with **Add directory path** to follow each project
+  instead. Ctrl+L opens the full current path for viewing or navigation.
+- Enter on an entry opens its actions. `e` edits its current value; `d` removes
+  it from the search without deleting files. Esc cancels an edit or returns to
+  the previous menu; **Save & close** returns with changes already saved.
+- Duplicate entries are rejected, as are absolute and `~/...` paths that are
+  missing, files, or unreadable. Existing saved entries stay editable and
+  removable even if their directory no longer exists.
+
+**Add folder name** keeps the existing shortcut behavior:
 
 - A name such as `agents` searches `.agents/agents`, `.claude/agents`, and
   `.codex/agents`, first in the project, then in your home directory. Project
   definitions win over personal ones with the same name.
-- Add more names, for example `["agents", "global"]`, to also load
+- Add another name, for example `global`, to also load
   `.claude/global` and its siblings.
-- A path such as `./team-agents` or `~/my-agents` loads exactly that folder.
-- `[]` turns disk agents off.
+- Named locations do not have to exist yet. Missing ones are skipped.
+- Remove every entry to turn disk-defined agents off.
 
 The stock CLI starts with `["agents"]`, so existing `.claude/agents` and
 `.codex/agents` definitions work without setup. If you saved Coder settings
@@ -1924,18 +2007,21 @@ than passed directly to the terminal. Styles persist across chunks and lines per
 command; cursor movement, clipboard commands, and other controls remain escaped.
 Plain shell output stays dim. ANSI generated by Termflow itself is retained.
 
-## Speculative execution
+## Code mode and speculative execution
 
-Press **Ctrl+X Ctrl+S** to switch speculative execution on or off, the same chord
-as Code Puppy. It is off by default and saved as `run.speculative_code_mode`, so
-`/set run.speculative_code_mode true` does the same. Between turns the change
+Code mode is on by default: `/set run.code_mode false` turns it off, and every
+tool is then called natively. Speculative execution builds on it and is off by
+default. Press **Ctrl+X Ctrl+S** to switch it on or off, the same chord as Code
+Puppy. It is saved as `run.speculative_code_mode`, so
+`/set run.speculative_code_mode true` does the same, and it turns code mode on
+for its turns even when `run.code_mode` is off. Between turns either change
 applies to your next prompt. During a turn the switch and the pinned row change
 at once, but the running turn keeps the tools it started with: the row says
 `on from the next prompt` or `off from the next prompt` until that turn ends.
 The agent's tools are bound when a run starts, so the new value cannot reach
 the turn that is already running.
 
-While it is on, every tool except `write_file` and `edit_file` becomes a
+In code mode, every tool except `write_file` and `edit_file` becomes a
 function inside one harness `CodeMode` `run_code` tool, `shell` included. Other
 tools that run a program passed as a string, such as a workflow plugin, stay
 native as `CodeMode` keeps them by default.
@@ -1954,10 +2040,13 @@ not the filesystem the file tools act on there.
   `read_only`. This is the built-in `coder` plugin's default. `pathlib` can also
   delete and rename files there, which `write_file` cannot do but could already
   replace the content of.
-- **Read-only:** `read_file` registered but `write_file` missing, `read_only`, or
-  `read_only_patterns` set.
-- **Not mounted:** no `read_file`, `allowed_patterns` or `denied_patterns`, no
-  `FileSystem`, more than one, or a plugin that adds a capability function or
+- **Read-only:** `read_file` registered but `write_file` missing, `read_only`,
+  `read_only_patterns` set, or a `ToolGuardrail` (a plugin's or the agent's own)
+  that checks or hides `write_file`, `edit_file`, `shell`, or `run_code`.
+- **Not mounted:** no `read_file`, `allowed_patterns` or `denied_patterns`, a
+  `ToolGuardrail` that checks or hides `read_file`, no `FileSystem`, more than
+  one, a supplied agent that does not expose its capabilities, or a plugin that
+  adds a capability function or
   `DynamicCapability` (which could supply one at run time). File access then
   goes through the file tools only.
 
@@ -1965,7 +2054,7 @@ While the model writes:
 
 - **Eager execution** runs each complete statement as soon as it has streamed,
   so a slow `shell` build or test starts before the snippet is finished.
-- **Speculation** starts `list_files`, `read_file`, `grep`, and
+- **Speculation**, only while its switch is on, starts `list_files`, `read_file`, `grep`, and
   `read_clai_customization_guide` calls whose arguments are all literals the
   moment their line has streamed. Only these
   read-only tools speculate, because an early call may belong to a branch the
@@ -1973,7 +2062,8 @@ While the model writes:
   plugin or MCP tool with the same name, or one that declares itself read-only,
   waits like any other call. Writes and shell commands never start speculatively.
 
-The model gets instructions for writing snippets that benefit. On Anthropic
+The model gets instructions for writing snippets that benefit, with the advice
+for literal read calls only while speculation is on. On Anthropic
 models CLAI also sets `anthropic_eager_input_streaming`, since Anthropic
 otherwise sends tool arguments in one burst at the end, which leaves no time to
 run anything early.
@@ -1983,7 +2073,7 @@ output as direct calls, listed under their `run_code` header in the order they
 ran. A speculative call is shown only once the snippet uses its result, so a
 launch for a branch the snippet never took does not appear.
 
-A pinned row above the footer shows the session's totals while the switch is on:
+A pinned row above the footer shows the session's totals while speculation is on:
 
 ```text
 Speculative Execution  29 hits · 0 misses · 0 wasted    saved ≥ 7.0s
@@ -2124,8 +2214,9 @@ plugin list. Use `/plugins list` to print it. Plugins are trusted code running a
 
 Every CLAI on your machine shares one settings database, so another worktree or
 branch may have saved a plugin setting this one cannot run. When a saved setting
-names a feature this build lacks, CLAI skips just that setting, uses the default,
-and tells you once at startup:
+names a feature this build lacks, CLAI skips just that setting and uses the default.
+Startup stays quiet about it; the plugin's row in `/plugins`, and `/plugins enable`
+or `reload` for that plugin, show what was skipped:
 
 ```text
 coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.
@@ -2138,9 +2229,11 @@ it again. CLAI builds from before this
 check apply every saved setting as they always did.
 
 `/plugins enable notion` gives the agent Notion's hosted MCP tools and opens its
-settings menu (`/plugins configure notion` reopens it). The token is picked from
-`/keys` by name (a new one is saved there as `NOTION_API_KEY`); without one, it
-signs in through the browser. Plugin settings never hold the token. See
+settings menu (`/plugins configure notion` reopens it). It uses a browser sign-in
+by default, made with `/notion login`, or a token picked from `/keys` by name (a new
+one is saved there as `NOTION_API_KEY`). Plugin settings never hold the token.
+No built-in plugin opens a browser while loading or during a prompt: each signs in
+only from its settings menu or its `login` command, and Esc cancels the wait. See
 [PLUGINS.md](PLUGINS.md#notion-workspace-tools).
 
 `/plugins enable linear` gives the agent Linear's hosted MCP tools, read-only by
@@ -2181,14 +2274,25 @@ shows how to put a different one, a web form for instance, in its place.
 The stock CLI enables the built-in `observability` plugin by default. It adds Pydantic
 AI's [`Instrumentation`](https://pydantic.dev/docs/ai/capabilities/overview/)
 capability to CLAI turns for agent, model-request, and tool
-spans, including timing, token usage, and failures. It adds CLAI's own UI spans
-only when `ui_events` is on (see below). HTTP client instrumentation is off by
-default; agent instrumentation does not affect unrelated agents globally.
+spans, including timing, token usage, and failures. While it is loaded it also
+turns on Pydantic AI instrumentation for every agent (`Agent.instrument_all`), so
+agents CLAI does not run itself, such as the compaction summariser,
+sub-agents, and session naming, are traced to the same place, and `/compact` records a
+`compact_messages` span. Unloading restores the previous setting. It adds CLAI's
+own UI spans only when `ui_events` is on (see below). HTTP client instrumentation
+is off by default.
 
 Startup plugin load failures reported in the terminal are also sent through the configured
 Logfire instance, including their exception and traceback, even when `ui_events` is off. Failures are
 reported after loading finishes, including those that happened before observability
 loaded. Disabling the plugin leaves these failures as terminal messages only.
+
+Other errors CLAI shows you and recovers from are sent the same way: a failed turn
+(for example, a model provider you have not logged in to), a slash command that
+fails unexpectedly (for example, `/update` hitting a GitHub rate limit), and a plugin
+handler that fails. Usage errors, such as a mistyped command, are not sent. An error
+inside the agent run is already on the run's span, so it is not sent twice. With
+`include_content` off, these records and load failures keep only the exception's type.
 
 This plugin was previously named `logfire`. Existing enabled/disabled choices,
 settings, and saved token references carry over without reconfiguration. Existing
@@ -2205,6 +2309,9 @@ cannot choose the telemetry destination. Relative `XDG_CONFIG_HOME` values fall
 back to `~/.config`. Export uses `send_to_logfire='if-token-present'`: no credentials
 means no Logfire export and no interactive project setup. Logfire's
 terminal console output is disabled so it does not interfere with the editor.
+Warnings and errors Logfire and OpenTelemetry log about failed exports go to
+`telemetry.log` next to `config.db` instead of over the editor; CLAI names the
+file on exit when a session wrote to it. Headless `clai2 -p` keeps them on stderr.
 Standard SDK configuration, including explicitly configured OTLP exporters, still
 applies; disable the plugin to stop its instrumentation altogether.
 
@@ -2217,6 +2324,10 @@ exported when it ends, which a root does at exit, so each root also gets a
 `CLAI session opened` log right away, carrying the same `agent_session_id` and
 email: query that to find a session that is still running. With `--resume`, the
 log is repeated with the saved ID as soon as startup picks the conversation.
+Logfire rejects a span that started more than a day before it arrives, so a
+root still open after 12 hours is ended then, and the next record opens a new
+root, and trace, with the same `agent_session_id`. A run under way keeps its
+place in the ended root's trace.
 
 Each session root is tagged with your email, as a Logfire tag and the
 `user.email` attribute; of its children, only the `CLAI session opened` log
@@ -2279,16 +2390,21 @@ never recorded, since both can hold secrets such as `/plugins add` settings.
 Choose **Logfire project** in the settings menu (`/plugins configure observability`, or
 `c` on `observability` in `/plugins`):
 
-1. Pick where traces go: Logfire US, Logfire EU, or a self-hosted Logfire URL.
+1. Pick which Logfire: Logfire US, Logfire EU, or **Another Logfire...** to type a
+   self-hosted or staging one as a host (`logfire.example.com`), the URL you open it
+   at, or its MCP URL (`https://logfire.example.com/mcp`); see
+   [Which Logfire](PLUGINS.md#which-logfire). Enter chooses; Esc cancels and changes
+   nothing.
 2. Sign in, or sign up, in the browser. CLAI prints the link too, so it works over SSH.
-3. Pick one of the projects you can write to.
+3. Pick one of the projects you can write to (`/` to search, Enter to use it).
 
 CLAI then creates a write token for that project, saves it in `/keys` as
 `LOGFIRE_TOKEN_<ORG>_<PROJECT>`, and points the plugin's `token` at it; the plugin
 reloads and the next turn is traced there. The sign-in itself is not kept, only
 your account's email, saved with the key name as `account` to tag session roots. The
-URL you picked is saved as the plugin's `base_url`, so `LOGFIRE_BASE_URL` cannot
-send the token elsewhere, and sending is turned on if it was off. Choose the row
+Logfire you picked is saved as the plugin's `base_url`, so `LOGFIRE_BASE_URL` cannot
+send the token elsewhere, and sending is turned on if it was off. The Logfire
+plugin's settings start from the same Logfire, so you pick the region once. Choose the row
 again to switch projects, or press `R` on it to go back to `LOGFIRE_TOKEN` or the
 credentials file.
 
@@ -2315,8 +2431,10 @@ and shuts down that instance without shutting down application-global providers.
 The existing global propagator is preserved. Logfire's SDK may install shared
 executor context-propagation helpers; those SDK hooks are not removed on unload.
 The plugin does not mutate a supplied agent. While enabled, its explicit per-run
-`Instrumentation` takes precedence over that agent's instrumentation settings;
-disabling it leaves the agent's original configuration in effect. Custom
+`Instrumentation` takes precedence over that agent's instrumentation settings, and
+`Agent.instrument_all` points agents without their own settings at the plugin's
+instance; disabling it leaves the agent's original configuration and the previous
+`Agent.instrument_all` setting in effect. Custom
 `chat()` launchers only get built-ins when passed `builtin_plugins=DEFAULT_PLUGINS`.
 
 - [Pydantic AI agent execution and events](https://pydantic.dev/docs/ai/core-concepts/agent/)

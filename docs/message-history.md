@@ -416,9 +416,11 @@ _(This example is complete, it can be run "as is")_
     A [multi-modal item][pydantic_ai.messages.MultiModalContent] in a tool return is reconstructed
     as its own type wherever it sits — on its own, in a list, or nested at any depth inside a
     mapping, including one whose own keys happen to look like ours. A URL-based item is
-    reconstructed only when its mapping carries `media_type`, which every history Pydantic AI dumps
-    does; without one it stays the plain mapping your tool returned, so a URL Pydantic AI cannot
-    read a media type out of never becomes a file that then fails to dump. A
+    reconstructed only when its mapping carries `media_type`, which a dump with the default arguments
+    always writes; without it the item stays the plain mapping your tool returned. A URL whose media type
+    Pydantic AI can't infer from the URL is serialized with `media_type: null`, which validates
+    back into the URL part's default (no media type) and dumps `null` again, in a tool return as
+    anywhere else. A
     [`BinaryContent`][pydantic_ai.messages.BinaryContent] or
     [`UploadedFile`][pydantic_ai.messages.UploadedFile] item is recognized by the fields its own type
     requires. A mapping that merely reuses one of our `kind` values stays a plain mapping, and
@@ -1074,6 +1076,8 @@ Treat `None` as unknown, not as an empty context window. It is returned before t
 Pydantic AI fills the window size from [genai-prices](https://github.com/pydantic/genai-prices) where its data records one. For a custom or local model, or one genai-prices doesn't cover yet, set the size explicitly with `profile={'context_window': 128_000}` — see [Inspecting a model's profile](models/overview.md#inspecting-a-models-profile).
 
 #### Scheduling maintenance into cache-cold windows
+
+See [Caching](capabilities/caching.md#prefix-stability-guarantees) for the full prefix-stability contract and monitoring guidance.
 
 History-mutating maintenance (summarizing, pruning, repair) has two costs: the work itself, and a *cache cost* — the next request re-writes the entire prompt prefix at full input price, since a mutated prefix can no longer hit the provider's prompt cache. That cache cost is only real while the cache is still warm. Once a conversation has been idle longer than the provider retains the prefix, the next request pays full price anyway, so that turn is a free moment to run any deferrable maintenance.
 

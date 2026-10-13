@@ -1,6 +1,7 @@
 """Isolate settings and provider access for every CLAI test."""
 
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -9,7 +10,8 @@ import pytest
 from keyring.errors import PasswordDeleteError
 
 from pydantic_ai import models
-from pydantic_clai2.config import credential_store
+from pydantic_clai2.config import Settings, credential_store
+from tests.clai2.cli_runner import CliRunner
 
 
 @pytest.fixture
@@ -109,6 +111,24 @@ def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     credential_store._NO_OLDER_ENTRY.clear()  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.fixture(autouse=True)
+def native_tools() -> Iterator[None]:
+    """Default code mode to off, so shells run native tools unless a test turns it on.
+
+    CLAI turns code mode on by default, folding tools into `run_code`, but most shell tests script
+    native tool calls with `TestModel`. Override this fixture to test the real default.
+    """
+    setting = Settings.model_fields['code_mode']
+    shipped = setting.default
+    setting.default = False
+    Settings.model_rebuild(force=True)
+    try:
+        yield
+    finally:
+        setting.default = shipped
+        Settings.model_rebuild(force=True)
+
+
 def stored_accounts() -> set[str]:
     """Accounts with a saved credential: each is an encrypted file, while the keyring only holds their key."""
     directory = credential_store.credentials_path().parent
@@ -135,3 +155,9 @@ def vault(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
     monkeypatch.setattr(keyring, 'set_password', set_value)
     monkeypatch.setattr(keyring, 'delete_password', delete)
     return entries
+
+
+@pytest.fixture
+def run_cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> CliRunner:
+    """Run `clai2` in this process; see `CliRunner`."""
+    return CliRunner(monkeypatch=monkeypatch, capsys=capsys)

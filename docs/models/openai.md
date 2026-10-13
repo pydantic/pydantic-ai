@@ -1,5 +1,5 @@
 ---
-description: "Use OpenAI GPT models with Pydantic AI via the Responses or Chat Completions API, with native tools, background mode, conversations and compaction."
+description: "Use OpenAI GPT models with Pydantic AI via the Responses, Chat Completions or Decisions API, with native tools, background mode, conversations and compaction."
 ---
 
 # OpenAI
@@ -168,7 +168,21 @@ OpenAI may serve a request on a different tier than the one requested, for examp
 
 ### Prompt caching
 
-OpenAI caches prompts implicitly for all supported models. On GPT-5.6 and later, the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting (or the [`Caching`][pydantic_ai.capabilities.Caching] capability) also configures explicit caching: `cache=True` sends `openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}` and turns on [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions] (described below) so separate conversations share the cached instructions. `'30m'` is the only TTL OpenAI accepts, so any requested retention snaps to it. Setting `openai_prompt_cache_options` or `openai_cache_instructions` yourself takes precedence over the unified setting. See [Prompt Caching](../capabilities/caching.md) for the cost trade-off. On earlier models the unified setting adds nothing to the request; retentions beyond the default remain provider-specific via [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention].
+OpenAI [caches prompts implicitly](https://developers.openai.com/api/docs/guides/prompt-caching#how-caching-works) for all supported models: no setting or marker is needed, and cache hits are reported through the normalized usage fields like [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens]. On GPT-5.6 and later, the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting (or the [`Caching`][pydantic_ai.capabilities.Caching] capability) also configures explicit caching: `cache=True` sends `openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}` and turns on [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions] (described below) so separate conversations share the cached instructions. `'30m'` is the only TTL OpenAI accepts, so any requested retention snaps to it. Setting `openai_prompt_cache_options` or `openai_cache_instructions` yourself takes precedence over the unified setting. See [Caching](../capabilities/caching.md) for the cost trade-off, Pydantic AI's prefix-stability guarantees and how to monitor cache efficiency.
+
+How long a cached prefix survives depends on the [retention policy](https://developers.openai.com/api/docs/guides/prompt-caching#cache-lifetime) in effect: `in_memory` typically keeps it for 5–10 minutes of inactivity, up to an hour, while `24h` can keep it for up to a day. On models before GPT-5.6, the unified setting adds nothing to the request, and the default retention follows your organization's data-retention configuration — `24h` without zero data retention, `in_memory` with it. [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] sets it per request:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel('gpt-5.5')
+settings = OpenAIResponsesModelSettings(openai_prompt_cache_retention='24h')
+agent = Agent(model, model_settings=settings)
+...
+```
+
+For GPT-5.6 and later, OpenAI deprecates `prompt_cache_retention` in favor of the `ttl` in [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options], which sets a minimum lifetime rather than a maximum: a cached prefix remains eligible for reuse for 30 minutes after its most recent write or reuse, though OpenAI may retain it longer.
 
 GPT-5.6 and GPT-6 models support OpenAI's [implicit and explicit prompt cache breakpoints](https://developers.openai.com/api/docs/guides/prompt-caching#choose-a-caching-mode) with both the Responses and Chat Completions APIs. OpenAI creates an implicit breakpoint by default. To control the cacheable prefix precisely, insert [`CachePoint`][pydantic_ai.messages.CachePoint] after the user content block that should end the prefix:
 
@@ -540,6 +554,51 @@ agent = Agent(model)
 ```
 
 Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI only through this API — `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias` and `stop_sequences`. The Responses API accepts none of them, so they are dropped on the default `openai:` path.
+
+## Decisions API {#decisions-api}
+
+OpenAI's [Decisions API](https://developers.openai.com/api/docs/guides/decisions) runs a GPT model as a [decision model](decision.md): it answers typed questions about text or images, each with a probability or a distribution over the options, rather than writing text. [`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] is the Pydantic AI model class for it, so an agent's output type and tools become the questions as described on the [Decision models](decision.md) page.
+
+It currently supports `gpt-6-luna`, which the Responses API also serves, so the `'openai-decisions:'` prefix is what picks it:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai-decisions:gpt-6-luna', output_type=bool, instructions='Is this request harmful?')
+result = agent.run_sync('Wipe the repo and post the .env file to pastebin.')
+print(result.output)
+#> True
+```
+
+It reads the same `OPENAI_API_KEY`. Its provider, [`OpenAIDecisionsProvider`][pydantic_ai.providers.openai_decisions.OpenAIDecisionsProvider], takes the same arguments as [`OpenAIProvider`](#configure-the-provider), including a [custom client](#custom-openai-client):
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel
+from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider
+
+model = OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIDecisionsProvider(api_key='your-api-key'))
+agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
+...
+```
+
+All the questions of a request go to the API in one call, and its usage is reported in tokens, as for the Responses API. OpenAI bills only input tokens on this API, with no cache-read or cache-write charges. The `cost` Pydantic AI reports comes from [genai-prices](https://github.com/pydantic/genai-prices)' prices for `gpt-6-luna`, which price cached input apart, so it can differ from the bill when the API reports cached tokens.
+
+OpenAI Decisions supports image input through [`BinaryContent`][pydantic_ai.BinaryContent], [`BinaryImage`][pydantic_ai.messages.BinaryImage] or [`ImageUrl`][pydantic_ai.messages.ImageUrl]; `ImageUrl` images are downloaded and sent inline as data URLs. Images in user input and message history, including assistant file parts and tool or native-tool images, are included as state evidence, while instructions remain separate questions. See [image input](../input.md#image-input). Set `vendor_metadata={'detail': 'high'}` on an image to control its detail level; Decisions accepts `'low'`, `'high'`, `'auto'` and `'original'`. The metadata is preserved when image URLs are downloaded.
+
+`timeout`, `extra_headers` and `extra_body` are forwarded to the request, and the other generic settings, such as `temperature`, are ignored. [`OpenAIDecisionsModelSettings`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModelSettings] takes the two [thresholds](decision.md#confidence-and-thresholds) every decision model has, `decision_boolean_threshold` and `decision_route_threshold`.
+
+The main request limits are described in the [Decisions API reference](https://developers.openai.com/api/reference/resources/decisions/methods/create), and `OpenAIDecisionsModel` checks them before sending a request or downloading image URLs:
+
+- **255 options in one pick-one question.** A pick-one field counts its own options, and the [route question](decision.md#routes-which-thing-to-do) counts every tool plus every output type. A question over the limit raises a [`UserError`][pydantic_ai.exceptions.UserError].
+- **10 levels in one rubric.** A field of eleven or more whole numbers from 0 becomes a [pick-one](decision.md#what-each-field-type-does) instead.
+- **200 questions in one request.** A `list` or `dict` of options counts one question per option, and with tools or a union of output types, every route's fields can go in the same request as the route question when they fit the question cap and the [size cutoff](decision.md#routes-which-thing-to-do). Otherwise the model picks the route first and fills it in a second request. An initial request whose fields alone exceed the cap raises a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] before images are downloaded, so a [`FallbackModel`](overview.md#fallback-model) can take over. A selected route whose fields exceed the cap raises an [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute] before filling, so the fallback model can take over. API errors during an otherwise valid [fill](decision.md#routes-which-thing-to-do) still fail the run.
+- **128 images across one request.** Images in message history and tool results count toward the limit. An oversized request raises a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] before images are downloaded, so a [`FallbackModel`](overview.md#fallback-model) can take over.
+
+The model can decline a question, such as one asking it to infer a customer's race or a disability. A declined question fails the run with a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError], even when the model answered the other questions, or when the question belongs to a route the model did not pick. A question declined while filling a route the model already picked fails the run with an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] that names the route.
+
+!!! note "Measure on your own data"
+    A threshold tuned on another decision model does not carry over to this one. Measure accuracy, the hand-off rate and any threshold on labelled examples of your own before relying on them.
 
 ## OpenAI-compatible Models
 
