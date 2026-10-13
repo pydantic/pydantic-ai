@@ -147,20 +147,20 @@ Run this final metadata check after CI, comments, and any selected `douwebot` re
    supports. When the harness uses only one model, run the subagent on the session's model. The check compares text
    against written rules.
 2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, title, body, labels, and complete catalog.
-3. Ask it to check only the title, body, and labels against this skill and the root `AGENTS.md`.
+3. Ask it to check only the title, body, and labels against this skill, the root `AGENTS.md`, and the PR template.
 4. Require either `current` or exact corrections: title or body text changes and label additions/removals.
    - Require each correction to cite the rule it enforces.
    - Require each correction to quote the title, body text, or label that breaks the rule. When the rule requires a
      missing element, require the correction to name that element instead.
-5. Verify each correction. Keep a correction only when a rule in this skill or the root `AGENTS.md` says what the
-   correction claims and the current title, body, or labels break that rule. When that rule is not the one the
-   correction cites, cite it on the kept correction. When you find a violation that no correction names, verify it
-   the same way and add it as a kept correction.
+5. Verify each correction. Keep a correction only when a rule in this skill, the root `AGENTS.md`, or the PR template
+   says what the correction claims and the current title, body, or labels break that rule. When that rule is not the
+   one the correction cites, cite it on the kept correction. When you find a violation that no correction names,
+   verify it the same way and add it as a kept correction.
 6. Edit the title, body, and labels once. Use the kept corrections, and write your own changes where they fall short.
    The edit is done when all three hold:
    - The edited title, body, and labels follow every rule a kept correction cites.
    - The edited title, body, and labels break no rule that the current ones follow.
-   - The edit changes nothing the first two conditions do not require.
+   - The edit applies no subagent text that no kept correction covers.
 
    Committed changes restart the post-push loop; GitHub metadata-only changes do not.
 7. Hand the PR back after the edit.
