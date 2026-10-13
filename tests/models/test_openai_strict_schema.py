@@ -320,7 +320,7 @@ async def test_openai_strict_tuple_guard_runs_before_request(
     )
     output = ToolOutput(MixedOutput, strict=True) if output_mode == 'tool' else NativeOutput(MixedOutput, strict=True)
 
-    with pytest.raises(UserError, match='OpenAI strict mode does not support tuple types'):
+    with pytest.raises(UserError, match='cannot use this tuple schema with `prefixItems` in OpenAI strict mode'):
         await Agent(model, output_type=output).run('Return a tuple.')
 
     assert request_capture.paths == []

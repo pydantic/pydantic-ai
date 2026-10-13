@@ -6610,8 +6610,8 @@ _PREFIX_ITEMS_SCHEMAS = [
 
 @pytest.mark.parametrize('array_schema', _PREFIX_ITEMS_SCHEMAS)
 def test_transformer_prefix_items_not_strict_compatible(array_schema: dict[str, Any]):
-    """OpenAI strict mode does not support `prefixItems` (tuple types), so `strict=None` must
-    infer non-strict instead of sending a schema the API rejects.
+    """The transformer conservatively treats `prefixItems` as incompatible; fixed-length Pydantic tuples
+    use it without `items`, which OpenAI rejects as missing `items`.
     See https://github.com/pydantic/pydantic-ai/issues/7315"""
     schema: dict[str, Any] = {
         'type': 'object',
@@ -6634,7 +6634,7 @@ def test_transformer_prefix_items_explicit_strict_raises(array_schema: dict[str,
         'properties': {'value': array_schema},
         'required': ['value'],
     }
-    with pytest.raises(UserError, match='OpenAI strict mode does not support tuple types'):
+    with pytest.raises(UserError, match='cannot use this tuple schema with `prefixItems` in OpenAI strict mode'):
         OpenAIJsonSchemaTransformer(schema, strict=True).walk()
 
 
