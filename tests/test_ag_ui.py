@@ -9024,6 +9024,7 @@ _MCP_APP_TOOL_RESULT = {
         'content': [{'type': 'text', 'text': 'Den Haag: 14C'}],
         'structuredContent': {'city': 'Den Haag', 'temp_c': 14},
         '_meta': {'selectedDay': 'tuesday'},
+        'isError': False,
     },
     'toolset_id': 'weather',
 }
@@ -9067,6 +9068,7 @@ async def test_mcp_app_tool_result_stream_matches_dumped_activity_message() -> N
                     'content': [{'type': 'text', 'text': 'Den Haag: 14C'}],
                     'structuredContent': {'city': 'Den Haag', 'temp_c': 14},
                     '_meta': {'selectedDay': 'tuesday'},
+                    'isError': False,
                 },
                 'serverId': 'weather',
             },
