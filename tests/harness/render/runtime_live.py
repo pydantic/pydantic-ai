@@ -174,9 +174,10 @@ def _stop_process_group(process: subprocess.Popen[str]) -> None:
 
 
 def _require_render_cli() -> None:
+    """Fail once the runtime test is opted into, so a broken CI install can't pass as a skip."""
     executable = shutil.which('render')
     if executable is None:
-        pytest.skip('local Render Workflows runtime requires the `render` CLI')
+        pytest.fail('local Render Workflows runtime requires the `render` CLI')
     completed = subprocess.run(
         [executable, '--version'],
         check=False,
@@ -187,21 +188,21 @@ def _require_render_cli() -> None:
     )
     version_match = re.search(r'render v(\d+)\.(\d+)\.(\d+)', completed.stdout + completed.stderr)
     if completed.returncode != 0 or version_match is None:
-        pytest.skip(f'could not determine Render CLI version: {completed.stdout}{completed.stderr}'.strip())
+        pytest.fail(f'could not determine Render CLI version: {completed.stdout}{completed.stderr}'.strip())
     version = tuple(int(part) for part in version_match.groups())
     if version < (2, 28, 0):
-        pytest.skip(f'local runtime test requires Render CLI >=2.28.0, found {version_match.group(0)}')
+        pytest.fail(f'local runtime test requires Render CLI >=2.28.0, found {version_match.group(0)}')
 
 
-@pytest.fixture
-def local_render_runtime(tmp_path: Path) -> Iterator[LocalRenderRuntime]:
-    """Start and cleanly stop the opt-in process-isolated local runtime."""
+@pytest.fixture(scope='module')
+def local_render_runtime(tmp_path_factory: pytest.TempPathFactory) -> Iterator[LocalRenderRuntime]:
+    """Start one opt-in process-isolated local runtime for the module, and stop it cleanly."""
     if os.getenv('PYDANTIC_AI_HARNESS_RENDER_LOCAL_RUNTIME') != '1':
         pytest.skip('set PYDANTIC_AI_HARNESS_RENDER_LOCAL_RUNTIME=1 to run the local Render runtime test')
     _require_render_cli()
 
     repository = Path(__file__).resolve().parents[3]
-    log_path = tmp_path / 'render-workflows-dev.log'
+    log_path = tmp_path_factory.mktemp('render-runtime') / 'render-workflows-dev.log'
     log_file = log_path.open('w')
     port = _unused_local_port()
     command = [
