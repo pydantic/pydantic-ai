@@ -61,7 +61,7 @@ if __name__ == '__main__':
 ```
 
 Set `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL`, and start a [Temporal server](temporal.md#durable-agent).
-Install `pydantic-ai[anthropic,temporal,logfire]` before running the example.
+Install `pydantic-ai[temporal]` before running the example.
 
 [`BatchModel`][pydantic_ai.models.batch.BatchModel] queues each model request instead of sending it immediately.
 The library groups compatible requests from concurrent durable agent runs and submits them automatically.

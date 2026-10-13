@@ -58,7 +58,7 @@ if __name__ == '__main__':
 
 Set `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL`, then run the example to submit a batch.
 Save the returned batch ID. Run it again with `BATCH_ID` to check completion and decode results.
-Install `pydantic-ai[anthropic,logfire]` to run this example.
+Install `pydantic-ai` to run this example.
 
 [`Model.batch_max_requests`][pydantic_ai.models.Model.batch_max_requests] returns a
 provider's per-batch request limit, or `None` when the model has no batch API.
