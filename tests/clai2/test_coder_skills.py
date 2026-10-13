@@ -1,6 +1,7 @@
 """Agent Skills in the built-in `coder` plugin: folders, the model's catalog, `/skill-name` commands, and notices."""
 
 import io
+import os
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -207,6 +208,11 @@ class TestSkillCatalog:
         assert '\x1b' not in output.getvalue()
         assert 'bad\\x1bc' in output.getvalue()
 
+    # Mode bits do not bind root, and Windows cannot make a directory unreadable with them.
+    @pytest.mark.skipif(
+        os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
+        reason='POSIX mode bits must apply to this process.',
+    )
     async def test_an_unreadable_folder_turns_skills_off_but_keeps_coder(self, project: Path) -> None:
         library = project / '.agents' / 'skills'
         write_skill(library, 'review')
