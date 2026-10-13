@@ -1722,7 +1722,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         # See the signature-only media-processing comment in `_process_part`.
                         continue
                     else:
-                        assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
+                        assert part.function_response is not None, f'Unexpected part: {part}'
 
             # Gemini sends the grounding metadata once, on the final chunk, after the text it grounds.
             for pending in self._pending_file_search_returns:
@@ -2017,7 +2017,7 @@ def _process_part(
         # Vertex AI reports agentic media-processing steps as signature-only parts. There is nothing to
         # show, and both backends reject them when replayed ("Invalid thought signature").
         return None, code_execution_tool_call_id
-    else:  # pragma: no cover
+    else:
         raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
 
     if provider_details:

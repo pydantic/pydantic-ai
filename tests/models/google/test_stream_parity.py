@@ -27,11 +27,12 @@ from typing import Any
 import httpx2
 import pytest
 
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import BaseToolCallPart, ModelResponse, ModelResponsePart, NativeToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, FileSearchTool, WebFetchTool, WebSearchTool
 
-from ...cassette_utils import recorded_interactions
+from ...cassette_utils import recorded_interactions, recorded_request_body
 from ...conftest import try_import
 
 with try_import() as imports_successful:
@@ -146,7 +147,12 @@ def _comparable_tool_fields(part: ModelResponsePart) -> dict[str, Any]:
 async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     model_name = _MODEL_NAME_PATTERN.search(interaction['request']['uri'])
     assert model_name is not None
-    body = interaction['response']['body']['string'].encode()
+    response_body = interaction['response']['body']
+    if 'string' not in response_body:
+        assert response_body['type'] == 'text'
+    body_text = response_body.get('string', response_body.get('content'))
+    assert isinstance(body_text, str)
+    body = body_text.encode()
     headers = {key: values[0] for key, values in interaction['response']['headers'].items()}
     headers.pop('content-encoding', None)
     headers.pop('content-length', None)
@@ -157,7 +163,9 @@ async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str,
         ),
     )
     model = GoogleModel(model_name.group(1), provider=provider)
-    model_request_parameters = ModelRequestParameters(native_tools=_native_tools(interaction['request']['parsed_body']))
+    request_body = recorded_request_body(interaction['request'])
+    assert is_str_dict(request_body)
+    model_request_parameters = ModelRequestParameters(native_tools=_native_tools(request_body))
 
     async def open_stream() -> AsyncIterator[GenerateContentResponse]:
         return await provider.client.aio.models.generate_content_stream(model=model.model_name, contents='')
