@@ -54,12 +54,6 @@ class BatchSettings(TypedDict, total=False):
     """How often a submitted batch is checked for results. Defaults to one minute."""
 
 
-class _ResolvedBatchSettings(TypedDict):
-    max_requests: int
-    max_wait: timedelta
-    poll_interval: timedelta
-
-
 @dataclass(frozen=True, kw_only=True)
 class BatchRequest:
     """One model request encoded for a provider batch API."""
@@ -105,7 +99,7 @@ class BatchModel(WrapperModel):
     or in `models=`, since the queue rebuilds it on the worker from its registered name.
     """
 
-    batch_settings: _ResolvedBatchSettings
+    batch_settings: BatchSettings
     """When the queue submits a batch, with defaults resolved at construction."""
 
     def __init__(self, wrapped: Model, *, batch_settings: BatchSettings | None = None) -> None:
