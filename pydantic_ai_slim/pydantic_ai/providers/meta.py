@@ -5,8 +5,8 @@ from typing import Literal, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles.meta import muse_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 
 try:
@@ -35,29 +35,6 @@ MetaModelName = Literal[
 See <https://dev.meta.ai/docs/models> for an up to date list of models.
 """
 
-_MUSE_TEXT_MODEL_PREFIXES = ('muse-spark-', 'muse-wonder-')
-
-
-def _muse_model_profile(model_name: str) -> OpenAIModelProfile | None:
-    if not model_name.startswith(_MUSE_TEXT_MODEL_PREFIXES):
-        return None
-    # Muse always reasons: `api.meta.ai` rejects `reasoning.effort='none'` and accepts `minimal` through `max`.
-    # `openai_supports_reasoning` stays off because it makes `OpenAI*Model` drop sampling parameters while
-    # reasoning, which Meta accepts.
-    return OpenAIModelProfile(
-        supports_thinking=True,
-        thinking_always_enabled=True,
-        thinking_enabled_by_default=True,
-        openai_supports_encrypted_reasoning_content=True,
-        # Muse labels progress preambles `commentary`; sending the phase back keeps the model from reading its
-        # own preambles as final answers in long tool-calling runs.
-        openai_supports_phase=True,
-        supports_json_schema_output=True,
-        supports_json_object_output=True,
-        supported_native_tools=frozenset({WebSearchTool}),
-        context_window=1_048_576,
-    )
-
 
 class MetaProvider(_OpenAICompatibleProvider):
     """Provider for Meta's Model API (Muse models)."""
@@ -80,7 +57,7 @@ class MetaProvider(_OpenAICompatibleProvider):
         # on both the Responses and Chat Completions APIs.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer, supports_forced_tool_choice=False),
-            _muse_model_profile(model_name),
+            muse_model_profile(model_name),
         )
 
     @overload
