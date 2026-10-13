@@ -555,7 +555,7 @@ jobs:
             command: "--no-sync"
             sync_command: >-
               --inexact --package pydantic-ai-harness --package pydantic-clai2
-              --extra code-mode --extra coder --extra logfire
+              --extra code-mode --extra coder --extra logfire --extra render
             # Its own suite: the rest of `tests/` is covered by the other cells.
             paths: tests/harness
           - name: pydantic-clai2
@@ -1044,6 +1044,27 @@ jobs:
         env:
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+
+      # The Render Workflows integration runs nested agents in separate worker processes on the
+      # keyless local runtime from the Render CLI. It adds about a minute, so one leg runs it; the
+      # live files are omitted from coverage.
+      - name: run Render local runtime tests
+        if: matrix.python-version == '3.13' && matrix.resolution == 'locked'
+        shell: bash
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/render-cli.zip" \
+            "https://github.com/render-oss/cli/releases/download/v${RENDER_CLI_VERSION}/cli_${RENDER_CLI_VERSION}_linux_amd64.zip"
+          echo "${RENDER_CLI_SHA256}  $RUNNER_TEMP/render-cli.zip" | sha256sum --check --quiet
+          unzip -q "$RUNNER_TEMP/render-cli.zip" "cli_v${RENDER_CLI_VERSION}" -d "$RUNNER_TEMP/render-cli"
+          mv "$RUNNER_TEMP/render-cli/cli_v${RENDER_CLI_VERSION}" "$RUNNER_TEMP/render-cli/render"
+          chmod +x "$RUNNER_TEMP/render-cli/render"
+          export PATH="$RUNNER_TEMP/render-cli:$PATH"
+          uv run --all-packages --all-extras --no-extra mcp-tasks \
+            pytest --durations=5 tests/harness/render/test_local_runtime_live.py
+        env:
+          RENDER_CLI_VERSION: 2.28.0
+          RENDER_CLI_SHA256: 00d1ca6f3c31b1f4bc7316837b8ee24acbeb11cf372b7593c7d2c3106a1987b4
+          PYDANTIC_AI_HARNESS_RENDER_LOCAL_RUNTIME: '1'
 
       # See the matching step in the `test` job.
       - name: combine coverage files
