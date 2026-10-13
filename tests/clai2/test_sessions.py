@@ -645,6 +645,8 @@ async def test_stock_agent_rebuilds_only_when_plugin_snapshot_changes(tmp_path: 
     await session.prompt('enabled')
     bound = session.agent
     assert bound is not agent
+    # Logfire Agent Control addresses an agent by its name, so a rebuild keeps it.
+    assert agent.name == bound.name == 'clai2'
     assert model.last_model_request_parameters is not None
     assert 'delegate_task' in {tool.name for tool in model.last_model_request_parameters.function_tools}
     session.plugins = [coder]
