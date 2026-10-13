@@ -47,7 +47,10 @@ severity bands or false-positive rules from your own priors.
 
 **Verdict mapping:** any HIGH or CRITICAL finding → `REQUEST_CHANGES`.
 MEDIUM-only or below → `APPROVE` (post the comments anyway).
-No findings → `APPROVE`. **Cap inline comments at 30 per run** — if
+No findings → `APPROVE`. If changed files went unreviewed because a
+sub-agent returned an error and you could not cover its files in time,
+submit `COMMENT` instead of `APPROVE` and name those files in the body.
+**Cap inline comments at 30 per run** — if
 more findings survive, keep the highest-severity 30 inline and list
 the rest briefly in the review body.
 
@@ -133,6 +136,10 @@ Keep sub-agent prompts focused: the assigned files + PR context + the
 pointer to `review-instructions.md`. **Wait for all sub-agents to
 return** before proceeding.
 
+A sub-agent that returns an `error:` result (it timed out, failed, or was
+refused because the run is short on time) is finished. **Do not dispatch it
+again.** Review its files yourself in Step 4 while time allows.
+
 **Merge findings:** keep findings flagged by multiple sub-agents with the
 strongest evidence; for a finding flagged by only one, scrutinize harder
 before keeping it. Then run Step 4 yourself as the quality gate.
@@ -169,7 +176,8 @@ For each surviving finding, call `mcp__safeoutputs__create_pull_request_review_c
 After all comments are posted, call **`mcp__safeoutputs__submit_pull_request_review`** with:
 
 - **type:** `REQUEST_CHANGES` if any HIGH or CRITICAL finding survived,
-  else `APPROVE`.
+  else `APPROVE` (or `COMMENT` when files went unreviewed, per the verdict
+  mapping).
 - **body:** Always opens with the `Reviewed at` line. If you are approving,
   that line is most often the whole body. For `REQUEST_CHANGES`,
   include only the verdict + any cross-cutting feedback that can't be
