@@ -32,6 +32,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
     from pydantic_ai.providers.nebius import NebiusProvider
+    from pydantic_ai.providers.nvidia import NVIDIAProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
@@ -57,6 +58,7 @@ with try_import() as imports_successful:
         ('mistral', MistralProvider, 'MISTRAL_API_KEY'),
         ('xai', XaiProvider, 'XAI_API_KEY'),
         ('moonshotai', MoonshotAIProvider, 'MOONSHOTAI_API_KEY'),
+        ('nvidia', NVIDIAProvider, 'NVIDIA_API_KEY'),
         ('fireworks', FireworksProvider, 'FIREWORKS_API_KEY'),
         ('together', TogetherProvider, 'TOGETHER_API_KEY'),
         ('heroku', HerokuProvider, 'HEROKU_INFERENCE_KEY'),

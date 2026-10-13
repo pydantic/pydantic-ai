@@ -229,6 +229,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .moonshotai import MoonshotAIProvider
 
         return MoonshotAIProvider
+    elif provider == 'nvidia':
+        from .nvidia import NVIDIAProvider
+
+        return NVIDIAProvider
     elif provider == 'fireworks':
         from .fireworks import FireworksProvider
 
