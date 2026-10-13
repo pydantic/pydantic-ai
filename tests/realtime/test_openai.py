@@ -5854,13 +5854,14 @@ async def test_transcript_after_its_response_ended_changes_nothing_recorded() ->
         with anyio.fail_after(5):
             async for event in session:  # pragma: no branch
                 if isinstance(event, RealtimeTurnCompleteEvent):
+                    # Frames are handled in order, so the error after the late transcript marks it handled.
+                    for frame in _item_done('a', 0, 'commentary', 'Hello world.', text=False):
+                        ws.push(frame)
+                    ws.push({'type': 'error', 'error': {'message': 'marker', 'type': 'invalid_request_error'}})
+                elif isinstance(event, RealtimeSessionErrorEvent):
                     break
-        for frame in _item_done('a', 0, 'commentary', 'Hello world.', text=False):
-            ws.push(frame)
-        for _ in range(20):
-            await asyncio.sleep(0)
         responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
-    assert [[getattr(part, 'transcript', None) for part in response.parts] for response in responses] == [
+    assert [[part.transcript for part in response.parts if isinstance(part, SpeechPart)] for response in responses] == [
         ['Hello', 'Bonjour.']
     ]
 
