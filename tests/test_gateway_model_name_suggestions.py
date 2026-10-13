@@ -117,7 +117,6 @@ async def test_gateway_direct_model_suggests_gateway_model_id(
     env.set('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.example.com/proxy')
     monkeypatch.setattr('pydantic_ai.providers.gateway.create_async_http_client', create_gateway_http_client)
     monkeypatch.setattr('pydantic_ai.providers.gateway.create_async_httpx2_client', create_gateway_httpx2_client)
-    monkeypatch.setattr('pydantic_ai.providers.google._create_google_httpx2_client', create_gateway_httpx2_client)
 
     match provider:
         case 'openai-responses':
@@ -127,6 +126,9 @@ async def test_gateway_direct_model_suggests_gateway_model_id(
         case 'anthropic':
             model = AnthropicModel(model_name, provider='gateway')
         case 'google':
+            monkeypatch.setattr(
+                'pydantic_ai.providers.google._create_google_httpx2_client', create_gateway_httpx2_client
+            )
             model = GoogleModel(model_name, provider='gateway')
         case 'groq':
             model = GroqModel(model_name, provider='gateway')
