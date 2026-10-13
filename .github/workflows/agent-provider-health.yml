@@ -37,14 +37,14 @@ concurrency:
 
 jobs:
   monitor:
-    # Fork pull_request runs and Dependabot runs (re-runs included) get no Actions secrets, so they have no
-    # provider key; their unknown quota cannot establish an outage.
+    # Fork and Dependabot pull_request runs (re-runs included) get no Actions secrets, so they have no provider key;
+    # their unknown quota cannot establish an outage.
     if: >-
       github.repository == 'pydantic/pydantic-ai' &&
       (github.event_name != 'workflow_run' ||
-       (github.event.workflow_run.actor.login != 'dependabot[bot]' &&
-        (github.event.workflow_run.event != 'pull_request' ||
-         github.event.workflow_run.head_repository.full_name == github.repository)))
+       github.event.workflow_run.event != 'pull_request' ||
+       (github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.actor.login != 'dependabot[bot]'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

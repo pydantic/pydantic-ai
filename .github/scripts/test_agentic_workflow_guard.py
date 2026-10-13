@@ -1490,9 +1490,9 @@ jobs:
     if: >-
       github.repository == 'pydantic/pydantic-ai' &&
       (github.event_name != 'workflow_run' ||
-       (github.event.workflow_run.actor.login != 'dependabot[bot]' &&
-        (github.event.workflow_run.event != 'pull_request' ||
-         github.event.workflow_run.head_repository.full_name == github.repository)))
+       github.event.workflow_run.event != 'pull_request' ||
+       (github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.actor.login != 'dependabot[bot]'))
     env:
       PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
     permissions:
@@ -1620,17 +1620,15 @@ jobs:
         (
             "if: >-\n      github.repository == 'pydantic/pydantic-ai' &&\n"
             "      (github.event_name != 'workflow_run' ||\n"
-            "       (github.event.workflow_run.actor.login != 'dependabot[bot]' &&\n"
-            "        (github.event.workflow_run.event != 'pull_request' ||\n"
-            '         github.event.workflow_run.head_repository.full_name == github.repository)))',
+            "       github.event.workflow_run.event != 'pull_request' ||\n"
+            '       (github.event.workflow_run.head_repository.full_name == github.repository &&\n'
+            "        github.event.workflow_run.actor.login != 'dependabot[bot]'))",
             "if: github.repository == 'pydantic/pydantic-ai'",
         ),
         # The fork-only gate that opened #10181 on a Dependabot run.
         (
-            "       (github.event.workflow_run.actor.login != 'dependabot[bot]' &&\n"
-            "        (github.event.workflow_run.event != 'pull_request' ||\n"
-            '         github.event.workflow_run.head_repository.full_name == github.repository)))',
-            "       github.event.workflow_run.event != 'pull_request' ||\n"
+            '       (github.event.workflow_run.head_repository.full_name == github.repository &&\n'
+            "        github.event.workflow_run.actor.login != 'dependabot[bot]'))",
             '       github.event.workflow_run.head_repository.full_name == github.repository)',
         ),
     ],
