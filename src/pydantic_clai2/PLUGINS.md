@@ -303,6 +303,59 @@ server errors are nonfatal. Unloading discards queued work and attempts one
 release with bounded shutdown. A departed or unresponsive herdr may miss
 reports; they do not fail the agent turn.
 
+## Agent of Empires integration
+
+The built-in `aoe` plugin (`pydantic_clai2.builtin_plugins.aoe`) starts disabled. Run
+`clai2 plugins enable aoe` (or `/plugins enable aoe`) to let
+[Agent of Empires](https://github.com/agent-of-empires/agent-of-empires) (AoE)
+track CLAI2 like its built-in agents. Register CLAI2 as an AoE custom agent:
+
+```toml
+# ~/.config/agent-of-empires/config.toml
+[session.custom_agents]
+clai2 = "clai2"
+```
+
+and start sessions with `aoe add --tool clai2 -l`, or pick `clai2` in AoE's new-session
+dialog. If AoE alerts you on status changes (its sounds, or `[status_hooks]` such as
+`on_waiting = "notify-send ..."`), `/plugins disable notifications` avoids a second
+desktop alert from CLAI2 for the same turn.
+
+The plugin does nothing unless CLAI2 runs interactively (not `-p`) on Linux or macOS,
+in a tmux pane of an AoE agent session: AoE names that session `aoe_<title>_<id>` and
+sets the instance ID on it, which the plugin reads from `AOE_INSTANCE_ID` or the tmux
+session's hidden environment. A CLAI2 started from inside another CLAI2 in the same
+pane, such as from a `!` shell command, stays quiet so the outer one keeps reporting.
+
+**Status.** AoE reads a custom agent's state from `/tmp/aoe-hooks-<uid>/<id>/status`;
+the plugin writes it the way AoE's own hooks do, refusing a directory that is a
+symlink, owned by another user, or open to group or others. It reports `running`
+while a prompt's agent run is in progress (rewritten every minute, as AoE ignores an
+older `running`), `waiting` while an `ask_user` question is open, `error` after a
+failed turn until the next prompt's agent run starts, and `idle` otherwise. Background
+`/fork` runs do not count as `running`, but a failed fork is a failed turn and shows
+`error`; a fork starting or completing does not clear it.
+Other approval prompts are not tracked. The file is removed when
+CLAI2 exits; AoE removes the directory when it stops the session.
+
+**Conversation.** The current conversation ID goes to `session_id` beside the status
+file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
+`~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
+CLAI2 starts empty, so the plugin resumes the conversation recorded there; `--resume`,
+`--session-id`, and `--fork-session` take precedence (`SessionStart.conversation_chosen`). A conversation saved in another
+directory, such as after AoE moved a worktree, is not resumed; use `/resume`. AoE's
+own resume, `--fork-from`, and smart rename apply to its built-in agents only.
+
+**Title.** When the conversation's title changes (its first prompt, background naming,
+or a rename in `/resume`), the plugin runs `aoe session rename ID --title=TITLE`, in a linked
+Git worktree too. There, AoE's `session.tie_workdir_to_name` (on by default) refuses the
+rename while a turn runs, and otherwise may move an AoE-managed worktree to follow the title.
+The plugin stops trying for the session once AoE refuses a rename; a rename that times out is
+tried again with the next title. AoE renames the tmux session to match.
+
+All file and process work runs off the event loop, and failures are logged at debug
+level, never raised into a turn. `/plugins disable aoe` stops reporting.
+
 ## Desktop notifications
 
 The default-enabled `notifications` plugin (`pydantic_clai2.builtin_plugins.notifications`)
@@ -434,6 +487,10 @@ same saved conversation IDs. A root is exported only when it ends, at exit, so a
 `CLAI session opened` log under it carries its `agent_session_id` and email
 from the start. With `--resume`, the root opens before the conversation is
 chosen, so it is logged again with the saved ID once startup selects it.
+Logfire rejects spans that started more than a day before they arrive, so a
+root is also ended once it has been open for `ROOT_LIFETIME` (12 hours) in
+`pydantic_clai2.builtin_plugins.logfire_session`. The next record opens a new
+root with the same `agent_session_id`; a run under way stays in the old trace.
 
 `user_tag` (default `logfire-account`) tags each session root, and only the
 root and its `CLAI session opened` log, with your email, as a Logfire tag and
@@ -941,14 +998,17 @@ saves `unrestricted_filesystem` in the `coder` declaration. Supplied agents are 
 are still run-level capabilities, so self-delegation requires binding `Coder` and
 the capabilities it should carry when constructing that agent.
 
-`agent_folders` is a JSON list of folder names or paths for disk-defined agents
-(Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
+`agent_folders` is stored as a JSON list of folder names or paths for disk-defined
+agents (Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
 `.claude/<name>`, and `.codex/<name>` in the project, then your home directory;
-project definitions win. A path loads exactly that folder; `[]` disables disk
-agents. The stock CLI uses `["agents"]`. Saved `coder` declarations that omit
-`agent_folders` keep disk agents off, so an upgrade never loads new definitions
-without your say. Old `pydantic_ai_harness.coder:Coder` declarations load
-through this module and are not rewritten.
+project definitions win. A path loads exactly that folder: a relative one in
+each project CLAI runs in, an absolute or `~/` one everywhere. Missing folders
+are skipped; `[]` disables disk agents. The stock CLI uses `["agents"]`. Saved
+`coder` declarations that omit `agent_folders` keep disk agents off, so an
+upgrade never loads new definitions without your say. Old
+`pydantic_ai_harness.coder:Coder` declarations load through this module and are
+not rewritten. `/plugins configure coder` edits this list; see
+[Agent folders](README.md#agent-folders).
 
 Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
 host hooks. The shell keeps plugin resources alive until children settle; `/plugins`
@@ -1826,7 +1886,7 @@ Six `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
-| `on_session_start` | CLAI has started, before the first prompt, or the plugin loaded mid-session | `agent`, `settings` | no |
+| `on_session_start` | CLAI has started, before the first prompt, or the plugin loaded mid-session | `agent`, `settings`, `conversation_chosen` | no |
 | `on_session_end` | CLAI is quitting, or the plugin is unloading | `reason`: `exit`, `eof`, or `error` | no |
 | `on_turn_start` | you pressed Enter on a prompt | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |
@@ -1843,11 +1903,12 @@ startup or preventing other handlers from running.
 `on_conversation_changed` receives a `ConversationChanged` event after `/new`, `/clear`,
 and `/resume`, when the first prompt of a new conversation gives it a title, and when
 background naming or a rename in the `/resume` browser retitles the current conversation.
-`title` is `None` until the first prompt is saved. A startup `--resume SESSION-ID` is restored
-before plugins load, so `on_session_start` already sees that conversation in `host.conversation`;
-a session picked from the `--resume` browser arrives as this event. The event fires once per
-change, never for a background `/fork`, and a name from background naming waits until no turn
-or command is running.
+`title` is `None` until the first prompt is saved. A startup `--resume SESSION-ID`, `--session-id`,
+or `--fork-session` is applied before plugins load, so `on_session_start` already sees that
+conversation in `host.conversation`, and `SessionStart.conversation_chosen` says so; a session
+picked from the `--resume` browser arrives as this event. The event fires once per change,
+never for a background `/fork`, and a name from background naming waits until no turn or
+command is running.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
@@ -2207,7 +2268,8 @@ The contract:
   declaration, in their own table. Your settings JSON never holds them.
 - **A build that lacks a feature, or does not know its name, ignores that one
   setting.** It uses the built-in declaration's value, or your model's default,
-  keeps your other settings, and prints one line per plugin:
+  and keeps your other settings. It says so in the plugin's `/plugins` row and in
+  the result of `/plugins enable` or `reload`, not at startup:
   `coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.`
   Reading never rewrites the database, and saving from that build keeps the
   ignored value and its tag. A tag goes away only when its value changes.
@@ -2856,13 +2918,13 @@ Older branches must receive this fix too. The minimum read-side backport is
 `model_settings_from_json`; keep the form itself strict. Also backport preservation
 of unknown keys on save and the shell's model-settings validation error handler.
 
-The editor offers OpenAI reasoning effort, Responses reasoning context, mode,
-summary, and verbosity, and Claude classic/adaptive thinking and effort.
+The editor offers OpenAI reasoning effort and verbosity, Responses reasoning
+context, mode, and summary, and Claude classic/adaptive thinking and effort.
 The editor hides generic request fields such as timeouts and penalties.
 Reasoning GPT models do not show sampling controls. Previously saved overrides
 remain visible so they can be reset. Choices depend on the model and API: Chat Completions does not get Responses
-controls. OpenRouter and vLLM GPT routes expose Chat Completions reasoning effort
-and service tier, not Responses-only controls. `all_turns` appears only on compatible models, and adaptive Claude
+controls. OpenRouter and vLLM GPT routes expose Chat Completions reasoning effort,
+verbosity, and service tier, not Responses-only controls. `all_turns` appears only on compatible models, and adaptive Claude
 models do not get a token budget. Classic thinking budgets must be at least
 1024 and below an explicit `max_tokens`. Without one, Pydantic AI
 leaves room for the answer beyond the budget. Other unset fields
@@ -2999,7 +3061,8 @@ abort the run. The `ask_user` plugin is skipped even if saved settings enable or
 replace it; this does not change those settings. `host.full_screen()` raises in
 headless mode. Plugins must not bypass the host by reading terminal input or
 printing directly to stdout. `--resume SESSION-ID` restores history without a
-browser or tool replay, before plugins load.
+browser or tool replay, before plugins load; `--session-id` and `--fork-session` are
+likewise applied before plugins load.
 
 ## The stock agent from code
 

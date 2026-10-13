@@ -14,6 +14,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
+from pydantic_clai2.__main__ import quiet_telemetry_logs
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config import Settings
@@ -96,6 +97,25 @@ async def test_export_problems_go_to_a_file_not_the_terminal(
         f'ERROR {_METRICS}: Failed to export metrics batch code: None, reason: timed out',
     ]
     assert 'Currently retrying' not in text
+    assert text.endswith(_NOTICE.format(log))
+
+
+async def test_null_handlers_do_not_keep_records_out_of_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The entry point's `NullHandler`, or one on a descendant, discards records, so they still go to the file."""
+    monkeypatch.setattr(logging.getLogger(_METRICS), 'handlers', [logging.NullHandler()])
+
+    # As `main()` runs the CLI: its `NullHandler` on the telemetry loggers is in place before the session starts.
+    with unconfigured_logging(), quiet_telemetry_logs():
+        text = await _chat(tmp_path, monkeypatch, ['/fail'])
+        assert capsys.readouterr().err == ''
+
+    log = tmp_path / 'telemetry.log'
+    assert [line.split(' ', 2)[2] for line in log.read_text().splitlines()] == [
+        'WARNING logfire: Currently retrying 1 failed export(s) (955 bytes)',
+        f'ERROR {_METRICS}: Failed to export metrics batch code: None, reason: timed out',
+    ]
     assert text.endswith(_NOTICE.format(log))
 
 
