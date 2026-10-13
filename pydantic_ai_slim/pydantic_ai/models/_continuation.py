@@ -35,7 +35,6 @@ from .. import _utils
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior
 from ..messages import (
-    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     FinalResultEvent,
     ModelMessage,
     ModelResponse,
@@ -68,6 +67,7 @@ __all__ = [
 # from a same-`provider_response_id` background poll. The `FallbackModel` side must use these exact
 # keys. The marker is transient: `merge_responses` honors it as a replace, then pops it so it can't
 # persist into history and wrongly force a later legitimate `pause_turn` continuation to replace.
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 _REPLACE_PREVIOUS_RESPONSE_KEY = 'replace_previous_response'
 
 MAX_GENERATION_CONTINUATIONS = 10
