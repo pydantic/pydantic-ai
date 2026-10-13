@@ -152,10 +152,12 @@ Run this final metadata check after CI, comments, and any selected `douwebot` re
    - Require each correction to cite the rule it enforces.
    - Require each correction to quote the title, body text, or label that breaks the rule. When the rule requires a
      missing element, require the correction to name that element instead.
-5. Verify each correction before you apply it. A correction is verified when all three hold:
+5. Verify each correction before you apply it. A correction is verified when all four hold:
    - The cited rule says what the correction claims.
    - The current title, body, or labels break that rule.
-   - The corrected title, body, and labels break no rule in this skill or the root `AGENTS.md`.
+   - The correction changes only the quoted text, or adds only the named missing element.
+   - Applying the correction breaks no rule in this skill or the root `AGENTS.md` that the current title, body, and
+     labels follow.
 
    Apply only verified corrections. When the current title, body, or labels break the rule an unverified correction
    describes, write your own correction and verify it the same way. Committed changes restart the post-push loop;
