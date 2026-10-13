@@ -254,7 +254,7 @@ class Transcriber:
             The transcription model to use, with instrumentation applied if configured.
         """
         model_: TranscriptionModel
-        if some_model := self._override_model.get():
+        if (some_model := self._override_model.get()) is not None:
             model_ = some_model
         else:
             model_ = self._model = infer_transcription_model(self.model)

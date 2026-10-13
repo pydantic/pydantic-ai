@@ -78,16 +78,18 @@ class InstrumentedTranscriptionModel(WrapperTranscriptionModel):
             **self.model_attributes(self.wrapped),
         }
 
+        include_content = self.instrumentation_settings.include_content
         recorded_settings: dict[str, object] | None = None
         if self.instrumentation_settings.include_model_request_parameters:
             # `extra_headers` and `extra_body` can carry credentials, so they are never recorded.
-            recorded_settings = {
-                key: value for key, value in settings.items() if key not in ('extra_headers', 'extra_body')
-            }
+            excluded = {'extra_headers', 'extra_body'}
+            if not include_content:
+                # A prompt is content: it can hold the transcript of the previous audio segment.
+                excluded.add('openai_prompt')
+            recorded_settings = {key: value for key, value in settings.items() if key not in excluded}
             if recorded_settings:
                 attributes['transcription_settings'] = json.dumps(serialize_any(recorded_settings))
 
-        include_content = self.instrumentation_settings.include_content
         attributes['logfire.json_schema'] = json.dumps(
             {
                 'type': 'object',

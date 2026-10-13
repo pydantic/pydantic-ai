@@ -43,6 +43,7 @@ _FILE_EXTENSIONS: dict[str, str] = {
     'audio/x-flac': 'flac',
     'audio/mpeg': 'mp3',
     'audio/mp3': 'mp3',
+    'audio/mpga': 'mpga',
     'audio/mp4': 'm4a',
     'audio/m4a': 'm4a',
     'audio/x-m4a': 'm4a',

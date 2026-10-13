@@ -132,6 +132,21 @@ async def test_override():
     assert (await transcriber.transcribe(AUDIO)).text == 'original'
 
 
+async def test_override_with_falsy_model():
+    """An override is applied by presence, so a model that happens to be falsy is still used."""
+
+    class FalsyTranscriptionModel(TestTranscriptionModel):
+        def __len__(self) -> int:
+            return 0
+
+    falsy_model = FalsyTranscriptionModel(text='overridden')
+    assert not falsy_model
+    transcriber = Transcriber(TestTranscriptionModel(text='original'))
+
+    with transcriber.override(model=falsy_model):
+        assert (await transcriber.transcribe(AUDIO)).text == 'overridden'
+
+
 @requires_openai
 async def test_override_with_model_name(env: TestEnv):
     """A model name passed to `override` is inferred, here to the OpenAI model, which rejects AAC by name."""
@@ -329,6 +344,24 @@ async def test_instrumentation_respects_content_and_request_parameter_flags(capf
     assert 'transcript' not in span['attributes']
     assert 'transcription_settings' not in span['attributes']
     assert 'Book a table' not in str(span)
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@requires_openai
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_instrumentation_records_prompt_only_with_content(capfire: CaptureLogfire, include_content: bool):
+    """`openai_prompt` is content, like the transcript, so request parameters alone don't record it."""
+    transcriber = Transcriber(
+        TestTranscriptionModel(),
+        instrument=InstrumentationSettings(include_content=include_content, include_model_request_parameters=True),
+    )
+
+    await transcriber.transcribe(AUDIO, settings=OpenAITranscriptionSettings(language='en', openai_prompt='Pydantic'))
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    span = next(span for span in spans if 'transcription' in span['name'])
+    expected = {'language': 'en', 'openai_prompt': 'Pydantic'} if include_content else {'language': 'en'}
+    assert span['attributes']['transcription_settings'] == expected
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
@@ -580,6 +613,25 @@ async def test_openai_downloads_audio_url(monkeypatch: pytest.MonkeyPatch):
 
     download_item.assert_awaited_once_with(audio, data_format='bytes')
     assert _form(requests[0])['file'] == 'audio.mp3 (audio/mpeg, 14 bytes)'
+
+
+@requires_openai
+@pytest.mark.parametrize(
+    'media_type,filename',
+    [
+        ('audio/mpga', 'audio.mpga'),
+        ('audio/mp4a-latm', 'audio.m4a'),
+        ('video/mp4', 'audio.mp4'),
+    ],
+)
+async def test_openai_names_the_upload_after_the_media_type(media_type: str, filename: str):
+    """The endpoint reads the audio format off the file extension, so each accepted media type maps to one."""
+    requests: list[httpx2.Request] = []
+    model = _openai_model('whisper-1', _json_response({'text': 'Hi.'}), requests)
+
+    await model.transcribe(BinaryContent(data=b'fake audio', media_type=media_type))
+
+    assert _form(requests[0])['file'] == f'{filename} ({media_type}, 10 bytes)'
 
 
 @requires_openai
