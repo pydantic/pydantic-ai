@@ -154,7 +154,7 @@ class AnchoredEvidence:
 def context_window_fraction(messages: Sequence[_messages.ModelMessage], context_window: int | None) -> float | None:
     """The latest response's context size over `context_window`, or `None` when it can't be calculated.
 
-    The context size is the response's input tokens, as `context_input_tokens` reads them, plus its output tokens.
+    The context size is the response's `context_tokens`.
     Shared by [`RunContext.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] and
     [`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used].
     """

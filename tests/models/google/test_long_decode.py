@@ -6,8 +6,14 @@ sends the same request again with the token, inside one `generate_content` or `g
 merges the requests' responses into one with summed usage.
 
 `test_recorded_long_decode` records a live long decode, unary and streamed. The other tests script the requests on
-an `httpx2.MockTransport` in the recorded shapes, for what a live request can't be made to produce on demand: a request
-that fails or drops, a cap reached without a token, a third request, and exact usage per request.
+an `httpx2.MockTransport` in the recorded shapes, for what a recording can't pin:
+
+- `test_one_request_is_unchanged`: a response that isn't continued, in the shapes of the continued ones so only how it
+  ends differs, including a cap reached without a token, which a live request can't be made to return.
+- `test_continued_requests_are_one_response` and `test_streamed_continuation_events`: a decode small enough to pin
+  every event and each request's usage.
+- `test_per_request_input_limit_reads_the_first_request`: a third request.
+- `test_failed_continuation_request_raises` and the `test_stream_drop_*` tests: a request that fails or drops.
 """
 
 from __future__ import annotations as _annotations
@@ -55,12 +61,13 @@ def _b64(value: bytes) -> str:
     return base64.b64encode(value).decode()
 
 
-def _usage(prompt: int | None, output: int) -> dict[str, int]:
-    """Gemini's `usageMetadata`. A stream sends `promptTokenCount` only on each request's finishing chunk."""
-    usage = {'candidatesTokenCount': output}
-    if prompt is not None:
-        usage['promptTokenCount'] = prompt
-    return usage
+def _usage(prompt: int, output: int) -> dict[str, int]:
+    """Gemini's `usageMetadata`.
+
+    A stream reports a provisional prompt count on every chunk, and the final one on each request's finishing chunk:
+    74, then 110, in the stream recording of `test_recorded_long_decode`.
+    """
+    return {'promptTokenCount': prompt, 'candidatesTokenCount': output}
 
 
 def _chunk(
@@ -243,7 +250,7 @@ _ONE_REQUEST_CASES = [
 
 
 def _one_request(case: _OneRequestCase, stream: bool) -> list[httpx2.Response]:
-    """A response from one request. Streamed, only its finishing chunk carries a signature and the prompt count."""
+    """A response from one request. Streamed, only its finishing chunk carries a signature and the final prompt count."""
 
     def finishing(text: str) -> dict[str, object]:
         return _chunk(
@@ -258,10 +265,8 @@ def _one_request(case: _OneRequestCase, stream: bool) -> list[httpx2.Response]:
     if stream:
         return [
             _sse(
-                _chunk(
-                    {'text': '1\n2\n'}, response_id='request-1', usage=_usage(None, 4), model_version=case.model_name
-                ),
-                _chunk({'text': '3\n'}, response_id='request-1', usage=_usage(None, 6), model_version=case.model_name),
+                _chunk({'text': '1\n2\n'}, response_id='request-1', usage=_usage(8, 4), model_version=case.model_name),
+                _chunk({'text': '3\n'}, response_id='request-1', usage=_usage(8, 6), model_version=case.model_name),
                 finishing(''),
             )
         ]
@@ -297,17 +302,17 @@ async def test_one_request_is_unchanged(case: _OneRequestCase, stream: bool, all
 def _two_requests(stream: bool) -> list[httpx2.Response]:
     """A long decode continued once: the first request writes 6 tokens and a signature, the second 2 more.
 
-    Streamed, the first request checkpoints a token mid-stream and finishes with another, and only its finishing
-    chunk reports the prompt; the second request's prompt re-counts the first request's output.
+    Streamed, the first request checkpoints a token mid-stream and finishes with another. The second request's prompt
+    re-counts the first request's output.
     """
     if stream:
         return [
             _sse(
-                _chunk({'text': '1\n2\n'}, response_id='request-1', usage=_usage(None, 4)),
+                _chunk({'text': '1\n2\n'}, response_id='request-1', usage=_usage(8, 4)),
                 _chunk(
                     {'text': '3\n'},
                     response_id='request-1',
-                    usage=_usage(None, 6),
+                    usage=_usage(8, 6),
                     continuation_token=b'checkpoint-1',
                 ),
                 _chunk(
@@ -319,7 +324,7 @@ def _two_requests(stream: bool) -> list[httpx2.Response]:
                 ),
             ),
             _sse(
-                _chunk({'text': '4\n5'}, response_id='request-2', usage=_usage(None, 2)),
+                _chunk({'text': '4\n5'}, response_id='request-2', usage=_usage(14, 2)),
                 _chunk({'text': ''}, response_id='request-2', usage=_usage(16, 2), finish_reason='STOP'),
             ),
         ]
@@ -433,7 +438,7 @@ async def test_streamed_continuation_events(allow_model_requests: None):
             ),
         ]
     )
-    assert usages == snapshot([(0, 4), (0, 4), (0, 6), (10, 6), (10, 8), (10, 8), (26, 8)])
+    assert usages == snapshot([(8, 4), (8, 4), (8, 6), (10, 6), (24, 8), (24, 8), (26, 8)])
 
 
 def _three_requests(stream: bool) -> list[httpx2.Response]:
@@ -451,7 +456,9 @@ def _three_requests(stream: bool) -> list[httpx2.Response]:
         )
         if stream:
             responses.append(
-                _sse(_chunk({'text': text}, response_id=f'request-{number}', usage=_usage(None, output)), finishing)
+                _sse(
+                    _chunk({'text': text}, response_id=f'request-{number}', usage=_usage(prompt - 2, output)), finishing
+                )
             )
         else:
             responses.append(httpx2.Response(200, json=finishing))
@@ -472,8 +479,8 @@ async def test_per_request_input_limit_reads_the_first_request(
     """`per_request_input_tokens_limit` caps a long decode's context, not the input tokens it is billed for.
 
     The requests' summed input (44 tokens) re-counts earlier output, so the limit is checked against the first
-    request's (10). A stream checks it after every event, including those of the third request, while the summed
-    input so far (26) already counts two requests.
+    request's (10). A stream checks it after every event, including those of the later requests, whose summed input so
+    far already counts the earlier ones.
     """
     agent = Agent(_model(_three_requests(stream), []), model_settings={'max_tokens': 100_000})
     usage_limits = UsageLimits(per_request_input_tokens_limit=limit)
@@ -546,7 +553,7 @@ class _DroppedStream(httpx2.AsyncByteStream):
 def _dropped_after(*chunks: dict[str, object]) -> list[httpx2.Response]:
     """A stream that drops after `chunks`, and the request google-genai resumes it with."""
     resumed = _sse(
-        _chunk({'text': '2\n3\n'}, response_id='request-2', usage=_usage(None, 4)),
+        _chunk({'text': '2\n3\n'}, response_id='request-2', usage=_usage(10, 4)),
         _chunk({'text': ''}, response_id='request-2', usage=_usage(12, 4), finish_reason='STOP'),
     )
     return [
@@ -555,7 +562,7 @@ def _dropped_after(*chunks: dict[str, object]) -> list[httpx2.Response]:
     ]
 
 
-_CHECKPOINT = _chunk({'text': '1\n'}, response_id='request-1', usage=_usage(None, 2), continuation_token=b'checkpoint')
+_CHECKPOINT = _chunk({'text': '1\n'}, response_id='request-1', usage=_usage(8, 2), continuation_token=b'checkpoint')
 
 
 @pytest.mark.parametrize(
@@ -563,7 +570,7 @@ _CHECKPOINT = _chunk({'text': '1\n'}, response_id='request-1', usage=_usage(None
     [
         pytest.param([], id='nothing'),
         pytest.param(
-            [{'candidates': [{'index': 0}], 'usageMetadata': _usage(None, 2), 'responseId': 'request-1'}],
+            [{'candidates': [{'index': 0}], 'usageMetadata': _usage(8, 2), 'responseId': 'request-1'}],
             id='no-output',
         ),
     ],
@@ -594,7 +601,7 @@ async def test_stream_drop_that_would_repeat_output_raises(allow_model_requests:
     google-genai resumes it from the last token, and the resumed request repeats what was streamed after it. The run
     keeps what was streamed as an interrupted response, whose usage counts the resumed request's first chunk.
     """
-    uncheckpointed = _chunk({'text': '2\n'}, response_id='request-1', usage=_usage(None, 4))
+    uncheckpointed = _chunk({'text': '2\n'}, response_id='request-1', usage=_usage(8, 4))
     agent = Agent(_model(_dropped_after(_CHECKPOINT, uncheckpointed), []), model_settings={'max_tokens': 100_000})
 
     with capture_run_messages() as messages, pytest.raises(ModelAPIError, match='would repeat that output'):
@@ -604,7 +611,7 @@ async def test_stream_drop_that_would_repeat_output_raises(allow_model_requests:
         [
             ModelResponse(
                 parts=[TextPart(content='1\n2\n')],
-                usage=RequestUsage(output_tokens=8),
+                usage=RequestUsage(input_tokens=18, output_tokens=8),
                 model_name='gemini-4-argon',
                 timestamp=IsDatetime(),
                 provider_name='google',
@@ -612,6 +619,7 @@ async def test_stream_drop_that_would_repeat_output_raises(allow_model_requests:
                 provider_response_id='request-1',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'initial_input_tokens': 8}},
                 state='interrupted',
             )
         ]
