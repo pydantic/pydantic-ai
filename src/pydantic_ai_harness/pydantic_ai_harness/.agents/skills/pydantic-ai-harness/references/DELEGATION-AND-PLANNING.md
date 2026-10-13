@@ -292,6 +292,13 @@ Gotchas:
 Selected tools start, return a "running in background (task id)" message immediately, and deliver the
 result as a follow-up message when done.
 
+Each follow-up `ModelRequest` carries
+`metadata={'origin': 'background_tool', 'tool_call_id': original_tool_call_id}`, including handled
+failure notifications. This metadata is not sent to the model; it is available on delivered messages
+and their serialized copies. Later history normalization may merge requests and discard per-message
+metadata, so persist it from `EnqueuedMessagesEvent.messages` when you need to retain it.
+`ToolReturn.metadata` is still discarded.
+
 ```python
 import asyncio
 

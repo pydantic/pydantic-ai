@@ -103,7 +103,13 @@ agent = Agent(
 The model first receives a message saying that the tool has started. The message includes a task ID.
 When the tool finishes, the model receives the result with the same task ID.
 
-Text and files returned by the tool are sent to the model. Application-only metadata is not sent.
+Each follow-up is a `ModelRequest` with
+`metadata={'origin': 'background_tool', 'tool_call_id': original_tool_call_id}`, including handled
+failure notifications. This metadata is not sent to the model; it is available on delivered messages
+and their serialized copies. Later history normalization may merge requests and discard per-message
+metadata, so persist it from `EnqueuedMessagesEvent.messages` when you need to retain it.
+
+Text and files returned by the tool are sent to the model. `ToolReturn.metadata` is discarded.
 `ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text. Any
 other tool exception ends the run with the original exception, as it does for a sequential tool.
 Running out of retries or raising `CancelledError` also ends the run. A tool can call `ctx.cancel()`

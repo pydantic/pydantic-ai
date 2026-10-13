@@ -24,7 +24,9 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     BinaryContent,
+    EnqueuedMessagesEvent,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -179,14 +181,17 @@ class TestBackgroundTools:
             'Do not repeat or poll it; its result will arrive automatically. '
             'Continue independent work, or end your response.'
         )
-        follow_up = next(
-            part.content
-            for part in parts
+        follow_up_message, follow_up = next(
+            (message, part)
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
             if isinstance(part, UserPromptPart) and isinstance(part.content, str) and 'Background tool' in part.content
         )
-        assert follow_up == (
+        assert follow_up.content == (
             f"Background tool 'slow_research' (task {match['task_id']}) completed.\nResult: researched topic"
         )
+        assert follow_up_message.metadata == {'origin': 'background_tool', 'tool_call_id': match['task_id']}
 
     async def test_realtime_session_keeps_native_tool_path_and_instructions(self) -> None:
         image = BinaryContent(data=b'image bytes', media_type='image/png')
@@ -253,6 +258,11 @@ class TestBackgroundTools:
         result = await agent.run('go')
 
         assert _follow_up_seen(result.all_messages(), expected)
+        call = next(
+            part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)
+        )
+        follow_up = next(message for message in reversed(result.all_messages()) if isinstance(message, ModelRequest))
+        assert follow_up.metadata == {'origin': 'background_tool', 'tool_call_id': call.tool_call_id}
         if private_detail is not None:
             assert not _follow_up_seen(result.all_messages(), private_detail)
 
@@ -421,7 +431,7 @@ class TestBackgroundTools:
                 release.set()
                 yield 'waiting'
             else:
-                yield {0: DeltaToolCall(name='slow', json_args='{}')}
+                yield {0: DeltaToolCall(name='slow', json_args='{}', tool_call_id='call-1')}
 
         agent = Agent(FunctionModel(stream_function=model_fn), capabilities=[BackgroundTools()])
 
@@ -431,12 +441,18 @@ class TestBackgroundTools:
             return 'value'
 
         output = None
+        delivered_messages: list[ModelMessage] = []
         async with agent.run_stream_events('go') as events:
             async for event in events:
                 if isinstance(event, AgentRunResultEvent):
                     output = event.result.output
+                elif isinstance(event, EnqueuedMessagesEvent):
+                    delivered_messages.extend(event.messages)
 
         assert output == 'done'
+        assert [message.metadata for message in delivered_messages] == [
+            {'origin': 'background_tool', 'tool_call_id': 'call-1'}
+        ]
 
     async def test_iter_delivers_background_result(self) -> None:
         agent = Agent(_model_calling('slow'), capabilities=[BackgroundTools()])
@@ -617,8 +633,8 @@ class TestBackgroundTools:
 
         result = await agent.run('go')
 
-        follow_up = next(
-            part
+        follow_up_message, follow_up = next(
+            (message, part)
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
             for part in message.parts
@@ -632,6 +648,20 @@ class TestBackgroundTools:
         assert follow_up.content[1:] == ['supporting image', image]
         assert 'secret application metadata' not in str(follow_up.content)
         assert 'deferred_tool' not in str(follow_up.content)
+        call = next(
+            part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)
+        )
+        assert follow_up_message.metadata == {'origin': 'background_tool', 'tool_call_id': call.tool_call_id}
+        restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([follow_up_message]))
+        assert restored[0].metadata == follow_up_message.metadata
+        restored_part = restored[0].parts[0]
+        assert isinstance(restored_part, UserPromptPart)
+        assert isinstance(restored_part.content, list)
+        assert restored_part.content[:2] == follow_up.content[:2]
+        restored_image = restored_part.content[2]
+        assert isinstance(restored_image, BinaryContent)
+        assert restored_image.data == image.data
+        assert restored_image.media_type == image.media_type
 
     async def test_tool_return_preserves_string_content(self) -> None:
         agent = Agent(_model_calling('structured'), capabilities=[BackgroundTools()])
