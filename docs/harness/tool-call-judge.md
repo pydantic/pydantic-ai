@@ -11,6 +11,9 @@ Ask a second model whether a tool call may run, and stop it before the tool func
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+!!! tip "Approval Reviewer or Tool Call Judge?"
+    Both ask a second model one yes/no question about a tool call, but give it opposite powers. Use Tool Call Judge when you want a model to say no: its `yes` blocks a call, whether or not a person is watching. Use [Approval Reviewer](approval-reviewer.md) when you want a model to say yes on a person's behalf: it reviews only calls that already need approval, its `no` approves the call, and everything else still goes to the person. A judge cannot do the second job, because it runs when a call executes, after the person has already approved it.
+
 ## The problem
 
 Some tool calls are fine and some are not, and which is which depends on the arguments rather than the tool. `run_shell` is not dangerous; `run_shell(command='rm -rf /')` is. Allowlists and argument validation catch the shapes you anticipated. [Human approval](../deferred-tools.md) catches everything, but needs a person on the other end, which a scheduled or long-running agent does not have.

@@ -11,6 +11,9 @@ Let a second model approve the low-risk tool calls that need approval, and leave
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+!!! tip "Approval Reviewer or Tool Call Judge?"
+    Both ask a second model one yes/no question about a tool call, but give it opposite powers. Use [Tool Call Judge](tool-call-judge.md) when you want a model to say no: its `yes` blocks a call, whether or not a person is watching. Use Approval Reviewer when you want a model to say yes on a person's behalf: it reviews only calls that already need approval, its `no` approves the call, and everything else still goes to the person. A judge cannot do the second job, because it runs when a call executes, after the person has already approved it.
+
 ## The problem
 
 [Human approval](../deferred-tools.md#human-in-the-loop-tool-approval) is the dependable gate for a tool like `run_shell`, but most of the calls it stops are harmless: `ls`, `git status`, `rg TODO`. A person asked to approve every one of them stops reading the requests, and the request that mattered gets the same click as the rest. Allowlists cut the volume, but which calls are risky depends on the arguments, and a list only covers the shapes you anticipated.
@@ -142,7 +145,7 @@ Either way, what the reviewer is shown leaves the process: a call's arguments go
 
 Like `ToolCallJudge`, `ApprovalReviewer` asks one question and takes one answer rather than grading risk on a scale against a threshold: a model's self-reported severity is not calibrated across models, prompts, or days, so a threshold on it would not mean what it says.
 
-Tiering is expressed with more than one reviewer, each with its own selector, question, and model. Every reviewer receives the requests the ones before it left, so a call is approved when any reviewer that selects it answers `no`. Give reviewers non-overlapping selectors, so that each tool's calls are cleared by the question written for it:
+Tiering is expressed with the `tools` selector instead. Calls to a tool the reviewer selects can be approved by the model; calls to a tool it does not select always go to a person. Mark tools by what a wrong approval would cost, and select only the tiers you are willing to hand to a model:
 
 ```python {names="defined"}
 from pydantic_ai import Agent, DeferredToolRequests
@@ -154,17 +157,26 @@ agent = Agent(
     capabilities=[
         ApprovalReviewer(
             'anthropic:claude-haiku-5-5',
-            tools=['run_shell'],
+            tools={'risk': 'low'},
             question='Could this command delete or overwrite data, reach the network, or expose secrets?',
-        ),
-        ApprovalReviewer(
-            'anthropic:claude-haiku-5-5',
-            tools=['write_file'],
-            question='Does this write outside the project directory or touch configuration or credentials?',
         ),
     ],
 )
+
+
+@agent.tool_plain(requires_approval=True, metadata={'risk': 'low'})
+def run_shell(command: str) -> str:
+    return f'Would run: {command}'
+
+
+@agent.tool_plain(requires_approval=True, metadata={'risk': 'high'})
+def deploy(environment: str) -> str:
+    return f'Would deploy to {environment}'
 ```
+
+A `run_shell` call the reviewer answers `no` for runs without asking anyone; every `deploy` call goes to a person, because no reviewer selects it.
+
+For a different question per tool, add more than one reviewer, each with its own selector, question, and model. Every reviewer receives the requests the ones before it left, so a call is approved when any reviewer that selects it answers `no`. Give reviewers non-overlapping selectors, so that each tool's calls are cleared by the question written for it.
 
 ## Using a decision model
 
