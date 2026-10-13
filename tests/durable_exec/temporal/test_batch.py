@@ -12,7 +12,7 @@ import json
 import sys
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, is_dataclass, replace
 from datetime import timedelta
 from typing import Any
 
@@ -59,6 +59,8 @@ try:
     from temporalio.service import RPCError, RPCStatusCode, ServiceClient
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import (
+        ActivityInboundInterceptor,
+        ExecuteActivityInput,
         Interceptor as WorkerInterceptor,
         Replayer,
         StartActivityInput,
@@ -69,7 +71,7 @@ try:
     )
     from temporalio.workflow import ActivityConfig, ActivityHandle
 
-    from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
+    from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
@@ -101,6 +103,8 @@ class ClientFaults:
     missing_status: bool = False
     conflicting_policy: bool = False
     enqueue_error: BaseException | None = None
+    override_model_id: bool = False
+    activity_model_id: str | None = None
     capture: bool = False
     updates: list[tuple[str, str, object]] = field(default_factory=list[tuple[str, str, object]])
 
@@ -109,11 +113,23 @@ faults = ClientFaults()
 
 
 class FaultInterceptor(Interceptor, WorkerInterceptor):
+    def intercept_activity(self, next: ActivityInboundInterceptor) -> ActivityInboundInterceptor:
+        return FaultActivity(next)
+
     def intercept_client(self, next: OutboundInterceptor) -> OutboundInterceptor:
         return FaultOutbound(next)
 
     def workflow_interceptor_class(self, input: WorkflowInterceptorClassInput) -> type[WorkflowInboundInterceptor]:
         return FastRetryInbound
+
+
+class FaultActivity(ActivityInboundInterceptor):
+    async def execute_activity(self, input: ExecuteActivityInput) -> Any:
+        if faults.override_model_id and activity.info().activity_type.endswith('__batch_enqueue'):
+            params = input.args[0]
+            assert is_dataclass(params) and not isinstance(params, type)
+            input.args = [replace(params, model_id=faults.activity_model_id)]
+        return await super().execute_activity(input)
 
 
 class FastRetryInbound(WorkflowInboundInterceptor):
@@ -471,6 +487,8 @@ def reset_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     faults.missing_status = False
     faults.conflicting_policy = False
     faults.enqueue_error = None
+    faults.override_model_id = False
+    faults.activity_model_id = None
     faults.capture = False
     faults.updates.clear()
     faults.drop_signals = 0
@@ -1148,3 +1166,31 @@ async def test_exhausting_wait_rounds_cancels_the_pending_batch(
         await asyncio.wait_for(provider.cancelled_job.wait(), READINESS_WAIT_TIMEOUT)
         assert provider.canceled == provider.batch_ids('bounded-wait')
     assert len(provider.batch_ids('bounded-wait')) == 1
+
+
+@workflow.defn(failure_exception_types=[UserError])
+class AutomaticBatchWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [registry_agent]
+
+    @workflow.run
+    async def run(self, stream: bool) -> str:
+        if stream:
+            async with registry_agent.run_stream('streaming', model='batch') as result:
+                return await result.get_output()  # pragma: no cover - batching rejects streaming before yielding
+        return (await registry_agent.run('worker-registry', model='batch')).output
+
+
+@pytest.mark.parametrize('mode', ['stream', 'missing-default', 'missing-named'])
+async def test_automatic_worker_registration_rejects_invalid_batch_requests(client: Client, mode: str) -> None:
+    stream = mode == 'stream'
+    faults.override_model_id = not stream
+    faults.activity_model_id = 'missing' if mode == 'missing-named' else None
+    queue = 'batch-automatic-validation-queue'
+    async with Worker(client, task_queue=queue, workflows=[AutomaticBatchWorkflow]):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                AutomaticBatchWorkflow.run, stream, id=f'automatic-validation-{uuid.uuid4()}', task_queue=queue
+            )
+        message = 'does not support streaming' if stream else 'No `BatchModel` is registered'
+        assert any(message in str(error) for error in failure_causes(exc_info.value))
+    assert provider.batch_ids('streaming', 'worker-registry') == []
