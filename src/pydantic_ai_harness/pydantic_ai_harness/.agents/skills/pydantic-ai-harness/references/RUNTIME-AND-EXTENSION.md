@@ -72,9 +72,13 @@ Stores, all in `pydantic_ai_harness.step_persistence`, all async, all accepting
   "pydantic-ai-harness[mongodb]"`. Exactly one of `client`/`db_url`, and `database` is required. With
   `db_url` the store owns the client, so call `await store.aclose()`. It creates indexes on its first
   write, so the user needs index-creation privileges.
+- `PostgresStepStore(pool, *, table='step_persistence')`: `pool` is your own `asyncpg` pool (the
+  driver-neutral `PostgresPool` protocol); no harness extra, and you own the pool lifecycle. `table`
+  is a prefix of at most 40 characters. It creates its tables on first use, so the role needs
+  `CREATE` on the schema.
 
-File, SQLite, and Mongo stores move `BinaryContent` and any text part of 64 KiB or more to a
-`MediaStore` (disk, same DB, or same Mongo client by default). Pass `media_store=None` to keep them
+File, SQLite, Mongo, and Postgres stores move `BinaryContent` and any text part of 64 KiB or more to a
+`MediaStore` (disk, same DB, same Mongo client, or same pool by default). Pass `media_store=None` to keep them
 inline, or `media_store=S3MediaStore(...)` from `pydantic_ai_harness.media`.
 
 Reading back:

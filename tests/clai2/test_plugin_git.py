@@ -236,7 +236,7 @@ async def test_remove_other_file_plugin_with_unresolvable_plugins_directory(tmp_
     await harness.loader.load_all()
     harness.store.plugins_dir.rmdir()
     harness.store.plugins_dir.symlink_to(harness.store.plugins_dir.name, target_is_directory=True)
-    # Python 3.10 raises when resolving this loop; unrelated file plugins must not need that resolution.
+    # Unrelated file plugins must not resolve this symlink loop.
     assert (await harness.loader.command(['remove', 'external'])).startswith('Disabled external.')
     assert harness.store.plugins() == [declaration.model_copy(update={'enabled': False})]
     assert path.is_file()

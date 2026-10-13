@@ -36,9 +36,12 @@ safe-outputs:
   report-failure-as-issue: false
   noop:
     report-as-issue: false
-  missing-tool: false
-  missing-data: false
-  report-incomplete: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   jobs:
     record-attention-decision:
       description: "Classify one bounded candidate for deterministic host-side policy."

@@ -2,7 +2,7 @@
 name: pydantic-ai-harness
 description: Extend Pydantic AI agents with capabilities from pydantic-ai-harness -- the Coder coding agent, file and shell tools in local or sandboxed workspaces (Modal, E2B, Sprites), Code Mode, sub-agents and planning, memory and skills, context compaction, guardrails and spend limits, web research and browsers, hosted SaaS integrations, and step persistence. Use when the user mentions pydantic-ai-harness or pydantic_ai_harness, imports a harness capability such as Coder, CodeMode, FileSystem, Shell, SubAgents, Memory, or ToolGuardrail, or wants a Pydantic AI agent that edits files, runs commands or agent-written Python, delegates, remembers, manages long context, or stays within limits.
 license: MIT
-compatibility: Requires Python 3.10+
+compatibility: Requires Python 3.11+
 metadata:
   version: "0.2.0"
   author: pydantic

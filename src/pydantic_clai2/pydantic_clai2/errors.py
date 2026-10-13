@@ -1,10 +1,6 @@
 """Actionable terminal messages without changing exceptions delivered to plugins."""
 
-import sys
 from typing import cast
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup
 
 _DETAIL = 200
 """Characters of each failed model's error to show; provider error bodies can be long."""
