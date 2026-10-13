@@ -2155,9 +2155,8 @@ class TestCodeMode:
         assert result.output == 'sum is 10'
 
     # Deferred gather resolution order: regression tests for issue #9962. In global
-    # sequential modes (`sequential`, `parallel_ordered_events`) deferred calls resume in
-    # dispatch order even when the snapshot lists the pending ids in another order;
-    # `parallel` stays unordered.
+    # `sequential` mode deferred calls resume in dispatch order even when the snapshot
+    # lists the pending ids in another order; the parallel modes stay unordered.
 
     @staticmethod
     def _gather_three_calls_agent(monkeypatch: pytest.MonkeyPatch, executed: list[str]) -> Agent[object, str]:
@@ -2205,37 +2204,60 @@ class TestCodeMode:
         assert executed == ['first', 'second', 'third']
         assert result.output == 'done'
 
-    def test_deferred_gather_parallel_ordered_events_reversed_pending_ids_runs_in_dispatch_order(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Global `parallel_ordered_events` mode also resumes in dispatch order.
-
-        `parallel_ordered_events` is not `parallel`, so the executor treats it as global
-        sequential and must not trust the snapshot's id order. The `pending_call_ids`
-        reversal is test-local forcing, not library behavior.
-        """
-        executed: list[str] = []
-        agent = self._gather_three_calls_agent(monkeypatch, executed)
-        with agent.parallel_tool_call_execution_mode('parallel_ordered_events'):
-            result = agent.run_sync('Gather three record calls.')
-
-        assert executed == ['first', 'second', 'third']
-        assert result.output == 'done'
-
+    @pytest.mark.parametrize('mode', ['parallel', 'parallel_ordered_events'])
     def test_deferred_gather_parallel_reversed_pending_ids_completes_all_calls(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, mode: ParallelExecutionMode
     ) -> None:
-        """Global `parallel` mode stays unordered, but every gathered call completes.
+        """The parallel modes stay unordered, but every gathered call completes.
 
         Completion order is intentionally not pinned here. The `pending_call_ids`
         reversal is test-local forcing, not library behavior.
         """
         executed: list[str] = []
         agent = self._gather_three_calls_agent(monkeypatch, executed)
-        with agent.parallel_tool_call_execution_mode('parallel'):
+        with agent.parallel_tool_call_execution_mode(mode):
             result = agent.run_sync('Gather three record calls.')
 
         assert sorted(executed) == ['first', 'second', 'third']
+        assert result.output == 'done'
+
+    @pytest.mark.parametrize('mode', ['parallel', 'parallel_ordered_events'])
+    async def test_gathered_calls_overlap_in_parallel_modes(self, mode: ParallelExecutionMode) -> None:
+        """Gathered sandbox calls run concurrently unless the run's mode is `sequential` (issue #9248).
+
+        `parallel_ordered_events` orders top-level result events, which nested calls do not emit,
+        and `DBOSDurability` defaults to it. Each call waits until all three are in flight, so the
+        run only completes if the calls overlap.
+        """
+        in_flight = 0
+        all_started = asyncio.Event()
+
+        async def fetch(label: str) -> str:
+            """Return `label` once every gathered call has started."""
+            nonlocal in_flight
+            in_flight += 1
+            if in_flight == 3:
+                all_started.set()
+            await all_started.wait()
+            return label
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+                return ModelResponse(parts=[TextPart('done')])
+            code = "import asyncio\nawait asyncio.gather(fetch(label='a'), fetch(label='b'), fetch(label='c'))"
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code}, tool_call_id='gather')])
+
+        agent = Agent(FunctionModel(model_fn), tools=[fetch], capabilities=[CodeMode[object]()])
+        with anyio.fail_after(10), agent.parallel_tool_call_execution_mode(mode):
+            result = await agent.run('Gather three fetches.')
+
+        run_code_return = next(
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+        )
+        assert run_code_return.content == ['a', 'b', 'c']
         assert result.output == 'done'
 
     async def test_deferred_capability_loader_stays_native_with_tools_all(self) -> None:
@@ -4329,8 +4351,12 @@ class TestGlobalModeIsSequential:
         def sequential() -> ParallelExecutionMode:
             return 'sequential'
 
+        def parallel_ordered_events() -> ParallelExecutionMode:
+            return 'parallel_ordered_events'
+
         assert global_mode_is_sequential(parallel) is False
         assert global_mode_is_sequential(sequential) is True
+        assert global_mode_is_sequential(parallel_ordered_events) is False
 
 
 class TestCodeModeOSAccessInTemporal:
