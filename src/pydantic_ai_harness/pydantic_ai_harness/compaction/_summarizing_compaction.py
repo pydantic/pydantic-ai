@@ -278,6 +278,20 @@ def _without_bridge_prefix(summary: str) -> str:
     return summary.removeprefix(f'{_BRIDGE_PREFIX}\n\n')
 
 
+def _adds_nothing_to_summarize(message: ModelMessage, kept: Sequence[ModelMessage]) -> bool:
+    """Whether summarizing *message* would add nothing the compacted history does not already hold.
+
+    That is a message kept verbatim alongside the summary, or a request made up only of system
+    prompts (an earlier summary, or prompts copied into the new summary message), pins (reinjected),
+    and receipts (replaced).
+    """
+    if any(message is retained for retained in kept):
+        return True
+    return isinstance(message, ModelRequest) and all(
+        isinstance(part, SystemPromptPart) or is_pinned(part) or is_receipt_part(part) for part in message.parts
+    )
+
+
 def _is_kept_user_message(message: ModelRequest) -> bool:
     """Return whether *message* is an earlier `keep_user_messages` retention copy."""
     return message.metadata is not None and message.metadata.get(_KEPT_USER_MESSAGE_METADATA) is True
@@ -511,13 +525,6 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         to_summarize = messages[:cutoff]
         preserved = messages[cutoff:]
 
-        previous_summary = _extract_previous_summary(messages) if self.incremental else None
-        summary = await self._summarize(to_summarize, ctx, previous_summary=previous_summary)
-        summary = self._maybe_bridge_prefix(summary, messages, ctx)
-
-        summary_part = SystemPromptPart(content=f'{_SUMMARY_PREFIX}{summary}')
-        summary_message = ModelRequest(parts=[*system_parts, summary_part])
-
         extra: list[ModelMessage] = []
         if self.keep_user_messages:
             extra = self._kept_user_messages(to_summarize)
@@ -544,6 +551,18 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 idx = messages.index(first_user_msg)
                 if idx < cutoff and first_user_msg not in preserved:
                     extra = [first_user_msg]
+
+        if all(_adds_nothing_to_summarize(message, extra) for message in to_summarize):
+            # Re-summarizing only an earlier summary would cost a model call without shrinking the
+            # history, as when a large message keeps the retained suffix above the trigger.
+            return messages
+
+        previous_summary = _extract_previous_summary(messages) if self.incremental else None
+        summary = await self._summarize(to_summarize, ctx, previous_summary=previous_summary)
+        summary = self._maybe_bridge_prefix(summary, messages, ctx)
+
+        summary_part = SystemPromptPart(content=f'{_SUMMARY_PREFIX}{summary}')
+        summary_message = ModelRequest(parts=[*system_parts, summary_part])
 
         result: list[ModelMessage] = [summary_message, *extra, *preserved]
         result = reinject_pinned(messages, result, protected_tail=len(preserved) if self.keep_tokens else 0)

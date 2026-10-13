@@ -368,6 +368,8 @@ The suffix is measured as described in [What counts toward `keep_tokens`](#what-
 
 Whole messages and tool dependencies can overshoot the target. Summaries, receipts, reinserted pins, and retained older user turns are additional; they do not displace the protected suffix. Existing receipts inside that suffix remain unchanged. This is not a context-window-fit guarantee: callers must check the remaining request budget and stop, switch models, or explicitly reduce the retention target if necessary. Configure the same retention target on each fallback that must preserve it.
 
+A large message can keep the retained suffix and the summary above `max_tokens`. Until newer messages meet the target without it, everything before the suffix is already accounted for: an earlier summary, receipts, pins, and messages kept verbatim anyway, such as the preserved first user turn. `SummarizingCompaction` then has nothing new to summarize, so it leaves the history unchanged without a summary call instead of re-summarizing its own summary on every request. The request still goes out above the trigger; `ClampOversizedMessages` can shorten an oversized message when that matters.
+
 ## `SummarizingCompaction`: compress, do not discard
 
 When old context still matters but must be compressed, `SummarizingCompaction` summarizes the older messages with a dedicated model call and replaces them with a single structured summary, preserving the recent tail and tool-call integrity. It is the expensive tier, so it is best used behind the cheaper passes (see `TieredCompaction`).

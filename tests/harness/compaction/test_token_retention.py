@@ -517,6 +517,78 @@ class TestSummarizingCompactionTokenRetention:
         assert bool(retained_users) is keep_user_messages
         assert all(len(text) <= 30 for text in retained_users)
 
+    @pytest.mark.parametrize('preserve_first_user_message', [False, True])
+    @pytest.mark.parametrize('receipts', [False, True])
+    @pytest.mark.parametrize('pinned', [False, True])
+    async def test_recompacting_with_nothing_new_to_summarize_skips_the_summary_call(
+        self, preserve_first_user_message: bool, receipts: bool, pinned: bool
+    ) -> None:
+        # The 60-token message crosses the 80-token floor, so the retained suffix plus the summary
+        # stays above the 100-token trigger. Before the newer messages reach the floor on their own,
+        # every later compaction would only re-summarize the previous summary.
+        calls = 0
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            return response('summary')
+
+        first = ModelRequest(parts=[UserPromptPart('o' * 50), *([pin('pinned fact')] if pinned else [])])
+        history: list[ModelMessage] = [
+            first,
+            response('older answer'),
+            response('x' * 60),
+            ModelRequest.user_text_prompt('y' * 30),
+        ]
+        strategy: SummarizingCompaction[None] = SummarizingCompaction(
+            max_tokens=100,
+            keep_tokens=80,
+            tokenizer=len,
+            preserve_first_user_message=preserve_first_user_message,
+            receipts=receipts,
+            model=FunctionModel(summarize),
+        )
+
+        compacted = await compact_now(strategy, history, model=TestModel())
+        assert calls == 1
+        grown: list[ModelMessage] = [*compacted, response('z' * 5)]
+        assert estimate_token_count(grown, tokenizer=len) > 100
+        snapshot = ModelMessagesTypeAdapter.dump_json(grown)
+
+        result = await compact_now(strategy, grown, model=TestModel())
+
+        assert calls == 1
+        assert len(result) == len(grown)
+        assert all(actual is original for actual, original in zip(result, grown))
+        assert ModelMessagesTypeAdapter.dump_json(result) == snapshot
+
+        # Once the newer messages meet the floor without it, the crossing message is summarized.
+        newer: list[ModelMessage] = [*grown, response('n' * 80)]
+        result = await compact_now(strategy, newer, model=TestModel())
+
+        assert calls == 2
+        assert result[-1] is newer[-1]
+        assert all(message is not history[1] for message in result)
+
+    @pytest.mark.parametrize('keep_tokens', [None, 40])
+    async def test_prefix_of_only_the_preserved_first_user_turn_is_not_summarized(
+        self, keep_tokens: int | None
+    ) -> None:
+        # The first user turn is kept verbatim alongside any summary, so summarizing it alone
+        # would cost a model call and make the history longer.
+        history: list[ModelMessage] = [ModelRequest.user_text_prompt('o' * 50), response('x' * 60)]
+        snapshot = ModelMessagesTypeAdapter.dump_json(history)
+        usage = RunUsage()
+        strategy: SummarizingCompaction[None] = SummarizingCompaction(
+            max_messages=1, keep_messages=1, keep_tokens=keep_tokens, tokenizer=len
+        )
+
+        result = await compact_now(strategy, history, model=TestModel(), usage=usage)
+
+        assert all(actual is original for actual, original in zip(result, history, strict=True))
+        assert ModelMessagesTypeAdapter.dump_json(result) == snapshot
+        assert usage.requests == 0
+
     async def test_model_error_falls_back_to_sliding_window_with_same_minimum(self) -> None:
         calls = 0
 

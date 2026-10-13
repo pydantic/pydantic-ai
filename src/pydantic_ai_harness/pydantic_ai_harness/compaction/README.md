@@ -483,6 +483,11 @@ Allow headroom for whole-message/tool-dependency overshoot and added context; `k
 request-size limit. A value of `0` sets a zero-token target rather than a minimum-retention floor;
 `None` selects message-count retention with `keep_messages`.
 
+When everything before the suffix is already accounted for (an earlier summary, receipts, pins, and
+messages kept verbatim anyway, such as the preserved first user turn), `SummarizingCompaction` has
+nothing new to summarize and leaves the history unchanged without a summary call, even if it is
+still above the trigger.
+
 See the [token-retention guide](https://pydantic.dev/docs/ai/harness/compaction/#token-retention-after-automatic-compaction)
 for the automatic-compaction example, tokenizer accounting, and fallback/budget guidance.
 
