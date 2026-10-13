@@ -2,7 +2,7 @@
 
 How a harness agent is persisted, made durable, configured, extended, and served. This covers saving and
 resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurability`), Absurd durable
-tasks (`AbsurdDurability`), harness capabilities under core durable execution, Logfire-managed
+tasks (`AbsurdDurability`), pgtask durable tasks (`PGTaskDurability`), harness capabilities under core durable execution, Logfire-managed
 instructions (`ManagedPrompt`), agent-written capabilities (`CapabilityCreation`), loading harness
 capabilities from YAML/JSON specs, serving an agent to editors over ACP, and running one as a GitHub
 Agentic Workflow.
@@ -15,6 +15,7 @@ Agentic Workflow.
 | Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
+| Checkpoint every model/tool step in Postgres with pgtask | `PGTaskDurability` |
 | Edit, version, and roll out the system prompt from Logfire without redeploying | `ManagedPrompt` |
 | Let the agent write new capabilities that load on the next run | `CapabilityCreation` |
 | Define the agent in YAML/JSON with harness capabilities | `Agent.from_file(..., custom_capability_types=[...])` |
@@ -277,6 +278,46 @@ Gotchas:
   `ExternalToolset` is fine.
 - Keep tool side effects idempotent: a crash after a tool runs but before its step is saved re-runs it.
 
+## PGTaskDurability
+
+Checkpoints every model request, tool call, and MCP call as a step of a
+[pgtask](https://github.com/Kludex/pgtask) task, stored in Postgres. When a worker dies, the task re-runs
+from the top and completed steps return their stored results.
+
+```bash
+uv add "pydantic-ai-harness[pgtask]" "pydantic-ai-slim[openai]"
+```
+
+```python {test="skip"}
+from pgtask import Task, TaskRegistry
+from pydantic_ai import Agent
+
+from pydantic_ai_harness.pgtask import PGTaskDurability
+
+tasks = TaskRegistry(queue_name='agents')
+agent = Agent('openai:gpt-5', name='analyst', capabilities=[PGTaskDurability()])
+
+
+@tasks.task('analyse')
+async def analyse(task: Task, payload: dict[str, str]) -> dict[str, str]:
+    result = await agent.run(payload['prompt'])
+    return {'output': result.output}
+```
+
+Parameters: `PGTaskDurability(*, models=None, event_stream_handler=None, name=None,
+parallel_execution_mode='sequential')`, the same as `AbsurdDurability`.
+
+Gotchas:
+
+- Run `await Client.connect(url)` then `await client.migrate()` once per database before the first task.
+- The agent needs a `name` (or `name=`), and every function, MCP, or dynamic toolset needs a unique
+  `id`. Both are part of every step name, so renaming either makes in-flight tasks re-run those steps.
+- Tool results are stored as JSON, `ModelRetry` and `ToolFailed` included; `DynamicToolset` calls are checkpointed too.
+  A checkpoint that no longer decodes raises `CheckpointDecodeError` instead of re-running the tool.
+- Function, MCP, or dynamic toolsets passed with `run(toolsets=...)` inside a task raise `UserError`;
+  `ExternalToolset` is fine.
+- Keep tool side effects idempotent: a crash after a tool runs but before its step is saved re-runs it.
+
 ## ManagedPrompt
 
 Resolves a Logfire-managed prompt once per run and uses it as the agent's instructions, with the label
@@ -381,7 +422,7 @@ agent = Agent.from_spec(spec, custom_capability_types=[Planning, StepPersistence
 `pydantic-ai-slim[spec]` for YAML). Capability entries take the forms `Name`, `{Name: positional_arg}`,
 or `{Name: {kwargs}}`, and each class's `from_spec` builds the instance. Opted out (they hold callables
 or live agents, and raise `ValueError` if listed): `AWSLambdaDurability`, `AbsurdDurability`,
-`CapabilityCreation`, `DynamicWorkflow`, `InputGuardrail`, `OutputGuardrail`, `SubAgents`,
+`PGTaskDurability`, `CapabilityCreation`, `DynamicWorkflow`, `InputGuardrail`, `OutputGuardrail`, `SubAgents`,
 `SystemReminders`, `ToolGuardrail`, `TrajectoryJudge`. `AskUser` has a spec name but needs an
 `answerer` callable, so in practice it is passed in code too. Pass those instances with the
 `capabilities=` keyword of `Agent.from_spec`/`Agent.from_file`, which adds them to the spec's list.
@@ -465,6 +506,7 @@ capabilities, because the CLI passes no `custom_capability_types`. Use a Python 
 - https://pydantic.dev/docs/ai/harness/durable-execution/
 - https://pydantic.dev/docs/ai/harness/aws-lambda/
 - https://pydantic.dev/docs/ai/harness/absurd/
+- https://pydantic.dev/docs/ai/harness/pgtask/
 - https://pydantic.dev/docs/ai/harness/managed-prompt/
 - https://pydantic.dev/docs/ai/harness/capability-creation/
 - https://pydantic.dev/docs/ai/harness/acp/
