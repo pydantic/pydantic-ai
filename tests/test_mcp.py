@@ -835,8 +835,8 @@ class TestMCPToolsetIntegration:
 
         @server.tool(meta={'ui': {'visibility': ['model']}})
         def model_only() -> str:
-            """Only the model calls this."""
-            return 'model only'
+            """Only the model calls this; the app request relay must refuse it before it reaches the server."""
+            raise AssertionError('relayed an app call to a model-only tool')  # pragma: no cover
 
         return server
 
