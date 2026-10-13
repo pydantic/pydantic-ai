@@ -37,7 +37,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "2457"
+      - "2456"
       content-type:
       - application/json
     body:
@@ -55,22 +55,22 @@ interactions:
         tools: []
         tool_choice: auto
         truncation: disabled
-        id: resp_6acd7a27f54e047026234a8d
+        id: resp_6ace34b4ac7c3b46e4c14f69
         object: response
         status: completed
-        created_at: 1791851047.0
-        completed_at: 1791851047.0
+        created_at: 1791898804.0
+        completed_at: 1791898804.0
         error: null
         incomplete_details: null
         output:
         - type: reasoning
-          id: rs_6acd7a27f54e047026234a8d:rs_01a132a52929737e8cc9a0e6c3bd206e
+          id: rs_6ace34b4ac7c3b46e4c14f69:rs_01a1357de0eb763b85ca7bc0dbee489c
           encrypted_content: >-
-            Q-PaDgHTj0A3fOJLrgLF2azgfF-bCgrV6T9LLyFUMaQB9yhCbVqc_K-GoCxyWN7BikQYlyplT5dGOciPayCp4JFLNb8fwariRA6MPPwHSwflzd_pLyb1RtDl0V8fydQu-uSHg_5r9svk2AH834EuR3-Ju_1UHM3OYUJ447xzlgTpxf9KlE-2Y_VLYExzU1ZaPnlSjZ1UqsgZlH5cMNbaW1KHhEagypqtCbykE25DqVUz0psomxSX5qwjZeixIcMrSxsqVkS5QWdITrC396Ra1NbxKrCriLjBeAqICYqQi6rBpKldoNLuxSpABzvVXgeXPOKNn8LO-8hbaoee7ZOQfw_1OCG2YdegwCTIPjPbHiTEz3VBWl6rIXeNcgpH56R7plMFi8JNTmSJLNc43lEQPGlhnURbOAe_5Lqxjg_7P2c-y_UOC6fZjgbTJEouKC0CsQJAdIq6qtWPzsngOReQaglfP4N62C3i2oLXC9cMEnqa4fhWM4xHyWMSILT7-PqNTEDmMxRKDayzGDqaS-Vk2mTOeqod6afPDzMezqkGoFhPcQe9Pidyeus6Y05McQDQ2txsyN7X_lc9H8Q9PVaXBu-QK8JSvRlHgMIyzAit6gHse4U91Rm1Rcz7TETomorx7ZlOXVAnSKRBqOejVJuepHibAHiRQYuPzPz9GzBfaZ9x0N3eu79rcYkV77dfZQgCFqPKDRflOVDQkKAp_TF8zUPJHE3TgnLWZAZNPd411uHZLmm2BBZsepKI5PdEkNO8YMcxALitVUTMmNM649ivnPP3LijqX1_UBVlESANXg2NMIFeoKR_SRkC2QnRMYIFc1TfWlfQtrcU6QH7pp-3cb7BRAoM95ewob-Z4AOu4no1YDgoys61IAein01Dm6-HKrIl32E5WHyHmglnkFnAA_g7H6LraktxYIvEyU1q3Zn_z00NGWoUAI7r0rkl-JFZEhULqn1N1f97-Uqj534hh64pFuofxOuygNuPLgjF5Qeeja32PkN0L_qy9hAu4pReFnXAgttH7SeaY3UlyN-Y6B9AtByNIhoBdcM8WxCklIixzm5qIsQsyq3m1PF7WWbBVHXajkEtewXVwL562PRo_SrIRaMsuBSRpA7O4I1e5ybmh3oN0hz-JXgP4_DAO-040HQ1pb7tRnv_EBUgctNduvLPYG2C2yL9hsMEzi3t2NTmi5qGgmMKb7WGBF4WAj1a0mImYyS-N5mxLW9bLLAAlfm538xRfjRAdmQAT3Qz97BPsbPJDIYMVFiqqjWhmczvh5_IsM2M9xNQuwUBsWl6Nac_1ruIiWbOQUq-ZGw-kQ3ivHLXPozqt8d4U5Sf2aCQlKfksrih4k1tJlWn9dlsIgezBe62BQlCRvtqJOt-subaBPKAx00a0tDFyGtoM2zYTWb5EkW2mlL6fP-eT2A
+            Q-PaDgEDJUH0gk0nYVBQ0gR7NE9rUyZHqSoYrzmApe_uYfpM0CwI5soibFaj-amJcbtWrjMIXoP1iTm6p13N0jzWy1aEgPG6NsIaBdVdXJBYB_o0uS7snyishaxKEjvEqmWj_KY0xa5rUlxF78YXcGKhA7XQhyP5jS3S3jCjQFMwv_7Nu_MXSP-cXkhVGL5o0L4hWl6SptsdXqD1rpZHkcKlrdws2f5j5th_k9S9QPPVTr6JrF9j6aqIZjhSL5OuH-NDuV3jjqPCKq9A9gRGdS7m1DLJwtDRaVVVtqmbN0s_FFeFLMLTqhPrkpkSc9Er95NwJ7jfMQRd7ifVEM3WpV0uZkLIUdhQx-NWCR7zelV4oBsfaQ_EpzhP04caYFtJqDSFKCSAT20ggD3bNTmfFL4IiZqcUQkvV0HbhGCer2BUNyRkkB4BcDbbfVUzbvclir9KhTJdGnCmgWfHTYGRAHhaz9Q8VsN62DGsZa8jvRzca_qpWo11AWzcnJ9JBdjddFGnkcrQhf6cF_54YrrZytc6gPD_wO3DBzeZABzm-QH1qz_P0nUhTik7-3XZQUay6mesfmDwI8vCXv04aDJEtSlBWs44IG96r2CxayFNqswrcU9Ja3fw9hpJAL_RiNuHgoj49x-OJVJ7sAsGZ_rQniSQltO8hr7l1gGS10ZLje9Qhpbe_u8jQEnSiLRs35mbjJjdb81wU_9wZ2AR3lQayd3XBVTisCBaH79IAKIMQ06R0WzV4idYdmruXVyWjJcT74lXc-ol3GNoWc2VcavVAdGNB3CBO_yS6v6bEwS2gM4HebHVD4ZKyHBslUjPSbzM6G1ZMUqpjKsd804EwA3oBqWuHkgjRUo0QoMlCPEH5hecf1wQJufPVvrOjOcdghggsJdjrvobvgYgVz50WiIi9OjdFdxdj0CFUA2u4z6qQR1rX2DQVEIXiMkB_r4IKLtzBERLah8NBeO0-0yVbAjbmFCxHz-n7LdujVCnJz5gkfEOFbvBdMjedMi-KeTAz79AuKgiqOg1p4kKXMJm6pQYzlqJ_0L0dViIVfufvypoKfBRC6VP-4vdvw1DhnA8eL9ovSZL-yQQ6ibDyy-Br__PqoTaxrKFU8_IPP7IeprpVcUzDau0yO0Nm1o88WxH85KfkS9d4kEWWksvRvo7UiSpPGdPoAzt5iSCee2S4zGJ6FCkQYLV4vYHhm1F7WnwZEczU_JHIr4j7-m_Qkn5jf_sAglnszsabINXc7DbAp0eHZm39lhEN4KLeczPYSocnxyKi66QkPKhgnvFBLHx0R36m8Wut1WCyKbFGYuzs_PC5Fmil-vE6wS1owXHKAGPKpm1NpwE0CGRBXr1vKwrutqqvSDvtXmIpTZbfxsUHzM9wPbTHc1ewgU1XVH2K-nriiIR7h6LMHigqIVFfCcWRA
           summary: []
           status: completed
         - type: message
-          id: msg_01a132a52a0f708fabde96fdb088de74
+          id: msg_01a1357de15473b79769e4481e0f22eb
           role: assistant
           content:
           - type: output_text
@@ -83,10 +83,10 @@ interactions:
           input_tokens: 12
           input_tokens_details:
             cached_tokens: 0
-          output_tokens: 31
+          output_tokens: 16
           output_tokens_details:
-            reasoning_tokens: 20
-          total_tokens: 43
+            reasoning_tokens: 5
+          total_tokens: 28
         parallel_tool_calls: true
         store: true
-  recorded_at: 2026-10-13T00:24:07.749733+00:00
+  recorded_at: 2026-10-13T13:40:04.864219+00:00

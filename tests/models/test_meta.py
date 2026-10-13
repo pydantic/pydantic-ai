@@ -178,7 +178,7 @@ async def test_meta_chat_completions(allow_model_requests: None, meta_api_key: s
         return f'Sunny and 21C in {city}.'
 
     result = await agent.run('What is the weather in Paris? Use the tool.')
-    assert result.output == snapshot("It's **Sunny and 21°C** in Paris.")
+    assert result.output == snapshot("It's Sunny and 21°C in Paris.")
     assert any(isinstance(part, ToolCallPart) for part in result.all_messages()[1].parts)
     assert not any(isinstance(part, ThinkingPart) for message in result.all_messages() for part in message.parts)
-    assert result.usage.details == snapshot({'reasoning_tokens': 308})
+    assert result.usage.details == snapshot({'reasoning_tokens': 517})
