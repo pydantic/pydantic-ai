@@ -4,12 +4,12 @@ import asyncio
 import dataclasses
 import sys
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Generic, overload
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, overload
 
 import anyio
 from opentelemetry.trace import NoOpTracer, Tracer
@@ -150,6 +150,10 @@ class AnchoredEvidence:
     """Capabilities loaded inside the anchored window but not in `loaded_capability_ids`."""
 
 
+ToolNamePath: TypeAlias = tuple[str | Mapping[str, str], ...]
+"""The name-changing wrappers a tool listing passes through: a prefix, or a map from inner to exposed names."""
+
+
 def context_window_fraction(messages: Sequence[_messages.ModelMessage], context_window: int | None) -> float | None:
     """The latest response's `total_tokens` over `context_window`, or `None` when it can't be calculated.
 
@@ -211,7 +215,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     instrumentation_version: int = DEFAULT_INSTRUMENTATION_VERSION
     """Instrumentation settings version, if instrumentation is enabled."""
     retries: dict[str, int] = field(default_factory=dict[str, int])
-    """Number of retries for each tool so far."""
+    """Number of retries for each tool so far, keyed by the name the model calls the tool by."""
     tool_call_id: str | None = None
     """The ID of the tool call."""
     tool_name: str | None = None
@@ -444,6 +448,21 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     _capability: AbstractCapability[RunContextAgentDepsT] | None = field(default=None, repr=False)
     """The capability whose hook is currently being dispatched, if any."""
+
+    _tool_name_path: ToolNamePath = field(default=(), repr=False, compare=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    The name-changing wrappers a tool listing has passed through, outermost first: a
+    `PrefixedToolset`'s prefix, or a `RenamedToolset`'s map from inner to exposed names. `retries`
+    is keyed by the name the model calls a tool by, while `FunctionToolset` holds the tool under
+    its own name, so it applies this path (see `exposed_tool_name`) to find the count its tool's
+    `prepare` reads as `retry`.
+
+    Only `get_tools` carries it, and only down to the leaf: it is stripped before user code that
+    runs while tools are listed (see `without_tool_name_path`), so a context such code hands to an
+    unrelated toolset can't attribute that toolset's counts to the wrong names. Excluded from
+    equality because it is listing bookkeeping, not run state.
+    """
 
     @property
     def model_id(self) -> str | None:
@@ -946,6 +965,27 @@ def _run_context_init_with_capability_loaded(
 # keyword is invisible to `replace()`, and `@wraps` keeps `inspect.signature` resolving to the real
 # one. `TemporalRunContext` defines its own `__init__` and is unaffected either way.
 RunContext.__init__ = _run_context_init_with_capability_loaded
+
+
+def with_tool_name_layer(ctx: RunContext[AgentDepsT], layer: str | Mapping[str, str]) -> RunContext[AgentDepsT]:
+    """The context to list a wrapped toolset's tools with, for a wrapper that prefixes or renames them."""
+    return dataclasses.replace(ctx, _tool_name_path=(*ctx._tool_name_path, layer))  # pyright: ignore[reportPrivateUsage]
+
+
+def without_tool_name_path(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+    """The context to hand user code that runs while tools are listed, without the listing's tool name path."""
+    return dataclasses.replace(ctx, _tool_name_path=()) if ctx._tool_name_path else ctx  # pyright: ignore[reportPrivateUsage]
+
+
+def exposed_tool_name(ctx: RunContext[Any], name: str) -> str:
+    """The name the model calls a tool by, given the name the listing toolset holds it under.
+
+    Applies the context's tool name path innermost layer first, the way `PrefixedToolset` and
+    `RenamedToolset` name the tools they list.
+    """
+    for layer in reversed(ctx._tool_name_path):  # pyright: ignore[reportPrivateUsage]
+        name = f'{layer}_{name}' if isinstance(layer, str) else layer.get(name) or name
+    return name
 
 
 _CURRENT_RUN_CONTEXT: ContextVar[RunContext[Any] | None] = ContextVar(

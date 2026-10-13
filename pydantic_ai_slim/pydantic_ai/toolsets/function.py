@@ -9,7 +9,7 @@ from pydantic.json_schema import GenerateJsonSchema
 
 from .. import _utils
 from .._instructions import AgentInstructions, normalize_instructions
-from .._run_context import AgentDepsT, RunContext
+from .._run_context import AgentDepsT, RunContext, exposed_tool_name
 from .._system_prompt import SystemPromptRunner
 from ..exceptions import ModelRetry, UserError
 from ..messages import InstructionPart
@@ -629,11 +629,16 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
             if max_retries is None:
                 max_retries = ctx.max_retries
+            # `retries` is keyed by the name the model calls the tool by, computed here from the
+            # wrappers that pushed a layer. When the real name differs, the computed one can be an
+            # unrelated tool's, whose count is then read: the tool's own `prepare` renamed it, or a
+            # user wrapper that pushes no layer renamed it inside a built-in one.
             run_context = replace(
                 ctx,
                 tool_name=original_name,
-                retry=ctx.retries.get(original_name, 0),
+                retry=ctx.retries.get(exposed_tool_name(ctx, original_name), 0),
                 max_retries=max_retries,
+                _tool_name_path=(),
             )
             tool_def = await tool.prepare_tool_def(run_context)
             if not tool_def:

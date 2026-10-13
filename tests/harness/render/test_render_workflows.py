@@ -13,7 +13,7 @@ import pytest
 from pydantic import TypeAdapter
 from render.workflows import TaskContext, TaskDefinition, TaskRunMetadata, Workflows
 
-from pydantic_ai import Agent, FunctionToolset, RunContext
+from pydantic_ai import Agent, FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -30,6 +30,7 @@ from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import DynamicToolset
 from pydantic_ai_harness import RenderWorkflows, ToolOutputLimits
 from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill
@@ -214,6 +215,42 @@ async def test_dynamic_tool_discovery_and_call_run_as_render_child_tasks() -> No
     assert calls == ['a']
     assert 'dynamic-support__dynamic_toolset__dynamic-tools.get_tools' in context.task_names
     assert 'dynamic-support__dynamic_toolset__dynamic-tools.call_tool' in context.task_names
+
+
+async def test_prefixed_dynamic_tool_child_tasks_see_its_retry_count() -> None:
+    """A dynamic toolset's child tasks list it under the prefix the run listed it under (#9741).
+
+    `ctx.retries` is keyed by the name the model calls the tool by, so a `prepare` that runs in a
+    child task only sees `demo_fail`'s failure if the prefix crossed the task boundary with it.
+    """
+
+    def failing_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+        toolset = FunctionToolset[None](id='inner')
+
+        async def hide_after_failure(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+            return None if ctx.retry else tool_def
+
+        @toolset.tool(prepare=hide_after_failure)
+        async def fail(ctx: RunContext[None]) -> str:
+            raise ModelRetry('Choose another approach.')
+
+        return toolset
+
+    def call_while_listed(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if info.function_tools:
+            return ModelResponse(parts=[ToolCallPart(info.function_tools[0].name, {})])
+        return ModelResponse(parts=[TextPart('No tools left.')])
+
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(call_while_listed),
+        name='prefixed-dynamic-retries',
+        deps_type=type(None),
+        toolsets=[DynamicToolset(failing_toolset, id='dynamic').prefixed('demo')],
+        capabilities=[runtime],
+    )
+
+    assert await run_agent_in_task(agent, runtime, RecordingTaskContext()) == 'No tools left.'
 
 
 async def test_dynamic_tool_cannot_opt_out_of_render_child_task() -> None:

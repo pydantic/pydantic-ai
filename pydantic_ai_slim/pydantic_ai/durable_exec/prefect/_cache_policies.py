@@ -139,6 +139,14 @@ def _replace_run_context(
                 # hash it by value; `None` (bare/synthetic context) hashes distinctly.
                 'usage_limits': value.usage_limits,
                 **({'workspace': value.workspace.ref} if value.workspace.ref is not None else {}),
+                # A dynamic toolset's discovery under a name-changing wrapper reads retry counts by
+                # the names this path gives its tools, so one toolset listed under two prefixes must
+                # not share a cache entry. Projected only when set, so other keys are unchanged.
+                **(
+                    {'_tool_name_path': tool_name_path}
+                    if (tool_name_path := value._tool_name_path)  # pyright: ignore[reportPrivateUsage]
+                    else {}
+                ),
             }
 
     return inputs
