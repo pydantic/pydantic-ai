@@ -519,6 +519,26 @@ async def test_call_tool_for_app_refuses_tools_hidden_from_apps(weather: MCPTool
     assert str(exc_info.value) == f'Tool {name!r} is not available to apps (code: -32602)'
 
 
+@pytest.mark.parametrize('arguments', ['day=friday', []])
+async def test_call_tool_for_app_refuses_arguments_that_are_not_an_object(weather: MCPToolset[Any], arguments: Any):
+    """A page's arguments come from its JSON, so ones that aren't an object get an `MCPError` instead of a call."""
+    with pytest.raises(MCPError) as exc_info:
+        await weather.call_tool_for_app('select_day', arguments)
+    assert str(exc_info.value) == 'Tool arguments must be an object (code: -32602)'
+
+
+async def test_call_tool_for_app_skips_process_tool_call():
+    """A page's tool calls don't go through `process_tool_call`, which handles the model's calls."""
+
+    async def hook(
+        ctx: RunContext[Any], call_tool: CallToolFunc, name: str, args: dict[str, Any]
+    ) -> ToolResult:  # pragma: no cover
+        raise AssertionError("a page's tool call must not reach process_tool_call")
+
+    hooked = MCPToolset(weather_server(), process_tool_call=hook)
+    assert await hooked.call_tool_for_app('select_day', {'day': 'friday'}) == wrapped_text_result('Selected friday')
+
+
 async def test_call_tool_for_app_raises_protocol_errors(weather: MCPToolset[Any], monkeypatch: pytest.MonkeyPatch):
     """A JSON-RPC error from the server's `tools/call` is raised as `MCPError`.
 
@@ -652,7 +672,7 @@ PROXIED_REQUEST_CASES = [
             'method': 'tools/call',
             'params': {'name': 'select_day', 'arguments': []},
         },
-        result=snapshot({'error': 'Invalid MCP params'}),
+        result=snapshot({'error': 'Tool arguments must be an object'}),
     ),
 ]
 
@@ -671,7 +691,10 @@ async def test_ag_ui_answers_proxied_mcp_app_requests(case: ProxiedRequestCase, 
     """
     agent = Agent(FunctionModel(stream_function=no_model))
     events = await post_run(agui_app(agent, [weather]), {'__proxiedMCPRequest': case.request})
-    assert [event['type'] for event in events] == ['RUN_STARTED', 'RUN_FINISHED']
+    assert [(event['type'], 'timestamp' in event) for event in events] == [
+        ('RUN_STARTED', True),
+        ('RUN_FINISHED', True),
+    ]
     assert events[1]['result'] == case.result
 
 

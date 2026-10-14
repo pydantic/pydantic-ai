@@ -1767,15 +1767,20 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             when the server sent them, and `isError`.
 
         Raises:
-            MCPError: If the tool isn't available to apps (code `INVALID_PARAMS`), or the server returns a protocol
-                error.
+            MCPError: If `arguments` isn't an object or the tool isn't available to apps (code `INVALID_PARAMS`), or
+                the server returns a protocol error.
         """
+        # The arguments come from the page's JSON, so their type is checked here rather than trusted.
+        if arguments is None:
+            arguments = {}
+        elif not _utils.is_str_dict(arguments):
+            raise MCPError(message='Tool arguments must be an object', code=mcp_types.INVALID_PARAMS)
         async with self:
             try:
                 tool = next((t for t in await self.list_tools() if t.name == name), None)
                 if tool is None or not _visible_to(tool, 'app'):
                     raise MCPError(message=f'Tool {name!r} is not available to apps', code=mcp_types.INVALID_PARAMS)
-                result = await self.client.call_tool(name=name, arguments=arguments or {}, raise_on_error=False)
+                result = await self.client.call_tool(name=name, arguments=arguments, raise_on_error=False)
             except McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
         return _call_tool_result_to_wire(result)

@@ -547,7 +547,7 @@ async def run_agent(request: Request) -> Response:
 app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
 ```
 
-Only toolsets with an `id` can be named. Tools are called with [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app], so only tools visible to apps can be called, and [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call] doesn't apply. Resources are read with [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app], so any resource on these servers can be read, as through the middleware. MCP errors come back as `{"error": ...}` in the result, as they do from the middleware, and other failures, such as an unreachable server, end the run with `RUN_ERROR`.
+Only toolsets with an `id` can be named. Tools are called with [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app], so only tools visible to apps can be called, and [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call] doesn't apply. Resources are read with [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app], so any resource on these servers can be read, as through the middleware. MCP errors come back as `{"error": ...}` in the result, as they do from the middleware, and other failures, such as an unreachable server, end the run with `RUN_ERROR`. Each request enters the toolset itself, so keep it entered (`async with weather:`) while your app runs, or every request reconnects to the server.
 
 ### Assistant message identity
 
