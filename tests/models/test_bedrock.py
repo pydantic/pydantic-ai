@@ -6437,6 +6437,108 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
     )
 
 
+async def test_bedrock_model_code_execution_tool_sandbox_timeout(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """A Nova code-interpreter sandbox timeout round-trips as `content=None`.
+
+    Nova's interpreter returns one `json` block for every result, code errors included. A sandbox timeout is the only
+    other shape: `status: 'error'` with empty `content`. Bedrock rejects that empty list when it's sent back, so the
+    `None` it parses to goes back as `[{'json': None}]`, which Bedrock accepts. Pinned so the single-block
+    normalization isn't reworked for content shapes Bedrock doesn't send:
+    https://github.com/pydantic/pydantic-ai/issues/8582
+    """
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())])
+
+    result1 = await agent.run(
+        'Use your code interpreter tool to execute exactly the following Python code, verbatim, once. '
+        'Do not modify it and do not retry it. Then report what happened.\n\n'
+        '```python\nimport time\nwhile True:\n    time.sleep(1)\n```',
+        model_settings={'temperature': 0.0},
+    )
+    assert result1.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content="""\
+Use your code interpreter tool to execute exactly the following Python code, verbatim, once. Do not modify it and do not retry it. Then report what happened.
+
+```python
+import time
+while True:
+    time.sleep(1)
+```\
+""",
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'snippet': """\
+import time
+while True:
+    time.sleep(1)\
+"""
+                        },
+                        tool_call_id='tooluse_pzqySiiYaDhuZz9jPLvwcQ',
+                        provider_name='bedrock',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content=None,
+                        tool_call_id='tooluse_pzqySiiYaDhuZz9jPLvwcQ',
+                        timestamp=IsDatetime(),
+                        provider_name='bedrock',
+                        provider_details={'status': 'error'},
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=996, output_tokens=326, cost=Decimal('0.00122518')),
+                model_name='us.amazon.nova-2-lite-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result2 = await agent.run(
+            'In one sentence: what did the code interpreter return?', message_history=result1.all_messages()
+        )
+    assert [
+        block['toolResult']
+        for message in sent_requests[0]['messages']
+        for block in message['content']
+        if 'toolResult' in block
+    ] == snapshot(
+        [
+            {
+                'toolUseId': 'tooluse_pzqySiiYaDhuZz9jPLvwcQ',
+                'content': [{'json': None}],
+                'type': 'nova_code_interpreter_result',
+                'status': 'error',
+            }
+        ]
+    )
+    assert result2.output == snapshot(
+        'The code interpreter returned an error because the provided code contains an infinite loop that never terminates, preventing execution.'
+    )
+
+
 async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
     agent = Agent(
