@@ -1959,7 +1959,7 @@ Seven `async` methods fire outside the agent run, in the shell:
 |---|---|---|---|
 | `on_session_start` | CLAI has started, before the first prompt, or the plugin loaded mid-session | `agent`, `settings`, `conversation_chosen` | no |
 | `on_session_end` | CLAI is quitting, or the plugin is unloading | `reason`: `exit`, `eof`, or `error` | no |
-| `on_turn_start` | you pressed Enter on a prompt | `text` | yes: edit `event.text`, or `event.cancel()` |
+| `on_turn_start` | you pressed Enter on a prompt, or a plugin sent one with `send_input` | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |
 | `on_conversation_changed` | the shell switched conversations, or the current one got a new title | `conversation_id`, `title` | no |
 | `on_command_end` | a `/command` finished | `text`, `output`, `error` | no |
@@ -1985,10 +1985,12 @@ command is running.
 
 `on_command_end` receives a `CommandEnd` event once a `/command` has run, typed at the prompt,
 opened mid-turn, or entered with `host.send_input`: `text` is the command as entered, `output`
-the text the shell showed for it (empty when it showed nothing, as for a menu closed without
-changes), and `error` the exception it failed with, which the shell showed instead, including
-a `/plugins` command refused while delegated tasks run. A command cancelled with Esc or Ctrl-C
-fires nothing. Use it to show command results somewhere other than
+the text the command returned, which the shell printed (empty when it returned none, as for a
+menu closed without changes; what the command printed itself, such as the history `/resume`
+replays, is not in it), and `error` the exception it failed with, which the shell showed
+instead, including a `/plugins` command refused while delegated tasks run. A command cancelled
+with Esc or Ctrl-C fires nothing; a finished one fires after Esc stops reaching it, so a slow
+handler cannot cancel it. Use it to show command results somewhere other than
 the terminal; the shell has already printed them.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
@@ -2165,18 +2167,30 @@ prompt the keyboard does:
   opens over it at once. Input entered before the prompt opens, such as from `on_session_start`,
   waits for it. Results arrive through the usual moments (`on_turn_start`, `on_turn_end`,
   `on_command_end`, `on_conversation_changed`), so switching sessions is `send_input('/resume ID')`.
-  A headless `-p` run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on
-  a host with no prompt to type at: one built without `send_input=`, or a CLAI whose standard input
-  is not a terminal, which reads its prompts line by line from there.
+  A bare command that opens a menu, such as `/model` or `/resume`, opens it in the terminal,
+  where only the keyboard closes it; send `/model NAME` or `/resume ID` instead. A headless `-p`
+  run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
+  prompt to type at: one built without `send_input=`, or a CLAI whose output is not a terminal,
+  which reads its prompts line by line.
 - `self.host.interrupt()` cancels the running turn or command as Esc does, and returns
-  `False` when nothing was running.
+  `False` when nothing was running. A menu stays open, and a headless `-p` run is not cancelled.
 - `await self.host.complete(text)` returns what Tab offers for `text`: termflow `Completion`s
-  for command names (with their descriptions), their arguments, and `@` paths, computed in a
-  worker thread as the editor's are.
+  for command names (with their descriptions), their arguments, and `@` paths. As in the
+  editor, they are computed in a worker thread, at most 100 of them, and none when a completer
+  fails.
 - `self.host.sessions` is the saved conversations `/resume` lists, or `None` without
   session persistence: `listing(query=...)`, `saved(ID)` for one with its history,
   `rename(ID, TITLE)`, `fork(ID)` to save a copy under a new ID, and `delete(ID)`, which
-  refuses the current conversation and one running in another CLAI.
+  refuses the current conversation and one running in another CLAI. Like opening `/resume`,
+  `listing` queues the newest untitled sessions for background naming, which calls the
+  naming model. Renaming the current conversation fires `on_conversation_changed` at once, even
+  while a turn runs, unlike background naming.
+
+| | `send_input(text)` | `submit_prompt(text)` |
+|---|---|---|
+| Called from | anywhere on the shell's event loop | a `/command` handler, between turns |
+| Runs | a prompt as a turn, a `/command` as a command | always a prompt, after the command returns |
+| Echoed in the transcript | yes, like typed input | no |
 
 Path-like input is not dispatched to commands. A slash, dot, or backslash in the
 first token after the leading `/` makes it a prompt instead, so screenshot paths

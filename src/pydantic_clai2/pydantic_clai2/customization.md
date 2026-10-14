@@ -27,7 +27,7 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   on_command_end.
 - Drive the prompt from somewhere other than the keyboard, such as a remote UI:
   host.send_input(text) enters a prompt or /command as if typed, host.interrupt()
-  cancels the running turn, await host.complete(text) returns what Tab offers, and
+  cancels the running turn or command, await host.complete(text) returns what Tab offers, and
   host.sessions lists, renames, forks, and deletes the saved sessions /resume shows.
 - Configure a plugin: declare a Pydantic settings model as the class's type
   parameter, `Plugin[MySettings]`, and read self.settings.
