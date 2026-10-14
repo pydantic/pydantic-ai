@@ -27,6 +27,7 @@ Follow the general [documentation guidance](../agent_docs/documentation.md). The
 - Use `trigger:docs` on a Pydantic AI pull request to dispatch navigation validation to unified-docs. This workflow does not render an HTML preview.
 - Read the unified-docs result comment and verify its reported SHA matches the current pull request head.
 - The workflow removes `trigger:docs` after dispatch. Re-add the label to request validation for the current pull request head.
+- Ask a maintainer to arrange a pinned-source preview for the current Pydantic AI pull request head.
 - Render the current PR head in a unified-docs preview before merging.
 - Verify the preview's reported SHA matches that head.
 - Treat navigation success and rendered-preview success as separate gates.
