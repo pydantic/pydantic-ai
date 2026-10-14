@@ -1396,8 +1396,8 @@ jobs:
       matrix:
         fastmcp:
           # The `[mcp]` extra's floor.
-          - name: "3.3.0"
-            spec: "==3.3.0"
+          - name: "3.4.8"
+            spec: "==3.4.8"
           - name: latest
             spec: ">=3,<4"
     env:
