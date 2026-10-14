@@ -595,6 +595,16 @@ PROXIED_REQUEST_CASES = [
         request={'serverHash': 'weather', 'serverId': 'weather', 'method': 'tools/call', 'params': {'arguments': {}}},
         result=snapshot({'error': 'Invalid MCP params'}),
     ),
+    ProxiedRequestCase(
+        id='arguments-not-an-object',
+        request={
+            'serverHash': 'weather',
+            'serverId': 'weather',
+            'method': 'tools/call',
+            'params': {'name': 'select_day', 'arguments': []},
+        },
+        result=snapshot({'error': 'Invalid MCP params'}),
+    ),
 ]
 
 

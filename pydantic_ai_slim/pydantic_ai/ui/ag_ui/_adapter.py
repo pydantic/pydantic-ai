@@ -296,7 +296,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     one of these toolsets, the adapter answers it from that toolset with
     [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] or
     [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] instead of running the agent.
-    Tool calls are limited to tools visible to apps; any resource on these servers can be read.
+    Tool calls are limited to tools visible to apps and don't go through
+    [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call]; any resource on these servers can be read.
 
     Defaults to no toolsets, which runs the agent for every request.
     """
@@ -401,7 +402,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         raw_params = request.get('params')
         params: dict[str, Any] = raw_params if is_str_dict(raw_params) else {}
         name, uri = params.get('name'), params.get('uri')
-        arguments: Any = params.get('arguments') or {}
+        arguments: Any = params.get('arguments')
+        if arguments is None:
+            arguments = {}
         try:
             if method == 'tools/call' and isinstance(name, str) and is_str_dict(arguments):
                 return await toolset.call_tool_for_app(name, arguments)
