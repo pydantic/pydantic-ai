@@ -19,6 +19,7 @@ from pydantic_ai import (
     TextPartDelta,
     _utils,
 )
+from pydantic_ai._context_size import context_tokens
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import FunctionToolCallEvent, ModelResponse
 from pydantic_ai_harness.filesystem import FileSystem
@@ -140,7 +141,7 @@ class Tasks:
             progress.model, progress.context_window = update.model_name, update.context_window
         for message in reversed(record.messages):
             if isinstance(message, ModelResponse) and message.usage.input_tokens:
-                progress.context_tokens = message.usage.total_tokens
+                progress.context_tokens = context_tokens(message)
                 break
         if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
             self.partial[record.id] = event.part.content

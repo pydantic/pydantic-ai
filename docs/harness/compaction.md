@@ -113,7 +113,10 @@ agent = Agent(
 ### What counts toward the fraction
 
 With a usage anchor, the provider-reported usage covers everything billed for the anchored request,
-including its instructions, tool definitions, and `FilePart` payloads. For the suffix after the
+including its instructions, tool definitions, and `FilePart` payloads. A response a provider
+continued across several requests ([Google long decode](../models/google.md#long-decode)) anchors on
+its first request's input tokens plus its output, since its billed input re-counts the earlier
+requests' output. For the suffix after the
 anchor, and for a whole history with no usage anchor, the estimator uses `tokenizer` when supplied
 or a ~4-characters-per-token heuristic. That estimated portion cannot see `FilePart` payloads, and
 counts a file inside a tool return as the `See file <identifier>.` reference that stands in for it.
@@ -129,7 +132,10 @@ The retained tail is measured per message with `estimate_message_tokens`, so `ke
 tokens as the provider counts them. A response counts at least its reported `output_tokens`, which
 includes thinking that some providers return as an empty part with only a signature. The messages
 between two responses that carry usage share the difference between their `input_tokens`, which is
-exactly what the provider counted for them. Before the first such response, after the last, and
+exactly what the provider counted for them. A response a provider continued across several requests
+([Google long decode](../models/google.md#long-decode))
+enters that difference with its first request's input tokens, since its billed `input_tokens`
+re-count the earlier requests' output. Before the first such response, after the last, and
 where the history did not grow between two of them (as across an earlier compaction), `tokenizer` or the
 ~4-characters-per-token heuristic applies. Instructions are not part of the tail. A history with no
 provider usage is measured with the heuristic as before.
@@ -356,7 +362,19 @@ agent = Agent(
 )
 ```
 
-By default `preserve_first_user_message=True` keeps the first user turn (in addition to system prompts) even when it falls outside the window, so the agent does not lose the original task. Pass `keep_tokens` instead of `keep_messages` to trim to a token budget rather than a message count.
+By default `preserve_first_user_message=True` keeps the first user turn (in addition to system prompts) even when it falls outside the window, so the agent does not lose the original task. Pass `keep_tokens` instead of `keep_messages` to retain a minimum amount of original message text rather than a message count.
+
+### Token retention after automatic compaction
+
+`max_tokens` determines when compaction runs; a positive `keep_tokens` determines how much original recent history survives. Both `SlidingWindowCompaction` and `SummarizingCompaction` include the whole message that crosses the retention target, extending backward for matching tool calls and tool-specific retry responses.
+
+For example, automatic compaction with `max_tokens=170_000` may encounter a 190k-token history consisting of 139k older tokens, a recent 48k-token message, and a 3k-token newest tail. With `keep_tokens=50_000`, it retains the 51k-token suffix, including the message that crosses the target. Summarizing compaction summarizes the older prefix; sliding-window compaction discards it.
+
+The suffix is measured as described in [What counts toward `keep_tokens`](#what-counts-toward-keep_tokens): provider-reported usage where the history has it, otherwise the configured `tokenizer` or the default character-based estimate over message-part text, including system-prompt parts. Attached `ModelRequest.instructions` do not satisfy the retention target. If the whole history is below the target, compaction leaves it unchanged without a summary call. `keep_tokens=0` uses a zero-token target rather than a minimum-retention floor; `None` uses `keep_messages`.
+
+Whole messages and tool dependencies can overshoot the target. Summaries, receipts, reinserted pins, and retained older user turns are additional; they do not displace the protected suffix. Existing receipts inside that suffix remain unchanged. This is not a context-window-fit guarantee: callers must check the remaining request budget and stop, switch models, or explicitly reduce the retention target if necessary. Configure the same retention target on each fallback that must preserve it.
+
+A large message can keep the retained suffix and the summary above `max_tokens`. Until newer messages meet the target without it, everything before the suffix is already accounted for: an earlier summary, receipts, pins, and messages kept verbatim anyway, such as the preserved first user turn. `SummarizingCompaction` then has nothing new to summarize, so it leaves the history unchanged without a summary call instead of re-summarizing its own summary on every request. The request still goes out above the trigger; `ClampOversizedMessages` can shorten an oversized message when that matters.
 
 ## `SummarizingCompaction`: compress, do not discard
 
@@ -498,7 +516,7 @@ The `Planning` capability does not need pinning: its plan is re-injected ephemer
 
 ## Keeping user messages (`keep_user_messages`)
 
-User turns are the highest signal-per-token content in a conversation, and losing them is the main driver of resumption drift. `SummarizingCompaction(keep_user_messages=True)` preserves the newest user turns from the summarized prefix alongside the summary. They consume the existing `keep_messages` tail budget, so at most that many retained user messages and tail messages survive together, except that one tail slot is reserved for the request being answered when retained user turns would otherwise consume it; compaction therefore does not grow retained copies on each cycle. When `keep_tokens` is set, those same retained user messages and tail messages also share its token budget; a user turn that does not fit is summarized instead, and the newest tail message survives even when retained user turns exhaust that budget too. Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) with an explicit truncation marker when it overruns. The character budget applies per part and is shared across the text items of a multi-part prompt; images, audio, and cache points pass through untouched. This supersedes `preserve_first_user_message`, which keeps only the first turn.
+User turns are the highest signal-per-token content in a conversation, and losing them is the main driver of resumption drift. `SummarizingCompaction(keep_user_messages=True)` preserves the newest user turns from the summarized prefix alongside the summary. In message-count mode, they consume the existing `keep_messages` tail budget, so at most that many retained user messages and tail messages survive together, except that one tail slot is reserved for the request being answered when retained user turns would otherwise consume it; compaction therefore does not grow retained copies on each cycle. With a positive `keep_tokens`, the original suffix takes precedence: `keep_messages` caps only the additional older user turns, which do not reduce the retained tail. With `keep_tokens=0`, retained user copies must fit a zero-token budget, and the newest tail message still survives. Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) with an explicit truncation marker when it overruns. The character budget applies per part and is shared across the text items of a multi-part prompt; images, audio, and cache points pass through untouched. This supersedes `preserve_first_user_message`, which keeps only the first turn.
 
 ```python
 from pydantic_ai_harness import SummarizingCompaction

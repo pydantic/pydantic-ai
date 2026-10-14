@@ -16,6 +16,7 @@ from opentelemetry.trace import NoOpTracer, Tracer, get_tracer
 import pydantic_ai_harness
 import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent, Tool
+from pydantic_ai._context_size import mark_initial_input_tokens
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
@@ -296,6 +297,14 @@ class TestEstimateContextTokens:
         ]
         assert estimate_context_tokens(msgs, tokenizer=lambda s: len(s.split())) == 50_503
 
+    def test_long_decode_anchors_on_its_first_request(self):
+        # A provider SDK that continued the response in a second request (Google long decode) summed both
+        # requests' input, which re-counts the first one's 500 output tokens; the context is the first request's.
+        response = _assistant_with_usage('long', 50_000 + 50_500, 1_000)
+        mark_initial_input_tokens(response, 50_000)
+        msgs: list[ModelMessage] = [_user('x' * 40), response]
+        assert estimate_context_tokens(msgs) == 51_000
+
 
 # ---------------------------------------------------------------------------
 # _is_safe_cutoff
@@ -419,7 +428,7 @@ class TestFindTokenCutoff:
             _user('last'),
         ]
         assert estimate_token_count(msgs) <= 100, 'the text estimate alone would keep everything'
-        assert find_token_cutoff(msgs, 100) == 2
+        assert find_token_cutoff(msgs, 100) == 1
 
     def test_output_usage_alone_counts(self):
         """A provider that reports only output tokens still has its thinking counted."""
@@ -430,7 +439,7 @@ class TestFindTokenCutoff:
             _reported(input_tokens=0, output_tokens=10),
             _user('last'),
         ]
-        assert find_token_cutoff(msgs, 100) == 2
+        assert find_token_cutoff(msgs, 100) == 1
 
 
 def _reported(*, input_tokens: int, output_tokens: int) -> ModelResponse:
@@ -458,6 +467,18 @@ class TestEstimateMessageTokens:
             _user('w' * 80),  # after the last reported response: estimated
         ]
         assert estimate_message_tokens(msgs) == [10, 751, 250, 200, 10, 50, 20]
+
+    def test_long_decode_input_is_its_first_request(self):
+        """A response continued across requests counts its first request's input, not their sum."""
+        # Its second request's input re-counted the first one's 500 output tokens.
+        long_decode = _reported(input_tokens=1000 + 1500, output_tokens=600)
+        mark_initial_input_tokens(long_decode, 1000)
+        msgs: list[ModelMessage] = [
+            long_decode,
+            _user('y' * 400),  # with the response above, shares 1900 - 1000 in proportion 600:100
+            _reported(input_tokens=1900, output_tokens=200),
+        ]
+        assert estimate_message_tokens(msgs) == [772, 128, 200]
 
     def test_unchanged_input_between_responses_keeps_estimates(self):
         """Equal input usage says nothing about the messages between, so it does not zero them."""
@@ -1344,9 +1365,10 @@ class TestTokenizerParameter:
         rc = _make_request_context(messages)
         ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
-        # With keep_tokens=5 and 4 tokens per message, should keep 1 message.
+        # Include the whole message crossing the five-token retention target.
         remaining_tokens = estimate_token_count(result.messages, tokenizer=lambda s: len(s))
-        assert remaining_tokens <= 5
+        assert remaining_tokens == 8
+        assert result.messages == messages[-2:]
 
     async def test_sliding_window_tokenizer_threshold_check(self):
         """SlidingWindowCompaction tokenizer should be used for the trigger check."""
@@ -3855,7 +3877,7 @@ class TestKeepUserMessages:
         assert len(first.messages) <= comp.max_messages
         assert second.messages == first.messages
 
-    async def test_retained_users_and_tail_share_the_token_budget(self):
+    async def test_retained_users_are_additional_to_the_token_tail(self):
         comp = SummarizingCompaction(
             model='test:m',
             max_tokens=2,
@@ -3868,12 +3890,11 @@ class TestKeepUserMessages:
         messages: list[ModelMessage] = [_user('xx'), _assistant('x')]
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
             result = await comp.compact(messages, _make_ctx())
-        assert _user_texts(result) == []
-        assert result[-1] == messages[-1]
-        assert comp.keep_tokens is not None
-        assert estimate_token_count(result[1:], len) <= comp.keep_tokens
+        assert _user_texts(result) == ['xx']
+        assert result[-1] is messages[-1]
+        assert estimate_token_count(result[1:], len) == 3
 
-    async def test_retained_user_can_consume_the_token_budget(self):
+    async def test_retained_user_cannot_displace_the_token_tail(self):
         comp = SummarizingCompaction(
             model='test:m',
             max_tokens=2,
@@ -3887,16 +3908,15 @@ class TestKeepUserMessages:
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
             result = await comp.compact(messages, _make_ctx())
         assert _user_texts(result) == ['x']
-        assert result[-1] == messages[-1]
-        assert comp.keep_tokens is not None
-        assert estimate_token_count(result[1:-1], len) <= comp.keep_tokens
+        assert result[-1] is messages[-1]
+        assert estimate_token_count(result[1:], len) == 2
 
-    async def test_older_user_is_not_retained_when_the_newest_does_not_fit(self):
+    async def test_extra_users_are_capped_without_displacing_token_tail(self):
         comp = SummarizingCompaction(
             model='test:m',
             max_tokens=3,
             keep_tokens=1,
-            keep_messages=3,
+            keep_messages=1,
             keep_user_messages=True,
             bridge_prefix=False,
             tokenizer=len,
@@ -3904,8 +3924,8 @@ class TestKeepUserMessages:
         messages: list[ModelMessage] = [_user('x'), _assistant('x'), _user('xx'), _assistant('x')]
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
             result = await comp.compact(messages, _make_ctx())
-        assert _user_texts(result) == []
-        assert result[-1] == messages[-1]
+        assert _user_texts(result) == ['xx']
+        assert result[-1] is messages[-1]
 
     async def test_retained_user_turns_exhausting_keep_messages_preserve_current_request(self):
         comp = SummarizingCompaction(
@@ -3961,9 +3981,8 @@ class TestKeepUserMessages:
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
             result = await comp.compact(messages, _make_ctx())
         assert _user_texts(result) == ['ab', 'd']
-        assert result[-1] == messages[-1]
-        assert comp.keep_tokens is not None
-        assert estimate_token_count(result[1:-1], len) <= comp.keep_tokens
+        assert result[-2] is messages[1]
+        assert result[-1] is messages[-1]
 
     async def test_pin_is_not_rebuilt_as_a_kept_user_message(self):
         comp = SummarizingCompaction(
