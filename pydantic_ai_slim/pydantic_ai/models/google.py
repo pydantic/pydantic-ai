@@ -1447,6 +1447,7 @@ class GoogleModel(Model[Client]):
             if 'media_resolution' in vendor_metadata:
                 part_dict['media_resolution'] = vendor_metadata.pop('media_resolution')
             if 'media_processing' in vendor_metadata:
+                # Processing mode is independent of the source, including YouTube's native URI route.
                 part_dict['media_processing'] = vendor_metadata.pop('media_processing')
             # The remaining keys map to `video_metadata`, which only applies to video parts.
             if vendor_metadata and isinstance(file, (BinaryContent, VideoUrl, UploadedFile)):
