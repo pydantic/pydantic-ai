@@ -29,18 +29,19 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 
-from ._commands import run_command
+from ._commands import command_argv, run_command
 from ._filesystem import NativeFilesystem
 from ._types import RenderSandboxCleanupError, RenderSandboxEvent
 
 _T = TypeVar('_T')
 
 
-def _positive(value: object, name: str) -> None:
+def _positive(value: object, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f'{name} must be a positive finite number')
     if not math.isfinite(value) or value <= 0:
         raise ValueError(f'{name} must be a positive finite number')
+    return float(value)
 
 
 def _environment(env: Mapping[str, str] | None) -> dict[str, str]:
@@ -291,7 +292,7 @@ class RenderSandboxBackend:
                 result = await run_command(
                     self.client,
                     self._ref.id,
-                    f'{prepare}cd -- {path} && pwd -P',
+                    command_argv(f'{prepare}cd -- {path} && pwd -P'),
                     working_dir='/',
                     timeout=self.config.operation_timeout,
                     max_output_bytes=self.config.max_output_bytes,
@@ -299,7 +300,7 @@ class RenderSandboxBackend:
                     pace=self._pace_transfer,
                 )
                 cwd = result.stdout.rstrip('\n')
-                if result.exit_code != 0 or not cwd.startswith('/') or '\n' in cwd:
+                if result.exit_code != 0 or not cwd.startswith('/') or '\n' in cwd or '\0' in cwd:
                     raise WorkspaceUnavailableError('The sandbox working directory is unavailable')
                 self._cwd = posixpath.normpath(cwd)
                 self._emit('ready', status='running')
@@ -327,17 +328,13 @@ class RenderSandboxBackend:
         if isinstance(command, str):
             if not shell:
                 raise TypeError('A string command requires shell=True')
-            invocation = command
-        else:
-            if shell:
-                raise TypeError('An argv command requires shell=False')
-            if not command:
-                raise ValueError('command argv cannot be empty')
-            invocation = command
-        if any('\0' in part for part in ([invocation] if isinstance(invocation, str) else invocation)):
-            raise ValueError('command cannot contain NUL')
+        elif shell:
+            raise TypeError('An argv command requires shell=False')
+        # Validate and copy caller-owned arguments before the first network wait.
+        # Later edits to their list must not change the command we execute remotely.
+        argv = command_argv(command)
         if timeout is not None:
-            _positive(timeout, 'timeout')
+            timeout = _positive(timeout, 'timeout')
         values = _environment(self.config.env)
         values.update(_environment(env))
         async with self._operation():
@@ -349,7 +346,7 @@ class RenderSandboxBackend:
                 result = await run_command(
                     self.client,
                     self._ref.id,
-                    invocation,
+                    argv,
                     working_dir=cwd,
                     env=values or None,
                     timeout=timeout,

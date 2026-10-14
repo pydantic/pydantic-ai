@@ -72,6 +72,53 @@ async def test_command_form_cwd_env_and_nonzero_result(workspace_harness: Worksp
     assert (await backend.run(['pwd', '-P'])).stdout.strip() == await backend.working_dir()
 
 
+async def test_command_arguments_are_copied_before_sandbox_creation(workspace_harness: WorkspaceHarness) -> None:
+    # Hold sandbox creation at the fake SDK boundary so another caller can edit
+    # its command list while this operation is waiting for the remote environment.
+    backend = workspace_harness.backend()
+    command = ['printf', '%s', 'original']
+    workspace_harness.create_gate = asyncio.Event()
+    try:
+        # The task group waits for the command on every exit. Opening the gate in
+        # finally also lets acquisition finish if the readiness assertion fails.
+        async with asyncio.TaskGroup() as tasks:
+            pending = tasks.create_task(backend.run(command))
+            try:
+                async with asyncio.timeout(10):
+                    await workspace_harness.create_started.wait()
+                command[-1] = 'changed'
+            finally:
+                workspace_harness.create_gate.set()
+        # The command must use the arguments supplied when the operation began.
+        assert pending.result().stdout == 'original'
+    finally:
+        # This test owns its backend, including when the regression assertion fails.
+        await backend.destroy()
+
+
+@pytest.mark.parametrize(
+    ('timeout', 'env'),
+    [
+        (0, None),
+        (-1, None),
+        (float('inf'), None),
+        (float('nan'), None),
+        (None, {'BAD=NAME': 'value'}),
+        (None, {'KEY': 'nul\0value'}),
+    ],
+)
+async def test_invalid_command_settings_create_no_sandbox(
+    workspace_harness: WorkspaceHarness, timeout: float | None, env: dict[str, str] | None
+) -> None:
+    # Invalid deadlines and environment values must fail before any paid resource
+    # is created, even when command validation moves between internal helpers.
+    backend = workspace_harness.backend()
+    with pytest.raises(ValueError):
+        await backend.run(['true'], timeout=timeout, env=env)
+    assert backend.ref is None
+    assert workspace_harness.created == []
+
+
 async def test_native_filesystem_handles_binary_large_files_and_errors(
     workspace_harness: WorkspaceHarness,
 ) -> None:

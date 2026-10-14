@@ -11,7 +11,6 @@ import asyncio
 import base64
 import binascii
 import json
-import math
 import shlex
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
@@ -39,15 +38,8 @@ _MAX_FRAME_CHARS = 131_072
 _MAX_LAUNCH_BYTES = 126_000
 
 
-def _positive(value: object, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (float, int)):
-        raise ValueError(f'{name} must be positive and finite')
-    if not math.isfinite(value) or value <= 0:
-        raise ValueError(f'{name} must be positive and finite')
-    return float(value)
-
-
-def _argv(command: WorkspaceCommand) -> list[str]:
+def command_argv(command: WorkspaceCommand) -> list[str]:
+    """Validate and copy a command before the backend starts any remote work."""
     if isinstance(command, str):
         values = ['/bin/sh', '-c', command]
     elif isinstance(command, Sequence) and not isinstance(command, (bytes, bytearray)):
@@ -61,8 +53,6 @@ def _argv(command: WorkspaceCommand) -> list[str]:
             raise ValueError('command argv cannot be empty')
     else:
         raise TypeError('command must be text or a sequence of arguments')
-    if any(type(value) is not str for value in values):
-        raise TypeError('command arguments must be strings')
     if any('\0' in value for value in values):
         raise ValueError('command arguments cannot contain NUL')
     return values
@@ -224,7 +214,7 @@ async def _stop_shielded(
 async def run_command(
     client: RenderAsync,
     sandbox_id: str,
-    command: WorkspaceCommand,
+    argv: list[str],
     *,
     working_dir: str,
     env: Mapping[str, str] | None = None,
@@ -235,24 +225,13 @@ async def run_command(
 ) -> CommandResult:
     """Run once, preserving the sandbox on timeout, cancellation or stream failure.
 
-    Strings run with /bin/sh -c; sequences are literal argv. The backend owns
-    argument-form validation and environment-state translation. Exceptions from
+    The backend validates arguments and settings before acquiring a sandbox and
+    supplies its own argument list. Acquisition also uses this runner with validated
+    configuration. Keep validation there so invalid input cannot create resources.
+    The remote supervisor independently checks its received payload. Exceptions from
     Render propagate unchanged, including after an uncertain start. No command
     is replayed. Stop failures remain explicit in exception notes and causes.
     """
-    argv = _argv(command)
-    if timeout is not None:
-        timeout = _positive(timeout, 'timeout')
-    stop_timeout = _positive(stop_timeout, 'stop_timeout')
-    if type(max_output_bytes) is not int or max_output_bytes < 1:
-        raise ValueError('max_output_bytes must be a positive integer')
-    if not working_dir.startswith('/') or '\0' in working_dir:
-        raise ValueError('working_dir must be an absolute path without NUL')
-    environment = dict(env or {})
-    if any(type(key) is not str or type(value) is not str for key, value in environment.items()):
-        raise TypeError('env must map strings to strings')
-    if any(not key or '=' in key or '\0' in key or '\0' in value for key, value in environment.items()):
-        raise ValueError('env contains an invalid name or NUL')
     nonce = uuid.uuid4().hex
     claim = f'{_CLAIM_ROOT}/pydantic-render-command-{nonce}'
     source = files('pydantic_ai_harness.render_sandbox').joinpath('_command_runner.py').read_text()
@@ -261,7 +240,7 @@ async def run_command(
         'nonce': nonce,
         'argv': argv,
         'cwd': working_dir,
-        'env': environment,
+        'env': dict(env or {}),
         'timeout': timeout,
         'limit': max_output_bytes,
     }
