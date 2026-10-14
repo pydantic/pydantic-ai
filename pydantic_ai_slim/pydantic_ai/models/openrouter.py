@@ -61,6 +61,14 @@ except ImportError as _import_error:
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
+
+class _LeadingCachePointPlaceholder(dict[str, Any]):
+    """The empty text part a `CachePoint` opening a user message sits on until `_move_leading_cache_controls` moves it.
+
+    A subclass, so the placeholder is told apart from a user's own empty text part by type, not shape.
+    """
+
+
 _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_filter', 'error'], FinishReason] = {
     'stop': 'stop',
     'length': 'length',
@@ -861,7 +869,7 @@ class OpenRouterModel(OpenAIChatModel):
             return
 
         if not params:
-            params.append({'type': 'text', 'text': ''})
+            params.append(cast(ChatCompletionContentPartParam, _LeadingCachePointPlaceholder(type='text', text='')))
 
         last_param = cast(dict[str, Any], params[-1])
         last_param['cache_control'] = self._build_cache_control(ttl)
@@ -874,27 +882,26 @@ class OpenRouterModel(OpenAIChatModel):
         OpenAI put a leading `CachePoint`. Only user messages carry it here, since a tool result's
         `cache_control` isn't documented for OpenRouter, so the closest earlier user message gets it,
         keeping a longer TTL already there. With only tool results and assistant turns before it, the
-        breakpoint is dropped. The placeholder is removed, and so is a message it leaves empty. Raises
-        `UserError` when nothing but system messages comes before it.
+        breakpoint is dropped. The placeholder is removed.
+
+        Raises `UserError`, as before, when nothing but system messages comes before it, and when the
+        `CachePoint` is its message's only content: dropping that message would leave the assistant turn
+        last, which Anthropic reads as a prefill.
         """
-        index = 0
-        while index < len(openai_messages):
-            message = cast(dict[str, Any], openai_messages[index])
+        for index, message in enumerate(openai_messages):
             content = message.get('content')
-            first = (
-                cast(dict[str, Any], content[0])
-                if message['role'] == 'user' and isinstance(content, list) and content
-                else {}
-            )
-            if first.get('type') != 'text' or first.get('text') != '' or 'cache_control' not in first:
-                index += 1
+            if not isinstance(content, list) or not content:
+                continue
+            rest = list(content)
+            placeholder = rest.pop(0)
+            if not isinstance(placeholder, _LeadingCachePointPlaceholder):
                 continue
             earlier = [
                 cast(dict[str, Any], previous)
                 for previous in openai_messages[:index]
                 if previous['role'] not in ('system', 'developer')
             ]
-            if not earlier:
+            if not earlier or not rest:
                 raise UserError(
                     'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to. '
                     'To cache system instructions or tool definitions, use the `openrouter_cache_instructions` or `openrouter_cache_tool_definitions` settings instead.'
@@ -903,16 +910,11 @@ class OpenRouterModel(OpenAIChatModel):
             if target is not None:
                 if isinstance(target_content := target['content'], str):
                     target['content'] = [
-                        {'type': 'text', 'text': target_content, 'cache_control': first['cache_control']}
+                        {'type': 'text', 'text': target_content, 'cache_control': placeholder['cache_control']}
                     ]
                 elif target_content[-1].get('cache_control', {}).get('ttl') != '1h':
-                    target_content[-1]['cache_control'] = first['cache_control']
-            rest = cast(list[Any], content)[1:]
-            if not rest:
-                del openai_messages[index]
-                continue
-            message['content'] = rest
-            index += 1
+                    target_content[-1]['cache_control'] = placeholder['cache_control']
+            cast(dict[str, Any], message)['content'] = rest
 
     def _add_cache_control_to_message(
         self, message: chat.ChatCompletionMessageParam, ttl: OpenRouterCacheTTL = '5m'

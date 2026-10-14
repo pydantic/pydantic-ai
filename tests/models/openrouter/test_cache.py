@@ -1152,31 +1152,45 @@ async def test_openrouter_leading_cache_point_without_earlier_user_message_is_dr
     assert messages[-1] == {'role': 'user', 'content': [{'type': 'text', 'text': '<reminder>'}]}
 
 
-async def test_openrouter_lone_leading_cache_point_drops_its_message(allow_model_requests: None) -> None:
-    """A user prompt holding only a `CachePoint` marks the previous user message and sends no empty message.
+async def test_openrouter_lone_leading_cache_point_still_raises(allow_model_requests: None) -> None:
+    """A later user prompt holding only a `CachePoint` still raises `UserError`, before any request.
 
-    A mocked client: the property is the absence of a message, which no recording of a valid request shows.
+    Dropping the emptied message would leave the assistant turn last, which Anthropic reads as a prefill.
+    """
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Do the task')]),
+        ModelResponse(parts=[TextPart('Working on it.')]),
+    ]
+
+    with pytest.raises(UserError, match='CachePoint cannot be the first content in a user message'):
+        await Agent(model).run([CachePoint()], message_history=history)
+
+
+async def test_openrouter_cache_point_after_empty_text_is_left_in_place(allow_model_requests: None) -> None:
+    """A user's own empty text part followed by a `CachePoint` keeps its breakpoint where it was.
+
+    Only the placeholder a leading `CachePoint` leaves is moved, so a request that already went out
+    unchanged still does. A mocked client: no recording of this request exists.
     """
     mock_client = _done_mock_client()
     model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
     history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(['Some context', 'Do the task'])]),
+        ModelRequest(parts=[UserPromptPart('Do the task')]),
         ModelResponse(parts=[TextPart('Working on it.')]),
     ]
 
-    await Agent(model).run([CachePoint()], message_history=history)
+    await Agent(model).run(['', CachePoint(), 'more'], message_history=history)
 
     messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
-    assert messages == [
-        {
-            'role': 'user',
-            'content': [
-                {'type': 'text', 'text': 'Some context'},
-                {'type': 'text', 'text': 'Do the task', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
-            ],
-        },
-        {'role': 'assistant', 'content': 'Working on it.'},
-    ]
+    assert messages[0] == {'role': 'user', 'content': 'Do the task'}
+    assert messages[-1] == {
+        'role': 'user',
+        'content': [
+            {'type': 'text', 'text': '', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+            {'type': 'text', 'text': 'more'},
+        ],
+    }
 
 
 # ===== Prompt caching: TTL ordering =====
