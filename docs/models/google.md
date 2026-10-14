@@ -230,9 +230,7 @@ See the [input documentation](../input.md) for more details and examples.
 
 ### Agentic video processing
 
-Video source and processing mode are independent. A YouTube [`VideoUrl`][pydantic_ai.messages.VideoUrl] still uses Gemini's [direct YouTube input](https://ai.google.dev/gemini-api/docs/generate-content/video-understanding#youtube): Pydantic AI sends the URL without downloading or uploading the video. Enabling agentic processing preserves that route. Google also lists YouTube URLs among the [supported agentic video sources](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/video-understanding#agentic-video-processing-support).
-
-Without `media_processing`, Gemini uses its default static processing. [Google recommends](https://ai.google.dev/gemini-api/docs/generate-content/video-understanding#choose_a_processing_mode) static processing for short clips, whole-video summaries, latency-sensitive queries, or frame-level precision across the clip; agentic processing for long videos or retrieval of specific moments or topics. Choose the processing mode for the workload, including when the source is YouTube.
+Agentic video processing lets Gemini inspect relevant video segments on demand. Without `media_processing`, Gemini uses its default static processing. [Google recommends](https://ai.google.dev/gemini-api/docs/generate-content/video-understanding#choose_a_processing_mode) static processing for short clips, whole-video summaries, latency-sensitive queries, or frame-level precision across the clip; agentic processing for long videos or retrieval of specific moments or topics. Choose the processing mode for the workload.
 
 For [Gemini models that support agentic video processing](https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding), set `media_processing` on a video input:
 
@@ -252,6 +250,8 @@ result = agent.run_sync(
 )
 print(result.output)
 ```
+
+Video source and processing mode are independent. A YouTube [`VideoUrl`][pydantic_ai.messages.VideoUrl] uses Gemini's [direct YouTube input](https://ai.google.dev/gemini-api/docs/generate-content/video-understanding#youtube): Pydantic AI sends the URL without downloading or uploading the video, including when agentic processing is enabled. Google lists YouTube URLs among the [supported agentic video sources](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/video-understanding#agentic-video-processing-support).
 
 On the Gemini Developer API, each processing step appears in the response as a [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] named `media_processing`. Vertex AI returns signature-only parts for these steps, so they do not appear in the message history.
 
