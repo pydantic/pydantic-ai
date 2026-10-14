@@ -16,21 +16,24 @@ from pydantic_ai import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.output import NativeOutput
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, try_import
-from .conftest import RequestCapture
+from .conftest import RequestCapture, json_objects
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
     from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 
 pytestmark = [
@@ -56,10 +59,10 @@ def freeze_deepseek_off_peak_pricing(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: None, deepseek_api_key: str):
     """Regression test for #5829: real-API check that deferred capabilities work on a DeepSeek thinking model.
 
-    Loading a deferred capability injects a framework-synthesized `search_tools` assistant turn with
-    tool calls but no thinking; before the fix DeepSeek rejected it with a 400. A successful
-    recording confirms DeepSeek accepts the empty `reasoning_content` the fix sends. The
-    deterministic mapping guard is in
+    Loading a deferred capability used to inject a framework-synthesized `search_tools` assistant
+    turn with tool calls but no thinking, which DeepSeek rejected with a 400. The reveal is a system
+    message now, so this recording guards the end-to-end deferred-capability run rather than the
+    empty `reasoning_content` backfill; the mapping guard for that is
     `test_openai.py::test_field_mode_thinking_backfill_on_synthetic_tool_search_turn`.
     """
     model = OpenAIChatModel('deepseek-v4-flash', provider=DeepSeekProvider(api_key=deepseek_api_key))
@@ -98,6 +101,56 @@ async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: 
     assert any(isinstance(part, ThinkingPart) for message in messages for part in message.parts), (
         'expected a `ThinkingPart`; thinking was not exercised, so the reasoning_content round-trip is untested'
     )
+
+
+async def test_deepseek_auto_mode_backfills_current_turn_tool_call(
+    allow_model_requests: None, deepseek_api_key: str, request_capture: RequestCapture
+):
+    """DeepSeek through a generic `OpenAIProvider` accepts a current-turn tool call that had no thinking.
+
+    A generic provider leaves `openai_chat_send_back_thinking_parts` at `'auto'`. The second tool call
+    in this user turn carries no `ThinkingPart`, as when another model served that step; DeepSeek
+    rejects it with a 400 unless it carries `reasoning_content`, so `'auto'` sends the field the first
+    turn already carries, empty. The run completing is the API accepting it; the request assertion
+    pins what was sent.
+    """
+    provider = OpenAIProvider(
+        base_url='https://api.deepseek.com', api_key=deepseek_api_key, http_client=request_capture.client
+    )
+    agent = Agent(OpenAIChatModel('deepseek-v4-flash', provider=provider))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return 'sunny'  # pragma: no cover
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is the weather in Paris and then London? One tool call per city.')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart('Check Paris first.', id='reasoning_content', provider_name='openai'),
+                ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_1'),
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id='call_1')]),
+        ModelResponse(
+            parts=[ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='call_2')], provider_name='openai'
+        ),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'rainy', tool_call_id='call_2')]),
+    ]
+    result = await agent.run(message_history=history)
+
+    assert result.output == snapshot("""\
+Here's what I found:
+
+- **Paris:** sunny
+- **London:** rainy\
+""")
+    messages = request_capture.body('/chat/completions')['messages']
+    assert [
+        message.get('reasoning_content') for message in json_objects(messages) if message['role'] == 'assistant'
+    ] == snapshot(['Check Paris first.', ''])
 
 
 async def test_deepseek_model_thinking_part(
