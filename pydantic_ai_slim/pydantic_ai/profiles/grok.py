@@ -104,7 +104,7 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         SUPPORTED_NATIVE_TOOLS if grok_supports_builtin_tools else frozenset()
     )
 
-    return GrokModelProfile(
+    profile: GrokModelProfile = GrokModelProfile(
         supports_tools=True,
         supports_json_schema_output=True,
         supports_json_object_output=True,
@@ -114,9 +114,11 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         thinking_always_enabled=bool(grok_reasoning_efforts) and 'none' not in grok_reasoning_efforts,
         grok_supports_builtin_tools=grok_supports_builtin_tools,
         grok_reasoning_efforts=grok_reasoning_efforts,
-        grok_default_effort_omitted=model_name in _GROK_47_REASONING_MODELS,
         supported_native_tools=supported_native_tools,
     )
+    if model_name in _GROK_47_REASONING_MODELS:
+        profile['grok_default_effort_omitted'] = True
+    return profile
 
 
 def grok_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
