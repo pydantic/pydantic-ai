@@ -1916,7 +1916,9 @@ class _CrossScopeCase:
     id: str
     probe: Callable[[ModelSettings | None], Probe]
     """Builds a probe whose model carries the given `settings=`, sending the settings each probe call passes."""
-    setting: ModelSettings
+    setting: Callable[[], ModelSettings]
+    """Builds the provider-specific setting: its settings class is imported behind `try_import`, so it can't be built
+    at collection time on a shard that lacks the SDK."""
     thinking: ThinkingLevel
     sent: Callable[[dict[str, Any]], object]
     """The part of a probed request that both the setting and `thinking` control."""
@@ -1954,7 +1956,7 @@ _CROSS_SCOPE_CASES = [
         lambda s: http_probe(
             lambda c: OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=c), settings=s)
         ),
-        OpenAIChatModelSettings(openai_reasoning_effort='high'),
+        lambda: OpenAIChatModelSettings(openai_reasoning_effort='high'),
         'low',
         lambda p: p['body'].get('reasoning_effort'),
         overrides=True,
@@ -1967,7 +1969,7 @@ _CROSS_SCOPE_CASES = [
                 'gpt-5', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=c), settings=s
             )
         ),
-        OpenAIResponsesModelSettings(openai_reasoning_effort='high'),
+        lambda: OpenAIResponsesModelSettings(openai_reasoning_effort='high'),
         'low',
         lambda p: p['body'].get('reasoning'),
         overrides=True,
@@ -1980,7 +1982,7 @@ _CROSS_SCOPE_CASES = [
                 'claude-sonnet-4-5', provider=AnthropicProvider(api_key=PROBE_KEY, http_client=c), settings=s
             )
         ),
-        AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 5000}),
+        lambda: AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 5000}),
         'low',
         lambda p: p['body'].get('thinking'),
         overrides=True,
@@ -1994,7 +1996,7 @@ _CROSS_SCOPE_CASES = [
                 'claude-opus-4-5', provider=AnthropicProvider(api_key=PROBE_KEY, http_client=c), settings=s
             )
         ),
-        AnthropicModelSettings(anthropic_effort='high'),
+        lambda: AnthropicModelSettings(anthropic_effort='high'),
         'low',
         lambda p: p['body']['output_config']['effort'],
         overrides=True,
@@ -2008,7 +2010,7 @@ _CROSS_SCOPE_CASES = [
                 'claude-sonnet-4-5', provider=AnthropicProvider(api_key=PROBE_KEY, http_client=c), settings=s
             )
         ),
-        AnthropicModelSettings(anthropic_effort='high'),
+        lambda: AnthropicModelSettings(anthropic_effort='high'),
         'low',
         lambda p: p['body'].get('thinking'),
         overrides=False,
@@ -2021,7 +2023,7 @@ _CROSS_SCOPE_CASES = [
                 'gemini-2.5-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=c), settings=s
             )
         ),
-        GoogleModelSettings(google_thinking_config={'thinking_budget': 1000}),
+        lambda: GoogleModelSettings(google_thinking_config={'thinking_budget': 1000}),
         'low',
         lambda p: p['body']['generationConfig'].get('thinkingConfig'),
         overrides=True,
@@ -2032,7 +2034,7 @@ _CROSS_SCOPE_CASES = [
         lambda s: legacy_http_probe(
             lambda c: GroqModel('qwen/qwen3-32b', provider=GroqProvider(api_key=PROBE_KEY, http_client=c), settings=s)
         ),
-        GroqModelSettings(groq_reasoning_format='raw'),
+        lambda: GroqModelSettings(groq_reasoning_format='raw'),
         'low',
         lambda p: p['body'].get('reasoning_format'),
         overrides=True,
@@ -2044,7 +2046,7 @@ _CROSS_SCOPE_CASES = [
         lambda s: legacy_http_probe(
             lambda c: GroqModel('qwen/qwen3-32b', provider=GroqProvider(api_key=PROBE_KEY, http_client=c), settings=s)
         ),
-        GroqModelSettings(groq_reasoning_format='raw'),
+        lambda: GroqModelSettings(groq_reasoning_format='raw'),
         False,
         lambda p: p['body'].get('reasoning_effort'),
         overrides=False,
@@ -2058,7 +2060,7 @@ _CROSS_SCOPE_CASES = [
                 'openai/gpt-oss-120b', provider=GroqProvider(api_key=PROBE_KEY, http_client=c), settings=s
             )
         ),
-        GroqModelSettings(groq_reasoning_effort='high'),
+        lambda: GroqModelSettings(groq_reasoning_effort='high'),
         'low',
         lambda p: p['body'].get('reasoning_effort'),
         overrides=True,
@@ -2070,7 +2072,7 @@ _CROSS_SCOPE_CASES = [
         lambda s: legacy_http_probe(
             lambda c: GroqModel('qwen/qwen3-32b', provider=GroqProvider(api_key=PROBE_KEY, http_client=c), settings=s)
         ),
-        GroqModelSettings(groq_reasoning_effort='none'),
+        lambda: GroqModelSettings(groq_reasoning_effort='none'),
         'high',
         lambda p: p['body'].get('reasoning_effort'),
         overrides=True,
@@ -2082,7 +2084,7 @@ _CROSS_SCOPE_CASES = [
         lambda s: legacy_http_probe(
             lambda c: GroqModel('qwen/qwen3-32b', provider=GroqProvider(api_key=PROBE_KEY, http_client=c), settings=s)
         ),
-        GroqModelSettings(groq_reasoning_effort='default'),
+        lambda: GroqModelSettings(groq_reasoning_effort='default'),
         'high',
         lambda p: p['body'].get('reasoning_effort') == 'none',
         overrides=False,
@@ -2091,7 +2093,7 @@ _CROSS_SCOPE_CASES = [
     _CrossScopeCase(
         'bedrock-anthropic-thinking',
         _bedrock_probe('anthropic.claude-sonnet-4-5-20250929-v1:0'),
-        BedrockModelSettings(
+        lambda: BedrockModelSettings(
             bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 5000}}
         ),
         'low',
@@ -2103,7 +2105,7 @@ _CROSS_SCOPE_CASES = [
         # Adaptive Claude takes the effort an effort-level `thinking` maps to from `output_config`.
         'bedrock-anthropic-output-config',
         _bedrock_probe('us.anthropic.claude-sonnet-4-6'),
-        BedrockModelSettings(bedrock_additional_model_requests_fields={'output_config': {'effort': 'low'}}),
+        lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'output_config': {'effort': 'low'}}),
         'high',
         lambda p: json.loads(p['body'])['additionalModelRequestFields']['output_config'],
         overrides=True,
@@ -2113,7 +2115,7 @@ _CROSS_SCOPE_CASES = [
         # Budget-based Claude maps `thinking` to `thinking` alone, which an explicit `output_config` leaves in place.
         'bedrock-anthropic-output-config-without-effort',
         _bedrock_probe('anthropic.claude-sonnet-4-5-20250929-v1:0'),
-        BedrockModelSettings(bedrock_additional_model_requests_fields={'output_config': {'effort': 'low'}}),
+        lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'output_config': {'effort': 'low'}}),
         'high',
         lambda p: json.loads(p['body'])['additionalModelRequestFields']['thinking'],
         overrides=False,
@@ -2122,7 +2124,7 @@ _CROSS_SCOPE_CASES = [
     _CrossScopeCase(
         'bedrock-openai-reasoning-effort',
         _bedrock_probe('openai.gpt-oss-120b-1:0'),
-        BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning_effort': 'high'}),
+        lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning_effort': 'high'}),
         'low',
         _bedrock_sent,
         overrides=True,
@@ -2131,7 +2133,7 @@ _CROSS_SCOPE_CASES = [
     _CrossScopeCase(
         'bedrock-qwen-reasoning-config',
         _bedrock_probe('qwen.qwen3-32b-v1:0'),
-        BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning_config': 'high'}),
+        lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning_config': 'high'}),
         'low',
         _bedrock_sent,
         overrides=True,
@@ -2144,7 +2146,7 @@ _CROSS_SCOPE_CASES = [
                 'openai/gpt-5', provider=OpenRouterProvider(api_key=PROBE_KEY, http_client=c), settings=s
             )
         ),
-        OpenRouterModelSettings(openrouter_reasoning={'effort': 'high'}),
+        lambda: OpenRouterModelSettings(openrouter_reasoning={'effort': 'high'}),
         'low',
         lambda p: p['body'].get('reasoning'),
         overrides=True,
@@ -2158,7 +2160,7 @@ _CROSS_SCOPE_CASES = [
                 'openai/gpt-5', provider=OpenRouterProvider(api_key=PROBE_KEY, http_client=c), settings=s
             )
         ),
-        OpenAIChatModelSettings(openai_reasoning_effort='high'),
+        lambda: OpenAIChatModelSettings(openai_reasoning_effort='high'),
         'low',
         lambda p: p['body'].get('reasoning'),
         overrides=False,
@@ -2169,7 +2171,7 @@ _CROSS_SCOPE_CASES = [
         lambda s: xai_sdk_probe(
             lambda client: XaiModel('grok-3-mini', provider=XaiProvider(xai_client=client), settings=s)
         ),
-        XaiModelSettings(xai_reasoning_effort='high'),
+        lambda: XaiModelSettings(xai_reasoning_effort='high'),
         'low',
         lambda p: p.get('reasoning_effort'),
         overrides=True,
@@ -2183,7 +2185,7 @@ _CROSS_SCOPE_CASES = [
                 'zai-glm-4.7', provider=CerebrasProvider(api_key=PROBE_KEY, http_client=c), settings=s
             )
         ),
-        OpenAIChatModelSettings(openai_reasoning_effort='low'),
+        lambda: OpenAIChatModelSettings(openai_reasoning_effort='low'),
         'high',
         lambda p: p['body'].get('reasoning_effort'),
         overrides=True,
@@ -2197,7 +2199,7 @@ _CROSS_SCOPE_CASES = [
                 'zai-glm-4.7', provider=CerebrasProvider(api_key=PROBE_KEY, http_client=c), settings=s
             )
         ),
-        OpenAIChatModelSettings(openai_reasoning_effort='high'),
+        lambda: OpenAIChatModelSettings(openai_reasoning_effort='high'),
         False,
         lambda p: p['body'].get('reasoning_effort'),
         overrides=False,
@@ -2212,7 +2214,7 @@ _CROSS_SCOPE_CASES = [
                 settings=s,
             )
         ),
-        SnowflakeModelSettings(snowflake_reasoning={'effort': 'high'}),
+        lambda: SnowflakeModelSettings(snowflake_reasoning={'effort': 'high'}),
         'low',
         lambda p: p['body'].get('reasoning'),
         overrides=True,
@@ -2225,7 +2227,7 @@ _CROSS_SCOPE_CASES = [
                 'openai-gpt-5', provider=SnowflakeProvider(account='probe', token=PROBE_KEY, http_client=c), settings=s
             )
         ),
-        OpenAIChatModelSettings(openai_reasoning_effort='high'),
+        lambda: OpenAIChatModelSettings(openai_reasoning_effort='high'),
         'low',
         lambda p: p['body'].get('reasoning_effort'),
         overrides=True,
@@ -2237,7 +2239,7 @@ _CROSS_SCOPE_CASES = [
         lambda s: http_probe(
             lambda c: ZaiModel('glm-4.6', provider=ZaiProvider(api_key=PROBE_KEY, http_client=c), settings=s)
         ),
-        OpenAIChatModelSettings(openai_reasoning_effort='high'),
+        lambda: OpenAIChatModelSettings(openai_reasoning_effort='high'),
         'low',
         lambda p: (p['body'].get('thinking'), p['body'].get('reasoning_effort')),
         overrides=False,
@@ -2264,13 +2266,14 @@ async def test_cross_scope_thinking_override_warning_matches_the_wire(
     Not a VCR test, for the reason `tests/models/test_model_settings_support.py` gives: a frozen recording keeps
     matching after an adapter changes what it sends, and this pins each adapter's precedence against its own wire.
     """
-    key = next(iter(case.setting))
+    setting = case.setting()
+    key = next(iter(setting))
     thinking = ModelSettings(thinking=case.thinking)
     same_scope = case.probe(None)
     sent_thinking, _ = await _send(same_scope, thinking)
-    sent_setting, _ = await _send(same_scope, case.setting)
-    sent_both, same_scope_warnings = await _send(same_scope, {**case.setting, **thinking})
-    _, cross_scope_warnings = await _send(case.probe(case.setting), thinking)
+    sent_setting, _ = await _send(same_scope, setting)
+    sent_both, same_scope_warnings = await _send(same_scope, {**setting, **thinking})
+    _, cross_scope_warnings = await _send(case.probe(setting), thinking)
 
     assert same_scope_warnings == []
     if case.overrides:
