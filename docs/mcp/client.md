@@ -318,7 +318,9 @@ async def echo_deps(ctx: Context) -> dict[str, Any]:
     """
     await ctx.info('This is an info message')
 
-    deps: Any = getattr(ctx.request_context.meta, 'deps')
+    request_context = ctx.request_context
+    assert request_context is not None  # set while the server handles a request
+    deps: Any = getattr(request_context.meta, 'deps')
     return {'echo': 'This is an echo message', 'deps': deps}
 
 
@@ -737,7 +739,7 @@ class BookingDetails(BaseModel):
 async def book_table(ctx: Context) -> str:
     """Book a restaurant table with user input."""
     # Ask user for booking details using Pydantic schema
-    result = await ctx.elicit(message='Please provide your booking details:', schema=BookingDetails)
+    result = await ctx.elicit('Please provide your booking details:', response_type=BookingDetails)
 
     if result.action == 'accept' and result.data:
         booking = result.data
