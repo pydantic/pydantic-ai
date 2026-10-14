@@ -534,9 +534,10 @@ def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_
 
     Every engine's durable units go through it: on the live context for the in-process engines
     (DBOS steps, Prefect tasks), and on the reconstructed context for Temporal activities and
-    Render child tasks. Temporal's tool activities are the exception: their context gets the
-    enqueue guard in `deserialize_run_context` instead (its `cancel` protection is structural:
-    the live controller is never serialized).
+    Render child tasks. Temporal skips it for the units that go through
+    `TemporalDurability._tool_run_context_scope` (function and dynamic toolset activities, MCP
+    tool listing): their context gets the enqueue guard in `deserialize_run_context` instead (its
+    `cancel` protection is structural: the live controller is never serialized).
     """
     return replace(
         ctx,
