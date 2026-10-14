@@ -581,6 +581,11 @@ async def test_agentic_video_context_replay(
         contents=[user_content, omitted_content, Content(role='user', parts=[Part(text=_VIDEO_HELD_OUT_QUESTION)])],
     )
     assert _VIDEO_HELD_OUT_FILENAME.casefold() in (follow_up_response.text or '').casefold()
+    assert follow_up_response.usage_metadata is not None
+    assert any(
+        detail.modality == 'VIDEO' and detail.token_count is not None and detail.token_count > 0
+        for detail in follow_up_response.usage_metadata.tool_use_prompt_tokens_details or []
+    )
 
     omitted_body = request_capture.body(index=2)
     omitted_contents = omitted_body['contents']
