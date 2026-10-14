@@ -141,6 +141,7 @@ Additionally, always read the directory-specific instructions when working in th
 
 - [docs/AGENTS.md](docs/AGENTS.md)
 - [docs/harness/AGENTS.md](docs/harness/AGENTS.md)
+- [docs/model_aliases/AGENTS.md](docs/model_aliases/AGENTS.md)
 - [docs/realtime/AGENTS.md](docs/realtime/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/AGENTS.md](pydantic_ai_slim/pydantic_ai/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md](pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md)

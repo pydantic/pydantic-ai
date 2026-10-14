@@ -1,6 +1,6 @@
-"""Doc pages name models through the aliases in `docs/model_aliases.py`, so updating a model is a one-line change.
+"""Doc pages name models through the aliases in `docs/model_aliases/aliases.json`.
 
-See the "Model names" section of `docs/AGENTS.md`.
+Updating a model is then a one-line change. See the "Model names" section of `docs/AGENTS.md`.
 """
 
 from __future__ import annotations as _annotations
@@ -53,7 +53,7 @@ CHECKED_PAGES = {'models/overview.md'}
 _KNOWN_MODELS = frozenset(known_model_names())
 _KNOWN_PREFIXES = {model.partition(':')[0] for model in _KNOWN_MODELS}
 _PROVIDERS = {alias.partition(':')[0] for alias in MODEL_ALIASES}
-# Chat models are aliased by tier; not every provider has every tier.
+# Chat models are aliased by tier, and a provider that defines one tier defines all of them.
 _TIERS = ('small', 'medium', 'large', 'xlarge')
 # Other kinds of model have one alias per provider, checked against their own known names.
 _KINDS = {
@@ -173,16 +173,27 @@ def test_aliases_name_known_models():
     assert not _NOT_YET_KNOWN & all_known, 'Drop the models Pydantic AI now lists from `_NOT_YET_KNOWN`'
 
 
+def test_chat_providers_define_every_tier():
+    # A page can then switch an example to another provider without checking which tiers it has.
+    missing = sorted(
+        f'{provider}:{tier}'
+        for provider in _providers_with(_TIERS)
+        for tier in _TIERS
+        if f'{provider}:{tier}' not in MODEL_ALIASES
+    )
+    assert not missing, f'Define every chat tier, see `docs/model_aliases/AGENTS.md`: {missing}'
+
+
 def test_docs_aliases_resolve_to_known_models():
     problems = _report(_pages(), _alias_problems)
-    assert not problems, 'Use the model aliases from docs/model_aliases.py:\n' + '\n'.join(problems)
+    assert not problems, 'Use the model aliases from docs/model_aliases/aliases.json:\n' + '\n'.join(problems)
 
 
 def test_docs_name_models_by_alias():
     pages = [page for page in _pages() if not _is_exempt(page.relative_to(DOCS).as_posix())]
     hardcoded = _report(pages, _hardcoded_models)
     assert not hardcoded, (
-        'Name models with an alias from docs/model_aliases.py, like `{{ openai:medium }}`, '
+        'Name models with an alias from docs/model_aliases/aliases.json, like `{{ openai:medium }}`, '
         'or add the page to `EXEMPT_PAGES` if it is about specific models:\n' + '\n'.join(hardcoded)
     )
 

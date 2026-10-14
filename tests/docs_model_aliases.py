@@ -1,4 +1,4 @@
-"""Resolve the model aliases that doc pages use, as `docs/model_aliases.py` defines them.
+"""Resolve the model aliases that doc pages use, as `docs/model_aliases/aliases.json` defines them.
 
 `{{ openai:medium }}` stands for the full model string, like `openai:<model>`, and
 `{{ openai:medium.name }}` for the bare model name, like `<model>`. The docs site expands them the same way.
@@ -8,12 +8,13 @@ from __future__ import annotations as _annotations
 
 import difflib
 import re
-import runpy
 from collections.abc import Iterable
 from pathlib import Path
 
-_MODEL_ALIASES_FILE = Path(__file__).parent.parent / 'docs' / 'model_aliases.py'
-MODEL_ALIASES: dict[str, str] = runpy.run_path(str(_MODEL_ALIASES_FILE))['MODEL_ALIASES']
+from pydantic import TypeAdapter
+
+_MODEL_ALIASES_FILE = Path(__file__).parent.parent / 'docs' / 'model_aliases' / 'aliases.json'
+MODEL_ALIASES = TypeAdapter(dict[str, str]).validate_json(_MODEL_ALIASES_FILE.read_bytes())
 
 ALIAS_RE = re.compile(r'\{\{ ([a-z0-9-]+:[a-z]+)(\.name)? \}\}')
 """A model alias, written exactly as the docs site expects it."""
@@ -25,7 +26,7 @@ def resolve_model_aliases(text: str) -> str:
     def resolve(match: re.Match[str]) -> str:
         alias, bare = match.groups()
         if (model := MODEL_ALIASES.get(alias)) is None:
-            raise ValueError(f'Unknown model alias {match.group()!r}, see `docs/model_aliases.py`')
+            raise ValueError(f'Unknown model alias {match.group()!r}, see `docs/model_aliases/aliases.json`')
         return model.partition(':')[2] if bare else model
 
     return ALIAS_RE.sub(resolve, text)

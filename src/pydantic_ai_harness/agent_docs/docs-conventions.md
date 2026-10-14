@@ -60,8 +60,9 @@ slug as `harness/<page>`. When renaming a page, keep its existing `aliases:`.
   [version policy](../../../docs/harness/index.md#version-policy). Copy it verbatim from an existing page;
   don't improvise variants.
 - **Example style**: comments one line max; outputs elided (`#> ...`) rather than long canned
-  text. On `docs/harness/` pages, name models with the aliases from `docs/model_aliases.py`
-  (`{{ anthropic:large }}`), never model IDs; see the "Model names" section of `docs/AGENTS.md`.
+  text. On `docs/harness/` pages, name models with the aliases from
+  `docs/model_aliases/aliases.json` (`{{ anthropic:large }}`), never model IDs; see the "Model names"
+  section of `docs/AGENTS.md`.
   READMEs, which GitHub renders without resolving aliases, keep concrete model IDs.
 
 ## The Capability Index Spans Core And Harness

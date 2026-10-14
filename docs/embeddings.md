@@ -28,7 +28,7 @@ async def main():
     # Embed a search query
     result = await embedder.embed_query('What is machine learning?')
     print(f'Embedding dimensions: {len(result.embeddings[0])}')
-    #> Embedding dimensions: 3072
+    #> Embedding dimensions: 1536
 
     # Embed multiple documents at once
     docs = [
@@ -68,7 +68,7 @@ async def main():
     embedding = result[0]  # Or directly via __getitem__
     embedding = result['Hello world']  # Or by original input text
     print(f'Dimensions: {len(embedding)}')
-    #> Dimensions: 3072
+    #> Dimensions: 1536
 
     # Check usage
     print(f'Tokens used: {result.usage.input_tokens}')
@@ -88,7 +88,7 @@ The best embedding model depends on your language, domain, latency, deployment, 
 
 | If you want…                         | For example                                                                                                                                                                                                                                      |
 |--------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| A managed API                        | `{{ openai:embedding }}`, `google:gemini-embedding-2`, `voyageai:voyage-4`, or `cohere:embed-v4.0`                                                                                                                                            |
+| A managed API                        | `{{ openai:embedding }}` (cheap default), `google:gemini-embedding-2`, `voyageai:voyage-4`, or `cohere:embed-v4.0`                                                                                                                            |
 | No API key, private, free            | `sentence-transformers:google/embeddinggemma-300m`, `sentence-transformers:lightonai/DenseOn`, `sentence-transformers:Qwen/Qwen3-Embedding-0.6B`, or any other [Hugging Face model](https://huggingface.co/models?library=sentence-transformers) |
 | Multilingual                         | `cohere:embed-multilingual-v3.0`, `sentence-transformers:jinaai/jina-embeddings-v5-text-small-retrieval`, or `sentence-transformers:Snowflake/snowflake-arctic-embed-l-v2.0`                                                                     |
 | Specialized domain                   | `voyageai:voyage-code-3`, `voyageai:voyage-law-2`, `voyageai:voyage-finance-2`, `sentence-transformers:nomic-ai/CodeRankEmbed`, or `sentence-transformers:TechWolf/JobBERT-v3`                                                                   |
@@ -186,7 +186,7 @@ embedder = Embedder('{{ openai:embedding }}')
 async def main():
     result = await embedder.embed_query('Hello world')
     print(len(result.embeddings[0]))
-    #> 3072
+    #> 1536
 ```
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
