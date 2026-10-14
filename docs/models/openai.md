@@ -152,7 +152,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModel
 
 model = OpenAIResponsesModel('{{ openai:medium.name }}')
 settings = OpenAIResponsesModelSettings(
-    temperature=0.2,
+    openai_reasoning_effort='low',
     service_tier='flex',
 )
 agent = Agent(model, model_settings=settings)

@@ -102,8 +102,7 @@ from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 
 model = AnthropicModel('{{ anthropic:medium.name }}')
 settings = AnthropicModelSettings(
-    temperature=0.2,
-    top_k=40,
+    anthropic_effort='low',
     service_tier='auto',
 )
 agent = Agent(model, model_settings=settings)
