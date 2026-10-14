@@ -1359,19 +1359,35 @@ class TestXaiThinkingTranslation:
 
 
 @pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
-async def test_xai_thinking_effort_not_dropped_for_grok_4_7(allow_model_requests: None) -> None:
-    """`grok-4.7` resolves the grok-4.5+ reasoning profile, so a `Thinking` effort reaches the request."""
+@pytest.mark.parametrize(
+    'thinking, expected_effort',
+    [
+        ('low', 'low'),
+        (True, None),
+        (None, None),
+        ('xhigh', 'high'),
+    ],
+)
+async def test_xai_thinking_effort_for_grok_4_7(
+    allow_model_requests: None,
+    thinking: ThinkingLevel | None,
+    expected_effort: str | None,
+) -> None:
+    """`grok-4.7` maps explicit efforts and leaves its documented default to xAI."""
     response = create_response(content='ok')
     mock_client = MockXai.create_mock([response])
     m = XaiModel('grok-4.7', provider=XaiProvider(xai_client=mock_client))
-    settings: XaiModelSettings = {'thinking': 'low'}
+    settings: XaiModelSettings | None = {'thinking': thinking} if thinking is not None else None
     agent = Agent(m, model_settings=settings)
 
     await agent.run('hi')
 
     kwargs = get_mock_chat_create_kwargs(mock_client)
     assert len(kwargs) == 1
-    assert kwargs[0]['reasoning_effort'] == 'low'
+    if expected_effort is None:
+        assert 'reasoning_effort' not in kwargs[0]
+    else:
+        assert kwargs[0]['reasoning_effort'] == expected_effort
 
 
 # ---------------------------------------------------------------------------

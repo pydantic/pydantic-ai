@@ -14,8 +14,8 @@ GrokReasoningEffort: TypeAlias = Literal['none', 'low', 'medium', 'high']
 _GROK_BASIC_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('low', 'high'))
 _GROK_43_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('none', 'low', 'medium', 'high'))
 # Grok 4.5 and 4.6 accept `low`/`medium`/`high` but reject `none` (unlike Grok 4.3), so they always
-# reason. Verified against the xAI API for both: `reasoning_effort='none'` returns 400 `This model does
-# not support 'reasoning_effort' value 'none'`. https://docs.x.ai/developers/models
+# reason. Grok 4.7 also supports `xhigh`; its mapping is tracked separately in issue #9744, so this
+# profile keeps the existing high fallback. https://docs.x.ai/developers/model-capabilities/text/reasoning
 _GROK_45_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('low', 'medium', 'high'))
 _GROK_43_REASONING_MODELS = frozenset(
     (
@@ -44,7 +44,7 @@ _GROK_45_REASONING_MODELS = frozenset(
         # Grok 4.6 takes the same `reasoning_effort` values as 4.5, so it shares the set rather than
         # getting a branch of its own. `grok-4.6-latest` is deliberately absent: xAI doesn't serve one.
         'grok-4.6',
-        # Grok 4.7 likewise takes the same `reasoning_effort` values as 4.5.
+        # Grok 4.7 uses the in-scope Grok 4.5+ profile; xhigh is tracked separately in issue #9744.
         'grok-4.7',
         # `grok-build-latest` is xAI's floating alias for the newest Grok build model, currently Grok 4.5,
         # so it accepts the same `reasoning_effort` values. https://docs.x.ai/developers/models

@@ -110,7 +110,7 @@ def test_grok_model_profile_thinking(model_name: str, expected_thinking: bool, e
     profile = grok_model_profile(model_name)
     assert profile is not None
     assert profile.get('supports_thinking', False) == expected_thinking
-    # Only models whose `reasoning_effort` set lacks `'none'` (the grok-3-mini family) are always-on;
+    # Only models whose `reasoning_effort` set lacks `'none'` (the grok-3-mini and grok-4.5+ families) are always-on;
     # Grok 4.3 and its redirect slugs accept `'none'`, so `thinking=False` disables reasoning there.
     assert profile.get('thinking_always_enabled', False) == expected_always_enabled
 
