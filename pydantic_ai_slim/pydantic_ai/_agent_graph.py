@@ -232,14 +232,9 @@ async def _with_event_stream_buffer(
 
 
 async def _cancel_task(task: Task[Any]) -> None:
-    # `cancel()` is a documented no-op on an already-finished task, so there's no need to guard it.
-    task.cancel()
-    try:
-        await task
-    except BaseException:
-        # Called while another stream error is already propagating; await only
-        # to finish cleanup and retrieve the task exception, not replace it.
-        pass
+    # Graph teardown may already be under cancellation. Drain the wrapper task so its model stream cleanup
+    # finishes before the event iterator is closed below.
+    await cancel_and_drain(task)
 
 
 def _context_changes(before: Context, after: Context) -> list[tuple[ContextVar[Any], Any]]:
