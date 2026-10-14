@@ -107,8 +107,8 @@ Each follow-up is a `ModelRequest` containing a `UserPromptPart` whose first con
 `TextContent` with `metadata={'origin': 'background_tool_result', 'tool_call_id': original_tool_call_id}`,
 including handled failure notifications. This identifies the entire completion part, including any
 files and extra content. The metadata is not sent to the model and survives native message
-serialization and merging consecutive requests. UI adapters that convert content to plain text may
-discard it.
+serialization and merging consecutive requests. The Vercel AI and AG-UI message conversions omit
+this metadata.
 
 Text and files returned by the tool are sent to the model. `ToolReturn.metadata` is discarded.
 `ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text. Any

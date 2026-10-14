@@ -107,9 +107,10 @@ Each follow-up is a [`ModelRequest`][pydantic_ai.messages.ModelRequest] containi
 `metadata={'origin': 'background_tool_result', 'tool_call_id': original_tool_call_id}`, including handled
 failure notifications. This identifies the entire completion part, including any files and extra
 content. The metadata is not sent to the model and survives native message serialization and merging
-consecutive requests. UI adapters that convert content to plain text may discard it.
+consecutive requests. The Vercel AI and AG-UI message conversions omit this metadata.
 
-Text and files returned by the tool are sent to the model. `ToolReturn.metadata` is discarded.
+Text and files returned by the tool are sent to the model. [`ToolReturn.metadata`][pydantic_ai.messages.ToolReturn.metadata]
+is discarded.
 `ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text. Any
 other tool exception ends the run with the original exception, as it does for a sequential tool.
 Running out of retries or raising `CancelledError` also ends the run. A tool can call `ctx.cancel()`

@@ -46,6 +46,7 @@ with independent work. If none remains, end your response; the run will resume w
 """
 
 _RUN_IN_BACKGROUND = 'run_in_background'
+_BACKGROUND_RESULT_ORIGIN = 'background_tool_result'
 
 
 def _instructions(ctx: RunContext[Any]) -> str | None:
@@ -88,7 +89,7 @@ def _format_background_error(error: ApprovalRequired | CallDeferred | ToolRetryE
 
 
 def _background_completion(text: str, task_id: str) -> TextContent:
-    return TextContent(text, metadata={'origin': 'background_tool_result', 'tool_call_id': task_id})
+    return TextContent(text, metadata={'origin': _BACKGROUND_RESULT_ORIGIN, 'tool_call_id': task_id})
 
 
 def _format_background_result(

@@ -40,6 +40,9 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Ins
 from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextContent, TextPart, UserContent, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness.background_tools._capability import (
+    _BACKGROUND_RESULT_ORIGIN,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,
@@ -98,10 +101,8 @@ def _background_completion(content: str | Sequence[UserContent] | None) -> TextC
     if isinstance(content, Sequence) and len(content) == 1 and isinstance(content[0], TextContent):
         text_content = content[0]
         metadata = text_content.metadata
-        if isinstance(metadata, dict):
-            typed_metadata: dict[object, object] = text_content.metadata
-            if typed_metadata.get('origin') == 'background_tool_result':
-                return text_content
+        if isinstance(metadata, dict) and 'origin' in metadata and metadata['origin'] == _BACKGROUND_RESULT_ORIGIN:
+            return text_content
     return None
 
 
