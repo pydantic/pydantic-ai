@@ -56,7 +56,7 @@ _INLINE_FLAGS = {'python': 'c', 'javascript': 'ep', 'ruby': 'e', 'perl': 'eE', '
 """The flags whose argument is code, by language: `python -c`, `node -e`, `psql -c`, `bash -c`."""
 
 _HEREDOC = re.compile(r'(?<!<)<<(-?)[ \t]*\\?([\'"]?)([A-Za-z_]\w*)\2')
-_LITERAL = re.compile(r'\'[^\']*\'|"(?:[^"\\]|\\.)*"|\\.|(?<!\S)#[^\n]*\n')
+_LITERAL = re.compile(r'\$\'(?:[^\'\\]|\\.)*\'|\'[^\']*\'|"(?:[^"\\]|\\.)*"|\\.|(?<![^\s;&|(])#[^\n]*\n')
 """Closed quotes, escaped characters, and whole comment lines, in which `<<` is text."""
 _SEPARATOR = re.compile(r'[;&|(){}`]|\$\(')
 _TARGET = re.compile(r'(?:>{1,2}|\btee(?:[ \t]+-\w+)*)[ \t]*([^\s<>;&|]+)')
@@ -78,18 +78,22 @@ class Segment:
     """Code inside a Bash run, by start, end, and language, such as the quoted argument of `python -c`."""
 
 
-def command_segments(command: str) -> list[Segment]:
+def command_segments(command: str, *, end: int | None = None) -> list[Segment]:
     """Split `command` into Bash runs and the heredoc bodies between them, keeping every character in order.
 
     A heredoc body takes the language of the command reading it, else of the file it is written to,
-    else of a conventional delimiter (`PYEOF`, `SQL`). Delimiter lines stay Bash.
+    else of a conventional delimiter (`PYEOF`, `SQL`). Delimiter lines stay Bash. Heredocs opening
+    at or after `end` are not looked for, which bounds the work for a long command shown in part.
     """
+    limit = len(command) if end is None else end
     segments: list[Segment] = []
     shell = body = ''
+    position = 0
     # Heredocs opened and not yet closed: delimiter, whether leading tabs are stripped, language.
     pending: list[tuple[str, bool, str | None]] = []
     *lines, last = command.split('\n')
     for line in [*(f'{line}\n' for line in lines), last]:
+        line_start, position = position, position + len(line)
         if pending:
             delimiter, strip_tabs, language = pending[0]
             if (line.lstrip('\t') if strip_tabs else line).removesuffix('\n') != delimiter:
@@ -103,7 +107,7 @@ def command_segments(command: str) -> list[Segment]:
         pending.extend(
             (match[3], bool(match[1]), _heredoc_language(line, match=match))
             for match in _HEREDOC.finditer(line)
-            if _opens_heredoc(shell[: start + match.start()])
+            if line_start + match.start() < limit and _opens_heredoc(shell[: start + match.start()])
         )
         if pending:
             segments.append(_shell_segment(shell))
@@ -117,7 +121,7 @@ def command_segments(command: str) -> list[Segment]:
 def _opens_heredoc(before: str) -> bool:
     """Whether a `<<` after `before`, the Bash run so far, is an operator: not in quotes, a comment, or `$((1<<n))`."""
     code = _LITERAL.sub('', before)
-    return not re.search(r'[\'"]|(?<!\S)#', code) and code.count('((') <= code.count('))')
+    return not re.search(r'[\'"]|(?<![^\s;&|(])#', code) and code.count('((') <= code.count('))')
 
 
 def _heredoc_language(line: str, *, match: re.Match[str]) -> str | None:
@@ -171,7 +175,7 @@ def highlight_command(command: str, *, end: int) -> Text:
     """
     syntax_theme = theme.syntax_theme()
     text = Text()
-    for segment in command_segments(command):
+    for segment in command_segments(command, end=end):
         if len(text) >= end:
             break
         code = segment.text[: end - len(text)]

@@ -93,6 +93,11 @@ from pydantic_clai2.ui.rendering.command_syntax import command_segments
             [('# don\'t stop\necho \\" <<\\PYEOF\n', 'bash'), ('x = 1\n', 'python'), ('PYEOF', 'bash')],
             id='after-a-comment-and-an-escape',
         ),
+        pytest.param(
+            "echo $'it\\'s'; ls;# don't\ncat <<EOF\nbody\nEOF",
+            [("echo $'it\\'s'; ls;# don't\ncat <<EOF\n", 'bash'), ('body\n', None), ('EOF', 'bash')],
+            id='after-ansi-c-quotes-and-a-comment',
+        ),
         pytest.param('', [], id='empty'),
     ],
 )
@@ -100,6 +105,12 @@ def test_heredoc_bodies_take_their_language(command: str, expected: list[tuple[s
     segments = command_segments(command)
     assert [(segment.text, segment.language) for segment in segments] == expected
     assert ''.join(segment.text for segment in segments) == command
+
+
+def test_heredocs_past_end_are_not_looked_for() -> None:
+    command = 'echo "a<<b"\n' * 300 + "python3 - <<'EOF'\nimport os\nEOF"
+    assert [segment.language for segment in command_segments(command, end=100)] == ['bash']
+    assert [segment.language for segment in command_segments(command)] == ['bash', 'python', 'bash']
 
 
 @pytest.mark.parametrize(
