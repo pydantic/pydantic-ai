@@ -1289,7 +1289,7 @@ async def test_sdk_api_errors_during_websocket_connection_are_mapped(sockets: So
 async def test_missing_websocket_dependency(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setitem(sys.modules, 'pydantic_ai.models._openai_responses_websocket', None)
     source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
-    with pytest.raises(ImportError, match=r'Install `pydantic-ai-slim\[openai,realtime\]`'):
+    with pytest.raises(ImportError, match=r'Install `pydantic-ai-slim\[openai-realtime\]`'):
         async with source.connect():
             pytest.fail('The optional dependency is required')  # pragma: no cover
 

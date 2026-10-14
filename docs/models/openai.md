@@ -269,7 +269,11 @@ The features below are specific to the Responses API and only available on [`Ope
 
 ### WebSocket mode
 
-Use [`agent.connect()`][pydantic_ai.agent.AbstractAgent.connect] to reuse one WebSocket across model requests. This can reduce transport overhead in runs with repeated tool calls. Install the optional WebSocket dependency with `pip install 'pydantic-ai-slim[openai,realtime]'` and use an asyncio event loop.
+Use [`agent.connect()`][pydantic_ai.agent.AbstractAgent.connect] to reuse one WebSocket across model requests. This can reduce transport overhead in runs with repeated tool calls. WebSocket mode needs an asyncio event loop and `pydantic-ai-slim` with the `openai-realtime` optional group, which adds the WebSocket transport to the `openai` package:
+
+```bash
+pip/uv-add "pydantic-ai-slim[openai-realtime]"
+```
 
 Runs inside the context that select no model of their own use the connection. A run's `model=`, a run `spec` model, and a run capability model are honored as usual. Tools, structured output, capabilities, and streaming work as they do over HTTP. Set [`openai_previous_response_id='auto'`](#referencing-earlier-responses) so each request, including a tool result within a run, sends only new input:
 

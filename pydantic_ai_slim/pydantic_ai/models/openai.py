@@ -2402,7 +2402,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         Use the yielded model with ordinary agent runs. The source model continues to use HTTP.
         To connect an existing agent without passing a model again, use
         [`Agent.connect()`][pydantic_ai.agent.AbstractAgent.connect].
-        Install `pydantic-ai-slim[openai,realtime]` and use an asyncio event loop.
+        Install `pydantic-ai-slim[openai-realtime]` and use an asyncio event loop.
 
         Each connection supports one active response. Completed responses leave the socket open
         for the next request, including tool-call continuations. Cancelling or leaving a response
@@ -2433,7 +2433,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         try:
             from ._openai_responses_websocket import ResponsesWebSocket
         except ImportError as exc:
-            raise ImportError('Install `pydantic-ai-slim[openai,realtime]` to use Responses WebSockets.') from exc
+            raise ImportError('Install `pydantic-ai-slim[openai-realtime]` to use Responses WebSockets.') from exc
 
         headers = {key.lower(): value for key, value in (self.settings or {}).get('extra_headers', {}).items()}
         headers.update({key.lower(): value for key, value in (extra_headers or {}).items()})
