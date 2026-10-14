@@ -142,9 +142,11 @@ def _heredoc_language(line: str, *, match: re.Match[str]) -> str | None:
             break
         language = _INTERPRETERS.get(_command_name(word))
         if language is not None:
-            # `python3 script.py <<EOF` runs the script, which reads the heredoc as data.
-            script = next((word for word in words[index + 1 :] if not word.startswith('-')), '')
-            if _extension_language(script) != language:
+            # `python3 script.py <<EOF` and `python3 -c CODE <<EOF` run other code, which reads the heredoc as data.
+            rest = words[index + 1 :]
+            script = next((word for word in rest if not word.startswith('-')), '')
+            code_flags = {f'-{flag}' for flag in _INLINE_FLAGS[language]}
+            if _extension_language(script) != language and code_flags.isdisjoint(rest):
                 return language
             break
     for target in _TARGET.findall(f'{before} {after}'):

@@ -40,6 +40,11 @@ from pydantic_clai2.ui.rendering.command_syntax import Segment, command_segments
             id='script-reads-data',
         ),
         pytest.param(
+            "python -c 'print(1)' <<EOF\ndata\nEOF",
+            [("python -c 'print(1)' <<EOF\n", 'bash'), ('data\n', None), ('EOF', 'bash')],
+            id='inline-code-reads-data',
+        ),
+        pytest.param(
             'python3 run.py <<JSON\n{}\nJSON',
             [('python3 run.py <<JSON\n', 'bash'), ('{}\n', 'json'), ('JSON', 'bash')],
             id='script-reads-data-the-delimiter-names',
