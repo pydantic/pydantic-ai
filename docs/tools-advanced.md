@@ -456,10 +456,11 @@ tool is hidden.
 Whether a deferred tool can be forced by name depends on how its definition reaches the model:
 
 - A tool *declared* with its schema deferred, such as a [tool search](#tool-search) corpus member
-  on a model with native tool search (OpenAI GPT-5.4 and later), can be forced on Anthropic. On
-  OpenAI Responses, the API rejects a request forcing one with a 400 unless `ToolReturn.tools` has
-  revealed it on GPT-5.6 or later. A reveal by the model's own server-executed tool search is not
-  enough.
+  on a model with native tool search, is not ignored: Pydantic AI sends a `tool_choice` naming it as
+  is. Anthropic accepts the force. On OpenAI Responses, the API rejects it with a 400 while nothing
+  has revealed the tool, and after the model's own server-executed tool search reveals it. After a
+  `ToolReturn.tools` reveal, GPT-5.6 and later accept the force and earlier models return the same
+  400.
 - A tool withheld until revealed, such as an on-demand capability's tool or a tool search corpus
   member on an OpenAI model without native tool search, travels in the `additional_tools` item
   alone once `load_capability` or another `ToolReturn.tools` reveals it, and can be named in
