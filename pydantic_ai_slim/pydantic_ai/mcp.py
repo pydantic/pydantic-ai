@@ -98,6 +98,7 @@ from .settings import ModelSettings
 _MCP_SDK_V2 = is_mcp_sdk_v2()
 _JSON_SCHEMA_ADAPTER = TypeAdapter(dict[str, Any])
 _STOP_SEQUENCES_ADAPTER = TypeAdapter(list[str])
+_EXTENSIONS_ADAPTER = TypeAdapter(dict[str, dict[str, Any]])
 
 
 class _ToolTask(Protocol):
@@ -634,6 +635,13 @@ class ServerCapabilities:
     experimental: list[str] | None = None
     """Experimental, non-standard capabilities that the server supports."""
 
+    extensions: dict[str, dict[str, Any]] | None = None
+    """MCP extensions the server supports, keyed by extension identifier, with each extension's settings.
+
+    For example, a server with [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) support
+    declares `'io.modelcontextprotocol/ui'`.
+    """
+
     logging: bool = False
     """Whether the server supports sending log messages to the client."""
 
@@ -672,6 +680,7 @@ class ServerCapabilities:
         tools_cap = mcp_capabilities.tools
         return cls(
             experimental=list(mcp_capabilities.experimental.keys()) if mcp_capabilities.experimental else None,
+            extensions=mcp_validated_field(mcp_capabilities, 'extensions', _EXTENSIONS_ADAPTER),
             logging=mcp_capabilities.logging is not None,
             prompts=prompts_cap is not None,
             prompts_list_changed=bool(mcp_optional_field(prompts_cap, 'list_changed', bool)) if prompts_cap else False,

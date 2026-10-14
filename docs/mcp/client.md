@@ -519,6 +519,8 @@ async def app_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
             raise MCPError(message=f'Method {method!r} is not supported', code=METHOD_NOT_FOUND)
 ```
 
+A server that supports MCP Apps lists `'io.modelcontextprotocol/ui'` in [`capabilities.extensions`][pydantic_ai.mcp.ServerCapabilities.extensions].
+
 Some servers only offer app tools to clients that say they support MCP Apps, through the `io.modelcontextprotocol/ui` client extension. `MCPToolset` doesn't send it by default. With FastMCP 4, pass a client that does:
 
 ```python {title="mcp_apps_extension.py" test="skip" typecheck="skip - FastMCP 4 API; the docs environment has FastMCP 3"}

@@ -58,7 +58,9 @@ def mcp_app_ui_payload(app: MCPAppToolResult) -> dict[str, Any]:
     """Build the payload UI adapters send for an MCP App tool call.
 
     The keys match the `mcp-apps` activity content of the AG-UI MCP Apps middleware, so frontends can
-    share one renderer across protocols.
+    share one renderer across protocols. The middleware identifies the server by both `serverId` and
+    `serverHash` (a digest of its connection config), and renderers such as CopilotKit's require
+    `serverHash`, so the toolset ID fills both.
     """
     payload: dict[str, Any] = {
         'resourceUri': app['resource_uri'],
@@ -66,5 +68,5 @@ def mcp_app_ui_payload(app: MCPAppToolResult) -> dict[str, Any]:
         'result': app['result'],
     }
     if app['toolset_id'] is not None:
-        payload['serverId'] = app['toolset_id']
+        payload['serverId'] = payload['serverHash'] = app['toolset_id']
     return payload
