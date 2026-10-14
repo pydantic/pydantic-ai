@@ -479,6 +479,11 @@ class FallbackModel(Model):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return model_settings, model_request_parameters
 
+    def _warn_if_thinking_overridden(self, layers: Sequence[tuple[str, ModelSettings | None]]) -> None:
+        # Each candidate resolves `thinking` itself, and checks its own `settings` in its `prepare_request`.
+        for model in self.models:
+            model._warn_if_thinking_overridden(layers)
+
     def prepare_messages(
         self,
         messages: list[ModelMessage],
