@@ -5735,7 +5735,7 @@ async def test_adapter_tool_return_multimodal_always_serialized(tiny_image: Bina
 
 
 async def test_mcp_app_data_chunk_without_toolset_id_or_with_malformed_record():
-    """A record from a toolset without an `id` is sent without `serverId`; a malformed one is not sent."""
+    """A record from a toolset without an `id` is sent without `serverId`/`serverHash`; a malformed one is not sent."""
     app: dict[str, Any] = {
         'resource_uri': 'ui://weather/forecast',
         'tool_input': {},
@@ -5778,6 +5778,7 @@ async def test_mcp_app_data_chunk_without_toolset_id_or_with_malformed_record():
                 'id': 'call_1',
                 'data': {
                     'resourceUri': 'ui://weather/forecast',
+                    'toolInput': {},
                     'result': {'content': [], 'isError': False},
                 },
             }

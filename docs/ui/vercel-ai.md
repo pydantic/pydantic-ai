@@ -243,7 +243,7 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 
 ## MCP Apps
 
-When an [`MCPToolset`][pydantic_ai.mcp.MCPToolset] tool has an [MCP Apps](../mcp/client.md#mcp-apps) UI, its result is followed by a `data-mcp-apps` [data chunk](#data-chunks) whose `id` is the tool call ID. Its `data` has `resourceUri`, `result` (the full MCP `CallToolResult`) and, when the toolset has an `id`, `serverId` (set to that `id`). The arguments are on the tool part itself. Dumped history keeps it as a data part, which is ignored when loaded back.
+When an [`MCPToolset`][pydantic_ai.mcp.MCPToolset] tool has an [MCP Apps](../mcp/client.md#mcp-apps) UI, its result is followed by a `data-mcp-apps` [data chunk](#data-chunks) whose `id` is the tool call ID. Its `data` has `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`) and, when the toolset has an `id`, `serverId` and `serverHash` (both set to that `id`). Dumped history keeps it as a data part, which is ignored when loaded back.
 
 ## Tool Approval
 
