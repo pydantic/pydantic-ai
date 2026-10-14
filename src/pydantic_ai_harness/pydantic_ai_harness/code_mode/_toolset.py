@@ -1107,8 +1107,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         repl = self._persistent_repl(ctx)
         if repl is not None:
             await repl.begin(ctx)
-        # A REPL about to be restored is not fresh: the type checker would reject the names it defines.
-        fresh_repl = not run_state.has_executed_feed and (repl is None or repl.pending is None)
+        fresh_repl = not run_state.has_executed_feed
 
         callable_defs = tool.callable_defs
         sanitized_to_original = tool.sanitized_to_original
@@ -1195,16 +1194,15 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # original run and replay take different branches, which Temporal cannot record.
         limits = configured | {'max_feed_duration_secs': None} if in_workflow else configured
         try:
-            checkout = partial(
-                run_state.get_session,
+            if repl is not None and await repl.restore(run_state, limits=limits, in_temporal_workflow=in_workflow):
+                # The type checker would reject the names the restored state defines.
+                fresh_repl = type_check = False
+            session = await run_state.get_session(
                 type_check=type_check,
-                type_check_stubs=type_check_stubs,
+                type_check_stubs=type_check_stubs if type_check else None,
                 limits=limits,
                 in_temporal_workflow=in_workflow,
             )
-            session = await checkout()
-            if repl is not None:
-                session = await repl.restore(run_state, session, checkout)
             try:
                 # Already converted in `__post_init__`; this narrows the field's type.
                 os_handler = as_os_handler(self.os_access)

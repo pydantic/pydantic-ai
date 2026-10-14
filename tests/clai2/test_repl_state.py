@@ -270,6 +270,13 @@ class TestReplStates:
         await session.clear(SESSION_ID)
         assert not stale.exists()
 
+        # Nor does one reach a fork given that ID, even when the session it forks has no REPL.
+        await session.prompt('no code')
+        stale = dump(tmp_path, FORK_ID)
+        stale.write_bytes(b'state')
+        await session._fork(FORK_ID)  # pyright: ignore[reportPrivateUsage]
+        assert not stale.exists()
+
     async def test_file_errors_are_logged_not_raised(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -290,10 +297,11 @@ class TestReplStates:
         with caplog.at_level(logging.WARNING):
             await blocked.save(own, b'state')
             assert await unreadable.load(own) is None
+            unreadable.delete(SESSION_ID)
             states.copy(source=SESSION_ID, target=FORK_ID)
-            states.copy(source=FORK_ID, target=SESSION_ID)
 
         assert 'Could not save the REPL state' in caplog.text
         assert 'Could not read the saved REPL state' in caplog.text
+        assert 'Could not delete the REPL state' in caplog.text
         assert 'hard links are not supported' in caplog.text
         assert states.path(FORK_ID) is not None and not (tmp_path / 'states' / f'{FORK_ID}.bin').exists()

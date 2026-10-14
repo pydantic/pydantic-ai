@@ -171,9 +171,13 @@ class TestCodeModeReplStore:
 
     async def test_unloadable_state_starts_a_fresh_repl(self, caplog: pytest.LogCaptureFixture) -> None:
         store = MemoryReplStore(states={'c1': b'not a monty dump'})
-        agent = agent_with(store, {**SCRIPTS, 'fresh': {'code': 'x = 1\nx'}})
+        agent = agent_with(
+            store, {**SCRIPTS, 'bad': {'code': 'await add(a="bad", b=1)'}, 'fresh': {'code': 'x = 1\nx'}}
+        )
 
         with caplog.at_level(logging.WARNING):
+            # The fresh REPL's first snippet is type-checked, as in a run without saved state.
+            assert (await agent.run('bad', conversation_id='c1')).output.startswith('retry: Type error')
             assert (await agent.run('fresh', conversation_id='c1')).output == '1'
 
         assert 'could not restore the saved REPL state' in caplog.text

@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Generic, Protocol
 
 import anyio
-from pydantic_monty import AsyncMontySession, MontyError
+from pydantic_monty import MontyError, ResourceLimits
 
 from pydantic_ai import RunContext
 from pydantic_ai.tools import AgentDepsT
@@ -70,30 +69,27 @@ class PersistentRepl(Generic[AgentDepsT]):
         except Exception as error:
             _logger.warning('CodeMode could not load the saved REPL state, so this run starts fresh: %s', error)
 
-    async def restore(
-        self,
-        run_state: MontyRunState,
-        session: AsyncMontySession,
-        checkout: Callable[[], Awaitable[AsyncMontySession]],
-    ) -> AsyncMontySession:
-        """Load the pending state into `session`, the run's first, and return the session to feed.
+    async def restore(self, run_state: MontyRunState, *, limits: ResourceLimits, in_temporal_workflow: bool) -> bool:
+        """Load the pending state into the run's first session; return whether it was restored.
 
         A state Monty cannot load, such as a truncated dump or one from an incompatible Monty
-        version, is dropped, and the run continues in a fresh session from `checkout`.
+        version, is dropped, and the run continues in a fresh REPL, type-checked like any other.
         """
+        if self.pending is None:
+            return False
+        session = await run_state.get_session(
+            type_check=False, type_check_stubs=None, limits=limits, in_temporal_workflow=in_temporal_workflow
+        )
         state, self.pending = self.pending, None
-        if state is None:
-            return session
         try:
             await call_monty(run_state.portal, session.load_session, state)
         except MontyError as error:
             _logger.warning('CodeMode could not restore the saved REPL state, so this run starts fresh: %s', error)
-            # A session that failed to load refuses another load, so check out a new one.
+            # A session that failed to load refuses another load, so the next checkout starts a new one.
             await run_state.reset()
-            return await checkout()
-        # Later snippets are not type-checked; the checker would reject the restored names.
+            return False
         run_state.has_executed_feed = True
-        return session
+        return True
 
     def restart(self, ctx: RunContext[AgentDepsT]) -> None:
         """Record `restart: true`: the saved state is not restored, and is forgotten if nothing replaces it."""

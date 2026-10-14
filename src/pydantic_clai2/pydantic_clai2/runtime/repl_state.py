@@ -94,19 +94,25 @@ class ReplStates:
         starts with a fresh REPL.
         """
         source_path, target_path = self.path(source), self.path(target)
-        if source_path is None or target_path is None or not source_path.exists():
+        if source_path is None or target_path is None:
             return
         try:
+            # Cleared even when `source` has no REPL, so a file left under `target` cannot reach the fork.
             target_path.unlink(missing_ok=True)
-            os.link(source_path, target_path)
+            if source_path.exists():
+                os.link(source_path, target_path)
         except OSError as error:
             _logger.warning('Could not copy the REPL state to %s: %s', target_path, error)
 
     def delete(self, conversation_id: str) -> None:
         """Remove `conversation_id`'s REPL with the session."""
         path = self.path(conversation_id)
-        if path is not None:
+        if path is None:
+            return
+        try:
             path.unlink(missing_ok=True)
+        except OSError as error:
+            _logger.warning('Could not delete the REPL state %s: %s', path, error)
 
 
 def _write(path: Path, state: bytes) -> None:
