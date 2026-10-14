@@ -1,4 +1,4 @@
-import type { Item, Questions, ServerMessage, SessionInfo, StatusInfo, Usage } from './protocol'
+import type { Item, Questions, ServerMessage, SessionInfo, StatusInfo, ThemeInfo, Usage } from './protocol'
 
 export interface NoticeEntry {
   id: string
@@ -29,6 +29,7 @@ export interface State {
   sessionsVersion: number
   /** When the running turn started, by this page's clock. */
   turnStartedAt: number | null
+  theme: ThemeInfo | null
 }
 
 export const initial: State = {
@@ -39,6 +40,7 @@ export const initial: State = {
   questions: [],
   sessionsVersion: 0,
   turnStartedAt: null,
+  theme: null,
 }
 
 let counter = 0
@@ -68,6 +70,7 @@ export function reduce(state: State, message: ServerMessage): State {
         status: message.status,
         questions: message.questions,
         turnStartedAt: message.running ? (state.turnStartedAt ?? Date.now()) : null,
+        theme: message.theme,
       }
     case 'item':
       return { ...state, entries: [...state.entries, message.item] }
@@ -130,6 +133,8 @@ export function reduce(state: State, message: ServerMessage): State {
     }
     case 'title':
       return state.session ? { ...state, session: { ...state.session, title: message.title } } : state
+    case 'theme':
+      return { ...state, theme: message.theme }
     case 'sessions':
       return { ...state, sessionsVersion: state.sessionsVersion + 1 }
   }

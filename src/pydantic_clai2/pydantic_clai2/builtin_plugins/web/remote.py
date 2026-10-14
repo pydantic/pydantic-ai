@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from anyio import get_cancelled_exc_class, to_thread
+from termflow.themes import PALETTES
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
@@ -26,6 +27,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Item,
     ItemLog,
     Notice,
+    Palette,
     Project,
     SessionEntry,
     SessionInfo,
@@ -34,6 +36,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Snapshot,
     StatusChanged,
     StatusInfo,
+    ThemeChanged,
+    ThemeInfo,
     TitleChanged,
     Transcript,
     TurnEnded,
@@ -42,9 +46,11 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     history_items,
     user_text,
 )
+from pydantic_clai2.config.theme_names import names as theme_names
 from pydantic_clai2.plugins import CommandEnd, ConversationChanged, PluginHost, SessionCatalog, TurnOutcome
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
 
+THEME = 'display.theme'
 CODE_MODE = 'run.code_mode'
 SPECULATION = 'run.speculative_code_mode'
 Switch = Literal['run.code_mode', 'run.speculative_code_mode']
@@ -76,6 +82,8 @@ class Remote:
         self._identities: dict[str, ProjectIdentity] = {}
         self._shown = host.conversation.conversation_id
         """The conversation browsers were last sent, so a retitle sends only the title."""
+        self._theme = self._theme_name()
+        """The theme browsers were last sent, so a command that changes it sends it again."""
 
     # What the browser sees.
 
@@ -92,7 +100,21 @@ class Remote:
             running=self.running,
             status=self.status(),
             questions=self.answerer.questions,
+            theme=self.theme(),
         )
+
+    def theme(self) -> ThemeInfo:
+        """The `/theme` choice with its palette, as the terminal paints it."""
+        name = self._theme_name()
+        found = PALETTES.get(name)
+        palette = None if found is None else Palette(bg=found.bg, fg=found.fg, ansi=list(found.ansi))
+        return ThemeInfo(name=name, names=list(theme_names()), palette=palette)
+
+    def _theme_name(self) -> str:
+        try:
+            return str(self.host.setting(THEME))
+        except KeyError:
+            return 'default'
 
     def status(self) -> StatusInfo:
         status = self.host.status
@@ -177,6 +199,9 @@ class Remote:
         self.hub.publish(SessionsChanged())
 
     def command_ended(self, event: CommandEnd) -> None:
+        if (name := self._theme_name()) != self._theme:
+            self._theme = name
+            self.hub.publish(ThemeChanged(theme=self.theme()))
         if event.error is not None:
             self.hub.publish(Notice(text=str(event.error), level='error', command=event.text))
         elif event.output:

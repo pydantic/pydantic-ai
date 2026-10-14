@@ -2,8 +2,18 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { ApiError, api } from '../api'
 import { MOD } from '../platform'
 import { Logo } from './Logo'
-import type { Project, SessionEntry } from '../protocol'
-import { ChevronIcon, ComposeIcon, FolderIcon, MoonIcon, MoreIcon, SearchIcon, SidebarIcon, SunIcon } from './icons'
+import type { Project, SessionEntry, ThemeInfo } from '../protocol'
+import {
+  ChevronIcon,
+  ComposeIcon,
+  FolderIcon,
+  MoonIcon,
+  MoreIcon,
+  PaletteIcon,
+  SearchIcon,
+  SidebarIcon,
+  SunIcon,
+} from './icons'
 
 export interface SidebarHandle {
   focusSearch: () => void
@@ -15,6 +25,8 @@ interface Props {
   theme: 'dark' | 'light'
   connected: boolean
   onTheme: () => void
+  themeInfo: ThemeInfo | null
+  onPickTheme: (name: string) => void
   onView: (session: SessionEntry) => void
   onCollapse: () => void
   onError: (message: string) => void
@@ -31,7 +43,7 @@ export function ago(iso: string): string {
 
 /** Saved sessions grouped by project, as `/resume` lists them, with search and per-session actions. */
 export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
-  { version, viewing, theme, connected, onTheme, onView, onCollapse, onError },
+  { version, viewing, theme, connected, onTheme, themeInfo, onPickTheme, onView, onCollapse, onError },
   ref,
 ) {
   const [query, setQuery] = useState('')
@@ -203,9 +215,23 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         })}
       </nav>
       <div className="sidebar-foot">
-        <button className="icon-button" onClick={onTheme} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>
-          {theme === 'dark' ? <SunIcon size={16} /> : <MoonIcon size={16} />}
-        </button>
+        {themeInfo && (
+          <label className="theme-picker" title="The /theme palette, shared with the terminal">
+            <PaletteIcon size={14} />
+            <select value={themeInfo.name} onChange={(event) => onPickTheme(event.target.value)} aria-label="Theme">
+              {themeInfo.names.map((name) => (
+                <option key={name} value={name}>
+                  {name === 'default' ? 'Pydantic' : name.replace(/_/g, ' ')}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {!themeInfo?.palette && (
+          <button className="icon-button" onClick={onTheme} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>
+            {theme === 'dark' ? <SunIcon size={16} /> : <MoonIcon size={16} />}
+          </button>
+        )}
       </div>
     </aside>
   )

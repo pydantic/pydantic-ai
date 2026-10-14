@@ -1184,6 +1184,11 @@ read-only. Shell lines (`!`) run only in the terminal. A bare command that opens
 menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
 `/model NAME` instead.
 
+The page follows `/theme`: the `default` theme is Pydantic's own colours, in the
+browser's light or dark mode, and any other palette paints the page as it paints the terminal,
+with the same colour for each role. The picker in the sidebar's footer sends `/theme NAME`,
+and a change made in the terminal shows in the browser once the command ends.
+
 The composer's **Code** and **Speculative** toggles flip `run.code_mode` and
 `run.speculative_code_mode` by sending `/set` through the prompt, so they save the setting as
 typing it would; a running turn keeps the tools it started with. While speculation is on, code

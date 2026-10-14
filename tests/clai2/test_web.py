@@ -55,6 +55,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Snapshot,
     StatusChanged,
     TextDelta,
+    ThemeChanged,
     TitleChanged,
     ToolDone,
     TurnEnded,
@@ -269,6 +270,26 @@ def test_switches(make_web: 'MakeWeb') -> None:
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)
     assert web_.post('/api/switch', {'key': 'display.theme', 'on': True}).status_code == 422, 'only the run switches'
+
+
+def test_theme(make_web: 'MakeWeb') -> None:
+    """The browser paints the `/theme` palette, and hears when a command changes it."""
+    web_ = make_web(Agent(TestModel()))
+    theme = web_.get('/api/state').json()['theme']
+    assert (theme['name'], theme['palette']) == ('default', None)
+    assert {'default', 'tokyo_night', 'github_light'} <= set(theme['names'])
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': '/theme tokyo_night'})
+        changed = receive_until(socket, ThemeChanged)[1].theme
+        assert changed.name == 'tokyo_night'
+        assert changed.palette is not None and (changed.palette.bg, len(changed.palette.ansi)) == ('#1a1b26', 16)
+        web_.post('/api/input', {'text': '/cost'})
+        messages, _ = receive_until(socket, Notice)
+        assert not any(isinstance(message, ThemeChanged) for message in messages), 'sent only when it changes'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
 
 
 def test_a_failed_turn(make_web: 'MakeWeb') -> None:
@@ -520,8 +541,9 @@ def test_a_build_without_assets(tmp_path: Path) -> None:
         assert client.post('/api/input', json={'text': 'hi'}, headers={HEADER: TOKEN}).json() == {
             'detail': "Plugin 'web' has no prompt to enter input at."
         }
-        status = client.get('/api/state', headers={HEADER: TOKEN}).json()['status']
-        assert (status['code_mode'], status['speculation']) == (None, None), 'no settings to read'
+        state = client.get('/api/state', headers={HEADER: TOKEN}).json()
+        assert (state['status']['code_mode'], state['status']['speculation']) == (None, None), 'no settings to read'
+        assert state['theme']['name'] == 'default'
 
 
 async def test_lifespan_passes_through() -> None:

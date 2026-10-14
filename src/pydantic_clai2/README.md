@@ -101,7 +101,8 @@ streaming Markdown answers, collapsible tool calls (shell output, diffs, searche
 blocks, live token counts while a turn streams, and a composer with `/` command completion, a
 model picker, and a stop button. The
 terminal and the browser drive the same session: a prompt typed in either runs once, and both
-show it. `/web stop` ends the web UI; `/web status` shows its address.
+show it. The page follows `/theme`, and the sidebar's footer picks a theme too. `/web stop`
+ends the web UI; `/web status` shows its address.
 
 To use only the browser, start CLAI with `--web` (also `uvx pydantic-clai2 --web`). It prints
 the address, opens it, and logs the conversation to the terminal until Ctrl-C.

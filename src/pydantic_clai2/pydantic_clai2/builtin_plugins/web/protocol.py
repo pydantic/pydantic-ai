@@ -137,6 +137,24 @@ class StatusInfo:
 
 
 @dataclass(kw_only=True)
+class Palette:
+    """A termflow palette as `/theme` applies it to the terminal: background, foreground, and the 16 ANSI slots."""
+
+    bg: str
+    fg: str
+    ansi: list[str]
+
+
+@dataclass(kw_only=True)
+class ThemeInfo:
+    """The `/theme` choice: `default` is Pydantic's own colours, in the browser's light or dark mode."""
+
+    name: str
+    names: list[str]
+    palette: Palette | None = None
+
+
+@dataclass(kw_only=True)
 class Snapshot:
     """Everything a newly connected browser needs: sent first on every connection and conversation switch."""
 
@@ -146,6 +164,7 @@ class Snapshot:
     running: bool
     status: StatusInfo
     questions: list[Questions]
+    theme: ThemeInfo
 
 
 @dataclass(kw_only=True)
@@ -263,6 +282,14 @@ class TitleChanged:
 
 
 @dataclass(kw_only=True)
+class ThemeChanged:
+    """`/theme` or `/set display.theme` chose another palette."""
+
+    type: Literal['theme'] = 'theme'
+    theme: ThemeInfo
+
+
+@dataclass(kw_only=True)
 class SessionsChanged:
     """The saved sessions changed; the sidebar should list them again."""
 
@@ -280,6 +307,7 @@ ServerMessage = (
     | QuestionClosed
     | Notice
     | TitleChanged
+    | ThemeChanged
     | SessionsChanged
 )
 _WIRE: TypeAdapter[ServerMessage] = TypeAdapter(ServerMessage)
