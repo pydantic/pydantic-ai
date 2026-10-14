@@ -555,10 +555,14 @@ async def exercise_wrapped_run_isolation(
 
         assert len({capture.ref.id for capture in captures.values()}) == 3
         assert len({id(capture.backend) for capture in captures.values()}) == 3
+        # Check every run's seed files before command results: a shared result file
+        # can also differ, but the file-sharing control should identify its root cause.
         for name in names:
             capture = captures[name]
             assert capture.seed == f'seed:{name}'.encode(), f'file content leaked for {name}'
             assert capture.binary == b'\x00\xff' + name.encode(), f'binary content leaked for {name}'
+        for name in names:
+            capture = captures[name]
             assert capture.result == f'seed:{name}|{name}', f'command configuration leaked for {name}'
             created = harness.create_calls[capture.ref.id]
             assert created.env == {'RUN_LABEL': name}, f'creation configuration leaked for {name}'
@@ -595,7 +599,8 @@ async def test_wrapped_isolation_oracle_rejects_shared_state(
     # snapshots. Distinct IDs still exist, so an ID-only assertion cannot pass these.
     isolated_workspace_harness.share_filesystem = fault == 'files'
     isolated_workspace_harness.share_environment = fault == 'environment'
-    message = 'file content leaked' if fault == 'files' else 'command configuration leaked'
+    # Concurrent writes may first reveal the shared text file or the shared binary file.
+    message = '(?:file|binary) content leaked' if fault == 'files' else 'command configuration leaked'
     with pytest.raises(AssertionError, match=message):
         await exercise_wrapped_run_isolation(isolated_workspace_harness)
     assert set(isolated_workspace_harness.terminated) == set(isolated_workspace_harness.created)

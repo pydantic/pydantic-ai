@@ -15,12 +15,11 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
-
-from render import RenderAsync
-from render.experimental.sandbox.errors import SandboxNotFoundError
+from typing import Literal
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
+from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness import Coder, FileSystem, Shell
@@ -31,7 +30,62 @@ from pydantic_ai_harness.render_sandbox import (
     RenderSandboxEvent,
 )
 
-from .render_sandbox_fixture import HELD_OUT_TESTS, SOURCE, VISIBLE_TESTS
+# Explain which optional package to install when the Render SDK is absent.
+try:
+    from render import RenderAsync
+    from render.experimental.sandbox.errors import SandboxNotFoundError
+except ImportError as exc:
+    raise ImportError('Install `pydantic-ai-harness[render-sandbox]` to run this example.') from exc
+
+DEFAULT_MODEL = os.getenv('PYDANTIC_MODEL', 'anthropic:claude-sonnet-4-6')
+
+# Seed the remote workspace with a deliberately broken function and visible checks.
+# The acceptance checks stay on the host until the separate verification sandbox runs.
+SOURCE = b'''def invoice_total(lines):
+    """Sum unit_price_cents * quantity for each invoice line."""
+    return sum(line["unit_price_cents"] for line in lines)
+'''
+
+VISIBLE_TESTS = b"""import unittest
+from totals import invoice_total
+
+class InvoiceTests(unittest.TestCase):
+    def test_quantity(self):
+        self.assertEqual(invoice_total([{"unit_price_cents": 125, "quantity": 3}]), 375)
+
+    def test_empty(self):
+        self.assertEqual(invoice_total([]), 0)
+
+if __name__ == "__main__":
+    unittest.main()
+"""
+
+HELD_OUT_TESTS = b"""import unittest
+from totals import invoice_total
+
+class AcceptanceTests(unittest.TestCase):
+    def test_zero_quantity(self):
+        self.assertEqual(invoice_total([{"unit_price_cents": 200, "quantity": 0}]), 0)
+
+    def test_multiple_lines(self):
+        self.assertEqual(invoice_total([{"unit_price_cents": 1299, "quantity": 2},
+            {"unit_price_cents": 499, "quantity": 3}]), 4095)
+
+    def test_zero_price(self):
+        self.assertEqual(invoice_total([{"unit_price_cents": 0, "quantity": 100}]), 0)
+
+    def test_large_exact_integer(self):
+        self.assertEqual(invoice_total([{"unit_price_cents": 9007199254740993,
+            "quantity": 7}]), 63050394783186951)
+
+    def test_no_mutation(self):
+        data = [{"unit_price_cents": 9, "quantity": 4}]
+        self.assertEqual(invoice_total(data), 36)
+        self.assertEqual(data, [{"unit_price_cents": 9, "quantity": 4}])
+
+if __name__ == "__main__":
+    unittest.main()
+"""
 
 TASK = """Fix invoice_total in totals.py. First run python3 -m unittest -v test_totals
 and observe the defect before editing. Read the implementation. Each line has
@@ -43,10 +97,35 @@ install packages, deploy, or contact external services. End with the test result
 """
 
 
+def build_agent(
+    model: Model | str = DEFAULT_MODEL,
+    *,
+    capability: RenderSandbox[None] | None = None,
+    harness: Literal['coder', 'tools'] = 'coder',
+) -> Agent[None, str]:
+    """Build the example agent; the remote workspace is created only when tools run."""
+    # Callers may supply a provider with their own client and verification callbacks.
+    # Otherwise, use Render credentials from the environment and seed the repair files.
+    if capability is None:
+        capability = RenderSandbox(
+            config=RenderSandboxConfig(lifetime_seconds=600),
+            files={'totals.py': SOURCE, 'test_totals.py': VISIBLE_TESTS},
+        )
+    # Both tool compositions use the workspace supplied by the Render capability.
+    capabilities = [Coder(sub_agents=False)] if harness == 'coder' else [Shell(), FileSystem()]
+    return Agent(
+        model,
+        deps_type=type(None),
+        capabilities=[capability, *capabilities],
+        # A test must run after its preceding file write has completed.
+        model_settings={'parallel_tool_calls': False},
+    )
+
+
 def arguments() -> argparse.Namespace:
     """Select the model, standard tool composition, and local evidence destination."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--model', default=os.getenv('PYDANTIC_MODEL', 'anthropic:claude-sonnet-4-6'))
+    parser.add_argument('--model', default=DEFAULT_MODEL)
     parser.add_argument('--harness', choices=('coder', 'tools'), default='coder')
     parser.add_argument('--evidence', type=Path, default=Path('.cache/render-sandboxes/workspace-repair.json'))
     return parser.parse_args()
@@ -129,16 +208,8 @@ async def main(args: argparse.Namespace) -> None:
         on_finish=verify,
         on_sandbox_event=record,
     )
-    # Standard Harness capabilities use ctx.workspace. The Render capability
-    # supplies that workspace and contributes no provider-specific model tools.
-    harness = [Coder(sub_agents=False)] if args.harness == 'coder' else [Shell(), FileSystem()]
-    agent = Agent(
-        args.model,
-        capabilities=[capability, *harness],
-        # A test depends on the preceding write. Prevent models from issuing both
-        # in one response, where standard tools would otherwise run concurrently.
-        model_settings={'parallel_tool_calls': False},
-    )
+    # Reuse the same construction path exercised by the offline example tests.
+    agent = build_agent(args.model, capability=capability, harness=args.harness)
     try:
         async with asyncio.timeout(480):
             result = await agent.run(TASK, usage_limits=UsageLimits(request_limit=15))

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from itertools import pairwise
 
 import pytest
 
@@ -370,6 +369,22 @@ async def test_normal_dispatch_is_paced_across_backends_sharing_client(
     workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     interval = 0.03
+    loop = asyncio.get_running_loop()
+    now = loop.time()
+    started = now
+    sleeps: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def advance_clock(delay: float) -> None:
+        # Advance only when pacing requests a wait. Yield so concurrent callers still
+        # exercise the shared lock, without measuring time spent decoding fake commands.
+        nonlocal now
+        sleeps.append(delay)
+        now += delay
+        await real_sleep(0)
+
+    monkeypatch.setattr(loop, 'time', lambda: now)
+    monkeypatch.setattr(asyncio, 'sleep', advance_clock)
     workspace_harness.config = replace(workspace_harness.config, command_interval=interval)
     first = workspace_harness.backend()
     second = workspace_harness.backend()
@@ -394,14 +409,17 @@ async def test_normal_dispatch_is_paced_across_backends_sharing_client(
     monkeypatch.setattr(workspace_harness, 'execute', record)
     await asyncio.gather(first.working_dir(), second.working_dir())
     long = asyncio.create_task(first.run(['long']))
-    await command_started.wait()
-    # Dispatch pacing must not lock the long-running command's entire lifetime.
-    assert (await second.run(['short'])).stdout == 'done'
-    assert not long.done()
-    release.set()
-    await long
-    assert len(dispatches) == 4
-    assert all(later - earlier >= interval - 0.001 for earlier, later in pairwise(dispatches))
+    try:
+        await command_started.wait()
+        # Dispatch pacing must not lock the long-running command's entire lifetime.
+        assert (await second.run(['short'])).stdout == 'done'
+        assert not long.done()
+    finally:
+        # Release the pending command even if a regression fails an assertion.
+        release.set()
+        await long
+    assert [dispatch - started for dispatch in dispatches] == pytest.approx([0, interval, 2 * interval, 3 * interval])
+    assert sleeps == pytest.approx([interval] * 3)
 
 
 async def test_pacing_wait_does_not_spend_command_deadline(

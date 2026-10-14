@@ -92,7 +92,7 @@ Successful verification prints `Verified answer.txt: 42`. Normal return also mea
 
 `parallel_tool_calls=False` keeps this example's operations sequential. It is useful for tasks where a test must run after a file edit in the same model response. The backend itself supports concurrent operations. The `async with` scope closes the SDK's HTTP connections after its runs finish, including when you supply the client. Keep every user of that client inside the scope. For a long-lived service, keep one scope around all users of the client, or call `await capability.aclose()` when shutting down. Closing connections does not terminate a retained sandbox.
 
-For a code-repair example with protected input tests, seven independent checks in a fresh sandbox, and a cleanup audit, see [render_sandbox.py](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/examples/render_sandbox.py) and its [fixture](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/examples/render_sandbox_fixture.py). From a repository checkout with dependencies installed:
+For a code-repair example with protected input tests, seven independent checks in a fresh sandbox, and a cleanup audit, see [render_sandbox.py](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/examples/render_sandbox.py). From a repository checkout with dependencies installed:
 
 ```bash
 uv run --no-sync python -m src.pydantic_ai_harness.examples.render_sandbox
