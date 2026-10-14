@@ -33,6 +33,9 @@ from pydantic_ai_harness.code_mode import CodeMode, CodeModeReplStore, CodeModeT
 
 from .._recording_durability import RecordingDurability
 
+READINESS_WAIT_TIMEOUT = 10
+"""Seconds to wait for a background tool to reach a step; generous so loaded xdist workers do not flake."""
+
 
 @dataclass
 class MemoryReplStore:
@@ -325,8 +328,8 @@ class TestCodeModeReplStore:
 
             async for _ in capability.wrap_run_event_stream(ctx, stream=events()):
                 pass
-            await asyncio.wait_for(started.wait(), timeout=5)
+            await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
-        await asyncio.wait_for(finished.wait(), timeout=5)
+        await asyncio.wait_for(finished.wait(), timeout=READINESS_WAIT_TIMEOUT)
         assert store.loads == ['c1']
         assert store.saves == []

@@ -61,7 +61,7 @@ class ReplStates:
         if path is None:
             return None
         try:
-            return await run_sync(path.read_bytes)
+            return await run_sync(path.read_bytes, abandon_on_cancel=True)
         except FileNotFoundError:
             return None
         except OSError as error:
@@ -80,9 +80,10 @@ class ReplStates:
             state = None
         try:
             if state is None:
-                await run_sync(partial(path.unlink, missing_ok=True))
+                await run_sync(partial(path.unlink, missing_ok=True), abandon_on_cancel=True)
             else:
-                await run_sync(_write, path, state)
+                # Abandoned rather than awaited when harness gives up on the save; the write is atomic.
+                await run_sync(_write, path, state, abandon_on_cancel=True)
         except OSError as error:
             _logger.warning('Could not save the REPL state %s: %s', path, error)
 

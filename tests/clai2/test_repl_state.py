@@ -133,6 +133,21 @@ async def test_fork_session_continues_in_its_own_copy(workspace: Path) -> None:
     assert script.results[-2:] == ['42', '142']
 
 
+async def test_a_fork_never_inherits_a_stale_state(workspace: Path) -> None:
+    """A REPL left under an ID does not reach a fork given that ID, even when the forked session has none."""
+    script = Script()
+    await turn(workspace, script, 'set', session_id=FORK_ID)
+    store = SqliteConversationStore(database=workspace / 'sessions.db')
+    # Deleted outside the `/resume` browser, so its REPL file stays behind.
+    await store.delete(source=(await store.get(conversation_id=FORK_ID)).summary)
+    saved = Session(Agent(TestModel()), deps=None, conversations=store, workspace=workspace)
+    await saved.prompt('earlier work')
+
+    await turn(workspace, script, 'get', resume=saved.conversation_id, session_id=FORK_ID, fork_session=True)
+
+    assert "name 'x' is not defined" in script.results[-1]
+
+
 async def test_background_fork_starts_from_the_session_state(workspace: Path) -> None:
     script = Script()
     shell = create_shell(
@@ -268,13 +283,6 @@ class TestReplStates:
         stale.parent.mkdir()
         stale.write_bytes(b'state')
         await session.clear(SESSION_ID)
-        assert not stale.exists()
-
-        # Nor does one reach a fork given that ID, even when the session it forks has no REPL.
-        await session.prompt('no code')
-        stale = dump(tmp_path, FORK_ID)
-        stale.write_bytes(b'state')
-        await session._fork(FORK_ID)  # pyright: ignore[reportPrivateUsage]
         assert not stale.exists()
 
     async def test_file_errors_are_logged_not_raised(
