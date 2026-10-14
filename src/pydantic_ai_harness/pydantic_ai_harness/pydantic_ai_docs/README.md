@@ -53,8 +53,8 @@ Each call resolves in this order:
 Docs pages name models through aliases, which the docs site replaces with current models. Before
 returning a page that uses one, the tool reads the alias file, `model_aliases/aliases.json`, in the
 same order and replaces each alias with the model it names. An alias the file does not define is
-left as written. A page without aliases reads nothing else, so a checkout from before the alias
-file existed keeps working.
+left as written, and so is every alias when neither source can provide the file. A page without
+aliases reads nothing else, so a checkout from before the alias file existed keeps working.
 
 The capability never runs git. Keep the local checkout current yourself; the remote path
 always reads `main`, so it is the fresh fallback.

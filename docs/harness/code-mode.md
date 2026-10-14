@@ -262,7 +262,7 @@ class InMemoryReplStore:
             self.states[key] = state
 
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(repl_store=InMemoryReplStore())])
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(repl_store=InMemoryReplStore())])
 ```
 
 - A run that never calls `run_code` neither loads nor saves.

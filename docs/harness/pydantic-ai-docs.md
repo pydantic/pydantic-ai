@@ -53,7 +53,7 @@ Each call resolves in this order:
 2. **Remote fetch** -- otherwise the page is fetched from the same path under `https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs/`.
 3. **Neither resolves** -- a descriptive error naming the local path tried and the URL.
 
-Docs pages name models through aliases, which the docs site replaces with current models. Before returning a page that uses one, the tool reads the alias file, `model_aliases/aliases.json`, in the same order and replaces each alias with the model it names. An alias the file does not define is left as written. A page without aliases reads nothing else, so a checkout from before the alias file existed keeps working.
+Docs pages name models through aliases, which the docs site replaces with current models. Before returning a page that uses one, the tool reads the alias file, `model_aliases/aliases.json`, in the same order and replaces each alias with the model it names. An alias the file does not define is left as written, and so is every alias when neither source can provide the file. A page without aliases reads nothing else, so a checkout from before the alias file existed keeps working.
 
 The capability never runs git. Keep the local checkout current yourself; the remote path always reads `main`, so it is the fresh fallback.
 
