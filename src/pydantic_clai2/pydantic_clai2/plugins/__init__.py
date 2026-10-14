@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mappi
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
+from itertools import islice
 from typing import ClassVar, Generic, Literal, Never, Protocol, Self, TypeVar, cast, get_args, get_origin
 from uuid import uuid4
 
@@ -92,7 +93,11 @@ class SessionCatalog(Protocol):
     """
 
     async def listing(self, *, query: str = '', limit: int = 200) -> list[ConversationSummary]:
-        """Saved conversations from every directory, newest first, matching `query` when it is not empty."""
+        """Saved conversations from every directory, newest first, matching `query` when it is not empty.
+
+        As when `/resume` opens, the newest untitled ones are queued for background naming, which
+        calls the naming model, so poll it no more often than a person would look.
+        """
         ...
 
     async def saved(self, conversation_id: str) -> SavedConversation:
@@ -100,7 +105,11 @@ class SessionCatalog(Protocol):
         ...
 
     async def rename(self, conversation_id: str, title: str) -> None:
-        """Retitle a saved conversation, as a rename in `/resume` does; raises `ValueError` if it changed meanwhile."""
+        """Retitle a saved conversation, as a rename in `/resume` does; raises `ValueError` if it changed meanwhile.
+
+        For the current conversation, plugins hear `on_conversation_changed` at once, even while a turn
+        runs, unlike background naming, which waits for the turn to end.
+        """
         ...
 
     async def delete(self, conversation_id: str) -> None:
@@ -187,7 +196,9 @@ class ConversationChanged:
 class CommandEnd:
     """A `/command` finished, typed at the prompt or entered with `PluginHost.send_input`.
 
-    `output` is the text the shell showed for it, empty when it showed nothing; `error` is why it failed.
+    `output` is the text the command returned, which the shell printed, empty when it returned none;
+    what the command printed itself, such as the history `/resume` replays, is not in it. `error` is
+    why it failed.
     """
 
     text: str
@@ -369,6 +380,9 @@ def _runs_already(prefix: str) -> bool:
     return True
 
 
+COMPLETION_LIMIT = 100
+"""The most suggestions `PluginHost.complete` returns, as many as the editor shows."""
+
 HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd | ConversationChanged | CommandEnd | PluginLoadFailed
 Renderer = Callable[[AgentStreamEvent], RenderableType | None]
 """Draws an event, or returns `None` to fall back to the default display; see `Plugin.render`."""
@@ -463,27 +477,40 @@ class PluginHost(Generic[DepsT]):
         entered before the prompt opens, such as from `on_session_start`, waits for it. Unlike
         `submit_prompt`, it is not tied to a command handler. A headless `-p` run reads no prompts, so
         what it is sent is never run. Raises `RuntimeError` on a host whose shell reads no such input:
-        one built without `send_input=`, or a CLAI reading its prompts line by line from standard input.
+        one built without `send_input=`, or a CLAI whose output is not a terminal, which reads its
+        prompts line by line. A bare command that opens a menu, such as `/model`, opens it in the
+        terminal, where only the keyboard closes it.
         """
         if self._send_input is None:
             raise RuntimeError(f'Plugin {self.name!r} has no prompt to enter input at.')
         self._send_input(text)
 
     def interrupt(self) -> bool:
-        """Cancel the running turn or command, as Esc does; `False` when nothing was running."""
+        """Cancel the running turn or command, as Esc does; `False` when nothing was running.
+
+        A menu stays open, as only the keyboard closes it, and a headless `-p` run is not cancelled.
+        """
         return self._interrupt()
 
     async def complete(self, text: str, /) -> list[Completion]:
         """What Tab offers at the prompt for `text`: command names with descriptions, their arguments, `@` paths.
 
-        Each `Completion` replaces the `-start_position` characters before the end of `text`. Computed in
-        a worker thread, as the editor's completions are, since `@` paths read the disk. A host without
-        a shell offers nothing.
+        Each `Completion` replaces the `-start_position` characters before the end of `text`. As in the
+        editor, they are computed in a worker thread, since `@` paths read the disk, at most
+        `COMPLETION_LIMIT` of them, and none when a completer fails. A host without a shell offers nothing.
         """
         commands = self._commands
         if commands is None:
             return []
-        return await to_thread.run_sync(lambda: list(commands.get_completions(Document(text), CompleteEvent())))
+
+        def complete() -> list[Completion]:
+            found = commands.get_completions(Document(text), CompleteEvent(text_inserted=True))
+            return list(islice(found, COMPLETION_LIMIT))
+
+        try:
+            return await to_thread.run_sync(complete)
+        except Exception:  # noqa: BLE001 -- optional suggestions, as in the editor; a broken completer offers none.
+            return []
 
     @property
     def session_id(self) -> str | None:
