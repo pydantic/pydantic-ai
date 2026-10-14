@@ -121,7 +121,7 @@ def test_vllm_provider_openai_client_is_exclusive() -> None:
         ('deepseek-ai/DeepSeek-V4-Pro', OpenAIJsonSchemaTransformer, True),
         ('mistralai/Magistral-Small-2509', OpenAIJsonSchemaTransformer, True),
         ('CohereLabs/command-a-reasoning-08-2025', OpenAIJsonSchemaTransformer, True),
-        ('openai/gpt-oss-20b', OpenAIJsonSchemaTransformer, False),
+        ('openai/gpt-oss-20b', OpenAIJsonSchemaTransformer, True),
         ('zai-org/GLM-4.7', OpenAIJsonSchemaTransformer, True),
         ('zai-org/GLM-4-9B', OpenAIJsonSchemaTransformer, False),
         ('unknown-model', OpenAIJsonSchemaTransformer, False),

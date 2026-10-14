@@ -10,7 +10,7 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
 try:
@@ -51,7 +51,8 @@ class OVHcloudProvider(_OpenAICompatibleProvider):
             'meta-': meta_model_profile,
             'deepseek': deepseek_model_profile,
             'mistral': mistral_model_profile,
-            'gpt': harmony_model_profile,
+            'gpt-oss': harmony_model_profile,
+            'gpt': openai_model_profile,
             'qwen': qwen_model_profile,
         }
 
@@ -59,6 +60,7 @@ class OVHcloudProvider(_OpenAICompatibleProvider):
         for prefix, profile_func in prefix_to_profile.items():
             if model_name.startswith(prefix):
                 profile = profile_func(model_name)
+                break
 
         # As the OVHcloud AI Endpoints API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer.
         return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
