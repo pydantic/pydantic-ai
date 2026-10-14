@@ -1944,12 +1944,11 @@ def _native_tool_call_part_dict(
     if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
         # Live full-history replays returned HTTP 400 on the Developer API and Vertex, so later requests omit these
         # processing steps and may process the video again.
-        # TODO: Recheck this workaround against Google's [GenerateContent response structure](https://ai.google.dev/gemini-api/docs/generate-content/video-understanding#response-structure),
-        # [Cloud video guidance](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/video-understanding),
-        # and [API changelog](https://ai.google.dev/gemini-api/docs/changelog). With `GEMINI_API_KEY` set, rewrite with
-        # `uv run pytest 'tests/models/google/test_agentic_video.py::test_agentic_video_context_replay[developer-api]' --record-mode=rewrite`, then play back without the flag.
-        # For Vertex, rewrite with `.agents/skills/run-provider-tests/run-vertex-tests.sh 'tests/models/google/test_agentic_video.py::test_agentic_video_context_replay[vertex]' --record-mode=rewrite`, then play back without the flag.
-        # Remove this omission only when full returned content is accepted and answers the held-out filename question.
+        # TODO: Check https://ai.google.dev/gemini-api/docs/generate-content/video-understanding#response-structure,
+        # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/video-understanding and
+        # https://ai.google.dev/gemini-api/docs/changelog for updated replay guidance. Re-record
+        # test_agentic_video_context_replay on both APIs (see tests/AGENTS.md); remove omission only when the full
+        # returned content succeeds and answers the held-out filename question.
         return None
     tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
