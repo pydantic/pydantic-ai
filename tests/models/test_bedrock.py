@@ -6442,10 +6442,10 @@ async def test_bedrock_model_code_execution_tool_sandbox_timeout(
 ):
     """A Nova code-interpreter sandbox timeout round-trips as `content=None`.
 
-    Nova's interpreter returns one `json` block for every result, code errors included. A sandbox timeout is the only
-    other shape: `status: 'error'` with empty `content`. Bedrock rejects that empty list when it's sent back, so the
-    `None` it parses to goes back as `[{'json': None}]`, which Bedrock accepts. Pinned so the single-block
-    normalization isn't reworked for content shapes Bedrock doesn't send:
+    Nova's interpreter returns one `json` block whenever the code runs, code errors included. The only other shape
+    seen live is a sandbox timeout: `status: 'error'` with empty `content`. Bedrock rejects that empty list when it's
+    sent back, so the `None` it parses to goes back as `[{'json': None}]`, which Bedrock accepts. Pinned so the
+    single-block normalization isn't reworked for content shapes Bedrock doesn't send:
     https://github.com/pydantic/pydantic-ai/issues/8582
     """
     model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)

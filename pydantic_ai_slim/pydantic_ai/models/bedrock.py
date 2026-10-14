@@ -1997,7 +1997,7 @@ class BedrockStreamedResponse(StreamedResponse):
                                     # Same contract as in `BedrockConverseModel._process_response`. On a sandbox
                                     # timeout this delta holds a `text` item instead, which is the first token of
                                     # the model's reply leaked by Bedrock rather than tool output, so `content`
-                                    # stays `None`.
+                                    # stays `None` and the token is missing from the reply's text part.
                                     return_part.content = tr_content[0].get('json')
 
                                 # Don't yield anything yet - we wait for content block end
