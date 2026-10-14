@@ -2,7 +2,7 @@
 
 How a harness agent is persisted, made durable, configured, extended, and served. This covers saving and
 resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurability`), Absurd durable
-tasks (`AbsurdDurability`), harness capabilities under core durable execution, Logfire-managed
+tasks (`AbsurdDurability`), pgtask durable tasks (`PGTaskDurability`), Render Workflows, harness capabilities under core durable execution, Logfire-managed
 instructions (`ManagedPrompt`), agent-written capabilities (`CapabilityCreation`), loading harness
 capabilities from YAML/JSON specs, serving an agent to editors over ACP, and running one as a GitHub
 Agentic Workflow.
@@ -15,6 +15,8 @@ Agentic Workflow.
 | Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
+| Checkpoint every model/tool step in Postgres with pgtask | `PGTaskDurability` |
+| Use or evaluate Render Workflows for background agents with separate model/tool retries, timeouts, and compute | [`RenderWorkflows`](#renderworkflows); retrying the entry task run restarts the agent |
 | Edit, version, and roll out the system prompt from Logfire without redeploying | `ManagedPrompt` |
 | Let the agent write new capabilities that load on the next run | `CapabilityCreation` |
 | Define the agent in YAML/JSON with harness capabilities | `Agent.from_file(..., custom_capability_types=[...])` |
@@ -179,6 +181,40 @@ Rules that apply to every harness capability:
 The per-engine feature matrix for workspace tools (commands, background jobs, live events, delegation,
 timeouts) is in `CODING-AND-WORKSPACES.md` and the durable execution docs page.
 
+## RenderWorkflows
+
+When the user is using or evaluating Render, consider `RenderWorkflows` for background agent jobs that need
+separate retries, timeouts, or compute for model requests and tool calls. Retrying the entry task starts the
+whole agent again and can repeat completed work; the integration does not checkpoint progress or replay
+completed steps. Choose it when the application can handle repeated work. A plain Render task around
+`agent.run(...)` may be enough when the user only needs background execution. The calling application chooses which
+requests to submit, even if it runs on AWS or another platform. A submission creates a root-level task run; the
+capability starts chained task runs for supported operations through `TaskContext.run()`.
+
+Use the [Render Workflows guide](https://pydantic.dev/docs/ai/harness/render-workflows/) for installation,
+a runnable example, local execution, and deployment. Check its capability support and execution limits before
+composing an agent. The setup and constraints that affect implementation are:
+
+- Construct one `RenderWorkflows(app)` per agent and attach it in `Agent(capabilities=[...])`. Define agents
+  and tools at module load time, using the same Render `Workflows` app. Call `agent.run(...)` inside that
+  capability's `@workflows.task` entry function; a plain `@app.task` leaves agent operations inline. The live
+  app object requires Python construction rather than a JSON or YAML agent spec.
+- Give agents and registered leaf toolsets stable names and IDs, including capability-owned toolsets.
+  Task options are fixed per named toolset at registration. Use separate named toolsets for different policies; individual function tools can opt out, but cannot override their shared task settings. Return `False` from `resolve_tool_options` for `delegate_task`
+  and `read_tool_result` when using `SubAgents` and `ToolOutputLimits`, so those helpers retain the parent
+  task's live state. For a delegated agent's operations to run as chained task runs, attach its own
+  `RenderWorkflows` instance using the same app. A chained task run retry can repeat that operation's side effects, so make external writes safe
+  to repeat.
+- Inputs and results crossing a task boundary must be JSON encodable, including `deps`. Workers need
+  access to their own model credentials and external resources. Keep large artifacts in shared storage
+  and pass references that another worker can read; process-local files and live clients are not shared.
+  Model streaming and forwarded capability events are buffered at task boundaries. Tools that need an
+  immediate capability-event decision must run inline.
+- Generated operations are Render task definitions. Callers with Render API access to submit task runs can invoke them
+  directly, bypassing checks that exist only in the entry task. Keep Render credentials on the server
+  and authorize application users before submitting validated inputs. Treat Workflow API callers as
+  trusted, and account for Render's task-data retention when deciding what to send in task payloads.
+
 ## AWSLambdaDurability
 
 Checkpoints every model request, function tool call, MCP call, and dynamic-toolset resolution as an
@@ -251,7 +287,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.absurd import AbsurdDurability
 
 absurd = AsyncAbsurd('postgresql://localhost/absurd', queue_name='agents')
-agent = Agent('openai:gpt-5', name='analyst', capabilities=[AbsurdDurability()])
+agent = Agent('openai:gpt-6.1-sol', name='analyst', capabilities=[AbsurdDurability()])
 
 
 @absurd.register_task(name='analyse')
@@ -273,6 +309,46 @@ Gotchas:
   `id`. Both are part of every step name, so renaming either makes in-flight tasks re-run those steps.
 - Tool return values are stored as JSON. `ModelRetry`, `ToolFailed`, `CallDeferred`, and
   `ApprovalRequired` are not checkpointed, and `DynamicToolset`s are not wrapped, so that work re-runs.
+- Function, MCP, or dynamic toolsets passed with `run(toolsets=...)` inside a task raise `UserError`;
+  `ExternalToolset` is fine.
+- Keep tool side effects idempotent: a crash after a tool runs but before its step is saved re-runs it.
+
+## PGTaskDurability
+
+Checkpoints every model request, tool call, and MCP call as a step of a
+[pgtask](https://github.com/Kludex/pgtask) task, stored in Postgres. When a worker dies, the task re-runs
+from the top and completed steps return their stored results.
+
+```bash
+uv add "pydantic-ai-harness[pgtask]" "pydantic-ai-slim[openai]"
+```
+
+```python {test="skip"}
+from pgtask import Task, TaskRegistry
+from pydantic_ai import Agent
+
+from pydantic_ai_harness.pgtask import PGTaskDurability
+
+tasks = TaskRegistry(queue_name='agents')
+agent = Agent('openai:gpt-6.1-sol', name='analyst', capabilities=[PGTaskDurability()])
+
+
+@tasks.task('analyse')
+async def analyse(task: Task, payload: dict[str, str]) -> dict[str, str]:
+    result = await agent.run(payload['prompt'])
+    return {'output': result.output}
+```
+
+Parameters: `PGTaskDurability(*, models=None, event_stream_handler=None, name=None,
+parallel_execution_mode='sequential')`, the same as `AbsurdDurability`.
+
+Gotchas:
+
+- Run `await Client.connect(url)` then `await client.migrate()` once per database before the first task.
+- The agent needs a `name` (or `name=`), and every function, MCP, or dynamic toolset needs a unique
+  `id`. Both are part of every step name, so renaming either makes in-flight tasks re-run those steps.
+- Tool results are stored as JSON, `ModelRetry` and `ToolFailed` included; `DynamicToolset` calls are checkpointed too.
+  A checkpoint that no longer decodes raises `CheckpointDecodeError` instead of re-running the tool.
 - Function, MCP, or dynamic toolsets passed with `run(toolsets=...)` inside a task raise `UserError`;
   `ExternalToolset` is fine.
 - Keep tool side effects idempotent: a crash after a tool runs but before its step is saved re-runs it.
@@ -381,16 +457,17 @@ agent = Agent.from_spec(spec, custom_capability_types=[Planning, StepPersistence
 `pydantic-ai-slim[spec]` for YAML). Capability entries take the forms `Name`, `{Name: positional_arg}`,
 or `{Name: {kwargs}}`, and each class's `from_spec` builds the instance. Opted out (they hold callables
 or live agents, and raise `ValueError` if listed): `AWSLambdaDurability`, `AbsurdDurability`,
-`CapabilityCreation`, `DynamicWorkflow`, `InputGuardrail`, `OutputGuardrail`, `SubAgents`,
+`PGTaskDurability`, `CapabilityCreation`, `DynamicWorkflow`, `InputGuardrail`, `OutputGuardrail`, `SubAgents`,
 `SystemReminders`, `ToolGuardrail`, `TrajectoryJudge`. `AskUser` has a spec name but needs an
 `answerer` callable, so in practice it is passed in code too. Pass those instances with the
 `capabilities=` keyword of `Agent.from_spec`/`Agent.from_file`, which adds them to the spec's list.
 Keep secrets out of spec files and let capabilities read their env vars.
 
-`ToolCallJudge` is spec-loadable when its model is a string and `tools` is `'all'`, a name list, or a
-metadata match. A live model, predicate selector, and `on_verdict` callback are code-only.
+`ToolCallJudge` and `ApprovalReviewer` are spec-loadable when the model is a string and `tools` is
+`'all'`, a name list, or a metadata match. A live model, predicate selector, and the `on_verdict` or
+`on_review` callback are code-only.
 
-A spec whose `model` is a provider string (`'openai:gpt-5'`) needs that provider's API key when the
+A spec whose `model` is a provider string (`'openai:gpt-6.1-sol'`) needs that provider's API key when the
 agent is built. In tests, pass `defer_model_check=True` and run under `agent.override(model='test')`.
 
 ## ACP server (experimental)
@@ -450,7 +527,7 @@ loop. Silence the warning with `warnings.filterwarnings('ignore', category=Harne
 
 The gh-aw `pydantic-ai` engine runs a Pydantic AI agent in GitHub Actions on issues, PRs, or a schedule.
 In the workflow `.md`, import `pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main`,
-set `engine: {id: pydantic-ai, model: openai/gpt-5}` (`provider/model` is required), and point
+set `engine: {id: pydantic-ai, model: openai/gpt-6.1-sol}` (`provider/model` is required), and point
 `engine.env.PAI_AGENT` at `module:variable` (for example `my_agent:agent`), at
 `pydantic_ai_harness.researcher:researcher_agent`, or at a `.yml`/`.json` spec. Omit `PAI_AGENT` to run
 `Coder`. Then run `gh aw compile` and commit the `.lock.yml` with it. Gotchas: leave the model off the
@@ -465,6 +542,7 @@ capabilities, because the CLI passes no `custom_capability_types`. Use a Python 
 - https://pydantic.dev/docs/ai/harness/durable-execution/
 - https://pydantic.dev/docs/ai/harness/aws-lambda/
 - https://pydantic.dev/docs/ai/harness/absurd/
+- https://pydantic.dev/docs/ai/harness/pgtask/
 - https://pydantic.dev/docs/ai/harness/managed-prompt/
 - https://pydantic.dev/docs/ai/harness/capability-creation/
 - https://pydantic.dev/docs/ai/harness/acp/

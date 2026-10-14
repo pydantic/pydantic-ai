@@ -25,6 +25,7 @@ from devtools import debug
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent, ModelRetry, RunContext, format_as_xml
+from pydantic_ai.capabilities import Caching
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -96,6 +97,7 @@ agent = Agent[Deps, Response](
     # Pass the union members directly: a `Response` type alias isn't yet accepted as a `TypeForm` value (PEP-747)
     output_type=Success | InvalidRequest,
     deps_type=Deps,
+    capabilities=[Caching()],
 )
 
 

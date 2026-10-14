@@ -370,7 +370,8 @@ async def test_dbos_recovery_does_not_repeat_tool_requests(
     # Re-execute the workflow function from after its last step, the way recovery does. Calling it
     # again under the same ID is no replay: DBOS returns the stored result without running it.
     handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
-    assert await handle.get_result() == 'done'
+    # The default 1s result poll would add up to a second on top of the internal queue's own poll.
+    assert await handle.get_result(polling_interval_sec=0.01) == 'done'
     assert count_requests() == first_run, 'recovery made a request again'
 
     step_names = {step['function_name'] for step in steps}
