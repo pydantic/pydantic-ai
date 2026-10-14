@@ -111,7 +111,7 @@ class TestInputGuardrail:
         assert result.output == 'ok'
         assert calls == ['hello']
 
-    @pytest.mark.parametrize('metadata', [None, 'tag', [], {'origin': 'caller'}, {'origin': 'background_tool_result'}])
+    @pytest.mark.parametrize('metadata', [None, 'tag', [], {'origin': 'caller'}])
     async def test_singleton_textcontent_user_prompt_keeps_legacy_guardrail_behavior(self, metadata: object):
         prompt: list[TextContent] = [TextContent('ordinary user content', metadata=metadata)]
         seen: list[str] = []
@@ -214,6 +214,39 @@ class TestInputGuardrail:
                 )
             ]
         ]
+
+    async def test_background_completion_with_document_uses_multimodal_prompt_rules(self):
+        completion = TextContent(
+            'background answer',
+            metadata={
+                'origin': 'pydantic-ai-harness.background_tools.result.v1',
+                'tool_call_id': 'task-1',
+            },
+        )
+        document = BinaryContent(data=b'background report\n', media_type='text/plain')
+        content: list[TextContent | BinaryContent] = [completion, document]
+        history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=content)])]
+        seen: list[str] = []
+
+        allowing_agent = Agent(
+            TestModel(custom_output_text='ok'),
+            capabilities=[InputGuardrail(guard=lambda prompt: seen.append(prompt) or True)],
+        )
+        result = await allowing_agent.run(None, message_history=history)
+
+        assert result.output == 'ok'
+        assert seen == [str(content)]
+
+        replacing_agent = Agent(
+            TestModel(custom_output_text='ok'),
+            capabilities=[InputGuardrail(guard=lambda _: GuardrailResult.replace('[redacted]'))],
+        )
+        with pytest.raises(UserError, match='multimodal prompt'):
+            await replacing_agent.run(None, message_history=history)
+
+        prompt = history[-1].parts[0]
+        assert isinstance(prompt, UserPromptPart)
+        assert prompt.content == content
 
     async def test_guard_result_allow(self):
         agent = Agent(

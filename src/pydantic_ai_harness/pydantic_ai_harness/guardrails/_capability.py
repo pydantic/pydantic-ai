@@ -123,6 +123,8 @@ def _replace_prompt(messages: Sequence[ModelMessage], new_content: str) -> bool:
     sequence of parts, and a `str` written over it would send the model the
     replacement text alone -- the images, documents and audio the user attached
     would be gone, with nothing in the run to say so.
+    Singleton native background completions are rewritten in place, preserving
+    their metadata.
     """
     for message in reversed(messages):
         for part in reversed(message.parts):
