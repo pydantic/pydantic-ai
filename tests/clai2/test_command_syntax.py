@@ -4,7 +4,7 @@ import pytest
 from rich.syntax import Syntax
 
 from pydantic_clai2.ui.rendering import command_syntax
-from pydantic_clai2.ui.rendering.command_syntax import command_segments
+from pydantic_clai2.ui.rendering.command_syntax import Segment, command_segments
 
 
 @pytest.mark.parametrize(
@@ -111,6 +111,8 @@ def test_heredocs_on_lines_ending_past_end_are_not_looked_for() -> None:
     command = 'echo "a<<b"\n' * 300 + "python3 - <<'EOF'\nimport os\nEOF"
     assert [segment.language for segment in command_segments(command, end=100)] == ['bash']
     assert [segment.language for segment in command_segments('x<<EOF ' * 1000 + '\nbody', end=100)] == ['bash']
+    many = 'echo "a<<b"\n' * 100_000
+    assert command_segments(many, end=100) == [Segment(text=many, language='bash')]
     assert [segment.language for segment in command_segments(command)] == ['bash', 'python', 'bash']
 
 

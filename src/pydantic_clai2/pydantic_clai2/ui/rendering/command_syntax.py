@@ -93,6 +93,9 @@ def command_segments(command: str, *, end: int | None = None) -> list[Segment]:
     pending: list[tuple[str, bool, str | None]] = []
     *lines, last = command.split('\n')
     for line in [*(f'{line}\n' for line in lines), last]:
+        if position > limit and not pending:
+            shell += command[position:]  # Nothing from here on is shown.
+            break
         position += len(line)
         if pending:
             delimiter, strip_tabs, language = pending[0]
