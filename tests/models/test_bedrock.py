@@ -4449,6 +4449,7 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
                     RunUsage(
                         cache_write_tokens=8172,
                         output_tokens=5,
+                        cache_write_5m_tokens=8172,
                         input_tokens=8259,
                         cost=Decimal('0.0227194'),
                         requests=1,
@@ -4471,9 +4472,10 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
                 (
                     RunUsage(
                         cache_write_tokens=8175,
+                        cache_write_1h_tokens=8175,
                         output_tokens=5,
                         input_tokens=8262,
-                        cost=Decimal('0.02272765'),
+                        cost=Decimal('0.0362164'),
                         requests=1,
                     ),
                     RunUsage(
@@ -4579,8 +4581,14 @@ async def test_unified_cache_reads_history_after_wide_turn_real_api(
     ] == [(True, True)] * 2
     assert (first.usage, second.usage) == snapshot(
         (
-            RequestUsage(input_tokens=7749, cache_write_tokens=7746, output_tokens=219),
-            RequestUsage(input_tokens=8337, cache_read_tokens=7746, cache_write_tokens=584, output_tokens=156),
+            RequestUsage(input_tokens=7749, cache_write_tokens=7746, cache_write_5m_tokens=7746, output_tokens=219),
+            RequestUsage(
+                input_tokens=8337,
+                cache_read_tokens=7746,
+                cache_write_tokens=584,
+                cache_write_5m_tokens=584,
+                output_tokens=156,
+            ),
         )
     )
     assert second.usage.cache_read_tokens >= first.usage.cache_write_tokens

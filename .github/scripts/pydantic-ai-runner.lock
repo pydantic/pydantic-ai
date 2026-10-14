@@ -507,15 +507,15 @@ client = [
 
 [[package]]
 name = "genai-prices"
-version = "0.1.10"
+version = "0.1.12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx2" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c4/0b/159528e8580f9a5c985be78fcbea6230a1bcc1d46a9f8b681511d2c37e3f/genai_prices-0.1.10.tar.gz", hash = "sha256:889ba486497f8a85e9dd0e9228a27f2e135e31a850e96924b880f22c132092ac", size = 125604, upload-time = "2026-10-09T17:58:15.876Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/33/92/10212781b3416bc590b6a55c5643073282a2ff26e003b38ab27bad3ae5d2/genai_prices-0.1.12.tar.gz", hash = "sha256:d1493977cb7f61bc436516a166f644f5bbb01e1a83365e2914c99c6298f77ca4", size = 134740, upload-time = "2026-10-14T11:22:23.819Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/11/0c/379fe71fccf01d829f1d72f805189453f12ba4b96e4b49a5cde8e1afd5ba/genai_prices-0.1.10-py3-none-any.whl", hash = "sha256:1f0eb9ff0b02f3a40b3aa590098fbc3bfc9e08ef124fa0bd132e9d899a6fec88", size = 132788, upload-time = "2026-10-09T17:58:14.463Z" },
+    { url = "https://files.pythonhosted.org/packages/86/3f/28a7a4b9d67a9cc21d705ce6476557007841abeba6f2d5b58aa9bda9f795/genai_prices-0.1.12-py3-none-any.whl", hash = "sha256:89d98303c5b7a366a05136ba03884c5951ec9a9ceb28fef62c7fa719f2828182", size = 142670, upload-time = "2026-10-14T11:22:22.688Z" },
 ]
 
 [[package]]
@@ -1229,7 +1229,7 @@ requires-dist = [
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0,<5" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "fastmcp-tasks", marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
-    { name = "genai-prices", specifier = ">=0.1.10" },
+    { name = "genai-prices", specifier = ">=0.1.11" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.30.0" },
     { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.30.0" },
     { name = "griffelib", specifier = ">=2.0" },
