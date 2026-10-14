@@ -1994,9 +1994,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             # `'auto'` learns the field only from the mapped messages, so it backfills only when they carry
             # exactly one of the names `_process_thinking` reads: a server that rejects unknown fields has
             # already accepted that one. DeepSeek's guide asks for the field on every turn of a request with
-            # tools, but it rejects only a tool call after the last user message that omits it, so earlier
-            # turns go out unchanged (`test_deepseek_auto_mode_thinking_backfill` records both). A message
-            # backfilled here goes out without the field again once a newer user message follows it.
+            # tools, but in practice it rejected a current-turn tool call without it and accepted an
+            # earlier-turn one (`test_deepseek_auto_mode_thinking_backfill` records the accepted requests),
+            # so earlier turns go out unchanged. A message backfilled here goes out without the field again
+            # once a newer user message follows it.
             custom_field = profile.get('openai_chat_thinking_field', None)
             sent_fields = {
                 name

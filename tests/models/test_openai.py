@@ -5699,7 +5699,6 @@ AUTO_THINKING_BACKFILL_CASES = [
         ],
         assistant_turns=snapshot([{'tool_calls': ['get_weather']}]),
     ),
-    # An `OpenAIResponsesModel` reasoning item replayed through Chat: its id is not a Chat thinking field.
     # Thinking from another provider goes back as tags in `content`, so the request carries no field to backfill.
     AutoThinkingBackfillCase(
         id='foreign_thinking_only',
@@ -5713,6 +5712,7 @@ AUTO_THINKING_BACKFILL_CASES = [
         ],
         assistant_turns=snapshot([{'tool_calls': ['get_weather']}]),
     ),
+    # An `OpenAIResponsesModel` reasoning item replayed through Chat: its id is not a Chat thinking field.
     AutoThinkingBackfillCase(
         id='responses_reasoning_id',
         history=[
