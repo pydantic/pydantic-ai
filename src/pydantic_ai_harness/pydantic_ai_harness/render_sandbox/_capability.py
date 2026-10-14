@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from copy import copy
 from dataclasses import dataclass, field
@@ -33,10 +34,33 @@ class _RunBackend(RenderSandboxBackend):
         on_sandbox_event: Callable[[RenderSandboxEvent], None] | None,
         run_id: str | None,
         owner: object,
+        auto_cleanup: bool,
     ) -> None:
         super().__init__(client, config=config, ref=ref, on_sandbox_event=on_sandbox_event)
         self.run_id = run_id
         self.owner = owner
+        self.auto_cleanup = auto_cleanup
+
+    async def working_dir(self) -> str:
+        try:
+            return await super().working_dir()
+        except BaseException as error:
+            # Workflows prepares the workspace before entering the run cleanup hook.
+            # This worker still knows the new ID if readiness fails or is cancelled.
+            if self.owned and self.auto_cleanup:
+                try:
+                    await self.destroy()
+                except asyncio.CancelledError:
+                    # Termination finishes before destroy re-raises a repeated cancel.
+                    raise
+                except BaseException as cleanup_error:
+                    # A group keeps both failures visible across the task boundary;
+                    # ordinary workspace error serialization drops exception causes.
+                    raise BaseExceptionGroup(
+                        f'Render sandbox preparation and cleanup failed; retain {self.ref!r} for recovery.',
+                        [error, cleanup_error],
+                    ) from None
+            raise
 
 
 @dataclass(kw_only=True)
@@ -108,6 +132,7 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
             on_sandbox_event=self.on_sandbox_event,
             run_id=ctx.run_id,
             owner=self,
+            auto_cleanup=self.auto_cleanup,
         )
 
     def _check_durability(self, ctx: RunContext[AgentDepsT]) -> None:

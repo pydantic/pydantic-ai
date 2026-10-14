@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import NoReturn
 
@@ -30,6 +30,7 @@ with try_import() as imports_successful:
         WorkspaceBackend,
         WorkspaceReadOnlyError,
         WorkspaceRef,
+        WorkspaceUnavailableError,
     )
     from pydantic_ai_harness import RenderSandbox, RenderWorkflows
     from pydantic_ai_harness.render_sandbox import RenderSandboxCleanupError, RenderSandboxEvent
@@ -178,6 +179,106 @@ class TestRenderSandboxWorkflows:
             await pending
         assert workspace_harness.created == workspace_harness.terminated == ['sb-1']
         assert any(name.endswith('.destroy') for name in context.task_names)
+
+    @pytest.mark.parametrize('failure', ['timeout', 'errored'])
+    @pytest.mark.parametrize('ownership', ['owned', 'retained', 'attached'])
+    async def test_preparation_failure_respects_ownership(
+        self, workspace_harness: WorkspaceHarness, failure: str, ownership: str
+    ) -> None:
+        # Preparation happens before the run hook. Only a newly owned sandbox should
+        # be removed when it never becomes ready; retained and borrowed IDs survive.
+        harness = workspace_harness
+        harness.create_status = 'starting' if failure == 'timeout' else 'errored'
+        runtime = RenderWorkflows[None](Workflows())
+        sandbox = RenderSandbox[None](
+            id='sandbox',
+            client=harness.client,
+            config=replace(harness.config, readiness_timeout=0.01),
+            auto_cleanup=ownership != 'retained',
+        )
+        ref: WorkspaceRef | None = None
+        if ownership == 'attached':
+            existing = await harness.client.experimental.sandboxes.create(
+                timeout_seconds=300, network_policy='deny-all', env=None
+            )
+            ref = WorkspaceRef(provider='render', id=existing.id)
+        agent = Agent(TestModel(), name='preparation_failure', deps_type=type(None), capabilities=[runtime, sandbox])
+
+        @runtime.task
+        async def root(ctx: TaskContext) -> str:
+            del ctx
+            return (await agent.run('go', workspace=ref)).output
+
+        pending = root.func(WorkspaceTaskContext())
+        assert inspect.isawaitable(pending)
+        message = 'readiness exceeded' if failure == 'timeout' else 'sandbox is errored'
+        with pytest.raises(WorkspaceUnavailableError, match=message):
+            await pending
+        assert harness.created == ['sb-1']
+        assert harness.terminated == (['sb-1'] if ownership == 'owned' else [])
+        # The test owns retained and attached resources, just as an application would.
+        if ownership != 'owned':
+            await sandbox.destroy(WorkspaceRef(provider='render', id='sb-1'))
+
+    async def test_cancelled_preparation_waits_for_cleanup(self, workspace_harness: WorkspaceHarness) -> None:
+        # Cancellation can arrive before create returns its ID. Wait for that result,
+        # then finish termination even if cancellation is requested again during it.
+        harness = workspace_harness
+        harness.create_gate = asyncio.Event()
+        harness.terminate_gate = asyncio.Event()
+        runtime = RenderWorkflows[None](Workflows())
+        sandbox = RenderSandbox[None](id='sandbox', client=harness.client, config=harness.config)
+        agent = Agent(TestModel(), name='cancelled_preparation', deps_type=type(None), capabilities=[runtime, sandbox])
+
+        @runtime.task
+        async def root(ctx: TaskContext) -> str:
+            del ctx
+            return (await agent.run('go')).output
+
+        async def run() -> None:
+            pending = root.func(WorkspaceTaskContext())
+            assert inspect.isawaitable(pending)
+            await pending
+
+        task = asyncio.create_task(run())
+        await harness.create_started.wait()
+        task.cancel()
+        harness.create_gate.set()
+        await harness.terminate_started.wait()
+        task.cancel()
+        harness.terminate_gate.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert harness.created == harness.terminated == ['sb-1']
+
+    async def test_preparation_and_cleanup_failures_remain_visible(self, workspace_harness: WorkspaceHarness) -> None:
+        # A cleanup failure must not disappear when Workflows serializes an expected
+        # workspace error. Both errors and the known sandbox ID are needed for recovery.
+        harness = workspace_harness
+        harness.create_status = 'errored'
+        harness.terminate_error = RuntimeError('termination failed')
+        runtime = RenderWorkflows[None](Workflows())
+        sandbox = RenderSandbox[None](id='sandbox', client=harness.client, config=harness.config)
+        agent = Agent(
+            TestModel(), name='failed_preparation_cleanup', deps_type=type(None), capabilities=[runtime, sandbox]
+        )
+
+        @runtime.task
+        async def root(ctx: TaskContext) -> str:
+            del ctx
+            return (await agent.run('go')).output
+
+        pending = root.func(WorkspaceTaskContext())
+        assert inspect.isawaitable(pending)
+        with pytest.raises(ExceptionGroup, match='sb-1') as caught:
+            await pending
+        assert len(caught.value.exceptions) == 2
+        assert isinstance(caught.value.exceptions[0], WorkspaceUnavailableError)
+        assert isinstance(caught.value.exceptions[1], RenderSandboxCleanupError)
+        assert harness.created == ['sb-1']
+        assert harness.terminated == []
+        harness.terminate_error = None
+        await sandbox.destroy(WorkspaceRef(provider='render', id='sb-1'))
 
     async def test_concurrent_runs_and_root_retry(self, isolated_workspace_harness: WorkspaceHarness) -> None:
         # Overlapping root runs must keep distinct files and terminate only their own ID.
