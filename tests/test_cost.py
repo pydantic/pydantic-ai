@@ -232,24 +232,27 @@ async def test_cost_service_tier_without_tier_rates_is_standard(allow_model_requ
 
 
 def test_service_tier_only_changes_openai_prices():
-    """Every provider's tier is passed along; genai-prices ignores it, silently, where it has no tier rates."""
-    usage = RequestUsage(input_tokens=100_000)
+    """Each response's recorded tier is passed along; where genai-prices has no tier rates it's ignored, silently."""
     timestamp = datetime(2026, 10, 13, tzinfo=UTC)
     prices: dict[str, Decimal] = {}
-    for provider_name, model_name in [('openai', 'gpt-6.1-sol'), ('anthropic', 'claude-sonnet-4-5')]:
+    # Google records its tier too (e.g. `standard`), but genai-prices only has OpenAI tier rates.
+    for provider_name, model_name, service_tier in [
+        ('openai', 'gpt-6.1-sol', 'priority'),
+        ('google', 'gemini-2.5-flash', 'standard'),
+    ]:
         response = ModelResponse(
             parts=[],
-            usage=usage,
+            usage=RequestUsage(input_tokens=100_000),
             model_name=model_name,
             provider_name=provider_name,
-            provider_details={'service_tier': 'priority'},
+            provider_details={'service_tier': service_tier},
             timestamp=timestamp,
         )
         with warnings.catch_warnings():
             warnings.simplefilter('error')
             prices[provider_name] = response.cost().total_price
-    # OpenAI at its $4/MTok priority rate (standard is $2); Anthropic at its standard $3/MTok.
-    assert prices == snapshot({'openai': Decimal('0.4'), 'anthropic': Decimal('0.30')})
+    # OpenAI at its $4/MTok priority rate (standard is $2); Gemini at its standard rate.
+    assert prices == snapshot({'openai': Decimal('0.4'), 'google': Decimal('0.03')})
 
 
 async def test_cost_is_silent_for_unpriceable_model(allow_model_requests: None):
