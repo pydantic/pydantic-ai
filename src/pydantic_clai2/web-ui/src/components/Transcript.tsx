@@ -1,8 +1,10 @@
-import { memo, useEffect, useLayoutEffect, useRef } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { Item } from '../protocol'
 import type { Entry } from '../state'
+import { ChevronIcon } from './icons'
 import { Markdown } from './Markdown'
 import { Thinking } from './Thinking'
-import { ToolCard } from './ToolCard'
+import { ToolCard, codeCalls } from './ToolCard'
 
 const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live: boolean }) {
   switch (entry.kind) {
@@ -35,6 +37,83 @@ const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live:
   }
 })
 
+const EDITS = new Set(['edit_file', 'write_file'])
+const COMMANDS = new Set(['shell', 'run_code'])
+const EXPLORING = new Set(['read_file', 'list_files', 'grep', 'glob'])
+
+/** Consecutive tool calls other than edits fold into one group, as a desktop agent shows its work. */
+type Row = { kind: 'entry'; entry: Entry } | { kind: 'group'; id: string; tools: Item[] }
+
+function rows(entries: Entry[]): Row[] {
+  const result: Row[] = []
+  for (const entry of entries) {
+    const last = result[result.length - 1]
+    const groupable = entry.kind === 'tool' && !EDITS.has(entry.name)
+    if (groupable && last?.kind === 'group') last.tools.push(entry)
+    else if (groupable) result.push({ kind: 'group', id: `group-${entry.id}`, tools: [entry] })
+    else result.push({ kind: 'entry', entry })
+  }
+  return result.flatMap((row) =>
+    row.kind === 'group' && row.tools.length === 1 ? [{ kind: 'entry', entry: row.tools[0] as Item }] : [row],
+  )
+}
+
+function plural(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`
+}
+
+/** The names of what each call did; a code-mode script counts as the harness calls inside it. */
+function actions(tool: Item): string[] {
+  if (tool.name !== 'run_code') return [tool.name]
+  let code = ''
+  try {
+    code = String((JSON.parse(tool.args) as { code?: unknown }).code ?? '')
+  } catch {
+    // Arguments still streaming or not JSON: count it as one command.
+  }
+  const calls = codeCalls(code).map((call) => call.name)
+  return calls.length ? calls : ['run_code']
+}
+
+export function groupSummary(tools: Item[]): string {
+  const names = tools.flatMap(actions)
+  const explored = names.filter((name) => EXPLORING.has(name)).length
+  const commands = names.filter((name) => COMMANDS.has(name)).length
+  const edited = names.filter((name) => EDITS.has(name)).length
+  const other = names.length - explored - commands - edited
+  return [
+    explored && `Explored ${plural(explored, 'file', 'files')}`,
+    commands && `Ran ${plural(commands, 'command', 'commands')}`,
+    edited && `Edited ${plural(edited, 'file', 'files')}`,
+    other && `Called ${plural(other, 'tool', 'tools')}`,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+const ToolGroup = memo(function ToolGroup({ tools }: { tools: Item[] }) {
+  const running = tools.some((tool) => tool.state === 'running')
+  const failed = tools.filter((tool) => tool.state === 'error' || (tool.exit_code ?? 0) !== 0).length
+  const [open, setOpen] = useState<boolean | null>(null)
+  const shown = open ?? running
+  return (
+    <div className={`tool-group ${shown ? 'open' : ''}`}>
+      <button className="row-toggle" onClick={() => setOpen(!shown)} aria-expanded={shown}>
+        <span className={running ? 'shimmer' : ''}>{groupSummary(tools)}</span>
+        {failed > 0 && <span className="badge error">{plural(failed, 'failed', 'failed')}</span>}
+        <ChevronIcon size={12} className="chevron" />
+      </button>
+      {shown && (
+        <div className="tool-group-body">
+          {tools.map((tool) => (
+            <ToolCard key={tool.id} item={tool} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+})
+
 /** The conversation; it follows new output while the reader is at the bottom, and stays put once they scroll up. */
 export function Transcript({ entries, running, empty }: { entries: Entry[]; running: boolean; empty: React.ReactNode }) {
   const scroller = useRef<HTMLDivElement>(null)
@@ -56,7 +135,15 @@ export function Transcript({ entries, running, empty }: { entries: Entry[]; runn
   return (
     <div className="transcript" ref={scroller}>
       <div className="column">
-        {entries.length === 0 ? empty : entries.map((entry) => <EntryView key={entry.id} entry={entry} live={running && entry === last} />)}
+        {entries.length === 0
+          ? empty
+          : rows(entries).map((row) =>
+              row.kind === 'group' ? (
+                <ToolGroup key={row.id} tools={row.tools} />
+              ) : (
+                <EntryView key={row.entry.id} entry={row.entry} live={running && row.entry === last} />
+              ),
+            )}
         {running && last?.kind !== 'assistant' && last?.kind !== 'thinking' && (
           <div className="working">
             <span className="dot" />

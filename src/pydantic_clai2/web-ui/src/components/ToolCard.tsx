@@ -18,6 +18,18 @@ function parseArgs(args: string): Args {
 const str = (value: unknown): string => (typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value))
 const base = (path: string) => path.split('/').filter(Boolean).pop() ?? path
 
+export interface Call {
+  name: string
+  argument: string
+}
+
+const CALL = /\b(read_file|list_files|grep|glob|shell|write_file|edit_file)\(\s*(?:\w+\s*=\s*)?(?:[rbf]?(["'])((?:\\.|(?!\2).)*)\2)?/g
+
+/** The tool calls inside a `run_code` script, with their first literal argument, as code mode makes them. */
+export function codeCalls(code: string): Call[] {
+  return [...code.matchAll(CALL)].map((match) => ({ name: match[1] ?? '', argument: (match[3] ?? '').replace(/\\(.)/g, '$1') }))
+}
+
 interface Summary {
   icon: React.ReactNode
   verb: string
@@ -45,6 +57,13 @@ function summarize(item: Item, args: Args): Summary {
     case 'list_files':
       return { icon: <FileIcon size={14} />, verb: running ? 'Listing' : 'Listed', subject: str(args.path) || '.', mono: false }
     case 'run_code': {
+      const calls = codeCalls(str(args.code))
+      const [only] = calls
+      if (calls.length === 1 && only) {
+        // A script around one call reads as that call.
+        const key = only.name === 'shell' ? 'command' : only.name === 'grep' ? 'pattern' : 'path'
+        return summarize({ ...item, name: only.name }, { [key]: only.argument })
+      }
       const first = str(args.code).split('\n').find((line) => line.trim() && !line.trim().startsWith('#'))
       return { icon: <TerminalIcon size={14} />, verb: running ? 'Running' : 'Ran', subject: first?.trim() ?? 'code', mono: true }
     }

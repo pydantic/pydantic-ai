@@ -4,7 +4,7 @@ import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
 import { Sidebar, type SidebarHandle } from './components/Sidebar'
 import { Transcript } from './components/Transcript'
-import { SidebarIcon, SparkIcon } from './components/icons'
+import { SidebarIcon } from './components/icons'
 import type { ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
 import { MAC, MOD } from './platform'
 import { initial, reduce } from './state'
@@ -126,6 +126,18 @@ export function App() {
   const title = preview ? preview.title : (state.session?.title ?? 'New session')
   const workspace = preview ? preview.workspace : (state.session?.workspace ?? '')
   const entries = preview ? preview.items : state.entries
+  const project = (state.session?.workspace ?? '').split('/').filter(Boolean).pop() ?? ''
+  const fresh = !preview && entries.length === 0 && state.session !== null
+  const composerElement = (
+    <Composer
+      ref={composer}
+      running={state.running}
+      model={status?.model ?? '…'}
+      disabled={connection !== 'open'}
+      placeholder={state.running ? 'Queue a follow-up…' : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
+      onError={showError}
+    />
+  )
 
   return (
     <div className={`app ${sidebar ? '' : 'no-sidebar'}`}>
@@ -180,32 +192,30 @@ export function App() {
             </button>
           </div>
         )}
-        <Transcript
-          entries={entries}
-          running={!preview && state.running}
-          empty={
-            <div className="empty">
-              <SparkIcon size={28} />
-              <h1>What should we build?</h1>
-              <p>
-                Ask anything, or type <kbd>/</kbd> for commands. The terminal and this page drive the same session.
-              </p>
-            </div>
-          }
-        />
-        <footer className="bottom">
-          {!preview && state.questions.map((request) => <QuestionCard key={request.id} request={request} onError={showError} />)}
-          {!preview && (
-            <Composer
-              ref={composer}
-              running={state.running}
-              model={status?.model ?? '…'}
-              disabled={connection !== 'open'}
-              placeholder={state.running ? 'Queue a follow-up…' : 'Ask CLAI anything'}
-              onError={showError}
-            />
-          )}
-        </footer>
+        {fresh ? (
+          <div className="hero">
+            <h1>
+              What should we build{project ? ' in ' : ''}
+              {project && <span className="hero-project">{project}</span>}?
+            </h1>
+            {state.questions.map((request) => (
+              <QuestionCard key={request.id} request={request} onError={showError} />
+            ))}
+            {composerElement}
+            <p className="hero-hint">
+              Type <kbd>/</kbd> for commands. The terminal and this page drive the same session.
+            </p>
+          </div>
+        ) : (
+          <>
+            <Transcript entries={entries} running={!preview && state.running} empty={null} />
+            <footer className="bottom">
+              {!preview &&
+                state.questions.map((request) => <QuestionCard key={request.id} request={request} onError={showError} />)}
+              {!preview && composerElement}
+            </footer>
+          </>
+        )}
         {connection === 'expired' && (
           <div className="toast expired" role="alert">
             This page belongs to an earlier CLAI. Open the new address it printed.

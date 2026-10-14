@@ -1389,3 +1389,56 @@ pre {
     padding-right: 16px;
   }
 }
+
+/* Empty state: the composer sits under the question, as in a desktop agent's new thread */
+
+.hero {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  width: 100%;
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 0 28px 12vh;
+}
+
+.hero h1 {
+  margin: 0 0 6px;
+  text-align: center;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.hero-project {
+  color: var(--muted);
+}
+
+.hero-hint {
+  margin: 0;
+  text-align: center;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+
+.hero .composer textarea {
+  min-height: 72px;
+}
+
+/* A group of tool calls */
+
+.tool-group {
+  margin: -4px 0;
+}
+
+.tool-group-body {
+  margin: 4px 0 6px 4px;
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+}
+
+.tool-group-body .tool {
+  margin: 0;
+}
