@@ -1081,11 +1081,11 @@ class _Shell(Generic[DepsT, OutputT]):
         """Enter `text` as Enter at the prompt does: trimmed, bare `clear` as `/clear`, blank ignored.
 
         A `during_turn` command opens over a running turn; other input queues in the editor, or, while no
-        editor reads keys yet or at all, in the inbox the read loop takes it from. A line-mode prompt
-        (input that is not a terminal) reads only its own input, so it takes none.
+        editor reads keys yet or at all, in the inbox the read loop takes it from. A line-mode prompt,
+        used when CLAI's output is not a terminal, reads only its own input, so it takes none.
         """
         if self.prompt is not None and self.editor is None:
-            raise RuntimeError('This CLAI reads its prompts from standard input, so it cannot take other input.')
+            raise RuntimeError('This CLAI reads its prompts line by line, as its output is not a terminal.')
         text = expand_bare_command(text.strip())
         if not text or self.run_now(text):
             return
@@ -1203,7 +1203,7 @@ class _Shell(Generic[DepsT, OutputT]):
             self.console.print()
             if await self._refused(text):
                 return
-            await _execute_command(self.commands, text, console=self.console, fire=self.loader.fire)
+            await self.loader.fire(await _execute_command(self.commands, text, console=self.console))
             self._show_status_segments()
 
     def _show_status_segments(self) -> None:
@@ -1296,15 +1296,14 @@ class _Shell(Generic[DepsT, OutputT]):
         if await self._refused(text):
             return False
         self.submitted = submitted = list[str]()
+        ended: list[CommandEnd] = []
         try:
             if self.editor is not None and self.commands.runs_live(text):
-                completed = await self._live_command(text, self.editor)
+                completed = await self._live_command(text, self.editor, ended)
                 exiting = self.interrupts.exit_requested
             else:
                 async with self.forks.busy(), self._released():
-                    completed = await self.interrupts.run(
-                        _execute_command(self.commands, text, console=self.console, fire=self.loader.fire)
-                    )
+                    completed = await self.interrupts.run(self._execute(text, ended))
                 exiting = (
                     text == '/exit'
                     or self.interrupts.exit_requested
@@ -1313,12 +1312,19 @@ class _Shell(Generic[DepsT, OutputT]):
                 )
         finally:
             self.submitted = None
+        # Plugins hear of the command once Esc no longer reaches it, so a slow handler cannot cancel it.
+        for event in ended:
+            await self.loader.fire(event)
         # A cancelled command's prompts are cancelled with it.
         while completed and submitted and not exiting:
             exiting = await self._prompt(submitted.pop(0))
         return exiting
 
-    async def _live_command(self, text: str, editor: LivePrompt) -> bool:
+    async def _execute(self, text: str, ended: list[CommandEnd]) -> None:
+        """Run a command, adding its `CommandEnd` to `ended` unless it is cancelled first."""
+        ended.append(await _execute_command(self.commands, text, console=self.console))
+
+    async def _live_command(self, text: str, editor: LivePrompt, ended: list[CommandEnd]) -> bool:
         """Run a slow `live` command such as `/compact` with the spinner up and its cancel keys working.
 
         Suspending the editor instead would freeze its last frame, an idle prompt and a `ready`
@@ -1329,9 +1335,7 @@ class _Shell(Generic[DepsT, OutputT]):
         async with self.forks.busy():
             self.status.activity = 'working'
             try:
-                completed = await self.interrupts.run(
-                    _execute_command(self.commands, text, console=self.console, fire=self.loader.fire)
-                )
+                completed = await self.interrupts.run(self._execute(text, ended))
             finally:
                 self.status.activity = 'ready'
                 await editor.output.drain()
@@ -1489,10 +1493,8 @@ def _report_interrupt(completed: bool, console: Console) -> None:
         console.print()
 
 
-async def _execute_command(
-    commands: Commands, text: str, *, console: Console, fire: Callable[[CommandEnd], Awaitable[None]]
-) -> None:
-    """Run a command and show its result, then tell plugins what was shown; a cancelled command tells none."""
+async def _execute_command(commands: Commands, text: str, *, console: Console) -> CommandEnd:
+    """Run a command and show its result; the caller tells plugins, outside the scope that Esc cancels."""
     ended = CommandEnd(text=text)
     try:
         result = await commands.execute_async(text)
@@ -1505,7 +1507,7 @@ async def _execute_command(
         ended.error = exc
         console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
         console.print()
-    await fire(ended)
+    return ended
 
 
 def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:
