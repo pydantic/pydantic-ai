@@ -210,7 +210,7 @@ prompt = [
 
 Pass the prompt list to `agent.run_sync(prompt)`. Everything before the `CachePoint()` marker is cached. You can place multiple markers for fine-grained control over cache boundaries.
 
-A `CachePoint` that opens a user message marks the end of the previous user message instead. Unlike on Anthropic and Bedrock, a tool result in between doesn't carry it. One with no earlier user message in the conversation raises a [`UserError`][pydantic_ai.exceptions.UserError].
+A `CachePoint` that opens a user message marks the end of the previous user message instead, keeping a longer TTL already there. Unlike on Anthropic, Bedrock and OpenAI, a tool result in between doesn't carry it, since OpenRouter doesn't document `cache_control` on tool results; with no earlier user message the breakpoint is dropped. One with only system instructions before it raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
 !!! warning "Anthropic cache-breakpoint ordering"
     Anthropic processes cache breakpoints in a fixed order — tool definitions, then system instructions, then messages — and rejects a `'1h'` breakpoint that appears *after* a `'5m'` one in that sequence. When mixing TTLs across `CachePoint` markers or the cache settings on an Anthropic model, place the longer (`'1h'`) breakpoints before the shorter (`'5m'`) ones. Anthropic also allows at most four explicit breakpoints per request; excess breakpoints are dropped (oldest first) before the request is sent.

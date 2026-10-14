@@ -8,6 +8,7 @@ from dataclasses import replace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx2
 import pytest
 from inline_snapshot import snapshot
 
@@ -58,14 +59,12 @@ from tests.conftest import try_import
 from tests.harness._recording_durability import RecordingDurability
 
 with try_import() as anthropic_imports:
-    import httpx2
     from anthropic import AsyncAnthropic
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as openai_imports:
-    import httpx2
     from openai import AsyncOpenAI
 
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -1368,30 +1367,29 @@ class TestEndToEnd:
             content = sse(len(bodies), script[len(bodies) - 1])
             return httpx2.Response(200, content=content, headers={'content-type': 'text/event-stream'})
 
-        http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-        if provider == 'anthropic':
-            client = AsyncAnthropic(api_key='test', http_client=http_client)
-            agent: Agent[None, str] = Agent(
-                AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client)),
-                capabilities=[Planning()],
-                model_settings=AnthropicModelSettings(anthropic_cache=True),
-            )
-        else:
-            openai_client = AsyncOpenAI(api_key='test', http_client=http_client)
-            agent = Agent(
-                OpenAIChatModel('gpt-5.6', provider=OpenAIProvider(openai_client=openai_client)),
-                capabilities=[Planning()],
-            )
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+            if provider == 'anthropic':
+                client = AsyncAnthropic(api_key='test', http_client=http_client)
+                agent: Agent[None, str] = Agent(
+                    AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client)),
+                    capabilities=[Planning()],
+                    model_settings=AnthropicModelSettings(anthropic_cache=True),
+                )
+            else:
+                openai_client = AsyncOpenAI(api_key='test', http_client=http_client)
+                agent = Agent(
+                    OpenAIChatModel('gpt-5.6', provider=OpenAIProvider(openai_client=openai_client)),
+                    capabilities=[Planning()],
+                )
 
-        @agent.tool_plain
-        def lookup(n: int) -> str:
-            return f'result {n}'
+            @agent.tool_plain
+            def lookup(n: int) -> str:
+                return f'result {n}'
 
-        # Streamed, so the mock needs one response shape whether or not a capability with an event hook
-        # elsewhere in the process would have made `agent.run` stream anyway.
-        async with agent.run_stream('Fix the bug.') as streamed:
-            assert await streamed.get_output() == 'done'
-        await http_client.aclose()
+            # Streamed, so the mock needs one response shape whether or not a capability with an event hook
+            # elsewhere in the process would have made `agent.run` stream anyway.
+            async with agent.run_stream('Fix the bug.') as streamed:
+                assert await streamed.get_output() == 'done'
 
         marker = 'cache_control' if provider == 'anthropic' else 'prompt_cache_breakpoint'
         sent = [_wire_blocks(body) for body in bodies]
