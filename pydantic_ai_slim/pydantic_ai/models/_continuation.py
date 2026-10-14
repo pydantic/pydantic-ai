@@ -15,9 +15,10 @@ glue for stitching those segments back into a single response/stream:
   drives the streamed loop, presenting every segment as one continuous stream.
 
 This module is deliberately decoupled from `_agent_graph`: it imports only from
-`models`, `messages`, `usage`, `exceptions`, and the stdlib. Pluggable timing is
-injected as `sleep_func` so the loop stays free of `now_utc()`/RNG and replays
-deterministically under durable executors (e.g. Temporal).
+`models`, `messages`, `usage`, `exceptions`, `_utils`, the stdlib, and `anyio` (for
+a shielded cancel scope during stream teardown). Pluggable timing is injected as
+`sleep_func` so the loop stays free of `now_utc()`/RNG and replays deterministically
+under durable executors (e.g. Temporal).
 """
 
 from __future__ import annotations
