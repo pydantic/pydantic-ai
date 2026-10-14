@@ -34,7 +34,7 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `web` optional group — `pip install "pydantic-ai-slim[web]"`'
     ) from _import_error
 
-CHAT_UI_VERSION = '2.3.0'
+CHAT_UI_VERSION = '2.1.0'
 DEFAULT_HTML_URL = f'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{CHAT_UI_VERSION}/dist/index.html'
 # `dist/index.html` references its stylesheet and its lazily-imported chunks on the CDN, so a copy
 # downloaded for self-hosting still reaches the public internet at runtime. `offline/index.html` is
@@ -238,7 +238,8 @@ def create_web_app(
         model_settings: Optional settings to use for all model requests.
         instructions: Optional extra instructions to pass to each agent run.
         html_source: Path or URL for the chat UI HTML. Can be:
-            - None (default): Fetches from CDN and caches locally
+            - None (default): Fetches from CDN and caches locally. Uses UI 2.1.0 for root
+                deployments and 2.3.0 when the effective browser or API path is non-default.
             - A Path instance: Reads from the local file
             - A URL string (http:// or https://): Fetches from the URL
             - A file path string: Reads from the local file
@@ -298,12 +299,18 @@ def create_web_app(
 
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""
-        content = await _get_ui_html(html_source)
         root_path = quote(request.scope.get('root_path', ''), safe='/')
         derived: dict[str, str] = {}
         if root_path not in ('', '/'):
             root_path = _normalize_same_origin_path(root_path, 'root_path')
             derived = {'basePath': root_path, 'apiPath': f'{root_path}api/'}
+
+        source = html_source
+        paths: dict[str, str] = derived | explicit
+        if source is None and (paths.get('basePath', '/') != '/' or paths.get('apiPath', '/api/') != '/api/'):
+            # Runtime path configuration requires 2.3.0; keep the existing UI for root deployments.
+            source = 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.3.0/dist/index.html'
+        content = await _get_ui_html(source)
         if derived or explicit:
             content = _inject_path_config(content, derived, explicit)
 

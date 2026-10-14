@@ -4275,7 +4275,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
             html_source: Path or URL for the chat UI HTML. Can be:
-                - None (default): Fetches from CDN and caches locally
+                - None (default): Fetches from CDN and caches locally. Uses UI 2.1.0 for root
+                    deployments and 2.3.0 when the effective browser or API path is non-default.
                 - A Path instance: Reads from the local file
                 - A URL string (http:// or https://): Fetches from the URL
                 - A file path string: Reads from the local file

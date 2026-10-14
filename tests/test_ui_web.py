@@ -252,14 +252,14 @@ def test_chat_app_configure_preserves_chat_vs_responses(monkeypatch: pytest.Monk
         assert len([m for m in model_ids if 'gpt-4o' in m]) == 2
 
 
-def _stub_cdn_fetch(monkeypatch: pytest.MonkeyPatch, content: bytes) -> list[int]:
+def _stub_cdn_fetch(monkeypatch: pytest.MonkeyPatch, content: bytes, *, urls: list[str] | None = None) -> list[int]:
     """Stub `httpx.AsyncClient` to return `content` on every fetch, returning a `[count]` list.
 
     Used by the cache tests to drive `_get_ui_html`'s CDN/url branch without a real network
     request. The returned single-element list is incremented on each fetch so a test can assert
     how many times the cache missed.
     """
-    fetch_count = [0]
+    fetch_count: list[int] = [0]
 
     class MockResponse:
         def __init__(self) -> None:
@@ -277,6 +277,8 @@ def _stub_cdn_fetch(monkeypatch: pytest.MonkeyPatch, content: bytes) -> list[int
 
         async def get(self, url: str) -> MockResponse:
             fetch_count[0] += 1
+            if urls is not None:
+                urls.append(url)
             return MockResponse()
 
     monkeypatch.setattr(app_module.httpx2, 'AsyncClient', MockAsyncClient)
@@ -529,17 +531,97 @@ def test_chat_app_index_caching(isolated_ui_cache: None):
 def test_chat_app_cached_html_remains_raw_across_root_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     source = b'<html><head><script type="module"></script></head></html>'
     monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
-    _stub_cdn_fetch(monkeypatch, source)
+    urls: list[str] = []
+    _stub_cdn_fetch(monkeypatch, source, urls=urls)
     app = create_web_app(Agent('test'))
 
+    with TestClient(app, base_url=LOCAL_BASE_URL) as root_client:
+        assert root_client.get('/').content == source
     with TestClient(app, base_url=LOCAL_BASE_URL, root_path='/first') as first_client:
         first_response = first_client.get('/')
     with TestClient(app, base_url=LOCAL_BASE_URL, root_path='/second/') as second_client:
         second_response = second_client.get('/')
+    with TestClient(app, base_url=LOCAL_BASE_URL) as root_client:
+        assert root_client.get('/').content == source
 
     assert '"basePath":"/first/","apiPath":"/first/api/"' in first_response.text
     assert '"basePath":"/second/","apiPath":"/second/api/"' in second_response.text
-    assert (tmp_path / f'{app_module.CHAT_UI_VERSION}.html').read_bytes() == source
+    assert urls == [
+        'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.1.0/dist/index.html',
+        'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.3.0/dist/index.html',
+    ]
+    assert (tmp_path / '2.1.0.html').read_bytes() == source
+    configured_hash = hashlib.sha256(urls[1].encode()).hexdigest()[:16]
+    assert (tmp_path / f'url_{configured_hash}.html').read_bytes() == source
+
+
+@pytest.mark.parametrize(
+    ('root_path', 'base_path', 'api_path', 'version'),
+    [
+        ('', None, None, '2.1.0'),
+        ('/', None, None, '2.1.0'),
+        ('', '/', None, '2.1.0'),
+        ('', None, '/api', '2.1.0'),
+        ('', '/', '/api/', '2.1.0'),
+        ('', '/chat', None, '2.3.0'),
+        ('', None, '/agent-api', '2.3.0'),
+        ('', None, '/', '2.3.0'),
+        ('/proxy', None, None, '2.3.0'),
+        ('/proxy', '/', None, '2.3.0'),
+        ('/proxy', None, '/api/', '2.3.0'),
+        ('/proxy', '/', '/api/', '2.1.0'),
+    ],
+)
+def test_chat_app_selects_ui_for_effective_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    root_path: str,
+    base_path: str | None,
+    api_path: str | None,
+    version: str,
+):
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
+    urls: list[str] = []
+    _stub_cdn_fetch(monkeypatch, b'<html>UI</html>', urls=urls)
+    app = Agent('test').to_web(base_path=base_path, api_path=api_path)
+
+    with TestClient(app, base_url=LOCAL_BASE_URL, root_path=root_path) as client:
+        assert client.get('/').status_code == 200
+
+    assert urls == [f'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{version}/dist/index.html']
+
+
+@pytest.mark.parametrize('root_path', ['', '/demo'])
+@pytest.mark.parametrize(
+    'html_source',
+    [
+        'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.1.0/dist/index.html',
+        'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.1.0/offline/index.html',
+        'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.3.0/offline/index.html',
+        'https://custom.example.com/ui.html',
+    ],
+)
+def test_chat_app_preserves_custom_online_and_offline_sources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, root_path: str, html_source: str
+):
+    assert app_module.DEFAULT_HTML_URL == 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.1.0/dist/index.html'
+    assert app_module.OFFLINE_HTML_URL == 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.1.0/offline/index.html'
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
+    urls: list[str] = []
+    source = b'<html>Custom UI</html>'
+    _stub_cdn_fetch(monkeypatch, source, urls=urls)
+    app = Agent('test').to_web(html_source=html_source)
+
+    with TestClient(app, base_url=LOCAL_BASE_URL, root_path=root_path) as client:
+        response = client.get('/')
+
+    assert response.status_code == 200
+    assert urls == [html_source]
+    if root_path:
+        assert response.content.startswith(source)
+        assert '"basePath":"/demo/","apiPath":"/demo/api/"' in response.text
+    else:
+        assert response.content == source
 
 
 def test_chat_app_root_preserves_ui_build_defaults(monkeypatch: pytest.MonkeyPatch):

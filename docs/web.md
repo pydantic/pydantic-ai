@@ -179,15 +179,17 @@ the returned app's internal routes, so the outer application or proxy must route
 to the app accordingly.
 
 At the origin root, omitted settings are not injected, and the UI keeps its own build defaults.
+Ordinary root deployments, including `clai web`, keep UI 2.1.0. With the default HTML source,
+`to_web()` selects UI 2.3.0 when the effective browser or API path differs from `/` or `/api/`.
 
 When settings are injected, three sources are layered, each overriding the one before it: the paths
 derived from `root_path`, then a `window.PYDANTIC_AI_CHAT_CONFIG` that a custom
 [`html_source`](#custom-html-source) sets for itself, then `base_path` and `api_path`. So a custom
 HTML file keeps control of any path it configures unless you pass that path explicitly.
 
-The `window.PYDANTIC_AI_CHAT_CONFIG` global is read by `@pydantic/ai-chat-ui` 2.3.0 and later,
-which `to_web()` fetches by default. Older self-hosted HTML files ignore the injected paths;
-re-download the [offline artifact](#custom-html-source) before serving the UI below a prefix.
+The `window.PYDANTIC_AI_CHAT_CONFIG` global is read by `@pydantic/ai-chat-ui` 2.3.0 and later.
+Custom `html_source` values are used unchanged. Older self-hosted HTML files ignore the injected
+paths; download a compatible [offline artifact](#custom-html-source) before serving the UI below a prefix.
 
 `clai web` always serves at the origin root; to serve below a prefix, build the app with
 `agent.to_web()` and mount or proxy it yourself.
@@ -222,11 +224,13 @@ inlined, so it needs no network access beyond your own server:
 from pydantic_ai.ui import OFFLINE_HTML_URL
 
 print(OFFLINE_HTML_URL)  # Use this URL to download the self-contained UI HTML file
-#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.3.0/offline/index.html
+#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.1.0/offline/index.html
 ```
 
 Download it once from a machine that has internet access, then move it into the air-gapped
-environment:
+environment. For mounted or configured non-default paths, download the
+[2.3.0 offline build](https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.3.0/offline/index.html)
+instead; the 2.1.0 build ignores path configuration:
 
 ```bash
 curl -o ~/pydantic-ai-ui.html <chat_ui_url>
@@ -255,5 +259,5 @@ is unchanged and still uses the split build:
 from pydantic_ai.ui import DEFAULT_HTML_URL
 
 print(DEFAULT_HTML_URL)
-#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.3.0/dist/index.html
+#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.1.0/dist/index.html
 ```
