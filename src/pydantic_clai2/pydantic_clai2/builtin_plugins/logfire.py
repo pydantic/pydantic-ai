@@ -57,8 +57,9 @@ class LogfireSettings(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True, strict=True, hide_input_in_errors=True)
     service_name: str = Field(default='pydantic-clai2', min_length=1)
     send_to_logfire: Literal[False, 'if-token-present'] = 'if-token-present'
-    include_content: bool = True
-    include_binary_content: bool = True
+    # Off unless chosen here, so a `LOGFIRE_TOKEN` set for another project never receives prompts or files.
+    include_content: bool = False
+    include_binary_content: bool = False
     user_tag: Literal['logfire-account', 'git-email', False] = Field(
         default='logfire-account',
         description='Tag session roots with the email of the Logfire account that signed in during project setup, '
@@ -321,7 +322,7 @@ _ROWS = (
         key='include_content',
         label='Message content',
         description='Record prompts, responses, and tool arguments and results in spans.',
-        default='true',
+        default='false',
         choices=_BOOLEAN,
         choice_labels=_INCLUDED,
         allow_custom=False,
@@ -330,7 +331,7 @@ _ROWS = (
         key='include_binary_content',
         label='Binary content',
         description='Record images, audio, and other file data in spans. Needs message content included.',
-        default='true',
+        default='false',
         choices=_BOOLEAN,
         choice_labels=_INCLUDED,
         allow_custom=False,

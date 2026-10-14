@@ -179,12 +179,14 @@ Logfire instance. It exports to Logfire only when credentials are present, with
 no interactive setup or console logging. Errors CLAI shows and recovers from (plugin
 load failures, failed turns, unexpected slash command failures, failing plugin
 handlers) are recorded with their traceback, or only their type with include_content
-false; usage errors are not. Text and binary images are included by
-default, so review the telemetry destination before setting LOGFIRE_TOKEN. Use
-/plugins disable observability to remove it, or replace its settings with:
+false; usage errors are not. Prompts, results, and binary images are left out by
+default (include_content and include_binary_content are false), so credentials
+alone export only metadata. Review the telemetry destination before turning
+content on. Use /plugins disable observability to remove it, or replace its
+settings with:
 
 ```text
-/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": true, "include_binary_content": true}'
 ```
 
 Other options are service_name (default pydantic-clai2), send_to_logfire
