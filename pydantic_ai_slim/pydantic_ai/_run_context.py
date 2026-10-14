@@ -980,8 +980,8 @@ def with_tool_name_path(ctx: RunContext[AgentDepsT], path: ToolNamePath) -> RunC
     """A copy of the context with the given tool name path.
 
     Not `dataclasses.replace`, which rebuilds the context from its dataclass fields:
-    `TemporalRunContext` and `RenderRunContext` keep snapshots such as `available_tool_names`
-    outside them.
+    `TemporalRunContext` and `RenderRunContext` keep wire state such as `workspace_ref`, and a
+    custom subclass's own keys, outside them.
     """
     return _utils.replace_no_init(ctx, _tool_name_path=path)
 

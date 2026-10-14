@@ -5,7 +5,7 @@ import functools
 import inspect
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import KW_ONLY, dataclass, replace
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, TypeAlias, assert_never, cast
 
 import anyio
@@ -469,6 +469,23 @@ class EnqueueGuard(list[PendingMessage]):
 
     def append(self, pending: PendingMessage) -> None:
         raise UserError(self._message)
+
+
+@dataclass
+class DispatchSnapshots:
+    """The dispatch-time snapshots a reconstructed durable run context carries outside `RunContext`'s fields.
+
+    `RunContext` derives these from live run state that cannot cross a process boundary, so the
+    Temporal and Render contexts carry the values resolved at dispatch and read them back through
+    property overrides. `dataclasses.replace` rebuilds a context from its instance
+    `__dataclass_fields__` alone, so those contexts add these fields to that set whenever the
+    payload carried them. Otherwise each copy made inside a durable unit, such as a tool's
+    `prepare` context, would lose them.
+    """
+
+    available_tool_names: set[str] = field(repr=False)
+    active_capability_ids: set[str] = field(repr=False)
+    _deferred_capability_ids: set[str] = field(repr=False)
 
 
 def enqueue_not_supported_message(unit_noun: str, container_noun: str) -> str:

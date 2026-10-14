@@ -10,8 +10,8 @@ contracts not exposed there:
   operations. Covered by `test_protocol.py` and `test_transports.py`.
 * `_workspace`: the core workspace call schema, rather than a copied schema.
   Covered by `test_workspaces.py`.
-* `_run_context` and `_toolset`: availability evidence, enqueue rejection, tool
-  outcomes and validation-context reconstruction. Covered by `test_transports.py`,
+* `_run_context` and `_toolset`: availability evidence, dispatch snapshot fields,
+  enqueue rejection, tool outcomes and validation-context reconstruction. Covered by `test_transports.py`,
   `test_effects_contracts.py` and `test_workspaces.py`.
 
 Private context attributes and the effective tracer lookup also remain here.
@@ -57,6 +57,7 @@ from pydantic_ai.durable_exec._operation import (
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
+    DispatchSnapshots,
     DynamicToolsResult,
     EnqueueGuard,
     enqueue_not_supported_message,
@@ -445,29 +446,17 @@ class RenderRunContext(RunContext[AgentDepsT]):
         setattr(
             self,
             '__dataclass_fields__',
-            {name: field for name, field in RunContext.__dataclass_fields__.items() if name in self.__dict__},
+            {
+                name: field
+                for name, field in (RunContext.__dataclass_fields__ | DispatchSnapshots.__dataclass_fields__).items()
+                if name in self.__dict__
+            },
         )
 
     def __getattribute__(self, name: str) -> Any:
         if name in _GUARDED_FIELDS and name not in object.__getattribute__(self, '__dataclass_fields__'):
             raise UserError(f'{name!r} is not available on {self.__class__.__name__!r} inside a Render child task.')
         return super().__getattribute__(name)
-
-    def restore_snapshots(self, source: RenderRunContext[AgentDepsT]) -> None:
-        """Preserve worker-only state after core guards copy the dataclass fields.
-
-        These snapshots are properties or wire metadata, so `dataclasses.replace`
-        omits them. Do not copy dataclass fields: core has just guarded those.
-        """
-        for name in (
-            'available_tool_names',
-            'active_capability_ids',
-            '_deferred_capability_ids',
-            'workspace_ref',
-            '_model_id',
-        ):
-            if name in source.__dict__:
-                self.__dict__[name] = source.__dict__[name]
 
     @property
     def available_tool_names(self) -> set[str]:
