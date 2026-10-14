@@ -80,8 +80,8 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
     different concepts for pixel sizes, aspect ratios, and resolution tiers.
     """
 
-    openai_quality: Literal['low', 'medium', 'high', 'auto']
-    """GPT Image quality setting."""
+    openai_quality: Literal['low', 'medium', 'high', 'xhigh', 'max', 'auto']
+    """GPT Image quality setting. `xhigh` and `max` require a GPT Image 2.5 model."""
 
     openai_background: Literal['transparent', 'opaque', 'auto']
     """OpenAI image background setting."""

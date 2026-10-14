@@ -596,11 +596,11 @@ For more details, check the [API documentation][pydantic_ai.native_tools.ImageGe
 | `background` | ✅ | ❌ |
 | `input_fidelity` | ✅ | ❌ |
 | `moderation` | ✅ | ❌ |
-| `model` | ✅ (gpt-image-2, gpt-image-1.5, gpt-image-1, gpt-image-1-mini, or another OpenAI image model ID) | ❌ |
+| `model` | ✅ (gpt-image-2.5-flare, gpt-image-2.5-sunburst, gpt-image-2, gpt-image-1.5, gpt-image-1, gpt-image-1-mini, or another OpenAI image model ID) | ❌ |
 | `output_compression` | ✅ (100 (default), jpeg or webp only) | ✅ (75 (default), jpeg only, Google Cloud only) |
 | `output_format` | ✅ | ✅ (Google Cloud only) |
 | `partial_images` | ✅ | ❌ |
-| `quality` | ✅ | ❌ |
+| `quality` | ✅ (`xhigh` and `max` require a GPT Image 2.5 model) | ❌ |
 | `size` | ✅ (auto (default), 1024x1024, 1024x1536, 1536x1024) | ✅ (512, 1K (default), 2K, 4K) |
 | `aspect_ratio` | ✅ (1:1, 2:3, 3:2) | ✅ (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9) |
 

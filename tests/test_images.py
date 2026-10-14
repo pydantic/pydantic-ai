@@ -455,6 +455,8 @@ def test_known_openai_image_generation_model_names():
         'openai:gpt-image-1-mini',
         'openai:gpt-image-1.5',
         'openai:gpt-image-2',
+        'openai:gpt-image-2.5-flare',
+        'openai:gpt-image-2.5-sunburst',
     }
 
 
@@ -686,6 +688,23 @@ def test_google_extended_ratio_dimensions_match_the_live_api(aspect_ratio: str, 
 def test_openai_gpt_image_2_rejects_out_of_bounds_dimensions(dimensions: tuple[int, int], error_message: str):
     with pytest.raises(UserError, match=error_message):
         openai_geometry.resolve_openai_dimensions('gpt-image-2', dimensions)
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'gpt-image-2.5-flare',
+        'gpt-image-2.5-flare-2026-09-08',
+        'gpt-image-2.5-sunburst',
+        'gpt-image-2.5-sunburst-2026-09-08',
+    ],
+)
+def test_openai_gpt_image_2_5_shares_gpt_image_2_geometry(model_name: str):
+    """OpenAI's image generation guide gives GPT Image 2.5 the GPT Image 2 size limits."""
+    assert openai_geometry.resolve_openai_dimensions(model_name, (1536, 864)) == '1536x864'
+    assert openai_geometry.resolve_openai_aspect_ratio(model_name, '16:9') == '1280x720'
+    with pytest.raises(UserError, match='longest edge'):
+        openai_geometry.resolve_openai_dimensions(model_name, (4096, 2048))
 
 
 def test_openai_geometry_conflicts_and_invalid_compatibility_sizes():
@@ -3652,6 +3671,19 @@ async def test_openai_forwards_unvalidated_transparent_background(model_name: st
     await model.generate('transparent image', settings=OpenAIImageGenerationSettings(openai_background='transparent'))
 
     assert openai_mock_client.images.generate.await_args.kwargs['background'] == 'transparent'
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_gpt_image_2_5_forwards_xhigh_quality(openai_mock_client: AsyncMock):
+    openai_mock_client.images.generate.return_value = _openai_png_response()
+    model = OpenAIImageGenerationModel(
+        'gpt-image-2.5-flare',
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client)),
+    )
+
+    await model.generate('a lighthouse at dusk', settings=OpenAIImageGenerationSettings(openai_quality='xhigh'))
+
+    assert openai_mock_client.images.generate.await_args.kwargs['quality'] == 'xhigh'
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
