@@ -3472,18 +3472,21 @@ def test_replace_keeps_dispatch_snapshots():
 
     Core copies the context with `replace` inside activities, for a tool's `prepare`, a name-changing wrapper's
     `call_tool` and the `enqueue()` guard. The snapshots are not `RunContext` fields, so they survive only because
-    the reconstructed context adds them to the field set `replace` rebuilds from.
+    the reconstructed context adds them to the field set `replace` rebuilds from. The real-run tests read
+    `available_tool_names` and `active_capability_ids`; this one also covers the on-demand set behind
+    `is_tool_available`, which none of them reach.
     """
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), discovered_tool_names={'searched_tool'})
     reconstructed = TemporalRunContext.deserialize_run_context(TemporalRunContext.serialize_run_context(ctx), deps=None)
 
     copied = replace(reconstructed, tool_name='tool')
 
+    deferred = ToolDefinition(name='deferred', defer_loading=True, capability_id='deferred')
     assert (
         copied.available_tool_names,
         copied.active_capability_ids,
-        copied._deferred_capability_ids,  # pyright: ignore[reportPrivateUsage]
-    ) == snapshot(({'searched_tool'}, set(), set()))
+        copied.is_tool_available(deferred),
+    ) == snapshot(({'searched_tool'}, set(), False))
 
 
 _custom_context_reads: list[tuple[str, str, str, list[str]]] = []

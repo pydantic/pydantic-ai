@@ -532,10 +532,11 @@ def cancel_not_supported_message(unit_noun: str, container_noun: str) -> str:
 def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_noun: str) -> RunContext[AgentDepsT]:
     """Return a copy of `ctx` whose `enqueue()` and `cancel()` raise, for user code in a durable unit.
 
-    Used by the in-process engines (DBOS steps, Prefect tasks) that pass the live context into
-    the durable unit. Temporal reconstructs its context across the activity boundary and installs
-    the enqueue guard in `deserialize_run_context` instead (its `cancel` protection is
-    structural: the live controller is never serialized).
+    Every engine's durable units go through it: on the live context for the in-process engines
+    (DBOS steps, Prefect tasks), and on the reconstructed context for Temporal activities and
+    Render child tasks. Temporal's tool activities are the exception: their context gets the
+    enqueue guard in `deserialize_run_context` instead (its `cancel` protection is structural:
+    the live controller is never serialized).
     """
     return replace(
         ctx,

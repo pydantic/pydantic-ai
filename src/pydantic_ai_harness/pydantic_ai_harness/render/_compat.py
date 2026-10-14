@@ -10,8 +10,9 @@ contracts not exposed there:
   operations. Covered by `test_protocol.py` and `test_transports.py`.
 * `_workspace`: the core workspace call schema, rather than a copied schema.
   Covered by `test_workspaces.py`.
-* `_run_context` and `_toolset`: availability evidence, dispatch snapshot fields,
-  enqueue rejection, tool outcomes and validation-context reconstruction. Covered by `test_transports.py`,
+* `_run_context` and `_toolset`: availability evidence, dispatch snapshot
+  fields, enqueue rejection, tool outcomes and validation-context
+  reconstruction. Covered by `test_transports.py`,
   `test_effects_contracts.py` and `test_workspaces.py`.
 
 Private context attributes and the effective tracer lookup also remain here.
