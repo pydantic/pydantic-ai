@@ -887,6 +887,12 @@ class OpenRouterModel(OpenAIChatModel):
         Raises `UserError` when nothing but system messages comes before it, and when the
         `CachePoint` is its message's only content: dropping that message would leave the assistant turn
         last, which Anthropic reads as a prefill.
+
+        `_move_leading_cache_breakpoints` in `openai.py` handles the same shape for OpenAI's
+        `prompt_cache_breakpoint`. It isn't shared because the rules differ in every step: here only user
+        messages carry the marker, a longer TTL already on the target wins, a missing target drops the
+        marker instead of raising, a `CachePoint`-only message raises instead of being deleted, and the
+        placeholder is recognized by type rather than shape. Check the other one when changing either.
         """
         for index, message in enumerate(openai_messages):
             content = message.get('content')
