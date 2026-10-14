@@ -17,6 +17,8 @@ The `douwebot:review-agent-config` label requests one review only from its first
 
 Removing the approval label cancels in-flight work on a best-effort basis; cancellation may not stop a reviewer that has already started. Both review labels share the per-PR concurrency group, so removing the approval label can also cancel an ordinary review, and reapplying it starts another workflow run that uses that shared slot.
 
+Other label removals use unique concurrency groups so their no-op runs cannot replace queued review requests.
+
 **They are independent.** Neither reads the other's state, and the label suppresses
 nothing: `douwebot` is an on-demand deep pass on top of `CI Review`, requested when a
 PR warrants a second opinion. Do not reintroduce a gate from one onto the other — the

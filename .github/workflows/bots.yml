@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: pr-bots-${{ github.event.pull_request.number }}
+  group: pr-bots-${{ github.event.pull_request.number }}${{ github.event.action == 'unlabeled' && github.event.label.name != 'douwebot:review-agent-config' && format('-noop-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event.action == 'synchronize' || (github.event.action == 'unlabeled' && github.event.label.name == 'douwebot:review-agent-config') }}
 
 jobs:

@@ -202,6 +202,11 @@ def test_workflow_routes_events_and_cancellation_without_relying_on_label_presen
     )
     assert jobs['size-label']['if'] == "github.event.action == 'opened' || github.event.action == 'synchronize'"
     assert jobs['category-classify']['if'] == "github.event.action == 'opened' || github.event.action == 'synchronize'"
+    assert workflow['concurrency']['group'] == (
+        "pr-bots-${{ github.event.pull_request.number }}${{ github.event.action == 'unlabeled' "
+        "&& github.event.label.name != 'douwebot:review-agent-config' "
+        "&& format('-noop-{0}', github.run_id) || '' }}"
+    )
     assert "github.event.action == 'unlabeled'" in workflow['concurrency']['cancel-in-progress']
     assert APPROVAL_LABEL in workflow['concurrency']['cancel-in-progress']
 
