@@ -383,28 +383,39 @@ def legacy_http_probe(build: Callable[[httpx.AsyncClient], Model]) -> Probe:
     return probe
 
 
-async def bedrock_probe(settings: ModelSettings) -> str | None:
+def botocore_probe(build: Callable[[], BedrockConverseModel]) -> Probe:
     """Probe Bedrock through botocore's `before-send` event — there is no httpx client to inject."""
-    recorder = Recorder()
-    model = BedrockConverseModel(
+
+    async def probe(settings: ModelSettings) -> str | None:
+        recorder = Recorder()
+        model = build()
+
+        def handle(request: Any, **_: Any) -> None:
+            body = request.body
+            recorder.record(
+                {
+                    'body': body.decode('utf8', 'replace') if isinstance(body, bytes) else str(body),
+                    'headers': sorted(
+                        f'{k}:{v}' for k, v in request.headers.items() if k.lower() not in BEDROCK_VOLATILE
+                    ),
+                }
+            )
+            raise ProbeAborted
+
+        for operation in ('Converse', 'ConverseStream'):
+            model.client.meta.events.register_last(f'before-send.bedrock-runtime.{operation}', handle)
+        await run_probe_request(model, settings)
+        return recorder.first
+
+    return probe
+
+
+bedrock_probe = botocore_probe(
+    lambda: BedrockConverseModel(
         'anthropic.claude-sonnet-4-5-20250929-v1:0',
         provider=BedrockProvider(aws_access_key_id=PROBE_KEY, aws_secret_access_key=PROBE_KEY, region_name='us-east-1'),
     )
-
-    def handle(request: Any, **_: Any) -> None:
-        body = request.body
-        recorder.record(
-            {
-                'body': body.decode('utf8', 'replace') if isinstance(body, bytes) else str(body),
-                'headers': sorted(f'{k}:{v}' for k, v in request.headers.items() if k.lower() not in BEDROCK_VOLATILE),
-            }
-        )
-        raise ProbeAborted
-
-    for operation in ('Converse', 'ConverseStream'):
-        model.client.meta.events.register_last(f'before-send.bedrock-runtime.{operation}', handle)
-    await run_probe_request(model, settings)
-    return recorder.first
+)
 
 
 async def huggingface_probe(settings: ModelSettings) -> str | None:
@@ -418,12 +429,18 @@ async def huggingface_probe(settings: ModelSettings) -> str | None:
     return canonical(recorder.chat_completion_kwargs[0]) if recorder.chat_completion_kwargs else None
 
 
-async def xai_probe(settings: ModelSettings) -> str | None:
+def xai_sdk_probe(build: Callable[[AsyncXaiClient], Model]) -> Probe:
     """Probe xAI at the SDK call — its transport is gRPC, so there is no HTTP request to read."""
-    recorder = MockXai(responses=[ProbeAborted()])
-    model = XaiModel('grok-4', provider=XaiProvider(xai_client=cast(AsyncXaiClient, recorder)))
-    await run_probe_request(model, settings)
-    return canonical(recorder.chat_create_kwargs[0]) if recorder.chat_create_kwargs else None
+
+    async def probe(settings: ModelSettings) -> str | None:
+        recorder = MockXai(responses=[ProbeAborted()])
+        await run_probe_request(build(cast(AsyncXaiClient, recorder)), settings)
+        return canonical(recorder.chat_create_kwargs[0]) if recorder.chat_create_kwargs else None
+
+    return probe
+
+
+xai_probe = xai_sdk_probe(lambda client: XaiModel('grok-4', provider=XaiProvider(xai_client=client)))
 
 
 async def mcp_sampling_probe(settings: ModelSettings) -> str | None:
