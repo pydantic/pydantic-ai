@@ -13,7 +13,7 @@ import subprocess
 import sys
 from collections.abc import AsyncIterator
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
@@ -23,9 +23,9 @@ from ...conftest import try_import
 with try_import() as imports_successful:
     from render.experimental.sandbox import SandboxExecEvent, SandboxExecExit, SandboxExecOutput
 
-    from pydantic_ai.workspaces import WorkspaceTimeoutError
+    from pydantic_ai.workspaces import WorkspaceError, WorkspaceOutputLimitError, WorkspaceTimeoutError
 
-    from .workspace_helpers import WorkspaceHarness
+    from .workspace_helpers import WorkspaceHarness, local_python_command
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='render not installed'),
@@ -48,6 +48,7 @@ class LocalExec:
     output: asyncio.Queue[bytes] = field(default_factory=asyncio.Queue[bytes])
     delay_next: bool = False
     delayed: str | None = None
+    drain_before_stop: bool = False
 
     async def exec(self, sandbox_id: str, launch: str) -> AsyncIterator[SandboxExecEvent]:
         argv = shlex.split(launch)
@@ -60,11 +61,16 @@ class LocalExec:
             self.delay_next = False
             self.delayed = launch
             raise ConnectionError('start response lost before the server launches the command')
+        if argv[3] == 'stop' and self.drain_before_stop:
+            # A delayed provider stop lets the remote supervisor's own deadline fire.
+            await asyncio.gather(*(process.wait() for process in self.processes))
         process = await asyncio.create_subprocess_exec(
-            sys.executable,
-            *argv[1:],
-            # No host credentials or coverage instrumentation enter the child.
-            env={'PATH': os.defpath},
+            *local_python_command(argv),
+            # Keep host credentials out; subprocess coverage adds only its bookkeeping.
+            env={
+                'PATH': os.defpath,
+                **{key: value for key, value in os.environ.items() if key == 'COVERAGE_PROCESS_CONFIG'},
+            },
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -94,7 +100,7 @@ class LocalExec:
             await self.wait()
         finally:
             for process in self.processes:
-                if process.returncode is None:
+                if process.returncode is None:  # pragma: no cover - independent cleanup after a regression
                     process.kill()
                     await process.wait()
             for claim in self.claims:
@@ -151,13 +157,13 @@ async def test_supervisor_stops_the_real_foreground_process(
     finally:
         # This fallback is independent of the supervisor's stop implementation,
         # so a regression cannot leave the test command or its child running.
-        if pid is not None:
+        if pid is not None:  # pragma: no branch - missing PID only follows an earlier test failure
             with suppress(ProcessLookupError):
                 os.killpg(pid, signal.SIGKILL)
-        if child_pid is not None:
+        if child_pid is not None:  # pragma: no branch - missing PID only follows an earlier test failure
             with suppress(ProcessLookupError):
                 os.kill(child_pid, signal.SIGKILL)
-        if not task.done():
+        if not task.done():  # pragma: no cover - independent cleanup after a regression
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         await backend.destroy()
@@ -178,10 +184,10 @@ async def test_supervisor_returns_after_direct_exit_with_inherited_pipe(
         assert (result.exit_code, result.stdout, result.stderr) == (0, 'done', '')
         os.kill(int(background_pid.read_text()), 0)
     finally:
-        if background_pid.exists():
+        if background_pid.exists():  # pragma: no branch - absent only if command startup regresses
             try:
                 os.kill(int(background_pid.read_text()), signal.SIGKILL)
-            except ProcessLookupError:
+            except ProcessLookupError:  # pragma: lax no cover - OS may already have reaped the background child
                 pass
         await backend.destroy()
 
@@ -203,5 +209,84 @@ async def test_stop_fence_prevents_a_delayed_launch(
         assert isinstance(events[-1], SandboxExecExit) and events[-1].exit_code == 0
         assert not sentinel.exists()
         assert (await backend.run(['printf', 'still alive'])).stdout == 'still alive'
+    finally:
+        await backend.destroy()
+
+
+@pytest.mark.parametrize('failure', ['missing', 'permission', 'format'])
+async def test_supervisor_reports_executable_startup_failure(
+    workspace_harness: WorkspaceHarness, local_exec: LocalExec, tmp_path: Path, failure: str
+) -> None:
+    executable = tmp_path / 'program'
+    if failure != 'missing':
+        executable.write_text('not an executable format')
+        executable.chmod(0o700 if failure == 'format' else 0o600)
+    backend = workspace_harness.backend()
+    try:
+        if failure == 'format':
+            with pytest.raises(WorkspaceError, match='supervisor failed'):
+                await backend.run([str(executable)])
+        else:
+            result = await backend.run([str(executable)])
+            assert result.exit_code == (127 if failure == 'missing' else 126)
+        assert (await backend.run(['printf', 'usable'])).stdout == 'usable'
+    finally:
+        await backend.destroy()
+
+
+async def test_supervisor_output_bound_preserves_captured_prefix(
+    workspace_harness: WorkspaceHarness, local_exec: LocalExec
+) -> None:
+    workspace_harness.config = replace(workspace_harness.config, max_output_bytes=512)
+    backend = workspace_harness.backend()
+    try:
+        with pytest.raises(WorkspaceOutputLimitError) as caught:
+            await backend.run(['sh', '-c', 'printf "%05000d" 0'])
+        assert caught.value.limit == 512
+        assert caught.value.stdout == '0' * 512
+        await local_exec.wait()
+        assert (await backend.run(['printf', 'usable'])).stdout == 'usable'
+    finally:
+        await backend.destroy()
+
+
+async def test_remote_deadline_stops_command_when_provider_stop_is_delayed(
+    workspace_harness: WorkspaceHarness, local_exec: LocalExec
+) -> None:
+    backend = workspace_harness.backend()
+    await backend.working_dir()
+    while not local_exec.output.empty():
+        local_exec.output.get_nowait()
+    local_exec.drain_before_stop = True
+    pending = asyncio.create_task(backend.run(['sh', '-c', 'echo $$; exec sleep 60'], timeout=1))
+    pid: int | None = None
+    try:
+        async with asyncio.timeout(10):
+            pid = int(await local_exec.output.get())
+        with pytest.raises(WorkspaceTimeoutError):
+            await pending
+        await local_exec.wait()
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+    finally:
+        # This fallback still owns the process if its remote deadline regresses.
+        local_exec.drain_before_stop = False
+        if pid is not None:  # pragma: no branch - missing PID only follows an earlier test failure
+            with suppress(ProcessLookupError):
+                os.killpg(pid, signal.SIGKILL)
+        if not pending.done():  # pragma: no cover - independent cleanup after a regression
+            pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+        await backend.destroy()
+
+
+async def test_supervisor_drains_closed_stdout_and_separate_stderr(
+    workspace_harness: WorkspaceHarness, local_exec: LocalExec
+) -> None:
+    backend = workspace_harness.backend()
+    try:
+        # Closing one pipe while the child is alive must not discard the other pipe.
+        result = await backend.run(['sh', '-c', 'exec 1>&-; sleep 0.1; printf stderr >&2'])
+        assert (result.exit_code, result.stdout, result.stderr) == (0, '', 'stderr')
     finally:
         await backend.destroy()

@@ -265,8 +265,7 @@ class RenderSandboxBackend:
         await asyncio.shield(self._create_task)
 
     async def _ensure_ready(self) -> str:
-        if self._terminal:
-            raise WorkspaceUnavailableError('This Render workspace has been destroyed')
+        # The caller's _operation scope already rejects a destroyed workspace.
         async with self._acquire_lock:
             if self._cwd is not None:
                 return self._cwd

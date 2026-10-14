@@ -7,12 +7,14 @@ No credentials, network, or private Pydantic/Render interfaces are used.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import shlex
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Self
 
 import pytest
 
@@ -20,6 +22,7 @@ from ...conftest import try_import
 
 with try_import() as imports_successful:
     from render import RenderAsync
+    from render.client.errors import ClientError
     from render.experimental.sandbox import (
         Sandbox,
         SandboxExecEvent,
@@ -28,13 +31,30 @@ with try_import() as imports_successful:
         SandboxNotFoundError,
     )
 
-    from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceUnavailableError
+    from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
     from pydantic_ai_harness.render_sandbox import (
         RenderSandboxBackend,
         RenderSandboxCleanupError,
         RenderSandboxConfig,
         RenderSandboxEvent,
     )
+
+    class UnexpectedExit(SandboxExecExit):
+        """An unsupported SDK event shape must not be treated as a valid exit."""
+
+
+@dataclass
+class EventIterator:
+    """A finite public SDK iterator without generator-specific cleanup methods."""
+
+    events: AsyncIterator[SandboxExecEvent]
+
+    def __aiter__(self) -> Self:
+        return self
+
+    async def __anext__(self) -> SandboxExecEvent:
+        return await anext(self.events)
+
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='render not installed')
 
@@ -54,6 +74,10 @@ class ScriptedSDK:
     state_after_terminate: str = 'terminated'
     status_script: list[str | Exception] = field(default_factory=list[str | Exception])
     transport_error: Exception | None = None
+    readiness_output: str = '/workspace\n'
+    readiness_code: int = 0
+    stop_started: asyncio.Event = field(default_factory=asyncio.Event)
+    stop_gate: asyncio.Event | None = None
     observer_events: list[RenderSandboxEvent] = field(default_factory=list[RenderSandboxEvent])
 
     def sandbox(self, status: str) -> Sandbox:
@@ -107,7 +131,13 @@ class ScriptedSDK:
             return frame('output', stream='stdout', data=base64.b64encode(text.encode()).decode())
 
         if operation == 'stop':
+            self.stop_started.set()
+            if self.stop_gate is not None:
+                await self.stop_gate.wait()
             if self.stop_scenario == 'missing_ack':
+                yield SandboxExecExit(0)
+            elif self.stop_scenario == 'wrong_ack':
+                yield frame('exit', code=0)
                 yield SandboxExecExit(0)
             else:
                 yield frame('stopped')
@@ -116,66 +146,56 @@ class ScriptedSDK:
 
         # The backend prepares its working directory using the same real parser.
         if config['cwd'] == '/':
-            yield output('/workspace\n')
-            yield frame('exit', code=0)
+            yield output(self.readiness_output)
+            yield frame('exit', code=self.readiness_code)
             yield SandboxExecExit(0)
             return
 
-        async for event in self.response(nonce):
+        if self.transport_error is not None:
+            yield output('partial')
+            raise self.transport_error
+        for event in self.response(nonce):
             yield event
 
-    async def response(self, nonce: str) -> AsyncGenerator[SandboxExecEvent]:
+    def response(self, nonce: str) -> list[SandboxExecEvent]:
+        """Supply complete wire sequences so malformed messages cannot hide behind truncation."""
+
         def frame(kind: str, **fields: object) -> SandboxExecOutput:
             return SandboxExecOutput('stdout', json.dumps({'nonce': nonce, 'kind': kind, **fields}) + '\n')
 
         def output(text: str) -> SandboxExecOutput:
             return frame('output', stream='stdout', data=base64.b64encode(text.encode()).decode())
 
-        if self.transport_error is not None:
-            yield output('partial')
-            raise self.transport_error
-        if self.scenario == 'valid':
-            yield output('usable')
-        elif self.scenario == 'invalid_json':
-            yield SandboxExecOutput('stdout', '{broken\n')
-            return
-        elif self.scenario == 'invalid_base64':
-            yield frame('output', stream='stdout', data='not base64!')
-            return
-        elif self.scenario == 'wrong_identity':
-            yield SandboxExecOutput('stdout', '{"nonce":"unrelated","kind":"exit","code":0}\n')
-            return
-        elif self.scenario == 'oversized_frame':
-            yield SandboxExecOutput('stdout', 'x' * 131_073)
-            return
-        elif self.scenario == 'incomplete_frame':
-            yield SandboxExecOutput('stdout', '{"kind":')
-            yield SandboxExecExit(0)
-            return
-        elif self.scenario == 'missing_direct_exit':
-            yield output('partial')
-            yield SandboxExecExit(0)
-            return
-        elif self.scenario == 'output_after_direct_exit':
-            yield frame('exit', code=0)
-            yield output('late')
-            return
-        else:
-            assert self.scenario in {
-                'missing_sdk_exit',
-                'duplicate_sdk_exit',
-                'output_after_sdk_exit',
-            }
-            yield output('partial')
-
-        yield frame('exit', code=0)
-        if self.scenario == 'missing_sdk_exit':
-            return
-        yield SandboxExecExit(0)
-        if self.scenario == 'duplicate_sdk_exit':
-            yield SandboxExecExit(0)
-        elif self.scenario == 'output_after_sdk_exit':
-            yield output('late')
+        # Every error scenario describes the public SDK messages, including valid
+        # completion where appropriate. The backend must reject the actual defect.
+        complete = [frame('exit', code=0), SandboxExecExit(0)]
+        responses: dict[str, list[SandboxExecEvent]] = {
+            'valid': [output('usable'), *complete],
+            'invalid_json': [SandboxExecOutput('stdout', '{broken\n'), *complete],
+            'invalid_base64': [frame('output', stream='stdout', data='not base64!'), *complete],
+            'wrong_identity': [SandboxExecOutput('stdout', '{"nonce":"unrelated","kind":"started"}\n'), *complete],
+            'oversized_frame': [SandboxExecOutput('stdout', 'x' * 131_073), *complete],
+            'non_object': [SandboxExecOutput('stdout', '[1]\n'), *complete],
+            'invalid_output': [frame('output', stream='unexpected', data=''), *complete],
+            'invalid_output_data': [frame('output', stream='stdout', data=None), *complete],
+            'invalid_exit_code': [frame('exit', code=True), SandboxExecExit(0)],
+            'supervisor_error': [frame('error', category='OSError'), *complete],
+            'unknown_frame': [frame('unknown'), *complete],
+            'unexpected_stderr': [SandboxExecOutput('stderr', 'interpreter failed'), *complete],
+            'incomplete_frame': [SandboxExecOutput('stdout', '{"kind":'), SandboxExecExit(0)],
+            'missing_direct_exit': [output('partial'), SandboxExecExit(0)],
+            'missing_sdk_exit': [output('partial'), frame('exit', code=0)],
+            'duplicate_sdk_exit': [output('partial'), *complete, SandboxExecExit(0)],
+            'output_after_direct_exit': [frame('exit', code=0), output('late'), SandboxExecExit(0)],
+            'output_after_sdk_exit': [output('partial'), *complete, output('late')],
+            'remote_timeout': [frame('timeout'), SandboxExecExit(0)],
+            'fenced': [frame('fenced'), SandboxExecExit(0)],
+            'blank_line': [SandboxExecOutput('stdout', '\n'), output('usable'), *complete],
+            'oversized_output': [output('x' * 1024), *complete],
+            'invalid_sdk_exit': [frame('exit', code=0), SandboxExecExit(False)],
+            'invalid_sdk_event': [frame('exit', code=0), UnexpectedExit(0)],
+        }
+        return responses[self.scenario]
 
 
 @pytest.fixture
@@ -193,6 +213,16 @@ def boundary(monkeypatch: pytest.MonkeyPatch) -> ScriptedSDK:
     'scenario',
     [
         'invalid_json',
+        'non_object',
+        'invalid_output',
+        'invalid_output_data',
+        'invalid_sdk_exit',
+        'invalid_sdk_event',
+        'invalid_exit_code',
+        'supervisor_error',
+        'unknown_frame',
+        'unexpected_stderr',
+        'fenced',
         'invalid_base64',
         'wrong_identity',
         'oversized_frame',
@@ -222,15 +252,17 @@ async def test_unusable_command_stream_never_becomes_success_or_replays(boundary
     await backend.destroy()
 
 
+@pytest.mark.parametrize('acknowledgement', ['missing_ack', 'wrong_ack'])
 async def test_stop_failure_preserves_original_stream_error_and_recovery_reference(
     boundary: ScriptedSDK,
+    acknowledgement: str,
 ) -> None:
     backend = boundary.backend()
     await backend.working_dir()
     boundary.operations.clear()
     original = ConnectionError('response lost after command submission')
     boundary.transport_error = original
-    boundary.stop_scenario = 'missing_ack'
+    boundary.stop_scenario = acknowledgement
     with pytest.raises(ConnectionError) as caught:
         await backend.run(['side-effect'])
     assert caught.value is original
@@ -319,3 +351,137 @@ async def test_observer_warning_as_error_cannot_interrupt_cleanup(boundary: Scri
     assert boundary.terminations == 1
     assert boundary.status == 'terminated'
     assert backend.ref == WorkspaceRef(provider='render', id='sbx-scripted')
+
+
+@pytest.mark.parametrize(
+    ('code', 'directory'),
+    [(1, '/workspace\n'), (0, 'relative\n'), (0, '/workspace\nextra\n'), (0, '/nul\0directory\n')],
+)
+async def test_unusable_readiness_result_preserves_created_reference(
+    boundary: ScriptedSDK, code: int, directory: str
+) -> None:
+    # A successful API response still needs a usable absolute working directory.
+    boundary.readiness_code = code
+    boundary.readiness_output = directory
+    backend = boundary.backend()
+    with pytest.raises(WorkspaceUnavailableError, match='working directory is unavailable'):
+        await backend.working_dir()
+    assert backend.ref == WorkspaceRef(provider='render', id='sbx-scripted')
+    assert boundary.creates == 1
+    await backend.destroy()
+
+
+@pytest.mark.parametrize('stop_fails', [False, True])
+async def test_new_cancellation_during_failure_cleanup_takes_priority(boundary: ScriptedSDK, stop_fails: bool) -> None:
+    # Pause the provider's stop acknowledgement, then cancel the caller while its
+    # original transport failure is being cleaned up. Cleanup must finish first.
+    backend = boundary.backend()
+    await backend.working_dir()
+    original = ConnectionError('command response lost')
+    boundary.transport_error = original
+    boundary.stop_gate = asyncio.Event()
+    boundary.stop_scenario = 'missing_ack' if stop_fails else 'valid'
+    pending = asyncio.create_task(backend.run(['side-effect']))
+    try:
+        async with asyncio.timeout(10):
+            await boundary.stop_started.wait()
+        pending.cancel()
+        # Let the cancelled caller observe its shielded stop before releasing it.
+        await asyncio.sleep(0)
+        boundary.stop_gate.set()
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await pending
+        assert caught.value.__cause__ is original
+        if stop_fails:
+            assert any('stop also failed' in note for note in caught.value.__notes__)
+        assert backend.ref == WorkspaceRef(provider='render', id='sbx-scripted')
+        assert boundary.terminations == 0
+    finally:
+        boundary.stop_gate.set()
+        await asyncio.gather(pending, return_exceptions=True)
+        await backend.destroy()
+
+
+@pytest.mark.parametrize('failure', [ClientError('denied'), SandboxNotFoundError('gone')])
+async def test_readiness_provider_error_retains_reference(boundary: ScriptedSDK, failure: Exception) -> None:
+    boundary.status_script = [failure]
+    backend = boundary.backend()
+    with pytest.raises(WorkspaceUnavailableError) as caught:
+        await backend.working_dir()
+    assert caught.value.__cause__ is failure
+    assert backend.ref == WorkspaceRef(provider='render', id='sbx-scripted')
+    assert boundary.creates == 1
+    await backend.destroy()
+
+
+@pytest.mark.parametrize('failure', [ClientError('denied'), SandboxNotFoundError('gone')])
+async def test_failed_command_status_audit_preserves_provider_error(boundary: ScriptedSDK, failure: Exception) -> None:
+    backend = boundary.backend()
+    await backend.working_dir()
+    boundary.status_script = [failure]
+    boundary.transport_error = ConnectionError('stream interrupted')
+    with pytest.raises(WorkspaceUnavailableError) as caught:
+        await backend.run(['side-effect'])
+    assert caught.value.__cause__ is failure
+    assert boundary.creates == 1
+    await backend.destroy()
+
+
+async def test_remote_timeout_is_reported_as_command_timeout(boundary: ScriptedSDK) -> None:
+    backend = boundary.backend()
+    await backend.working_dir()
+    boundary.scenario = 'remote_timeout'
+    with pytest.raises(WorkspaceTimeoutError):
+        await backend.run(['side-effect'])
+    assert backend.ref is not None
+    assert boundary.terminations == 0
+    await backend.destroy()
+
+
+async def test_blank_wire_lines_are_ignored(boundary: ScriptedSDK) -> None:
+    backend = boundary.backend()
+    await backend.working_dir()
+    boundary.scenario = 'blank_line'
+    assert (await backend.run(['side-effect'])).stdout == 'usable'
+    await backend.destroy()
+
+
+async def test_oversized_launch_is_rejected_without_dispatch(boundary: ScriptedSDK) -> None:
+    backend = boundary.backend()
+    await backend.working_dir()
+    boundary.operations.clear()
+    with pytest.raises(ValueError, match='remote exec argument limit'):
+        await backend.run(['printf', '%s', 'x' * 126_000])
+    assert boundary.operations == []
+    assert boundary.creates == 1
+    assert backend.ref is not None
+    await backend.destroy()
+
+
+async def test_wire_output_limit_preserves_partial_output(boundary: ScriptedSDK) -> None:
+    from dataclasses import replace
+
+    backend = boundary.backend()
+    backend.config = replace(backend.config, max_output_bytes=512)
+    await backend.working_dir()
+    boundary.scenario = 'oversized_output'
+    from pydantic_ai.workspaces import WorkspaceOutputLimitError
+
+    with pytest.raises(WorkspaceOutputLimitError) as caught:
+        await backend.run(['side-effect'])
+    assert caught.value.stdout == 'x' * 512
+    assert caught.value.limit == 512
+    assert boundary.terminations == 0
+    await backend.destroy()
+
+
+async def test_sdk_iterator_without_generator_methods_is_supported(
+    boundary: ScriptedSDK, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def stream(identifier: str, launch: str) -> EventIterator:
+        return EventIterator(boundary.exec(identifier, launch))
+
+    monkeypatch.setattr(boundary.client.experimental.sandboxes, 'exec', stream)
+    backend = boundary.backend()
+    assert (await backend.run(['side-effect'])).stdout == 'usable'
+    await backend.destroy()

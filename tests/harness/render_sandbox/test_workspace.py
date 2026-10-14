@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from typing import Literal
 
 import pytest
 
@@ -468,3 +469,139 @@ async def test_cancellation_in_dispatch_queue_sends_no_command_and_cleanup_bypas
 def test_invalid_command_interval_is_rejected(interval: float) -> None:
     with pytest.raises(ValueError, match='command_interval'):
         RenderSandboxConfig(command_interval=interval)
+
+
+@pytest.mark.parametrize('env', [{1: 'value'}, {'name': 1}])
+def test_environment_types_are_validated_before_resource_creation(env: dict[str, str]) -> None:
+    # Python callers can bypass annotations; reject invalid variable names and values.
+    with pytest.raises(ValueError, match='env must map strings to strings'):
+        RenderSandboxConfig(env=env)
+
+
+@pytest.mark.parametrize('lifetime', [0, 86401, True, 1.5])
+def test_invalid_lifetime_is_rejected(lifetime: int) -> None:
+    with pytest.raises(ValueError, match='lifetime_seconds'):
+        RenderSandboxConfig(lifetime_seconds=lifetime)
+
+
+@pytest.mark.parametrize('limit', [0, -1, True, 1.5])
+def test_invalid_output_limit_is_rejected(limit: int) -> None:
+    with pytest.raises(ValueError, match='max_output_bytes'):
+        RenderSandboxConfig(max_output_bytes=limit)
+
+
+@pytest.mark.parametrize(
+    ('command', 'error'),
+    [([1], TypeError), (b'not argv', TypeError), (['printf', '\0'], ValueError)],
+)
+async def test_invalid_command_shape_is_rejected_before_creation(
+    workspace_harness: WorkspaceHarness, command: WorkspaceCommand, error: type[Exception]
+) -> None:
+    backend = workspace_harness.backend()
+    with pytest.raises(error):
+        await backend.run(command)
+    assert workspace_harness.created == []
+
+
+@pytest.mark.parametrize('ref', [WorkspaceRef(provider='other', id='sb-1'), WorkspaceRef(provider='render', id='')])
+def test_backend_rejects_invalid_attachment_identity(workspace_harness: WorkspaceHarness, ref: WorkspaceRef) -> None:
+    with pytest.raises(ValueError, match='identify a Render sandbox'):
+        workspace_harness.backend(ref)
+    assert workspace_harness.created == []
+
+
+def test_backend_default_client_uses_host_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic_ai_harness.render_sandbox import RenderSandboxBackend
+
+    # Client construction reads credentials but does not contact Render or create a sandbox.
+    monkeypatch.setenv('RENDER_API_KEY', 'test-only')
+    backend = RenderSandboxBackend()
+    assert backend.ref is None
+    assert isinstance(backend.client, RenderAsync)
+
+
+async def test_cancelled_creation_preserves_provider_failure_as_cause(
+    workspace_harness: WorkspaceHarness,
+) -> None:
+    # Cancel while creation is pending, then fail that bounded create operation.
+    # The caller keeps cancellation priority and can still inspect the provider error.
+    original = ConnectionError('create response lost')
+    workspace_harness.create_gate = asyncio.Event()
+    workspace_harness.create_error = original
+    backend = workspace_harness.backend()
+    pending = asyncio.create_task(backend.working_dir())
+    await workspace_harness.create_started.wait()
+    pending.cancel()
+    await asyncio.sleep(0)
+    workspace_harness.create_gate.set()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await pending
+    assert caught.value.__cause__ is original
+    assert backend.ref is None
+    assert workspace_harness.created == []
+
+
+async def test_missing_attachment_does_not_create_replacement(workspace_harness: WorkspaceHarness) -> None:
+    backend = workspace_harness.backend(WorkspaceRef(provider='render', id='missing'))
+    with pytest.raises(WorkspaceUnavailableError):
+        await backend.working_dir()
+    assert workspace_harness.created == []
+    assert backend.ref == WorkspaceRef(provider='render', id='missing')
+
+
+@pytest.mark.parametrize('policy', ['invalid', ''])
+def test_invalid_network_policy_is_rejected(policy: Literal['allow-all', 'deny-all']) -> None:
+    with pytest.raises(ValueError, match='network_policy'):
+        RenderSandboxConfig(network_policy=policy)
+
+
+async def test_local_command_cancellation_reaps_its_process(
+    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = workspace_harness.backend()
+    await backend.working_dir()
+    original = asyncio.create_subprocess_exec
+    processes: list[asyncio.subprocess.Process] = []
+    spawned = asyncio.Event()
+
+    async def spawn(
+        program: str,
+        *args: str,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        stdin: int | None = None,
+        stdout: int | None = None,
+        stderr: int | None = None,
+    ) -> asyncio.subprocess.Process:
+        process = await original(program, *args, cwd=cwd, env=env, stdin=stdin, stdout=stdout, stderr=stderr)
+        processes.append(process)
+        spawned.set()
+        return process
+
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', spawn)
+    pending = asyncio.create_task(backend.run(['sleep', '60']))
+    try:
+        async with asyncio.timeout(10):
+            await spawned.wait()
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        assert processes[0].returncode is not None
+    finally:
+        if not pending.done():  # pragma: no cover - independent cleanup if the cancellation assertion regresses
+            pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+        for process in processes:
+            if process.returncode is None:  # pragma: no cover - independent regression cleanup
+                process.kill()
+                await process.wait()
+        await backend.destroy()
+
+
+async def test_ordinary_inline_python_command_keeps_its_arguments(workspace_harness: WorkspaceHarness) -> None:
+    backend = workspace_harness.backend()
+    try:
+        assert (await backend.run(['python3', '-c', 'print("ordinary")'])).stdout == 'ordinary\n'
+        assert workspace_harness.commands[-1] == ['python3', '-c', 'print("ordinary")']
+    finally:
+        await backend.destroy()

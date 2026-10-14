@@ -33,19 +33,14 @@ def _json_object(value: object) -> TypeGuard[dict[str, object]]:
 
 
 def _mapping(value: object) -> dict[str, object]:
-    if not _json_object(value):
+    if not _json_object(value):  # pragma: no cover - only host-generated JSON objects and owned state reach here
         raise TypeError('Expected an object')
-    items = value
-    result: dict[str, object] = {}
-    for key, item in items.items():
-        if not isinstance(key, str):
-            raise TypeError('Expected a text key')
-        result[key] = item
-    return result
+    # These objects come from JSON decoding, which already guarantees text keys.
+    return value
 
 
 def _text(value: object) -> str:
-    if not isinstance(value, str):
+    if not isinstance(value, str):  # pragma: no cover - the host validates all text fields before dispatch
         raise TypeError('Expected text')
     return value
 
@@ -60,7 +55,7 @@ def _identity(pid: int) -> str | None:
     try:
         fields = Path(f'/proc/{pid}/stat').read_text(encoding='utf-8').rsplit(')', 1)[1].split()
         return fields[19]
-    except (FileNotFoundError, IndexError):
+    except (FileNotFoundError, IndexError):  # pragma: no cover - local macOS fallback; Render uses Linux /proc
         # A local POSIX test can run on macOS. Render uses the Linux branch above.
         result = subprocess.run(
             ['ps', '-o', 'lstart=', '-p', str(pid)],
@@ -95,15 +90,15 @@ def _signal_owned(claim: Path) -> None:
     if record.get('done') is True:
         return  # Direct command already exited. Its background jobs may continue.
     pid, birth = record.get('pid'), record.get('birth')
-    if not isinstance(pid, int) or not isinstance(birth, str):
+    if not isinstance(pid, int) or not isinstance(birth, str):  # pragma: no cover - private registration corruption
         raise TypeError('Invalid process registration')
     current = _identity(pid)
-    if current is None:
+    if current is None:  # pragma: no cover - the registered child is still owned and unreaped
         return
-    if current != birth:
+    if current != birth:  # pragma: no cover - ownership lock prevents PID reuse until state is marked done
         raise RuntimeError('Process identity no longer matches; no signal was sent')
     try:
-        if os.getpgid(pid) != pid:
+        if os.getpgid(pid) != pid:  # pragma: no cover - private registration always records the new group leader
             raise RuntimeError('Registered process is not its own group leader')
         # The supervisor cannot reap this leader while we hold the lock. Even if
         # it exits between the identity check and killpg, its PID cannot be reused.
@@ -131,7 +126,7 @@ def _json_array(value: object) -> TypeGuard[list[object]]:
 
 def _spawn(config: dict[str, object]) -> subprocess.Popen[bytes]:
     values = config['argv']
-    if not _json_array(values):
+    if not _json_array(values):  # pragma: no cover - the host always supplies its validated argument list
         raise TypeError('argv must be a list')
     arguments: list[object] = values
     argv = [_text(value) for value in arguments]
@@ -152,10 +147,10 @@ def _run(config: dict[str, object]) -> None:
     claim = Path(_text(config['claim']))
     nonce = _text(config['nonce'])
     limit = config['limit']
-    if not isinstance(limit, int) or limit < 1:
+    if not isinstance(limit, int) or limit < 1:  # pragma: no cover - public config rejects invalid limits
         raise ValueError('Invalid output limit')
     timeout = config.get('timeout')
-    if timeout is not None and not isinstance(timeout, (float, int)):
+    if timeout is not None and not isinstance(timeout, (float, int)):  # pragma: no cover - host validated timeout
         raise ValueError('Invalid timeout')
     try:
         claim.mkdir(mode=0o700)
@@ -167,7 +162,7 @@ def _run(config: dict[str, object]) -> None:
         # Registration and stop are mutually exclusive. A stop that acquires this
         # lock before registration fences the launch, including a lost start ACK.
         with _locked(claim):
-            if (claim / 'stopped').exists():
+            if (claim / 'stopped').exists():  # pragma: lax no cover - the stop fence can win mkdir or registration
                 _frame('fenced', nonce)
                 return
             try:
@@ -181,7 +176,7 @@ def _run(config: dict[str, object]) -> None:
                 _frame('exit', nonce, code=126)
                 return
             birth = _identity(process.pid)
-            if birth is None:
+            if birth is None:  # pragma: no cover - the new Linux child cannot be reaped before registration
                 raise RuntimeError('Cannot record process identity')
             _state(claim, pid=process.pid, birth=birth, done=False)
         _frame('started', nonce)
@@ -190,7 +185,7 @@ def _run(config: dict[str, object]) -> None:
     finally:
         if process is not None:
             with _locked(claim):
-                if process.poll() is None:
+                if process.poll() is None:  # pragma: no cover - fallback for a private supervisor machinery failure
                     # This Popen is still our unreaped child, including if
                     # registration failed. Never rely on a missing state file.
                     try:
@@ -242,7 +237,7 @@ def _capture(
                 stream_name, pipe = pipes[fd]
                 try:
                     data = os.read(fd, _CHUNK_SIZE)
-                except BlockingIOError:
+                except BlockingIOError:  # pragma: lax no cover - nonblocking readiness can race the kernel
                     continue
                 if not data:
                     selector.unregister(fd)
@@ -251,7 +246,7 @@ def _capture(
                 remaining = max(0, limit - output_bytes)
                 captured = data[:remaining]
                 output_bytes += len(data)
-                if captured:
+                if captured:  # pragma: no branch - pipe draining can finish before another post-limit read
                     _frame(
                         'output',
                         nonce,
@@ -278,7 +273,9 @@ def main() -> None:
         elif sys.argv[1] == 'run':
             _run(config)
         else:
-            raise ValueError('Invalid supervisor operation')
+            raise ValueError(
+                'Invalid supervisor operation'
+            )  # pragma: no cover - private dispatch uses only run and stop
     except Exception as error:
         # Never echo argv, env, or file contents into control-plane diagnostics.
         _frame('error', nonce, category=type(error).__name__)

@@ -148,8 +148,8 @@ class TestRenderSandboxWorkflows:
 
         async def finish(workspace: Workspace) -> None:
             del workspace
-            if phase == 'finish':
-                raise RuntimeError('finish failed')
+            # Model and seed failures occur before this callback; the remaining case fails here.
+            raise RuntimeError('finish failed')
 
         if phase == 'seed':
             workspace_harness.transfer_error = RuntimeError('seed failed')

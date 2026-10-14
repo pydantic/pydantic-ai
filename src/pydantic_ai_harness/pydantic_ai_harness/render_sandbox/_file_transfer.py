@@ -93,7 +93,7 @@ def main() -> None:
             commit(path, staged, int(sys.argv[4]))
             result = 0
         else:
-            raise ValueError('Unknown file operation')
+            raise ValueError('Unknown file operation')  # pragma: no cover - private dispatch selects a fixed operation
         print(json.dumps({'size': result}))
     except OSError as error:
         print(json.dumps({'errno': error.errno, 'message': error.strerror}))

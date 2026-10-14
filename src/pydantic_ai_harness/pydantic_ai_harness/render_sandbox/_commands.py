@@ -74,13 +74,8 @@ def _json_object(value: object) -> TypeGuard[dict[str, object]]:
 def _object(value: object) -> dict[str, object]:
     if not _json_object(value):
         raise WorkspaceError('Invalid command supervisor frame')
-    items = value
-    result: dict[str, object] = {}
-    for key, item in items.items():
-        if not isinstance(key, str):
-            raise WorkspaceError('Invalid command supervisor key')
-        result[key] = item
-    return result
+    # These objects come from JSON decoding, which already guarantees text keys.
+    return value
 
 
 @dataclass

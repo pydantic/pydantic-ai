@@ -11,7 +11,7 @@ import pytest
 from ...conftest import try_import
 
 with try_import() as imports_successful:
-    from render.experimental.sandbox import Sandbox
+    from render.experimental.sandbox import Sandbox, SandboxNotFoundError
 
     from .workspace_live_helpers import ResourceLedger
 
@@ -39,15 +39,20 @@ class _FakeControl:
         self.calls: list[str] = []
         self.fail_terminate: set[str] = set()
         self.stuck: set[str] = set()
+        self.gone: set[str] = set()
 
     async def terminate(self, sandbox_id: str, *, owner_id: str | None = None) -> None:
         self.calls.append(sandbox_id)
+        if sandbox_id in self.gone:
+            raise SandboxNotFoundError('already gone')
         if sandbox_id not in self.stuck:
             self.statuses[sandbox_id] = 'terminated'
         if sandbox_id in self.fail_terminate:
             raise RuntimeError('credential-shaped exception text must never enter the ledger')
 
     async def from_id(self, sandbox_id: str, *, owner_id: str | None = None) -> Sandbox:
+        if sandbox_id in self.gone:
+            raise SandboxNotFoundError('already gone')
         return _snapshot(sandbox_id, self.statuses[sandbox_id])
 
 
@@ -100,3 +105,15 @@ async def test_cleanup_refuses_an_unowned_sandbox(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match='not created by this test run'):
         await ledger.terminate_owned(control, 'sbx-external')
     assert control.calls == []
+
+
+async def test_cleanup_audits_already_absent_owned_resource(tmp_path: Path) -> None:
+    ledger = ResourceLedger(tmp_path / 'resources.json')
+    ledger.record_created(_snapshot('sbx-gone'))
+    control = _FakeControl({'sbx-gone': 'running'})
+    control.gone.add('sbx-gone')
+    await ledger.cleanup_and_audit(control)
+    assert ledger.audit_complete
+    assert ledger.records['sbx-gone'].status == 'not_found'
+    assert ledger.records['sbx-gone'].terminal
+    assert control.calls == ['sbx-gone']

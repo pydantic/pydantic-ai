@@ -14,9 +14,11 @@ import json
 import os
 import shlex
 import shutil
+import sys
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
@@ -178,6 +180,19 @@ def transfers(harness: WorkspaceHarness) -> tuple[Callable[..., Awaitable[None]]
     return copy_to, copy_from
 
 
+def local_python_command(argv: list[str]) -> list[str]:
+    """Run shipped helper bytes from their matching file so child coverage has a source path."""
+    # Render receives inline source. The local test transport recognizes that exact
+    # source and executes its package file with the same arguments and interpreter.
+    # Ordinary user commands keep their original arguments.
+    if len(argv) >= 3 and argv[:2] == ['python3', '-c']:
+        for name in ('_command_runner.py', '_file_transfer.py'):
+            path = files('pydantic_ai_harness.render_sandbox').joinpath(name)
+            if path.read_text() == argv[2]:
+                return [sys.executable, str(path), *argv[3:]]
+    return argv
+
+
 def commands(harness: WorkspaceHarness) -> Callable[..., Awaitable[CommandResult]]:
     async def command(
         client: RenderAsync,
@@ -212,9 +227,14 @@ def commands(harness: WorkspaceHarness) -> Callable[..., Awaitable[CommandResult
             # Fault injection is limited to this test-owned setting. Preserve all
             # other per-command environment fields so unrelated behavior stays valid.
             effective_env['RUN_LABEL'] = next(iter(harness.create_calls.values())).env['RUN_LABEL']
-        values = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+        # Preserve coverage's child-process configuration so local helper execution is measured.
+        values = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith('COVERAGE_') or key == 'COVERAGE_PROCESS_CONFIG'
+        }
         values.update(effective_env)
-        argv = ['/bin/sh', '-c', command] if isinstance(command, str) else list(command)
+        argv = ['/bin/sh', '-c', command] if isinstance(command, str) else local_python_command(list(command))
         process = await asyncio.create_subprocess_exec(
             *argv,
             cwd=working_dir,

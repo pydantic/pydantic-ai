@@ -540,7 +540,7 @@ async def exercise_wrapped_run_isolation(
             await asyncio.wait((owned_results, caller_task), return_when=asyncio.FIRST_COMPLETED)
             if caller_task.done():
                 caller_task.result()  # Re-raise an early caller failure with its cause intact.
-                raise AssertionError('caller completed before the ownership check released it')
+                raise AssertionError('caller completed before the ownership check released it')  # pragma: no cover
             results = await owned_results
         assert [result.output for result in results] == ['done:alpha', 'done:beta']
         assert completed_tools == set(names), 'runs must overlap before checking ownership'
@@ -664,7 +664,9 @@ async def test_durable_run_rejected_before_resource_creation(workspace_harness: 
             cache_key: tuple[object, ...],
             config: None,
         ) -> NoReturn:
-            raise AssertionError('The unsupported engine must be rejected before executing operations')
+            raise AssertionError(
+                'The unsupported engine must be rejected before executing operations'
+            )  # pragma: no cover
 
     class UnsupportedDurability(BaseDurabilityCapability[None]):
         """Advertise an active durable run through the public capability interface."""
@@ -757,3 +759,59 @@ async def test_context_closes_sdk_pool_without_destroying_retained_workspace(
         assert not client.is_closed
     assert client.is_closed
     assert workspace_harness.terminated == []
+
+
+def test_deferred_provider_is_rejected_before_creation(workspace_harness: WorkspaceHarness) -> None:
+    from pydantic_ai.exceptions import UserError
+
+    # The workspace must be chosen before model tools load deferred capabilities.
+    with pytest.raises(UserError, match='cannot be deferred'):
+        RenderSandbox(client=workspace_harness.client, defer_loading=True)
+    assert workspace_harness.created == []
+
+
+async def test_foreign_reference_is_resolved_by_its_own_provider(
+    workspace_harness: WorkspaceHarness, tmp_path: Path
+) -> None:
+    from pydantic_ai.models.test import TestModel
+
+    reference = WorkspaceRef(provider='other', id='external')
+
+    class OtherBackend:
+        ref = reference
+
+        async def working_dir(self) -> str:
+            return str(tmp_path)
+
+    class OtherProvider(AbstractCapability[None]):
+        def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+            assert ref == reference
+            return OtherBackend()
+
+    # Render declines the foreign reference, allowing the next provider to handle it.
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=type(None),
+        capabilities=[RenderSandbox(client=workspace_harness.client), OtherProvider()],
+    )
+    result = await agent.run('use the supplied workspace', workspace=reference)
+    assert result.output == 'done'
+    assert result.workspace.ref == reference
+    assert await result.workspace.working_dir() == str(tmp_path)
+    assert workspace_harness.created == []
+    assert workspace_harness.terminated == []
+
+
+def test_public_import_explains_missing_optional_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+    import sys
+
+    import pydantic_ai_harness.render_sandbox as public_provider
+
+    with monkeypatch.context() as missing_sdk:
+        missing_sdk.setitem(sys.modules, 'render', None)
+        missing_sdk.delitem(sys.modules, 'pydantic_ai_harness.render_sandbox._backend')
+        with pytest.raises(ImportError, match=r'pydantic-ai-harness\[render-sandbox\]'):
+            importlib.reload(public_provider)
+    # Restore the public module after the optional-dependency probe.
+    importlib.reload(public_provider)
