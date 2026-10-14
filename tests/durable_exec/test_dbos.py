@@ -1270,6 +1270,13 @@ async def test_dbos_agent_realtime_session_outside_workflow():
         assert [event async for event in session] == []
 
 
+async def test_dbos_agent_rejects_connect():
+    """Runs use the DBOS model, so a connection would open a socket that no run uses."""
+    with pytest.raises(UserError, match='`DBOSAgent` does not support explicit connections'):
+        async with simple_dbos_agent.connect():
+            pytest.fail('DBOSAgent runs cannot use a connection')  # pragma: no cover
+
+
 async def test_dbos_agent_iter_in_workflow(allow_model_requests: None, dbos: DBOS):
     # DBOS allows calling `iter` inside a workflow as a step.
     @DBOS.workflow()

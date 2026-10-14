@@ -1394,6 +1394,13 @@ async def test_realtime_session_outside_flow() -> None:
         assert [event async for event in session] == []
 
 
+async def test_prefect_agent_rejects_connect() -> None:
+    """Runs use the Prefect model, so a connection would open a socket that no run uses."""
+    with pytest.raises(UserError, match='`PrefectAgent` does not support explicit connections'):
+        async with simple_prefect_agent.connect():
+            pytest.fail('PrefectAgent runs cannot use a connection')  # pragma: no cover
+
+
 async def test_iter_in_flow(allow_model_requests: None) -> None:
     """Test that iter works inside a Prefect flow."""
 

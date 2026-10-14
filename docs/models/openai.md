@@ -309,7 +309,7 @@ A connection doesn't reconnect, retry an interrupted generation, or switch to HT
     - The model's default `timeout` bounds the handshake, and each request's `timeout` bounds its send and receive. Otherwise, the SDK client's timeouts apply.
     - `model.connect(websocket_connection_options=...)` accepts the OpenAI SDK's typed socket options, such as `max_size`.
     - Authentication must be supported by the OpenAI SDK's WebSocket transport; otherwise `connect()` raises [`UserError`][pydantic_ai.exceptions.UserError] with the SDK error as its cause. For Bedrock Mantle, see [its authentication limits](bedrock.md#bedrock-mantle).
-    - Background responses aren't supported, and an open connection can't be persisted across durable execution steps. Token counting and standalone compaction keep using HTTP.
+    - Background responses aren't supported, and an open connection can't be persisted across durable execution steps. The deprecated `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` wrappers reject `connect()`. Token counting and standalone compaction keep using HTTP.
 
 #### Connect a model directly
 
