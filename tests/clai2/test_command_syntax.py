@@ -107,9 +107,10 @@ def test_heredoc_bodies_take_their_language(command: str, expected: list[tuple[s
     assert ''.join(segment.text for segment in segments) == command
 
 
-def test_heredocs_past_end_are_not_looked_for() -> None:
+def test_heredocs_on_lines_ending_past_end_are_not_looked_for() -> None:
     command = 'echo "a<<b"\n' * 300 + "python3 - <<'EOF'\nimport os\nEOF"
     assert [segment.language for segment in command_segments(command, end=100)] == ['bash']
+    assert [segment.language for segment in command_segments('x<<EOF ' * 1000 + '\nbody', end=100)] == ['bash']
     assert [segment.language for segment in command_segments(command)] == ['bash', 'python', 'bash']
 
 

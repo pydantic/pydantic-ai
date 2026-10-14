@@ -82,8 +82,8 @@ def command_segments(command: str, *, end: int | None = None) -> list[Segment]:
     """Split `command` into Bash runs and the heredoc bodies between them, keeping every character in order.
 
     A heredoc body takes the language of the command reading it, else of the file it is written to,
-    else of a conventional delimiter (`PYEOF`, `SQL`). Delimiter lines stay Bash. Heredocs opening
-    at or after `end` are not looked for, which bounds the work for a long command shown in part.
+    else of a conventional delimiter (`PYEOF`, `SQL`). Delimiter lines stay Bash. Heredocs are not
+    looked for on lines ending past `end`, which bounds the work for a long command shown in part.
     """
     limit = len(command) if end is None else end
     segments: list[Segment] = []
@@ -93,7 +93,7 @@ def command_segments(command: str, *, end: int | None = None) -> list[Segment]:
     pending: list[tuple[str, bool, str | None]] = []
     *lines, last = command.split('\n')
     for line in [*(f'{line}\n' for line in lines), last]:
-        line_start, position = position, position + len(line)
+        position += len(line)
         if pending:
             delimiter, strip_tabs, language = pending[0]
             if (line.lstrip('\t') if strip_tabs else line).removesuffix('\n') != delimiter:
@@ -104,11 +104,13 @@ def command_segments(command: str, *, end: int | None = None) -> list[Segment]:
             pending.pop(0)
         start = len(shell)
         shell += line
-        pending.extend(
-            (match[3], bool(match[1]), _heredoc_language(line, match=match))
-            for match in _HEREDOC.finditer(line)
-            if line_start + match.start() < limit and _opens_heredoc(shell[: start + match.start()])
-        )
+        # A body starts on the next line, so a heredoc opened on a line ending past `limit` is never shown.
+        if position <= limit:
+            pending.extend(
+                (match[3], bool(match[1]), _heredoc_language(line, match=match))
+                for match in _HEREDOC.finditer(line)
+                if _opens_heredoc(shell[: start + match.start()])
+            )
         if pending:
             segments.append(_shell_segment(shell))
             shell = ''
