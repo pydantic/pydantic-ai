@@ -1757,6 +1757,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Runs in the context that select no model of their own use the connected model; a run's
         `model=`, a run `spec` model, and a run capability model are honored as usual. A run's model
         selector receives the connected model as its lower-precedence `ctx.model`.
+        Under an active [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override], the overriding
+        model is connected and its connection replaces the override for the context; an `override(model=...)`
+        entered inside the context still wins over the connection.
         The connection closes when the context exits. Each context
         opens an independent connection; concurrent tasks can open their own contexts on the same agent.
         The model's connection context defines request concurrency and interruption behavior.

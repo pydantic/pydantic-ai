@@ -303,7 +303,7 @@ async def main():
 
 Without that setting, each request sends the full message history. Keep passing the conversation or message history between runs either way.
 
-A connection supports **one active response at a time**. Concurrent tasks can each open their own `agent.connect()` context on the same agent. Parallel tool calls that each start a child run on the run's model (`ctx.model`) overlap on one socket and fail, so give those child runs their own model or connection. A completed response leaves the socket open. Cancelling a request, leaving a stream before it completes, or losing the transport closes the socket, and further requests in that context raise an error.
+A connection supports **one active response at a time**. Concurrent tasks can each open their own `agent.connect()` context on the same agent. Parallel tool calls that each start a child run on the run's model (`ctx.model`) overlap on one socket and fail, so give those child runs their own model or connection. A completed response leaves the socket open, including one that ends with `response.failed`. An `error` event from the API (such as an invalid request or a rate limit), cancelling a request, leaving a stream before it completes, or losing the transport closes the socket, and further requests in that context raise an error.
 
 A connection doesn't reconnect, retry an interrupted generation, or switch to HTTP. To recover, open a new connection and resume with the full `message_history`. On the recovery run, pass `model_settings=OpenAIResponsesModelSettings(openai_previous_response_id=None)` to clear an inherited `'auto'` value, so the full history is sent without a previous response ID. With `openai_store=False` or Zero Data Retention, `previous_response_id` works only on the same socket, through OpenAI's connection-local cache. See [OpenAI's WebSocket guide](https://developers.openai.com/api/docs/guides/websocket-mode/) for connection and retention limits.
 
@@ -318,6 +318,8 @@ A connection doesn't reconnect, retry an interrupted generation, or switch to HT
 #### Connect a model directly
 
 [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] yields an independent connected model. Pass it to an `Agent` or a run's `model` argument. The source model keeps using HTTP, and the connected model can't make requests after its context exits. The [Codex subscription model](openai-codex.md#limitations) doesn't support connections.
+
+Connection options such as `extra_headers` and `websocket_connection_options` are arguments of `OpenAIResponsesModel.connect()` only. `agent.connect()` takes none, so to use them, connect the model directly and pass the connected model, or a model that wraps it, to your agent.
 
 To use a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], connect its Responses models first, then build the fallback from the yielded models. Other models can remain ordinary HTTP fallbacks. Keep the `AsyncExitStack` open for every run that may use the connected models:
 

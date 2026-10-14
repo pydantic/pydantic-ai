@@ -83,6 +83,7 @@ class ResponsesWebSocket:
                 status_code=exc.response.status_code,
                 model_name=model_name,
                 body=bytes(exc.response.body).decode(errors='replace'),
+                # `dict(exc.response.headers)` raises `MultipleValuesError` on a repeated header.
                 headers={name: ', '.join(exc.response.headers.get_all(name)) for name in exc.response.headers},
             ) from exc
         except (OSError, WebSocketException, TimeoutError) as exc:
@@ -106,6 +107,8 @@ class ResponsesWebSocket:
             for header_set in (auth_headers, client.default_headers, extra_headers)
             for key, value in header_set.items()
         }
+        # Drop only `Omit`: a value of any other type has to reach the handshake comparison, so a request header
+        # the socket wasn't opened with is rejected rather than silently ignored.
         return {key: value for key, value in headers.items() if not isinstance(value, Omit)}
 
     async def request(self, body: Mapping[str, object], timeout: Timeout) -> ResponsesWebSocketStream:
@@ -179,6 +182,8 @@ class ResponsesWebSocketStream:
                 )
             message = f'{event.error.code}: {event.error.message}' if event.error.code else event.error.message
             raise ModelAPIError(model_name=self.websocket.model_name, message=message)
+        # Steering isn't supported: a connection serves one response at a time, so its cancellation and cleanup have
+        # one owner, and steering would need its own event routing.
         if isinstance(event, (ResponseSteerAcceptedEvent, ResponseSteerPendingEvent, ResponseSteerFailedEvent)):
             raise UnexpectedModelBehavior(f'Unexpected Responses WebSocket event: {event.type!r}')
 

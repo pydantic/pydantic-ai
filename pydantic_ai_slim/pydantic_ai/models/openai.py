@@ -3405,6 +3405,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 self._websocket.auth_headers, self.client, request_headers
             )
             if effective_headers != self._websocket.headers:
+                # Name the differing headers without their values, which can carry credentials.
                 differing_headers = ', '.join(
                     f'`{name}`'
                     for name in sorted(effective_headers.keys() | self._websocket.headers.keys())
