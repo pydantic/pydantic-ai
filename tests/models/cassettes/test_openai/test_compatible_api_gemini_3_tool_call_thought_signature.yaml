@@ -1,0 +1,203 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "465"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.1-flash-lite
+        stream: false
+        messages:
+        - role: user
+          content: >-
+            What's the weather in Taipei and Kaohsiung? Call get_weather once for each city
+            in parallel, then summarize.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: Get today's weather for a city.
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - private
+      content-type:
+      - application/json
+      expires:
+      - Wed, 14 Oct 2026 00:52:20 GMT
+      p3p:
+      - CP="This is not a P3P policy! See g.co/p3phelp for more info."
+      server-timing:
+      - gfet4t7; dur=632
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        choices:
+        - finish_reason: tool_calls
+          index: 0
+          message:
+            role: assistant
+            tool_calls:
+            - extra_content:
+                google:
+                  thought_signature: >-
+                    EnMKcQFpFH0T3Eo155GvdFL7f7EUL5LzyduwZxFFb9dUv0BLrRce4XCBDU5BC5amS3wt+2XuP9U8uoB7WYhhU/6CfHkYqXOmz7xjlbH+e16HA1vD7YLa7Sabu6gcW7/MNs8FMM8lGl5kDteCGIjI3pD9PL+x
+              function:
+                arguments: "{\"city\":\"Taipei\"}"
+                name: get_weather
+              id: call_339766
+              type: function
+            - function:
+                arguments: "{\"city\":\"Kaohsiung\"}"
+                name: get_weather
+              id: call_339767
+              type: function
+        created: 1791939140
+        id: RNLOau3xCMCtqtsPp6f7oA4
+        model: gemini-3.1-flash-lite
+        object: chat.completion
+        usage:
+          completion_tokens: 36
+          prompt_tokens: 74
+          total_tokens: 110
+  recorded_at: 2026-10-14T00:52:20.641651+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1085"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.1-flash-lite
+        stream: false
+        messages:
+        - role: user
+          content: >-
+            What's the weather in Taipei and Kaohsiung? Call get_weather once for each city
+            in parallel, then summarize.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_339766
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Taipei\"}"
+            extra_content:
+              google:
+                thought_signature: >-
+                  EnMKcQFpFH0T3Eo155GvdFL7f7EUL5LzyduwZxFFb9dUv0BLrRce4XCBDU5BC5amS3wt+2XuP9U8uoB7WYhhU/6CfHkYqXOmz7xjlbH+e16HA1vD7YLa7Sabu6gcW7/MNs8FMM8lGl5kDteCGIjI3pD9PL+x
+          - id: call_339767
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Kaohsiung\"}"
+        - role: tool
+          tool_call_id: call_339766
+          content: sunny, 28°C
+        - role: tool
+          tool_call_id: call_339767
+          content: sunny, 28°C
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: Get today's weather for a city.
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - private
+      content-type:
+      - application/json
+      expires:
+      - Wed, 14 Oct 2026 00:52:21 GMT
+      p3p:
+      - CP="This is not a P3P policy! See g.co/p3phelp for more info."
+      server-timing:
+      - gfet4t7; dur=820
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        choices:
+        - finish_reason: stop
+          index: 0
+          message:
+            content: The weather is currently sunny and 28°C in both Taipei and Kaohsiung.
+            extra_content:
+              google:
+                thought_signature: >-
+                  EnMKcQFpFH0T0zfj98gFJFC06FGsr5ZnG7NkymUFbAZ50VHiZiqYdLQ1LARB1UjPWZ7fF0m6szwvyywyE6CHVMrPZUH5ZhB8RocYGt3zq5KMOqYrYyx/p0VuQ84GnHs+IAK9GBZ7fb33uGNeqfgIWyCX84s2
+            role: assistant
+        created: 1791939141
+        id: RNLOatPzMvmIqtsP3rudkA4
+        model: gemini-3.1-flash-lite
+        object: chat.completion
+        usage:
+          completion_tokens: 20
+          prompt_tokens: 149
+          total_tokens: 169
+  recorded_at: 2026-10-14T00:52:21.569318+00:00
