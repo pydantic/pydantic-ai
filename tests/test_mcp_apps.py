@@ -198,7 +198,7 @@ async def test_app_tool_returns_carry_app_data(weather: MCPToolset[Any]):
     }
 
 
-HookKind = Literal['passthrough', 'rewrite', 'rewrite-in-place', 'other-tool', 'other-arguments']
+HookKind = Literal['passthrough', 'rewrite', 'rewrite-in-place', 'other-tool', 'other-arguments', 'arguments-in-place']
 
 
 @pytest.fixture
@@ -211,6 +211,8 @@ def hooked_weather(request: pytest.FixtureRequest) -> MCPToolset[Any]:
             return await call_tool('get_time', args)
         if hook_kind == 'other-arguments':
             return await call_tool(name, {'city': 'b'})
+        if hook_kind == 'arguments-in-place':
+            args['city'] = 'b'
         result = await call_tool(name, args)
         if hook_kind == 'rewrite':
             assert isinstance(result, dict)
@@ -245,13 +247,14 @@ def hooked_weather(request: pytest.FixtureRequest) -> MCPToolset[Any]:
         pytest.param('rewrite-in-place', {'temp_c': 14}, id='result-rewritten-in-place'),
         pytest.param('other-tool', 'a: 09:00', id='other-tool'),
         pytest.param('other-arguments', {'city': 'b', 'temp_c': 14}, id='other-arguments'),
+        pytest.param('arguments-in-place', {'city': 'b', 'temp_c': 14}, id='arguments-rewritten-in-place'),
     ],
     indirect=['hooked_weather'],
 )
 async def test_app_data_with_process_tool_call(hooked_weather: MCPToolset[Any], expected: Any):
     """App data is kept only when a `process_tool_call` hook returns the result of the model's own call unchanged.
 
-    A hook that changes the arguments or the result, including by editing the returned value in place, decides
+    A hook that changes the arguments or the result, including by editing it in place, decides
     what leaves the toolset, so the raw result is not forwarded.
     """
     run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
