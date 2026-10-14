@@ -108,7 +108,11 @@ Structured server error content is serialized as JSON for both `'retry'` and `'f
 
 ## Render MCP Apps in a Frontend
 
-For an MCP server that ships UI with its tools ([MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview)), `MCPToolset` needs no setup: calls to a tool whose `_meta.ui.resourceUri` names a UI resource keep an `MCPAppToolResult` under `ToolReturnPart.metadata['mcp_app']`, which the model never sees; the AG-UI adapter forwards it as an `mcp-apps` activity and the Vercel AI adapter as a `data-mcp-apps` chunk. The application is the host: it fetches the page with `read_resource_contents(uri)` (keeping the MIME type and the `_meta.ui` CSP and permissions), renders it in a sandboxed iframe, and relays the page's own requests to the server.
+For an MCP server that ships UI with its tools ([MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview)), `MCPToolset` needs no setup: calls to a tool whose `_meta.ui.resourceUri` names a UI resource keep an `MCPAppToolResult` under `ToolReturnPart.metadata['mcp_app']`, which the model never sees; the AG-UI adapter forwards it as an `mcp-apps` activity and the Vercel AI adapter as a `data-mcp-apps` chunk.
+
+The application is the host: it fetches the page with `read_resource_contents(uri)` (keeping the MIME type and the `_meta.ui` CSP and permissions), renders it in a sandboxed iframe, and relays the page's own `tools/call` and `resources/read` requests to the server with `call_tool_for_app(name, arguments)` and `read_resource_for_app(uri)`. These return the MCP wire result to send back as is (`isError` results included), and `call_tool_for_app` only calls tools whose `_meta.ui.visibility` includes `"app"` or is omitted. Use one `MCPToolset` per server, so a page only reaches the server that served it.
+
+With CopilotKit or another renderer built for the AG-UI MCP Apps middleware, pass `mcp_app_toolsets=[...]` to `AGUIAdapter.dispatch_request` instead: the adapter then answers the renderer's `forwardedProps.__proxiedMCPRequest` runs (page fetches and tool calls) from those toolsets without running the agent.
 
 ## Use Embeddings for RAG
 

@@ -522,7 +522,32 @@ AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`]
 
 ### MCP Apps
 
-When an [`MCPToolset`][pydantic_ai.mcp.MCPToolset] tool has an [MCP Apps](../mcp/client.md#mcp-apps) UI, its result is followed by an `ACTIVITY_SNAPSHOT` event with `activityType: "mcp-apps"` (from `ag-ui-protocol` `0.1.19`). Its content has `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`) and, when the toolset has an `id`, `serverId` and `serverHash` (both set to that `id`) — the same shape the AG-UI MCP Apps middleware emits, which renderers such as CopilotKit's expect. Dumped history carries it as an `ActivityMessage`, which is ignored when loaded back.
+When an [`MCPToolset`][pydantic_ai.mcp.MCPToolset] tool has an [MCP Apps](../mcp/client.md#mcp-apps) UI, its result is followed by an `ACTIVITY_SNAPSHOT` event with `activityType: "mcp-apps"` (from `ag-ui-protocol` `0.1.19`). Its content has `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`) and, when the toolset has an `id`, `serverId` and `serverHash` (both set to that `id`) — the same shape the AG-UI MCP Apps middleware emits. Dumped history carries it as an `ActivityMessage`, which is ignored when loaded back.
+
+Renderers built for that middleware, such as CopilotKit's, fetch the app's page and relay the app's own tool calls by starting a run whose `forwardedProps.__proxiedMCPRequest` names the server, and read the MCP result from `RUN_FINISHED.result`. To answer those runs from the server instead of running the agent, pass the toolsets with `mcp_app_toolsets`:
+
+```python {title="ag_ui_mcp_apps.py"}
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+weather = MCPToolset('http://localhost:8000/mcp', id='weather')
+agent = Agent('openai:gpt-5.2', toolsets=[weather])
+
+
+async def run_agent(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(request, agent=agent, mcp_app_toolsets=[weather])
+
+
+app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
+```
+
+Only toolsets with an `id` can be named. Tools are called with [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app], so only tools visible to apps can be called, and [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call] doesn't apply. Resources are read with [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app], so any resource on these servers can be read, as through the middleware. MCP errors come back as `{"error": ...}` in the result, as they do from the middleware, and other failures, such as an unreachable server, end the run with `RUN_ERROR`.
 
 ### Assistant message identity
 
