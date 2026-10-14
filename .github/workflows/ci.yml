@@ -265,6 +265,7 @@ jobs:
           .github/scripts/test_ci_content_classifier.py
           .github/scripts/test_gh_aw_engine_pin_bump.py
           .github/scripts/test_shard_durations.py
+          .github/scripts/test_strict_no_cover_data.py
 
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
       # answer here silently stops type errors reaching a developer's terminal.
@@ -1634,7 +1635,8 @@ jobs:
           cache-suffix: dev
 
       - run: uv sync --group dev --group coverage
-      - run: uv run --no-sync coverage combine
+      # `--keep` leaves the per-job files for the `strict-no-cover` data below.
+      - run: uv run --no-sync coverage combine --keep
       # Only the `pydantic-clai2` cells ran for a change confined to it, so they can only vouch
       # for its own tests; a `pydantic-ai-harness`-only change ran the harness and CLAI 2 suites,
       # which vouch for those and the harness source. The rest of the workspace is covered on the
@@ -1652,9 +1654,11 @@ jobs:
             uv run --no-sync coverage report
           fi
 
+      # The Python 3.11 jobs can file lines under a file that never ran them; the script explains why.
+      - run: uv run --no-sync python .github/scripts/strict_no_cover_data.py .coverage "$RUNNER_TEMP/strict-no-cover"
       - run: uv run --no-sync strict-no-cover
         env:
-          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage
+          COVERAGE_FILE: ${{ runner.temp }}/strict-no-cover
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
