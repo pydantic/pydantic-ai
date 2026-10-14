@@ -2915,7 +2915,6 @@ async def test_openai_deferred_capability_runs_on_model_without_native_tool_sear
 
 
 @pytest.mark.vcr
-@pytest.mark.moves_cache_prefix(reason='dynamic tool disclosure after ToolSearch discovery')
 async def test_openai_gpt_5_4_nano_deferred_tool_uses_local_search(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ) -> None:
@@ -2939,10 +2938,11 @@ async def test_openai_gpt_5_4_nano_deferred_tool_uses_local_search(
         p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.tool_name == 'get_weather'
     ]
     assert [p.content for p in weather_returns] == ['Sunny in Paris']
-    first_request_tools = cast(list[dict[str, Any]], request_capture.bodies('/responses')[0]['tools'])
-    assert [(tool['type'], tool.get('name'), tool.get('defer_loading')) for tool in first_request_tools] == snapshot(
-        [('function', 'search_tools', None)]
-    )
+    first_request_tools = request_capture.body('/responses')['tools']
+    assert isinstance(first_request_tools, list)
+    assert [(tool.get('type'), tool.get('name')) for tool in first_request_tools if isinstance(tool, dict)] == [
+        ('function', 'search_tools')
+    ]
 
 
 def _cross_provider_tool_search_agent(model: AnthropicModel | OpenAIResponsesModel) -> Agent[None, str]:

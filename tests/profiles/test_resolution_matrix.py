@@ -355,11 +355,11 @@ def test_openai_gpt_5_4():
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-5.4-nano', 'gpt-5.4-nano-2026-03-17'])
 def test_openai_gpt_5_4_nano(model_name: str):
-    """gpt-5.4-nano is the one gpt-5.4 variant without native `tool_search`: OpenAI rejects it with a 400."""
-    profile = OpenAIProvider.model_profile(model_name)
-    assert _normalize(profile)['supported_native_tools'] == snapshot(
-        frozenset({CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool})
-    )
+    """gpt-5.4-nano resolves gpt-5.4's profile minus native `tool_search`, which OpenAI rejects on it with a 400."""
+    expected = _normalize(OpenAIProvider.model_profile('gpt-5.4'))
+    assert expected is not None
+    expected['supported_native_tools'] -= {ToolSearchTool}
+    assert _normalize(OpenAIProvider.model_profile(model_name)) == expected
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
