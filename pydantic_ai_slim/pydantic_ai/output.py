@@ -408,7 +408,8 @@ def StructuredDict(
     #> {'name': 'John Doe', 'age': 30}
     ```
     """
-    json_schema = _utils.check_object_json_schema(json_schema)
+    # Copy so setting `title` and `description` below doesn't write to the caller's schema.
+    json_schema = _utils.check_object_json_schema(json_schema).copy()
 
     # Pydantic `TypeAdapter` fails when `object.__get_pydantic_json_schema__` has `$defs`, so we inline them
     # See https://github.com/pydantic/pydantic/issues/12145
