@@ -38,11 +38,9 @@ import anyio
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation, WrapModelRequestHandler
 from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextContent, TextPart, UserContent, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness.background_tools._capability import (
-    _BACKGROUND_RESULT_ORIGIN,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai_harness._background_completion import get_background_completion
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,
@@ -96,16 +94,6 @@ def _require_prompt_text(replacement: object, position: int) -> None:
         )
 
 
-def _background_completion(content: str | Sequence[UserContent] | None) -> TextContent | None:
-    """Return singleton native background-completion content, if present."""
-    if isinstance(content, Sequence) and len(content) == 1 and isinstance(content[0], TextContent):
-        text_content = content[0]
-        metadata = text_content.metadata
-        if isinstance(metadata, dict) and 'origin' in metadata and metadata['origin'] == _BACKGROUND_RESULT_ORIGIN:
-            return text_content
-    return None
-
-
 def _extract_prompt(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage]) -> str | None:
     """Return the text of the most recent user prompt, or `None` if absent.
 
@@ -114,14 +102,14 @@ def _extract_prompt(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage
     so that sub-agent calls or resumed runs without a fresh prompt still work.
     """
     if ctx.prompt is not None:
-        completion = _background_completion(ctx.prompt)
+        completion = get_background_completion(ctx.prompt)
         if completion is not None:
             return completion.content
         return ctx.prompt if isinstance(ctx.prompt, str) else str(ctx.prompt)
     for message in reversed(messages):
         for part in reversed(message.parts):
             if isinstance(part, UserPromptPart):
-                completion = _background_completion(part.content)
+                completion = get_background_completion(part.content)
                 if completion is not None:
                     return completion.content
                 return part.content if isinstance(part.content, str) else str(part.content)
@@ -142,7 +130,7 @@ def _replace_prompt(messages: Sequence[ModelMessage], new_content: str) -> bool:
                 if isinstance(part.content, str):
                     part.content = new_content
                     return True
-                completion = _background_completion(part.content)
+                completion = get_background_completion(part.content)
                 if completion is not None:
                     completion.content = new_content
                     return True

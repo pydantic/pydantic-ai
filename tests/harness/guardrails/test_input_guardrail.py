@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     TextContent,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -110,7 +111,7 @@ class TestInputGuardrail:
         assert result.output == 'ok'
         assert calls == ['hello']
 
-    @pytest.mark.parametrize('metadata', [None, 'tag', [], {'origin': 'caller'}])
+    @pytest.mark.parametrize('metadata', [None, 'tag', [], {'origin': 'caller'}, {'origin': 'background_tool_result'}])
     async def test_singleton_textcontent_user_prompt_keeps_legacy_guardrail_behavior(self, metadata: object):
         prompt: list[TextContent] = [TextContent('ordinary user content', metadata=metadata)]
         seen: list[str] = []
@@ -135,7 +136,8 @@ class TestInputGuardrail:
         model_prompts: list[list[object]] = []
         model_calls = 0
         completion = TextContent(
-            'background answer', metadata={'origin': 'background_tool_result', 'tool_call_id': 'task-1'}
+            'background answer',
+            metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'task-1'},
         )
 
         def guard(prompt: str) -> bool:
@@ -170,38 +172,47 @@ class TestInputGuardrail:
         await agent.run(None, message_history=first.all_messages())
         assert guard_calls == ['initial', 'background answer']
 
-        history_guard_calls: list[str] = []
-        history_model_prompts: list[object] = []
+    async def test_redacts_background_completion_from_pending_tool_history(self):
+        guard_observations: list[tuple[object, int, str]] = []
+        model_user_prompts: list[object] = []
+        completion = TextContent(
+            'background answer',
+            metadata={
+                'origin': 'pydantic-ai-harness.background_tools.result.v1',
+                'tool_call_id': 'task-1',
+            },
+        )
 
-        def guard_history(prompt: str) -> GuardrailResult:
-            history_guard_calls.append(prompt)
+        def guard(ctx: RunContext[object], prompt: str) -> GuardrailResult:
+            guard_observations.append((ctx.prompt, ctx.run_step, prompt))
             return GuardrailResult.replace('[redacted]')
 
-        def respond_to_history(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            history_model_prompts.extend(
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            model_user_prompts.extend(
                 part.content for message in messages for part in message.parts if isinstance(part, UserPromptPart)
             )
             return ModelResponse(parts=[TextPart('done')])
 
-        class PromptlessInputGuardrail(InputGuardrail[object]):
-            async def wrap_model_request(
-                self,
-                ctx: RunContext[object],
-                *,
-                request_context: ModelRequestContext,
-                handler: WrapModelRequestHandler,
-            ) -> ModelResponse:
-                ctx.prompt = None
-                return await super().wrap_model_request(ctx, request_context=request_context, handler=handler)
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content=[completion])]),
+            ModelResponse(parts=[ToolCallPart(tool_name='some_tool', args='{}', tool_call_id='tc1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='some_tool', content='result', tool_call_id='tc1')]),
+        ]
+        agent = Agent(FunctionModel(respond), capabilities=[InputGuardrail(guard=guard)])
+        result = await agent.run(None, message_history=history)
 
-        history_agent = Agent(
-            FunctionModel(respond_to_history),
-            capabilities=[PromptlessInputGuardrail(guard=guard_history)],
-        )
-        await history_agent.run(None, message_history=[ModelRequest(parts=[UserPromptPart(content=[completion])])])
-        assert history_guard_calls == ['background answer']
-        assert history_model_prompts == [
-            [TextContent('[redacted]', metadata={'origin': 'background_tool_result', 'tool_call_id': 'task-1'})]
+        assert result.output == 'done'
+        assert guard_observations == [(None, 1, 'background answer')]
+        assert model_user_prompts == [
+            [
+                TextContent(
+                    '[redacted]',
+                    metadata={
+                        'origin': 'pydantic-ai-harness.background_tools.result.v1',
+                        'tool_call_id': 'task-1',
+                    },
+                )
+            ]
         ]
 
     async def test_guard_result_allow(self):
@@ -345,7 +356,8 @@ class TestInputGuardrailRedaction:
                 for part in message.parts
                 if isinstance(part, UserPromptPart) and isinstance(part.content, list)
                 for item in part.content
-                if isinstance(item, TextContent) and item.metadata.get('origin') == 'background_tool_result'
+                if isinstance(item, TextContent)
+                and item.metadata.get('origin') == 'pydantic-ai-harness.background_tools.result.v1'
             ]
             if completions:
                 model_completions.append((completions[-1].content, completions[-1].metadata))
@@ -364,7 +376,7 @@ class TestInputGuardrailRedaction:
         assert model_completions == [
             (
                 "Background tool 'lookup' (task tool-1) completed.\nResult: answer",
-                {'origin': 'background_tool_result', 'tool_call_id': 'tool-1'},
+                {'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'tool-1'},
             )
         ]
 
@@ -374,7 +386,7 @@ class TestInputGuardrailRedaction:
         assert guard_calls == ['go', "Background tool 'lookup' (task tool-1) completed.\nResult: answer"]
         assert model_completions[-1] == (
             '[redacted]',
-            {'origin': 'background_tool_result', 'tool_call_id': 'tool-1'},
+            {'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'tool-1'},
         )
 
     async def test_replace_with_non_str_is_a_usage_error(self):

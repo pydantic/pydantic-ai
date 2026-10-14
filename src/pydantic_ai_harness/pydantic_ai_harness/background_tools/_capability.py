@@ -32,6 +32,7 @@ from pydantic_ai.tools import (
     ToolSelector,
     matches_tool_selector,
 )
+from pydantic_ai_harness._background_completion import make_background_completion
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -46,7 +47,6 @@ with independent work. If none remains, end your response; the run will resume w
 """
 
 _RUN_IN_BACKGROUND = 'run_in_background'
-_BACKGROUND_RESULT_ORIGIN = 'background_tool_result'
 
 
 def _instructions(ctx: RunContext[Any]) -> str | None:
@@ -88,10 +88,6 @@ def _format_background_error(error: ApprovalRequired | CallDeferred | ToolRetryE
     return content if isinstance(content, str) and content else type(error).__name__
 
 
-def _background_completion(text: str, task_id: str) -> TextContent:
-    return TextContent(text, metadata={'origin': _BACKGROUND_RESULT_ORIGIN, 'tool_call_id': task_id})
-
-
 def _format_background_result(
     tool_name: str, task_id: str, result: Any
 ) -> tuple[TextContent, *tuple[UserContent, ...]]:
@@ -116,8 +112,8 @@ def _format_background_result(
     content[0] = completion_text
 
     if all(isinstance(item, str) for item in content):
-        return (_background_completion('\n'.join(item for item in content if isinstance(item, str)), task_id),)
-    return (_background_completion(completion_text, task_id), *content[1:])
+        return (make_background_completion('\n'.join(item for item in content if isinstance(item, str)), task_id),)
+    return (make_background_completion(completion_text, task_id), *content[1:])
 
 
 @dataclass
@@ -276,7 +272,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                     result = await handler(args)
                 except (ApprovalRequired, CallDeferred, ToolRetryError, ToolFailedError) as e:
                     outcome = (
-                        _background_completion(
+                        make_background_completion(
                             f"Background tool '{tool_name}' (task {task_id}) failed: {_format_background_error(e)}",
                             task_id,
                         ),
