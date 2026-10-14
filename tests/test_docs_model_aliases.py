@@ -6,6 +6,7 @@ See the "Model names" section of `docs/AGENTS.md`.
 from __future__ import annotations as _annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -80,8 +81,40 @@ def _is_exempt(page: str) -> bool:
     return page not in CHECKED_PAGES and (page in EXEMPT_PAGES or page.startswith(tuple(EXEMPT_DIRS)))
 
 
-def _location(page: Path, text: str, index: int) -> str:
-    return f'docs/{page.relative_to(DOCS).as_posix()}:{text.count(chr(10), 0, index) + 1}'
+def _alias_problems(text: str) -> list[tuple[int, str]]:
+    """Each alias in `text` that isn't known or resolves to an unknown model, with its position."""
+    problems: list[tuple[int, str]] = []
+    for match in _ALIAS_LIKE_RE.finditer(text):
+        alias = ALIAS_RE.fullmatch(match.group())
+        if alias is None or alias.group(1) not in MODEL_ALIASES:
+            problems.append((match.start(), f'{match.group()} is not a known alias'))
+    for match in _PREFIXED_ALIAS_RE.finditer(text):
+        if match.group(2) not in MODEL_ALIASES:
+            continue
+        prefix = match.group('prefix')
+        model = prefix + resolve_model_aliases(match.group()[len(prefix) :])
+        if model.partition(':')[0] in _KNOWN_PREFIXES and model not in _KNOWN_MODELS:
+            problems.append((match.start(), f'{match.group()} resolves to unknown {model!r}'))
+    return problems
+
+
+def _hardcoded_models(text: str) -> list[tuple[int, str]]:
+    """Each tiered model in `text` that is named directly instead of by alias, with its position."""
+    return [
+        (match.start(), match.group())
+        for match in _HARDCODED_RE.finditer(text)
+        # Other providers, like `snowflake:` or `heroku:`, serve some of these models under the same names.
+        if (prefix := match.group('prefix')) is None or prefix.split('-')[0] in _PROVIDERS
+    ]
+
+
+def _report(pages: list[Path], find: Callable[[str], list[tuple[int, str]]]) -> list[str]:
+    report: list[str] = []
+    for page in pages:
+        text = page.read_text(encoding='utf-8')
+        for index, problem in find(text):
+            report.append(f'docs/{page.relative_to(DOCS).as_posix()}:{text.count(chr(10), 0, index) + 1}: {problem}')
+    return report
 
 
 def test_aliases_name_known_models():
@@ -95,40 +128,32 @@ def test_aliases_name_known_models():
 
 
 def test_docs_aliases_resolve_to_known_models():
-    problems: list[str] = []
-    for page in _pages():
-        text = page.read_text(encoding='utf-8')
-        for match in _ALIAS_LIKE_RE.finditer(text):
-            alias = ALIAS_RE.fullmatch(match.group())
-            if alias is None or alias.group(1) not in MODEL_ALIASES:
-                problems.append(f'{_location(page, text, match.start())}: {match.group()} is not a known alias')
-        for match in _PREFIXED_ALIAS_RE.finditer(text):
-            if match.group(2) not in MODEL_ALIASES:
-                continue
-            prefix = match.group('prefix')
-            model = prefix + resolve_model_aliases(match.group()[len(prefix) :])
-            if model.partition(':')[0] in _KNOWN_PREFIXES and model not in _KNOWN_MODELS:
-                problems.append(f'{_location(page, text, match.start())}: {match.group()} is unknown {model!r}')
-    assert not problems, 'Use the model aliases from docs/model_aliases.py, like `{{ openai:medium }}`:\n' + '\n'.join(
-        problems
-    )
+    problems = _report(_pages(), _alias_problems)
+    assert not problems, 'Use the model aliases from docs/model_aliases.py:\n' + '\n'.join(problems)
 
 
 def test_docs_name_models_by_alias():
-    hardcoded: list[str] = []
-    for page in _pages():
-        if _is_exempt(page.relative_to(DOCS).as_posix()):
-            continue
-        text = page.read_text(encoding='utf-8')
-        for match in _HARDCODED_RE.finditer(text):
-            prefix = match.group('prefix')
-            # Other providers, like `snowflake:` or `heroku:`, serve some of these models under the same names.
-            if prefix is None or prefix.split('-')[0] in _PROVIDERS:
-                hardcoded.append(f'{_location(page, text, match.start())}: {match.group()}')
+    pages = [page for page in _pages() if not _is_exempt(page.relative_to(DOCS).as_posix())]
+    hardcoded = _report(pages, _hardcoded_models)
     assert not hardcoded, (
         'Name models with an alias from docs/model_aliases.py, like `{{ openai:medium }}`, '
         'or add the page to `EXEMPT_PAGES` if it is about specific models:\n' + '\n'.join(hardcoded)
     )
+
+
+def test_checks_flag_misspelled_aliases_and_model_ids():
+    model = MODEL_ALIASES['openai:medium']
+    text = (
+        "Agent('{{openai:medium}}'), Agent('{{ openai:huge }}'), Agent('azure:{{ openai:medium.name }}'),\n"
+        f"Agent('google-cloud:{{{{ openai:medium.name }}}}'), Agent('{model}'), Agent('heroku:{model.partition(':')[2]}')"
+    )
+    assert [problem for _, problem in _alias_problems(text)] == [
+        '{{openai:medium}} is not a known alias',
+        '{{ openai:huge }} is not a known alias',
+        f"google-cloud:{{{{ openai:medium.name }}}} resolves to unknown 'google-cloud:{model.partition(':')[2]}'",
+    ]
+    assert [name for _, name in _hardcoded_models(text)] == [model]
+    assert _report([DOCS / 'index.md'], lambda text: [(0, 'problem')]) == ['docs/index.md:1: problem']
 
 
 def test_resolve_model_aliases():
