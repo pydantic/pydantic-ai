@@ -3,14 +3,18 @@
 import io
 
 import pytest
+from rich.color import Color
 from rich.console import Console
 from rich.text import Text
+from termflow.themes import PALETTES
 
 from pydantic_ai import FunctionToolCallEvent
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai_harness.filesystem import FileEditedEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import StreamRenderer
+from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.rendering import theme
 
 
 async def test_shell_header_includes_argument_once() -> None:
@@ -215,3 +219,154 @@ async def test_edit_uses_termflow_diff_renderer() -> None:
     assert 'old' in text and 'new' in text
     assert '\x1b[48;2;34;92;43m' in text  # addition rows: green
     assert '\x1b[48;2;122;41;54m' in text  # deletion rows: red
+
+
+async def _print_shell_call(console: Console, command: str) -> None:
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id='call'))
+    )
+
+
+async def _highlighted_header(command: str, *, width: int = 100) -> tuple[Console, Text]:
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='truecolor', width=width)
+    await _print_shell_call(console, command)
+    return console, Text.from_ansi(output.getvalue())
+
+
+def _color(console: Console, text: Text, fragment: str) -> Color | None:
+    return text.get_style_at_offset(console, text.plain.index(fragment)).color
+
+
+KEYWORD = Color.parse('color(4)')
+STRING = Color.parse('color(3)')
+BUILTIN = Color.parse('color(6)')
+
+
+@pytest.mark.parametrize(
+    ('command', 'keyword'),
+    [
+        pytest.param("cat > /tmp/probe.py <<'PYEOF'\nimport os\nPYEOF", 'import', id='heredoc-to-a-python-file'),
+        pytest.param("python - <<'EOF'\nfor line in lines: pass\nEOF", 'for', id='python-heredoc'),
+        pytest.param('uv run python <<EOF\nimport os\nEOF', 'import', id='uv-run-python-heredoc'),
+        pytest.param("psql <<'SQL'\nSELECT 1;\nSQL", 'SELECT', id='sql-heredoc'),
+        pytest.param("python3 -c 'import sys; print(sys.argv)'", 'import', id='python-c'),
+        pytest.param('node -e "const answer = 42"', 'const', id='node-e'),
+    ],
+)
+async def test_shell_header_highlights_embedded_code_in_its_language(command: str, keyword: str) -> None:
+    console, text = await _highlighted_header(command)
+    assert text.plain.startswith(f'● shell {command.splitlines()[0]}')
+    assert _color(console, text, keyword) == KEYWORD
+    assert _color(console, text, 'shell') == Color.parse(theme.LITHIUM)
+
+
+async def test_shell_header_highlights_the_shell_as_bash() -> None:
+    console, text = await _highlighted_header('cd /tmp && echo "$HOME" | python3 -c \'import sys\'\nEOF')
+    assert _color(console, text, 'cd') == BUILTIN
+    assert _color(console, text, 'echo') == BUILTIN
+    assert _color(console, text, '"$HOME"') == STRING
+    # The quotes around inline code are Bash; what they hold is Python.
+    assert _color(console, text, "'import") == STRING
+    assert _color(console, text, 'import') == KEYWORD
+    assert _color(console, text, 'EOF') is None, 'a name stays in the terminal foreground'
+
+
+async def test_shell_header_mutes_a_heredoc_in_an_unknown_language() -> None:
+    console, text = await _highlighted_header("git commit -F - <<'EOF'\nimport this\nEOF")
+    assert _color(console, text, 'import') == Color.parse(theme.GREY)
+    assert _color(console, text, "'EOF'") == STRING
+    assert _color(console, text, 'git') is None
+
+
+async def test_shell_header_escapes_controls_before_highlighting() -> None:
+    command = (
+        "python3 - <<'EOF'\nprint('\x1b[2J\x1b]52;c;cGF5bG9hZA==\x07')\nimport os\nEOF\n"
+        'python3 -c \'x = "\x1b]8;;https://example.com\x1b\\\\"\'\r\x9b31m'
+    )
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='truecolor', width=100)
+    await _print_shell_call(console, command)
+    text = Text.from_ansi(output.getvalue())
+    for control in ('\x1b[2J', '\x1b]', '\x07', '\r', '\x9b'):
+        assert control not in output.getvalue()
+    for escaped in (r'\x1b[2J', r'\x1b]52;c;', r'\x07', r'\x1b]8;;', r'\x0d', r'\x9b'):
+        assert escaped in text.plain
+    assert _color(console, text, 'import') == KEYWORD
+
+
+async def test_highlighted_shell_header_keeps_the_hanging_indent_and_row_cap() -> None:
+    command = (
+        'python3 - <<EOF\nx = "' + 'a' * 60 + '"\n' + '\n'.join(f'import m{index}' for index in range(12)) + '\nEOF'
+    )
+    plain = io.StringIO()
+    await _print_shell_call(Console(file=plain, width=40), command)
+    console, text = await _highlighted_header(command, width=40)
+    assert text.plain == Text.from_ansi(plain.getvalue()).plain, 'highlighting moves no character'
+    assert text.plain.splitlines() == [
+        '● shell python3 - <<EOF',
+        '        x =',
+        '        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        '        aaaaaaaaaaaaaaaaaaaaaaaaaaaaa"',
+        '        import m0',
+        '        import m1',
+        '        import m2',
+        '        import m3',
+        '        import m4',
+        '        import m5',
+        '        … +7 lines',
+    ]
+    assert _color(console, text, 'import') == KEYWORD
+    assert _color(console, text, '"aaa') == STRING
+    assert _color(console, text, '…') == Color.parse(theme.GREY)
+
+
+async def test_shell_header_stops_highlighting_inline_code_at_the_row_cap() -> None:
+    command = "python3 -c '\n" + '\n'.join(f'import m{index}' for index in range(12)) + "\n'"
+    console, text = await _highlighted_header(command)
+    assert text.plain.splitlines()[-1] == '        … +4 lines'
+    assert _color(console, text, 'import m8') == KEYWORD
+    _, empty = await _highlighted_header("python3 -c ''")
+    assert empty.plain == "● shell python3 -c ''\n"
+
+
+@pytest.mark.parametrize('name', ['default', 'github_light', 'tokyo_night'])
+async def test_shell_header_uses_the_palette_syntax_colours(name: str) -> None:
+    with theme.use(lambda: name):
+        console, text = await _highlighted_header("python3 - <<'EOF'\nimport os\nvalue = os.sep\nEOF")
+    keyword = PALETTES[name].ansi[4] if name != 'default' else 'color(4)'
+    assert _color(console, text, 'import') == Color.parse(keyword)
+    assert _color(console, text, 'value') is None, 'names use the terminal foreground'
+
+
+async def test_live_prompt_repaints_the_shell_header_for_a_new_theme_and_width() -> None:
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
+    console = Console(file=surface, force_terminal=True, color_system='truecolor', width=80)
+    selected = ['tokyo_night']
+    tokyo = PALETTES['tokyo_night']
+
+    def rows(*, width: int = 80) -> list[Text]:
+        return [Text.from_ansi(row) for row in surface.transcript.frame(width=width, height=24).rows]
+
+    def colour(fragment: str) -> Color | None:
+        row = next(row for row in rows() if fragment in row.plain)
+        return _color(console, row, fragment)
+
+    with theme.use(lambda: selected[0]):
+        await _print_shell_call(console, "python3 - <<'EOF'\nimport os\nprint(os.getcwd())\nEOF")
+        console.print('after')
+        assert colour('import') == Color.parse(tokyo.ansi[4])
+        assert colour('shell') == Color.parse(tokyo.ansi[12])
+        selected[0] = 'default'
+        # Rendered again, not recoloured: the palette's blue is also the slot of a brand colour.
+        assert colour('import') == KEYWORD
+        assert colour('shell') == Color.parse(theme.LITHIUM)
+        assert [row.plain for row in rows(width=20)][:5] == [
+            '● shell python3 -',
+            "        <<'EOF'",
+            '        import os',
+            '        print(os.get',
+            '        cwd())',
+        ]
+        assert [row.plain for row in rows()][-3:] == ['', 'after', '']
