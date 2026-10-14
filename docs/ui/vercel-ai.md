@@ -245,6 +245,29 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 
 When an [`MCPToolset`][pydantic_ai.mcp.MCPToolset] tool has an [MCP Apps](../mcp/client.md#mcp-apps) UI, its result is followed by a `data-mcp-apps` [data chunk](#data-chunks) whose `id` is the tool call ID. Its `data` has `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`) and, when the toolset has an `id`, `serverId` and `serverHash` (both set to that `id`). Dumped history keeps it as a data part, which is ignored when loaded back.
 
+AI SDK UI's `experimental_MCPAppRenderer` shows a page for a tool part whose `toolMetadata.app` names it, and gives the page the part's `output`, which here is what the model saw. Fill both from the chunk, which arrives once the tool part has its output:
+
+```tsx
+type Message = UIMessage<unknown, { 'mcp-apps': { resourceUri: string; result: Record<string, unknown> } }>;
+
+const app = message.parts.find(p => p.type === 'data-mcp-apps' && p.id === part.toolCallId);
+
+return app?.type === 'data-mcp-apps' && part.state === 'output-available' ? (
+  <MCPAppRenderer
+    part={{
+      ...part,
+      toolMetadata: { app: { resourceUri: app.data.resourceUri, mimeType: 'text/html;profile=mcp-app' } },
+      output: app.data.result,
+    }}
+    loadResource={loadResource}
+    handlers={{ allowedTools: ['select_day'], callTool, readResource }}
+    sandbox={sandbox}
+  />
+) : null;
+```
+
+`loadResource` returns the page as `{ uri, mimeType, html, meta }`: the HTML and `_meta.ui` that [`read_resource_contents`][pydantic_ai.mcp.MCPToolset.read_resource_contents] returns. `callTool` and `readResource` send the page's requests to your endpoint for [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] and [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app], as in [MCP Apps](../mcp/client.md#mcp-apps). The renderer refuses calls to tools not listed in `allowedTools`.
+
 ## Tool Approval
 
 !!! note
