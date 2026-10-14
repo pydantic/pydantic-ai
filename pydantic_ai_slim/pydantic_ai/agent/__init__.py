@@ -5,6 +5,7 @@ import contextvars
 import dataclasses
 import functools
 import inspect
+import sys
 import warnings
 from collections.abc import (
     AsyncGenerator,
@@ -158,6 +159,7 @@ if TYPE_CHECKING:
     from pydantic_graph import Graph, GraphRunContext
 
     from .. import result as _result
+    from ..durable_exec._base import BaseDurabilityCapability
     from ..realtime import (
         AudioRetention,
         KnownRealtimeModelName,
@@ -3230,6 +3232,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return selection
 
     def _get_connection_model_selection(self) -> models.Model | str:
+        # Looked up through `sys.modules` like `RunContext.in_durable_context`: without the module, no
+        # durability capability exists.
+        durable_exec = sys.modules.get('pydantic_ai.durable_exec._base')
+        durability: BaseDurabilityCapability[object] | None = (
+            None if durable_exec is None else durable_exec.BaseDurabilityCapability.from_agent(self)
+        )
+        if durability is not None and durability.in_durable_context:
+            # Connecting is I/O in deterministic durable code, and the connected model isn't registered.
+            raise exceptions.UserError(
+                f'`agent.connect()` is not supported inside a {durability.engine_name} '
+                f'{durability.durable_container_noun}.'
+            )
         selection = self._get_model_selection_outside_run()
         if not isinstance(selection, str):
             return selection
