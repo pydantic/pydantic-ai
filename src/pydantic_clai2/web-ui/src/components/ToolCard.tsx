@@ -1,4 +1,5 @@
 import { memo, useState } from 'react'
+import { cell } from '../code'
 import { highlight } from '../markdown'
 import type { Diff, Item } from '../protocol'
 import { DiffView, diffStats } from './DiffView'
@@ -58,14 +59,19 @@ function summarize(item: Item, args: Args): Summary {
     case 'list_files':
       return { icon: <FileIcon size={14} />, verb: running ? 'Listing' : 'Listed', subject: str(args.path) || '.', mono: false }
     case 'run_code': {
-      const calls = codeCalls(str(args.code))
+      const calls = codeCalls(cell(item.args).code)
       const [only] = calls
       if (calls.length === 1 && only) {
         // A script around one call reads as that call.
         const key = only.name === 'shell' ? 'command' : only.name === 'grep' ? 'pattern' : 'path'
         return summarize({ ...item, name: only.name }, { [key]: only.argument })
       }
-      const first = str(args.code).split('\n').find((line) => line.trim() && !line.trim().startsWith('#'))
+      const names = item.calls.length ? item.calls.map((call) => call.name) : calls.map((call) => call.name)
+      if (names.length > 1) {
+        // A script around several calls reads as the calls it made.
+        return { icon: <TerminalIcon size={14} />, verb: running ? 'Running' : 'Ran', subject: names.join(' · '), mono: true }
+      }
+      const first = cell(item.args).code.split('\n').find((line) => line.trim() && !line.trim().startsWith('#'))
       return { icon: <TerminalIcon size={14} />, verb: running ? 'Running' : 'Ran', subject: first?.trim() ?? 'code', mono: true }
     }
     case 'ask_user_question':
@@ -103,7 +109,7 @@ function argumentDiffs(item: Item, args: Args): Diff[] {
 }
 
 /** What `run_code` returned, as its printed output, rather than the JSON envelope. */
-function codeResult(text: string): string {
+export function codeResult(text: string): string {
   try {
     const value: unknown = JSON.parse(text)
     if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -166,7 +172,7 @@ function ToolDetails({ item, args }: { item: Item; args: Args }) {
     return (
       <div className="tool-body">
         <pre className="code-small">
-          <code className="hljs" dangerouslySetInnerHTML={{ __html: highlight(str(args.code).trim(), 'python') }} />
+          <code className="hljs" dangerouslySetInnerHTML={{ __html: highlight(cell(item.args).code.trim(), 'python') }} />
         </pre>
         {item.text && <pre className={`result ${item.state === 'error' ? 'error' : ''}`}>{codeResult(item.text)}</pre>}
       </div>

@@ -7,7 +7,8 @@ import { Switches } from './components/Switches'
 import { Transcript } from './components/Transcript'
 import { TurnMeter } from './components/TurnMeter'
 import { compact } from './format'
-import { SidebarIcon } from './components/icons'
+import { ReplPanel } from './components/ReplPanel'
+import { SidebarIcon, TerminalIcon } from './components/icons'
 import type { ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
 import { MAC, MOD } from './platform'
 import { isLight, paletteVariables } from './palette'
@@ -26,6 +27,7 @@ export function App() {
   const [connection, setConnection] = useState<Connection>('connecting')
   const [theme, setTheme] = useState<Theme>(initialTheme)
   const [sidebar, setSidebar] = useState(true)
+  const [repl, setRepl] = useState(() => localStorage.getItem('clai-repl') === 'open')
   const [preview, setPreview] = useState<Saved | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const composer = useRef<ComposerHandle>(null)
@@ -56,6 +58,8 @@ export function App() {
       window.clearTimeout(timer)
     }
   }, [])
+
+  useEffect(() => localStorage.setItem('clai-repl', repl ? 'open' : 'closed'), [repl])
 
   // A `/theme` palette paints the page as it paints the terminal; `default` keeps Pydantic's colours in the chosen mode.
   const palette = state.theme?.palette ?? null
@@ -115,6 +119,9 @@ export function App() {
       } else if (mod && event.shiftKey && event.key.toLowerCase() === 'o') {
         event.preventDefault()
         void api.newSession().catch((error: unknown) => showError(String(error)))
+      } else if (mod && event.key === 'j') {
+        event.preventDefault()
+        setRepl((open) => !open)
       } else if (mod && event.key === 'b') {
         event.preventDefault()
         setSidebar((open) => !open)
@@ -152,7 +159,7 @@ export function App() {
   )
 
   return (
-    <div className={`app ${sidebar ? '' : 'no-sidebar'}`}>
+    <div className={`app ${sidebar ? '' : 'no-sidebar'} ${repl ? 'with-repl' : ''}`}>
       {sidebar && (
         <Sidebar
           ref={sidebarRef}
@@ -192,6 +199,14 @@ export function App() {
               {status.cost && <span className="cost">${Number(status.cost).toFixed(2)}</span>}
             </div>
           )}
+          <button
+            className={`icon-button repl-toggle ${repl ? 'active' : ''}`}
+            onClick={() => setRepl(!repl)}
+            title={`${repl ? 'Hide' : 'Show'} the run_code REPL (${MOD}J)`}
+            aria-pressed={repl}
+          >
+            <TerminalIcon size={16} />
+          </button>
         </header>
         {preview && (
           <div className="preview-banner">
@@ -243,6 +258,7 @@ export function App() {
           </button>
         )}
       </main>
+      {repl && <ReplPanel entries={entries} status={status} onClose={() => setRepl(false)} />}
     </div>
   )
 }

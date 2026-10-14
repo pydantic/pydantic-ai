@@ -9,6 +9,15 @@ export interface Diff {
   truncated: boolean
 }
 
+export interface SubCall {
+  id: string
+  name: string
+  args: string
+  state: ToolState
+  text: string
+  output: string
+}
+
 export interface Item {
   id: string
   kind: ItemKind
@@ -19,6 +28,8 @@ export interface Item {
   output: string
   exit_code: number | null
   diffs: Diff[]
+  /** Tools a `run_code` cell called from its sandbox; live runs only. */
+  calls: SubCall[]
 }
 
 export interface Option {
@@ -97,6 +108,11 @@ export type ServerMessage =
   | { type: 'item'; item: Item }
   | { type: 'delta'; id: string; text: string }
   | { type: 'tool_output'; id: string; text: string }
+  | { type: 'args_delta'; id: string; text: string }
+  | { type: 'tool_args'; id: string; args: string }
+  | { type: 'call'; id: string; call: SubCall }
+  | { type: 'call_output'; id: string; call_id: string; text: string }
+  | { type: 'call_done'; id: string; call_id: string; text: string; state: ToolState }
   | { type: 'tool_done'; id: string; text: string; state: ToolState }
   | { type: 'shell_done'; id: string; exit_code: number | null }
   | { type: 'diff'; id: string; diff: Diff }
