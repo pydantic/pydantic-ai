@@ -1788,7 +1788,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     def _get_connection_model_selection(self) -> models.Model | str:
         """Resolve the model to connect: a model instance it borrows, or a model ID it infers and owns."""
-        raise NotImplementedError
+        raise exceptions.UserError(f'`{type(self).__name__}` does not support explicit connections.')
 
     def _use_connected_model(self, model: models.Model) -> AbstractContextManager[None]:
         """Use a connected model in place of the configured model selection for runs in this context."""
