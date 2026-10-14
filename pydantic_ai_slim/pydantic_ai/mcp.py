@@ -1571,7 +1571,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
         # Tools without a UI keep calling `direct_call_tool`, which subclasses and tests may replace. App tools
         # take the same steps, but keep the arguments and raw result of the last call to this tool: mapping it
-        # for the model drops `structuredContent` (when text mirrors it) and `_meta`, which the app needs.
+        # for the model keeps either `structuredContent` (when every block is text) or the content blocks, and
+        # always drops `_meta`, which the app needs.
         tool_name = name
         last_call: tuple[dict[str, Any], CallToolResult, ToolResult] | None = None
 

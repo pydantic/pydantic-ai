@@ -481,11 +481,11 @@ _(This example is complete, it can be run "as is")_
 
 ## MCP Apps
 
-[MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) let a server ship an interactive UI with a tool: the tool's `_meta.ui.resourceUri` names a `ui://` resource holding an HTML page, and the host application shows that page with the tool's input and result. Pydantic AI doesn't render anything, but it passes your frontend what it needs.
+An [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) is an HTML page a server attaches to a tool through the tool's `_meta.ui.resourceUri`. Pydantic AI doesn't render it; it gives your frontend what it needs to.
 
-When the agent calls a tool that names a UI resource, the call returns a [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose `metadata` holds an [`MCPAppToolResult`][pydantic_ai.mcp.MCPAppToolResult] under the `'mcp_app'` key, with the resource URI, the tool input, and the full MCP result including `structuredContent` and `_meta`. The model never sees this metadata. If a [`process_tool_call`](#tool-call-customization) hook changes the arguments or the result, the app data is not attached.
+When the agent calls such a tool, the [`ToolReturn`][pydantic_ai.messages.ToolReturn] carries an [`MCPAppToolResult`][pydantic_ai.mcp.MCPAppToolResult] in `metadata['mcp_app']`: the resource URI, the tool input, the full MCP result with `structuredContent` and `_meta`, and the toolset `id`. The model doesn't see it. The [AG-UI](../ui/ag-ui.md#mcp-apps) and [Vercel AI](../ui/vercel-ai.md#mcp-apps) adapters send it to the frontend. If a [`process_tool_call`](#tool-call-customization) hook changes the arguments or the result, it isn't attached. A [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] around the toolset that edits results gets this `ToolReturn` for app tools, so it should edit `return_value`, and drop `metadata` if the page mustn't see the original.
 
-The [AG-UI](../ui/ag-ui.md#mcp-apps) and [Vercel AI](../ui/vercel-ai.md#mcp-apps) adapters forward this data to the frontend. Your application is the host: it fetches the page with [`read_resource_contents`][pydantic_ai.mcp.MCPToolset.read_resource_contents], whose `_meta.ui` holds the Content Security Policy and permissions the server asks for, renders it in a sandboxed iframe, and passes the tool input and result in. Requests the page makes back to the server, such as calling a tool, also go through your application.
+To show the page, read it with [`read_resource_contents`][pydantic_ai.mcp.MCPToolset.read_resource_contents]. Each item has the content, its MIME type and its `_meta`; `_meta.ui` holds the CSP and permissions for the iframe.
 
 ```python {title="mcp_apps.py" test="skip"}
 from typing import Any
@@ -498,15 +498,13 @@ agent = Agent('openai:gpt-5.2', toolsets=[weather])
 
 
 async def app_page(resource_uri: str) -> tuple[str, dict[str, Any]]:
-    """Return an app's HTML and the `_meta.ui` settings its sandbox needs."""
+    """Return the page's HTML and its `_meta.ui`."""
     [contents] = await weather.read_resource_contents(resource_uri)
     assert isinstance(contents.content, str)
     return contents.content, (contents.metadata or {}).get('ui', {})
 ```
 
-A server that supports MCP Apps lists `'io.modelcontextprotocol/ui'` in [`capabilities.extensions`][pydantic_ai.mcp.ServerCapabilities.extensions].
-
-`MCPToolset` doesn't yet tell servers it supports MCP Apps (the `io.modelcontextprotocol/ui` client capability), so a server that only offers app tools to clients that do will not offer them.
+[`capabilities.extensions`][pydantic_ai.mcp.ServerCapabilities.extensions] lists the extensions a server supports; MCP Apps servers list `'io.modelcontextprotocol/ui'`. `MCPToolset` doesn't advertise the matching client extension, so a server that only offers app tools to clients that do won't offer them.
 
 ## HTTP authentication
 
