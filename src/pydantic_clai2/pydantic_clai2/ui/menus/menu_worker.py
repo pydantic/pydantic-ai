@@ -47,6 +47,14 @@ def holding_output(hold: Hold) -> Generator[None]:
         _HOLD.reset(token)
 
 
+def full_terminal() -> AbstractContextManager[None]:
+    """Take the live panel off the screen while another process draws on the whole terminal.
+
+    The panel repaints every cell when the block exits. Outside the live editor this does nothing.
+    """
+    return _HOLD.get()(leave_screen=True)
+
+
 def worker_stopping() -> bool:
     """Whether the owner has requested that this menu worker release its resources."""
     stop = _STOP.get()

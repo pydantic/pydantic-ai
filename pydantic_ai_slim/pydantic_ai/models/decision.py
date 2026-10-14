@@ -3,10 +3,11 @@ from __future__ import annotations as _annotations
 import dataclasses
 import json
 from abc import abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from functools import cached_property
 from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
 
@@ -23,14 +24,17 @@ from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
     BaseToolReturnPart,
+    BinaryContent,
     CachePoint,
     CompactionPart,
     FilePart,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
     ModelResponseStreamEvent,
+    MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
@@ -43,6 +47,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    is_multi_modal_content,
 )
 from ..profiles import ModelProfile, merge_profile
 from ..profiles.decision import DecisionModelProfile
@@ -57,6 +62,7 @@ from . import (
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
+    download_item,
 )
 
 __all__ = (
@@ -185,6 +191,12 @@ class DecisionRequest:
     """The text or JSON value to decide about."""
     questions: dict[str, DecisionQuestion]
     """Named questions to answer about the state."""
+    images: tuple[BinaryContent, ...] = ()
+    """Image evidence, in the order of the `<image N>` references in `state`.
+
+    Only image media types are supported. Backends that do not support images must reject a nonempty tuple,
+    including when `decide` is called directly.
+    """
 
 
 @dataclass(kw_only=True)
@@ -223,6 +235,36 @@ def _wire(value: DecisionQuestion | DecisionAnswer) -> dict[str, Any]:
         if item is not None:
             wire[name] = item
     return wire
+
+
+def _probability_bounds(probabilities: Collection[float]) -> tuple[list[Decimal], list[Decimal]]:  # pyright: ignore[reportUnusedFunction]
+    """The bounded rounding intervals of the displayed probabilities, using at least two decimal places."""
+    values: list[Decimal] = [Decimal(str(probability)) for probability in probabilities]
+    half_units: list[Decimal] = [Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2 for value in values]
+    lower: list[Decimal] = [max(Decimal(0), value - half_unit) for value, half_unit in zip(values, half_units)]
+    upper: list[Decimal] = [min(Decimal(1), value + half_unit) for value, half_unit in zip(values, half_units)]
+    return lower, upper
+
+
+def _score_fits(lower: Sequence[Decimal], upper: Sequence[Decimal], score: float) -> bool:  # pyright: ignore[reportUnusedFunction]
+    """Whether rounded probabilities can sum to one and produce the displayed score."""
+    remaining = Decimal(1) - sum(lower, Decimal(0))
+    valid = 0 <= remaining <= sum((high - low for low, high in zip(lower, upper)), Decimal(0))
+    if valid:
+        bounds: list[Decimal] = []
+        for levels in (range(len(lower)), reversed(range(len(lower)))):
+            rest = remaining
+            mean = sum((level * low for level, low in enumerate(lower)), Decimal(0))
+            for level in levels:
+                taken = min(rest, upper[level] - lower[level])
+                mean += level * taken
+                rest -= taken
+            bounds.append(mean)
+        displayed_score = Decimal(str(score))
+        score_decimals = max(2, -int(displayed_score.as_tuple().exponent))
+        score_half_unit = Decimal(1).scaleb(-score_decimals) / 2
+        valid = displayed_score + score_half_unit >= bounds[0] and displayed_score - score_half_unit <= bounds[1]
+    return valid
 
 
 _UNSUPPORTED_FIELD_HINT = (
@@ -374,16 +416,18 @@ class _Limits:
     questions can refuse a pick-one the backend would reject before anything is sent, and ask whole numbers with
     more levels than a rubric can have as a pick-one instead. Also whether the model needs `instructions` on every
     question, from the profile's `decision_requires_instructions` or the model's `requires_instructions`.
+    The backend's per-request question cap bounds speculation independently of those model-specific limits.
     """
 
     choice_options: int | None
     score_levels: int | None
     requires_instructions: bool
+    questions: int | None
 
 
 @dataclass(init=False)
 class DecisionModel(Model[InterfaceClient]):
-    """Base class for decision models: models that answer typed questions about a text rather than write text.
+    """Base class for decision models: models that answer typed questions about evidence rather than write text.
 
     A decision model is sent a *state*, the text or JSON value to judge, and a set of named questions of three
     kinds: a yes/no ([`NoulQuestion`][pydantic_ai.models.decision.NoulQuestion]), a pick-one
@@ -403,8 +447,8 @@ class DecisionModel(Model[InterfaceClient]):
       tool has returned or a retry was sent, what was done since goes along apart from both.
     - With tools attached, or a union of output types, one more pick-one asks which route the text calls for, and
       the likeliest is taken. The fields of every route the model can fill are asked beside it, each on the premise
-      of its route, and only the taken route's answers are read; past a size cutoff, a picked route with fields is
-      filled in a second request instead. A route whose fields the model cannot express, a single output type's
+      of its route, and only the taken route's answers are read; past a size or question-count cutoff, a picked
+      route with fields is filled in a second request instead. A route whose fields the model cannot express, a single output type's
       included, is raised as [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute], for a
       [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to hand to a language model. A pick below
       `decision_route_threshold`, when set, is raised as [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute]
@@ -417,8 +461,36 @@ class DecisionModel(Model[InterfaceClient]):
     To support a backend, subclass this, implement [`decide`][pydantic_ai.models.decision.DecisionModel.decide]
     along with `model_name`, `system` and `base_url`, set `max_choice_options` and `max_score_levels` to the
     backend's limits, and `requires_instructions` if it refuses a question without `instructions`, or have its
-    provider set these per model in a [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile]. See [Decision models](https://pydantic.dev/docs/ai/models/decision/) for the full rules
-    and an example.
+    provider set these per model in a [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile].
+    Set `supports_image_input` if the backend accepts images, and `max_images` and `max_questions` to its
+    per-request transport limits. These caps describe the endpoint, so profiles do not override them.
+    See [Decision models](../../models/decision.md#implementing-a-decision-model) for the full rules and an example.
+    """
+
+    supports_image_input: ClassVar[bool] = False
+    """Whether the backend can receive image evidence in `DecisionRequest.images`.
+
+    Set this on a backend that supports images. The shared history mapper then labels images in the state
+    and resolves image URLs before calling `decide`. This is a transport capability, not a profile default.
+    """
+
+    max_images: ClassVar[int | None] = None
+    """The most images the endpoint accepts in one request, or `None` for no limit.
+
+    This is a transport limit, independent of the selected model, so profiles do not override it.
+
+    An oversized request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] before image URLs
+    are downloaded, so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] can take over.
+    """
+
+    max_questions: ClassVar[int | None] = None
+    """The most questions the endpoint accepts in one request, or `None` for no limit.
+
+    This is a transport limit, independent of the selected model, so profiles do not override it.
+    Speculative route fields that do not fit are filled in a separate request after the route is selected.
+
+    An oversized request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] before image URLs
+    are downloaded.
     """
 
     max_choice_options: ClassVar[int | None] = None
@@ -468,6 +540,9 @@ class DecisionModel(Model[InterfaceClient]):
         This is called once per request the model makes: once per step, or twice when a route is picked in one
         request and, past the size cutoff for asking every route's fields up front, filled in a second. Every
         question in `request.questions` needs an answer of the matching kind under the same name.
+        Image-capable backends serialize `request.images` as evidence alongside `request.state`; other
+        backends must reject a nonempty tuple, including when this method is called directly. Backend request
+        limits also apply to direct calls.
 
         Raise [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] or
         [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] when the backend fails, so a
@@ -562,7 +637,6 @@ class DecisionModel(Model[InterfaceClient]):
         ):
             # Preserve the no-request path: there is no state or question to build when no arguments need filling.
             return self._forced(forced_tool, next(iter(routes)))
-        state = _map_messages(messages, turn=done)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
         settings = cast(DecisionModelSettings, model_settings or {})
@@ -577,11 +651,12 @@ class DecisionModel(Model[InterfaceClient]):
             choice_options=profile.get('decision_max_choice_options', self.max_choice_options),
             score_levels=profile.get('decision_max_score_levels', self.max_score_levels),
             requires_instructions=profile.get('decision_requires_instructions', self.requires_instructions),
+            questions=self.max_questions,
         )
         if forced_tool is not None:
             # Every other route has returned this turn, so the one left is taken without a choice question.
             return await self._forced_with_arguments(
-                forced_tool, next(iter(routes)), state, instructions, settings, boolean_threshold, limits
+                forced_tool, next(iter(routes)), messages, instructions, settings, boolean_threshold, limits, turn=done
             )
         fillable = [tool for tool in output_tools if _expressible(tool, instructions, limits)]
         if (
@@ -609,7 +684,9 @@ class DecisionModel(Model[InterfaceClient]):
                 # a choice question, like the last tool left, and handing it off needs no request either.
                 raise UnfillableRoute(self.model_name, next(iter(routes)), 1.0)
             ask = _Ask.about(output_tool, instructions, limits, label=None)
-            async with self._decide(DecisionRequest(state=state, questions=ask.questions), settings, fields=True) as (
+            state, image_inputs = self._map_decision_input(messages, turn=done)
+            request = await self._prepare_decision_request(state, image_inputs, ask.questions, settings)
+            async with self._decide(request, settings, fields=True) as (
                 response,
                 span,
             ):
@@ -617,15 +694,19 @@ class DecisionModel(Model[InterfaceClient]):
                 _record_outcome(span, confidence)
             return self._response(output_tool, args, response.usage, response.model_name, provider_details)
 
+        route_questions: dict[str, DecisionQuestion] = {}
+        route_key = _route_question(route_questions, routes, output_tools, tools, instructions, limits)
+        state, image_inputs = self._map_decision_input(messages, turn=done)
         speculation = _Speculation.about(routes, output_tools, state, instructions, limits)
         questions = speculation.questions()
-        route_key = _route_question(questions, routes, output_tools, tools, instructions, limits)
+        questions.update(route_questions)
+        request_template = await self._prepare_decision_request(state, image_inputs, questions, settings)
 
         # A picked route whose fields are asked in a second request, past the size cutoff: the route, its label and
         # its questions.
         to_fill: tuple[ToolDefinition, str, _Ask] | None = None
         async with self._decide(
-            DecisionRequest(state=state, questions=questions),
+            request_template,
             settings,
             fields=bool(speculation.asks),
             route_question=route_key,
@@ -661,7 +742,9 @@ class DecisionModel(Model[InterfaceClient]):
 
         if to_fill is not None:
             route, label, fill = to_fill
-            response, args, provider_details = await self._fill(label, fill, state, settings, boolean_threshold)
+            response, args, provider_details = await self._fill(
+                label, fill, request_template, settings, boolean_threshold
+            )
             response_usage += response.usage
             # `RequestUsage.requests` is fixed at 1, so usage cannot say that this turn asked twice: the
             # choice and the fill are two requests inside one step. The count is reported here, and only
@@ -689,11 +772,50 @@ class DecisionModel(Model[InterfaceClient]):
             finish_reason='tool_call',
         )
 
+    def _map_decision_input(
+        self, messages: list[ModelMessage], *, turn: bool
+    ) -> tuple[JsonValue, list[BinaryContent | ImageUrl]]:
+        """Map history once, keeping image URLs unresolved until the request passes preflight."""
+        image_inputs: list[BinaryContent | ImageUrl] = []
+        state = _map_messages(messages, turn=turn, images=image_inputs if self.supports_image_input else None)
+        return state, image_inputs
+
+    def _check_request_limits(self, *, image_count: int = 0, question_count: int = 0) -> None:
+        for kind, count, limit in (
+            ('images', image_count, self.max_images),
+            ('questions', question_count, self.max_questions),
+        ):
+            if limit is not None and count > limit:
+                raise ModelAPIError(self.model_name, f'{self.model_name} accepts at most {limit} {kind}; got {count}.')
+
+    async def _prepare_decision_request(
+        self,
+        state: JsonValue,
+        image_inputs: list[BinaryContent | ImageUrl],
+        questions: dict[str, DecisionQuestion],
+        model_settings: DecisionModelSettings,
+    ) -> DecisionRequest:
+        """Validate a complete request before resolving its image URLs."""
+        self._check_request_limits(image_count=len(image_inputs), question_count=len(questions))
+        images: list[BinaryContent] = []
+        for item in image_inputs:
+            if isinstance(item, BinaryContent):
+                images.append(item)
+            else:
+                downloaded = await download_item(item, data_format='bytes')
+                image = BinaryContent(
+                    downloaded['data'], media_type=downloaded['data_type'], vendor_metadata=item.vendor_metadata
+                )
+                if not image.is_image:
+                    raise UserError(f'Image URL {item.url!r} returned content that is not an image.')
+                images.append(image)
+        return DecisionRequest(state=state, questions=questions, images=tuple(images))
+
     async def _fill(
         self,
         label: str,
         ask: _Ask,
-        state: JsonValue,
+        request_template: DecisionRequest,
         settings: DecisionModelSettings,
         boolean_threshold: float,
     ) -> tuple[DecisionResponse, dict[str, Any], dict[str, Any]]:
@@ -711,7 +833,7 @@ class DecisionModel(Model[InterfaceClient]):
         """
         try:
             async with self._decide(
-                DecisionRequest(state=state, questions=ask.questions),
+                dataclasses.replace(request_template, questions=ask.questions),
                 settings,
                 route=label,
                 fields=True,
@@ -730,17 +852,21 @@ class DecisionModel(Model[InterfaceClient]):
         self,
         tool: ToolDefinition,
         label: str,
-        state: JsonValue,
+        messages: list[ModelMessage],
         instructions: str | None,
         settings: DecisionModelSettings,
         boolean_threshold: float,
         limits: _Limits,
+        *,
+        turn: bool,
     ) -> ModelResponse:
         """Fill the arguments of the one route left, without a choice request."""
         fill = _Ask.to_fill(tool, instructions, limits, label=label)
         if fill is None:
             raise UnfillableRoute(self.model_name, label, 1.0)
-        response, args, details = await self._fill(label, fill, state, settings, boolean_threshold)
+        state, image_inputs = self._map_decision_input(messages, turn=turn)
+        request_template = await self._prepare_decision_request(state, image_inputs, fill.questions, settings)
+        response, args, details = await self._fill(label, fill, request_template, settings, boolean_threshold)
         details['route'] = _forced_route(label)
         return self._response(tool, args, response.usage, response.model_name, details)
 
@@ -1230,10 +1356,18 @@ class _Speculation:
         # and all of them when the route taken could be one with nothing asked about it.
         smallest = min(sizes.values()) if len(sizes) == len(routes) else 0
         unpicked = sum(sizes.values()) - smallest
-        if unpicked > _REQUEST_TOKENS + state_tokens or state_tokens + sum(sizes.values()) > _SPECULATION_TOKENS:
+        if (
+            unpicked > _REQUEST_TOKENS + state_tokens
+            or state_tokens + sum(sizes.values()) > _SPECULATION_TOKENS
+            or (
+                limits.questions is not None and 1 + sum(len(ask.questions) for ask in asks.values()) > limits.questions
+            )
+        ):
             asks = {
                 label: ask for label, ask in asks.items() if routes[label] in output_tools and len(output_tools) == 1
             }
+        if limits.questions is not None and 1 + sum(len(ask.questions) for ask in asks.values()) > limits.questions:
+            asks = {}
         keys: dict[str, dict[str, str]] = {}
         taken: set[str] = set()
         for label, ask in asks.items():
@@ -1800,13 +1934,17 @@ class _Ask:
     def to_fill(cls, tool: ToolDefinition, instructions: str | None, limits: _Limits, *, label: str) -> _Ask | None:
         """The questions a picked route's fields become in the request that fills them, or `None` to hand it off.
 
-        `None` means the model cannot express one of the fields, so the route is raised as
-        [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute] before anything is sent to fill it.
+        `None` means the model cannot express one of the fields or their questions exceed the request cap,
+        so the route is raised as [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute]
+        before anything is sent to fill it.
         """
         try:
-            return cls.about(tool, instructions, limits, label=label)
+            ask = cls.about(tool, instructions, limits, label=label)
         except UserError:
             return None
+        if limits.questions is not None and len(ask.questions) > limits.questions:
+            return None
+        return ask
 
     def answers(
         self, response: DecisionResponse, boolean_threshold: float
@@ -2067,7 +2205,14 @@ def _noul_question(options: dict[bool, str | None], asked: JsonValue | None) -> 
     )
 
 
-def _prompt_text(part: UserPromptPart) -> str:
+def _image_label(item: MultiModalContent, images: list[BinaryContent | ImageUrl], context: str) -> str:
+    if not isinstance(item, (BinaryContent, ImageUrl)) or (isinstance(item, BinaryContent) and not item.is_image):
+        raise UserError(f'{context} contains an unsupported file: this model accepts text and images only.')
+    images.append(item)
+    return f'<image {len(images)}>'
+
+
+def _prompt_text(part: UserPromptPart, images: list[BinaryContent | ImageUrl] | None) -> str:
     texts: list[str] = []
     for item in [part.content] if isinstance(part.content, str) else part.content:
         if isinstance(item, str):
@@ -2076,6 +2221,8 @@ def _prompt_text(part: UserPromptPart) -> str:
             texts.append(item.content)
         elif isinstance(item, CachePoint):
             pass  # A marker for models that cache a prompt prefix; there is nothing in it to send.
+        elif images is not None and is_multi_modal_content(item):
+            texts.append(_image_label(item, images, 'A user prompt'))
         else:
             raise UserError(
                 'Files are not supported by this model: it judges text, so images, audio, video and documents '
@@ -2084,23 +2231,28 @@ def _prompt_text(part: UserPromptPart) -> str:
     return '\n\n'.join(texts)
 
 
-def _tool_return_entry(part: BaseToolReturnPart) -> JsonValue:
-    """A tool result as history, or a `UserError` when it carries a file: `model_response_str` would leave it out."""
+def _tool_return_entry(part: BaseToolReturnPart, images: list[BinaryContent | ImageUrl] | None) -> JsonValue:
+    """A tool result as history, preserving file positions and failed-result wrapping."""
     if part.files:
-        raise UserError('Files are not supported by this model: a file in a tool result cannot be sent to it.')
+        if images is None:
+            raise UserError('Files are not supported by this model: a file in a tool result cannot be sent to it.')
+        content: list[str] = []
+        for item in part.content_items(mode='str', wrap_if_error=False):
+            content.append(item if isinstance(item, str) else _image_label(item, images, 'A tool result'))
+        part = dataclasses.replace(part, content=content)
     return {'tool_return': {'name': part.tool_name, 'content': part.model_response_str()}}
 
 
-def _request_entry(part: ModelRequestPart) -> JsonValue:
+def _request_entry(part: ModelRequestPart, images: list[BinaryContent | ImageUrl] | None) -> JsonValue:
     """A request part as a history entry: a user prompt as what the user said, the rest as what they are."""
     if isinstance(part, SystemPromptPart):
         # Whoever wrote it, a system prompt is something that was said in the conversation, so it is
         # material to judge and not a question to ask. What the model is asked comes from `instructions`.
         return {'system': part.content}
     elif isinstance(part, UserPromptPart):
-        return {'user': _prompt_text(part)}
+        return {'user': _prompt_text(part, images)}
     elif isinstance(part, ToolReturnPart):
-        return _tool_return_entry(part)
+        return _tool_return_entry(part, images)
     elif isinstance(part, RetryPromptPart):
         return {'retry': part.model_response()}
     elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
@@ -2112,7 +2264,7 @@ def _request_entry(part: ModelRequestPart) -> JsonValue:
         assert_never(part)
 
 
-def _response_entries(message: ModelResponse) -> list[JsonValue]:
+def _response_entries(message: ModelResponse, images: list[BinaryContent | ImageUrl] | None) -> list[JsonValue]:
     """Map a response to history entries, in the order the model produced them."""
     entries: list[JsonValue] = []
     for part in message.parts:
@@ -2127,14 +2279,16 @@ def _response_entries(message: ModelResponse) -> list[JsonValue]:
         elif isinstance(part, ToolCallPart | NativeToolCallPart):
             entries.append({'tool_call': {'name': part.tool_name, 'args': part.args_as_dict()}})
         elif isinstance(part, NativeToolReturnPart):
-            entries.append(_tool_return_entry(part))
+            entries.append(_tool_return_entry(part, images))
         elif isinstance(part, CompactionPart):
             if part.content:
                 entries.append({'summary': part.content})
         elif isinstance(part, FilePart):
-            raise UserError(
-                'Files are not supported by this model: a file in the message history cannot be sent to it.'
-            )
+            if images is None:
+                raise UserError(
+                    'Files are not supported by this model: a file in the message history cannot be sent to it.'
+                )
+            entries.append({'assistant': _image_label(part.content, images, 'An assistant response')})
         elif isinstance(part, SpeechPart):  # pragma: no cover
             raise _unconverted_speech_part_error()
         else:
@@ -2142,7 +2296,9 @@ def _response_entries(message: ModelResponse) -> list[JsonValue]:
     return entries
 
 
-def _map_messages(messages: list[ModelMessage], *, turn: bool) -> JsonValue:
+def _map_messages(
+    messages: list[ModelMessage], *, turn: bool, images: list[BinaryContent | ImageUrl] | None
+) -> JsonValue:
     """The state to judge.
 
     The latest user text on its own is the whole state, sent as the plain text it is. With a conversation behind
@@ -2155,18 +2311,18 @@ def _map_messages(messages: list[ModelMessage], *, turn: bool) -> JsonValue:
     however the messages arrived: a run's own, or a `message_history` passed in that ends partway through a turn.
     """
     if turn and any(isinstance(part, UserPromptPart) for message in messages for part in message.parts):
-        return _map_turn(messages)
+        return _map_turn(messages, images)
     history: list[JsonValue] = []
     prompt_parts: list[str] = []
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, UserPromptPart) and message is messages[-1]:
-                    prompt_parts.append(_prompt_text(part))
+                    prompt_parts.append(_prompt_text(part, images))
                 else:
-                    history.append(_request_entry(part))
+                    history.append(_request_entry(part, images))
         elif isinstance(message, ModelResponse):
-            history.extend(_response_entries(message))
+            history.extend(_response_entries(message, images))
         else:
             assert_never(message)
 
@@ -2181,7 +2337,7 @@ def _map_messages(messages: list[ModelMessage], *, turn: bool) -> JsonValue:
     return state
 
 
-def _map_turn(messages: list[ModelMessage]) -> JsonValue:
+def _map_turn(messages: list[ModelMessage], images: list[BinaryContent | ImageUrl] | None) -> JsonValue:
     """The state split at the latest user prompt, for `_map_messages`."""
     latest = max(
         index
@@ -2193,19 +2349,19 @@ def _map_turn(messages: list[ModelMessage]) -> JsonValue:
     done: list[JsonValue] = []
     for index, message in enumerate(messages):
         if isinstance(message, ModelResponse):
-            (history if index < latest else done).extend(_response_entries(message))
+            (history if index < latest else done).extend(_response_entries(message, images))
             continue
         assert isinstance(message, ModelRequest)
         if index != latest:
-            (history if index < latest else done).extend(_request_entry(part) for part in message.parts)
+            (history if index < latest else done).extend(_request_entry(part, images) for part in message.parts)
             continue
         # The request holding the latest prompt: what came before its last prompt is the previous turn's, and what
         # came after it is this one's. Its prompts are the text, as they are when it is the last message.
         last_prompt = max(i for i, part in enumerate(message.parts) if isinstance(part, UserPromptPart))
         for i, part in enumerate(message.parts):
             if isinstance(part, UserPromptPart):
-                prompt_parts.append(_prompt_text(part))
+                prompt_parts.append(_prompt_text(part, images))
             else:
-                (history if i < last_prompt else done).append(_request_entry(part))
+                (history if i < last_prompt else done).append(_request_entry(part, images))
     state: dict[str, JsonValue] = {'history': history} if history else {}
     return {**state, 'text': '\n\n'.join(prompt_parts), 'done': done}

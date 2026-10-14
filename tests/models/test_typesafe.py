@@ -48,6 +48,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters, decision
+from pydantic_ai.models.decision import DecisionRequest, NoulQuestion
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -2507,6 +2508,22 @@ async def test_file_in_history_rejected(allow_model_requests: None, typesafe_mod
     agent = Agent(typesafe_model, output_type=bool, instructions='Is this fine?')
     with pytest.raises(UserError, match='Files are not supported'):
         await agent.run('Is it a cat?', message_history=history)
+
+
+async def test_decide_rejects_image_evidence_before_a_request(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
+):
+    with pytest.raises(UserError, match='TypeSafe does not support image input'):
+        await typesafe_model.decide(
+            DecisionRequest(
+                state='Review this image.',
+                questions={'q': NoulQuestion()},
+                images=(BinaryContent(b'image', media_type='image/png'),),
+            ),
+            {},
+        )
+
+    assert request_capture.paths == []
 
 
 async def test_non_text_prompt_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):

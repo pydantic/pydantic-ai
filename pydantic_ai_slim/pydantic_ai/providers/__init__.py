@@ -157,6 +157,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .openai_codex import OpenAICodexProvider
 
         return OpenAICodexProvider
+    elif provider == 'openai-decisions':
+        from .openai_decisions import OpenAIDecisionsProvider
+
+        return OpenAIDecisionsProvider
     elif provider == 'deepseek':
         from .deepseek import DeepSeekProvider
 
@@ -225,6 +229,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .moonshotai import MoonshotAIProvider
 
         return MoonshotAIProvider
+    elif provider == 'meta':
+        from .meta import MetaProvider
+
+        return MetaProvider
     elif provider == 'fireworks':
         from .fireworks import FireworksProvider
 

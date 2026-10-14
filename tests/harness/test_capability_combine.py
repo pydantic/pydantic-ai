@@ -285,9 +285,11 @@ COMBINE_POLICY: dict[str, Policy] = {
     '_Skill': Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name'),
     'RequireWorkspace': Anonymous('the same run-start check; two check the same thing twice'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
+    '_DefaultCaching': Anonymous('Coder-local caching default; it yields to any `cache` already set'),
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
     'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SpritesSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'SmolSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'BubblewrapSandbox': Anonymous('a structural wrapper, applied once per wrapped workspace capability'),
     'ModalSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'Researcher': Anonymous('a packaged harness; composing two is composing their members'),
@@ -318,11 +320,16 @@ COMBINE_POLICY: dict[str, Policy] = {
     'WarnNearLimits': Anonymous('a passive observer; several thresholds compose'),
     'WarnOnCacheBusts': Anonymous('a passive observer; several thresholds compose'),
     'TrajectoryJudge': Anonymous('each judge independently evaluates and steers the run'),
+    'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
         'itself up, before any id is consulted'
     ),
     'AbsurdDurability': Rejected(
+        'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
+        'itself up, before any id is consulted'
+    ),
+    'PGTaskDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
         'itself up, before any id is consulted'
     ),

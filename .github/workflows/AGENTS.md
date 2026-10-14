@@ -217,6 +217,17 @@ percentage used, so remaining quota is `100 - percentage`; `nextResetTime` is
 epoch milliseconds. A missing or malformed required window makes health unknown
 and keeps agent workflows gated. No quota-resource repository variable is needed.
 
+Unknown quota results may include one of these fixed diagnostic categories:
+`missing_api_key`, `invalid_request`, `http_error`, `timeout`, `tls_error`, `network_error`,
+`invalid_encoding`, `invalid_json`, `invalid_response`, `invalid_response_code`,
+`unsuccessful_response`, `invalid_limits`, `invalid_limit_row`,
+`invalid_window_unit`, `invalid_window_number`, `duplicate_window`,
+`invalid_percentage`, `invalid_reset_time`, or `missing_windows`. The artifact may
+also include a numeric HTTP status. These values contain no provider response text,
+request headers, URL, credential, or exception message. Version 1 artifacts without
+diagnostic fields remain valid. Diagnostics explain the unknown result; they do not
+change gate or recovery policy.
+
 To request manual recovery, run **Agent Provider Health** with `workflow_dispatch`
 and enter the incident's number as `recover_issue`. The controller finds that one
 open, marked incident whose provider key matches the currently configured provider.

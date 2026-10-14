@@ -85,6 +85,7 @@ with try_import() as openai_imports:
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
+    from pydantic_ai.providers.meta import MetaProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
     from pydantic_ai.providers.nebius import NebiusProvider
     from pydantic_ai.providers.ollama import OllamaProvider
@@ -614,7 +615,6 @@ def test_openai_codex_gpt_5_6():
             'openai_responses_supports_reasoning_mode': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_phase': True,
-            'openai_supports_prompt_cache_breakpoints': True,
             'openai_supports_minimal_reasoning_effort': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -622,8 +622,8 @@ def test_openai_codex_gpt_5_6():
             'tool_addition_mode': 'with_definitions',
             'openai_unsupported_model_settings': ('max_tokens', 'temperature', 'top_p'),
             'default_cache_retention': timedelta(seconds=1800),
-            'supports_cache': True,
-            'supported_cache_retentions': ('30m',),
+            'supports_cache': False,
+            'supported_cache_retentions': (),
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
@@ -2098,6 +2098,34 @@ def test_anthropic_unknown_model_returns_some_profile():
             'supported_cache_retentions': ('5m', '1h'),
             'supports_auto_cache': True,
         }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_meta_muse():
+    assert _normalize(MetaProvider.model_profile('muse-spark-1.3')) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_forced_tool_choice': False,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'thinking_enabled_by_default': True,
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_phase': True,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'openai_chat_supports_web_search': True,
+            'supported_native_tools': frozenset({WebSearchTool}),
+            'context_window': 1048576,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_meta_non_text_model():
+    """Image and transcription models only get the endpoint-wide facts, not the Muse text-model profile."""
+    assert _normalize(MetaProvider.model_profile('muse-image-1.0')) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'supports_forced_tool_choice': False}
     )
 
 

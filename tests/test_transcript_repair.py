@@ -934,6 +934,117 @@ async def test_reused_tool_call_id_shadowed_open_call_repaired():
     assert later_result.parts == [ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_1', timestamp=TS)]
 
 
+async def test_same_response_repeated_tool_call_id_both_answered_no_synthesized_return():
+    """Both calls repeating an ID within one response are answered FIFO by their real results."""
+    agent, received = capture_agent()
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is the weather?', timestamp=TS)], timestamp=TS),
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='call_1'),
+                ToolCallPart('get_weather', {'city': 'Amsterdam'}, tool_call_id='call_1'),
+            ],
+            timestamp=TS,
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('get_weather', 'Sunny', tool_call_id='call_1', timestamp=TS),
+                ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_1', timestamp=TS),
+            ],
+            timestamp=TS,
+        ),
+        ModelResponse(parts=[TextPart('Rainy!')], timestamp=TS),
+    ]
+
+    result = await agent.run('Thanks.', message_history=message_history)
+
+    assert result.output == 'All done.'
+    request = received[0][2]
+    assert isinstance(request, ModelRequest)
+    # Both real results reach the model, in order, and no synthesized return is inserted anywhere.
+    assert request.parts == [
+        ToolReturnPart('get_weather', 'Sunny', tool_call_id='call_1', timestamp=TS),
+        ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_1', timestamp=TS),
+    ]
+    all_parts = [part for message in received[0] for part in message.parts]
+    assert not any(
+        isinstance(part, ToolReturnPart) and part.metadata and SYNTHESIZED_TOOL_RETURN_METADATA_KEY in part.metadata
+        for part in all_parts
+    )
+
+
+async def test_repair_messages_idempotent_with_same_response_repeated_tool_call_id():
+    """Repeated `repair_messages` calls on a same-response repeated-ID history are stable."""
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='call_1'),
+                ToolCallPart('get_weather', {'city': 'Amsterdam'}, tool_call_id='call_1'),
+            ],
+            timestamp=TS,
+        ),
+    ]
+
+    repaired = repair_messages(history)
+    repaired_again = repair_messages(repaired)
+
+    assert repaired_again == repaired
+    assert len(repaired) == 2
+    request = repaired[-1]
+    assert isinstance(request, ModelRequest)
+    assert request.parts == [
+        ToolReturnPart(
+            'get_weather',
+            'The tool call was interrupted before a result was produced.',
+            tool_call_id='call_1',
+            metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
+            timestamp=TS,
+            outcome='interrupted',
+        ),
+        ToolReturnPart(
+            'get_weather',
+            'The tool call was interrupted before a result was produced.',
+            tool_call_id='call_1',
+            metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
+            timestamp=TS,
+            outcome='interrupted',
+        ),
+    ]
+
+
+async def test_same_response_repeated_tool_call_id_partially_answered_binds_fifo():
+    """A single result answers the first same-response call FIFO; the second is the dangling one."""
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='call_1'),
+                ToolCallPart('get_forecast', {'city': 'Amsterdam'}, tool_call_id='call_1'),
+            ],
+            timestamp=TS,
+        ),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id='call_1', timestamp=TS)], timestamp=TS),
+    ]
+
+    repaired = repair_messages(history)
+
+    assert len(repaired) == 2
+    request = repaired[-1]
+    assert isinstance(request, ModelRequest)
+    # FIFO: the real result answers the first call; the synthesized return closes the second.
+    assert request.parts == [
+        ToolReturnPart('get_weather', 'Sunny', tool_call_id='call_1', timestamp=TS),
+        ToolReturnPart(
+            'get_forecast',
+            'The tool call was interrupted before a result was produced.',
+            tool_call_id='call_1',
+            metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
+            timestamp=TS,
+            outcome='interrupted',
+        ),
+    ]
+
+
 async def test_dangling_tool_call_followed_by_response():
     """A dangling call directly followed by another response gets a new request in between."""
     agent, received = capture_agent()

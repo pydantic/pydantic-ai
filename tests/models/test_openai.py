@@ -1853,6 +1853,15 @@ def test_is_text_like_media_type():
     assert _is_text_like_media_type('application/soap+xml') is True
     assert _is_text_like_media_type('application/pdf') is False
     assert _is_text_like_media_type('image/png') is False
+    # Parameters (RFC 2045) are ignored: classification happens on the bare type.
+    assert _is_text_like_media_type('text/plain;charset=utf-8') is True
+    assert _is_text_like_media_type('application/json; charset=utf-8') is True
+    assert _is_text_like_media_type('application/xml;charset=utf-8') is True
+    assert _is_text_like_media_type('application/yaml;charset=utf-8') is True
+    assert _is_text_like_media_type('application/toml;charset=utf-8') is True
+    assert _is_text_like_media_type('application/ld+json;charset=utf-8') is True
+    assert _is_text_like_media_type('application/soap+xml;charset=utf-8') is True
+    assert _is_text_like_media_type('application/pdf;charset=binary') is False
 
 
 async def test_toml_document_as_binary_content_input(allow_model_requests: None):
@@ -1883,6 +1892,78 @@ async def test_toml_document_as_binary_content_input(allow_model_requests: None)
 [project]
 name = "demo"
 -----END FILE id="312a73"-----\
+""",
+                        'type': 'text',
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_json_parameterized_media_type_as_binary_content_input(allow_model_requests: None):
+    """JSON `BinaryContent` with a parameterized media type is inlined as text, like bare JSON is.
+
+    Unit test, not VCR: `BinaryContent.from_data_uri` stores `application/json;charset=utf-8`
+    verbatim (RFC 2397), and before the classifier ignored parameters the mapping raised
+    `Unsupported binary content type` before any request was made, so this pins the request
+    shape the mock client receives.
+    """
+    json_content = BinaryContent.from_data_uri('data:application/json;charset=utf-8;base64,eyJhIjogMX0=')
+
+    c = completion_message(ChatCompletionMessage(content='A JSON document.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['What is this file?', json_content])
+    assert result.output == snapshot('A JSON document.')
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is this file?', 'type': 'text'},
+                    {
+                        'text': """\
+-----BEGIN FILE id="e4ad4d" type="application/json;charset=utf-8"-----
+{"a": 1}
+-----END FILE id="e4ad4d"-----\
+""",
+                        'type': 'text',
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_parameterized_structured_suffix_media_type_inlined(allow_model_requests: None):
+    """A parameterized `+json` suffix media type is inlined as text, like its bare form is.
+
+    Unit test, not VCR: classification must look at the bare `application/ld+json` essence,
+    so the structured-suffix branch keeps matching when RFC 2397 parameters are present.
+    """
+    jsonld_content = BinaryContent.from_data_uri('data:application/ld+json;charset=utf-8;base64,eyJhIjogMX0=')
+
+    c = completion_message(ChatCompletionMessage(content='A JSON-LD document.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['What is this file?', jsonld_content])
+    assert result.output == snapshot('A JSON-LD document.')
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is this file?', 'type': 'text'},
+                    {
+                        'text': """\
+-----BEGIN FILE id="e4ad4d" type="application/ld+json;charset=utf-8"-----
+{"a": 1}
+-----END FILE id="e4ad4d"-----\
 """,
                         'type': 'text',
                     },
@@ -5253,6 +5334,23 @@ async def test_openai_gateway_prefix_preserves_sampling(allow_model_requests: No
         await agent.run('hello')
 
 
+async def test_openai_text_verbosity_chat_completions(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """`openai_text_verbosity` goes out as Chat Completions' top-level `verbosity`, and only when set."""
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    agent = Agent(OpenAIChatModel('gpt-5.6-luna', provider=provider))
+
+    result = await agent.run('What is 2+2?', model_settings=OpenAIChatModelSettings(openai_text_verbosity='low'))
+    assert result.output == snapshot('4')
+    await agent.run('What is 2+2?')
+
+    assert [
+        {key: value for key, value in body.items() if key == 'verbosity'}
+        for body in request_capture.bodies('/chat/completions')
+    ] == [{'verbosity': 'low'}, {}]
+
+
 async def test_openai_gpt_5_2_temperature_allowed_by_default(allow_model_requests: None):
     """GPT-5.2 allows temperature by default (reasoning_effort defaults to 'none')."""
     c = completion_message(ChatCompletionMessage(content='Paris.', role='assistant'))
@@ -5831,6 +5929,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'failed_attempts': None,
                 'workspace_ref': None,
             }
         ]
@@ -6681,6 +6780,7 @@ async def test_openai_malformed_tool_args_degraded_on_the_wire(allow_model_reque
     assert json.loads(assistant_message['tool_calls'][0]['function']['arguments']) == {INVALID_JSON_KEY: bad_args}
 
 
+@pytest.mark.subprocess(reason='asserts what a fresh interpreter has imported after model construction')
 def test_model_construction_preloads_lazy_dependencies():
     """Constructing a model resolves the deferred imports that stalled the first request's event loop (#7405).
 
