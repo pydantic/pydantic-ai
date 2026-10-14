@@ -1419,35 +1419,39 @@ jobs:
       # `--with` layers FastMCP 3 and the MCP SDK v1 it pins over the locked environment without
       # mutating it. `--no-extra mcp-tasks`: that extra is FastMCP 4's tasks extension, which FastMCP 3
       # doesn't use (it serves task-augmented tools itself).
-      - run: >-
-          uv run
-          --all-extras
-          --no-extra mcp-tasks
-          --all-packages
-          --with "fastmcp${{ matrix.fastmcp.spec }}"
-          --with "fastmcp-slim${{ matrix.fastmcp.spec }}"
-          coverage run -m pytest
-          -n logical --dist=loadgroup
-          tests/test_mcp.py
-          tests/models/test_mcp_sampling.py
-          tests/test_conftest.py
-          tests/durable_exec/test_dbos.py
-          tests/durable_exec/test_prefect.py
-          tests/durable_exec/test_durable_operation.py
-          tests/harness/day_ai
-          tests/harness/github
-          tests/harness/google_workspace
-          tests/harness/grain
-          tests/harness/linear
-          tests/harness/logfire_mcp
-          tests/harness/notion
-          tests/harness/ordinal
-          tests/harness/posthog
-          tests/harness/pylon
-          tests/harness/slack
-          tests/harness/stackone
-          tests/clai2/test_mcp.py
-          tests/clai2/test_mcp_command.py
+      # The durable-exec modules run in a second pass with `BLOCKBUSTER_ENABLED=false`, as in
+      # `test-durable-exec`: Prefect writes its result cache from inside the event loop.
+      - name: run tests
+        shell: bash
+        run: |
+          run=(
+            uv run --all-extras --no-extra mcp-tasks --all-packages
+            --with "fastmcp${{ matrix.fastmcp.spec }}"
+            --with "fastmcp-slim${{ matrix.fastmcp.spec }}"
+            coverage run -m pytest -n logical --dist=loadgroup
+          )
+          "${run[@]}" \
+            tests/test_mcp.py \
+            tests/models/test_mcp_sampling.py \
+            tests/test_conftest.py \
+            tests/harness/day_ai \
+            tests/harness/github \
+            tests/harness/google_workspace \
+            tests/harness/grain \
+            tests/harness/linear \
+            tests/harness/logfire_mcp \
+            tests/harness/notion \
+            tests/harness/ordinal \
+            tests/harness/posthog \
+            tests/harness/pylon \
+            tests/harness/slack \
+            tests/harness/stackone \
+            tests/clai2/test_mcp.py \
+            tests/clai2/test_mcp_command.py
+          BLOCKBUSTER_ENABLED=false "${run[@]}" \
+            tests/durable_exec/test_dbos.py \
+            tests/durable_exec/test_prefect.py \
+            tests/durable_exec/test_durable_operation.py
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-3-${{ matrix.fastmcp.name }}
 

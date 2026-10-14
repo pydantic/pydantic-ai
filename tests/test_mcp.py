@@ -217,7 +217,16 @@ assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modu
 @pytest.mark.skipif(not MCP_SDK_V2, reason='fastmcp 3 is itself built on legacy httpx')
 def test_mcp_runs_without_legacy_httpx() -> None:
     result = subprocess.run(
-        [sys.executable, '-W', 'error', '-c', _HTTPX_FREE_MCP],
+        [
+            sys.executable,
+            '-W',
+            'error',
+            # The same `py-key-value-aio` deprecation this suite's `filterwarnings` ignores on Python 3.15.
+            '-W',
+            "ignore:<class 'key_value.aio.:DeprecationWarning",
+            '-c',
+            _HTTPX_FREE_MCP,
+        ],
         capture_output=True,
         text=True,
     )
