@@ -359,6 +359,7 @@ def test_model_profile_thinking_levels(model_name: str, expected: frozenset[str]
         ('eu.gemini-2.0-flash', 'gemini-2.0-flash'),
         ('models/gemini-3-pro-preview', 'gemini-3-pro-preview'),
         ('publishers/google/models/au.gemini-3.5-pro', 'gemini-3.5-pro'),
+        ('au.gemini-4-argon', 'gemini-4-argon'),
     ],
 )
 def test_model_profile_normalizes_regional_and_resource_prefixes(prefixed_name: str, bare_name: str):
