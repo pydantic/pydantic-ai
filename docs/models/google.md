@@ -148,6 +148,11 @@ agent = Agent(model)
 ...
 ```
 
+The client the Google providers create, including through the [Gateway](../gateway.md), has a 20-minute timeout, which
+[long decode](#long-decode) needs. For a client you pass, `google-genai` applies the client's read timeout, or 600
+seconds if it has none, to every phase of each request, so give it a read timeout of at least 20 minutes for long-decode
+models.
+
 The Google providers also accept a legacy `httpx.AsyncClient` during Pydantic AI v2, but emit a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.
 
 ## HTTP Retries
@@ -323,6 +328,10 @@ keeps the full scale. For a model id the table doesn't cover, declare its
 levels with [`GoogleModelProfile.google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
 (default: the full scale); unsupported efforts resolve to the nearest supported level.
 
+`gemini-4-argon` supports the `low`, `medium` and `high` levels, so `thinking=False` and `'minimal'` resolve to
+`low`. On Google Cloud it rejects a `thinking_budget` in `google_thinking_config` with a 400 error: use
+`thinking_level` instead.
+
 See [Thinking](../capabilities/thinking.md) for the unified API and [Gemini API docs](https://ai.google.dev/gemini-api/docs/thinking) for Google's native thinking configuration.
 
 ### Safety settings
@@ -455,6 +464,51 @@ agent = Agent(GoogleModel('gemini-3.7-flash'), model_settings=model_settings)
     ```
 
     Caches have a minimum size (≈2048 tokens for Gemini 2.5 series models, ≈4096 for Gemini 3 series models) and a TTL — see the [Gemini caching docs](https://ai.google.dev/gemini-api/docs/caching) for the current thresholds, pricing, and `list` / `update` / `delete` operations.
+
+## Long decode
+
+`gemini-4-argon` caps the output of each request; Google's
+[long decode docs](https://ai.google.dev/gemini-api/docs/generate-content/long-decode) give the caps and defaults. When
+[`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] is above the cap, a request that reaches it returns a
+continuation token, and the `google-genai` SDK continues the response from it in another request, until the response
+is done or `max_tokens` is spent:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+agent = Agent('google:gemini-4-argon', model_settings={'max_tokens': 100_000})
+result = agent.run_sync('Write the complete specification.')
+print(result.output)
+```
+
+The SDK merges the requests into one [`ModelResponse`][pydantic_ai.messages.ModelResponse], so to Pydantic AI a long
+decode is one model request:
+
+- Its usage is the sum over the requests, which is what Google bills. Each request's input counts the output so far
+  again.
+- [Usage limits](../agent.md#usage-limits) count it as one request, and a run that isn't streamed checks its token
+  limits once every request is done: `max_tokens` is what bounds a long decode.
+  [`per_request_input_tokens_limit`][pydantic_ai.usage.UsageLimits.per_request_input_tokens_limit] is checked against
+  the input tokens of the first request.
+- Timeouts apply to each request. The Google providers create their client with the 20-minute read timeout Google
+  recommends.
+- If a later request fails, the model request fails. A run that isn't streamed loses the output of the earlier requests,
+  already billed. A streamed run keeps what it streamed as a response with
+  [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] that carries the finished requests' usage, which
+  [`capture_run_messages()`][pydantic_ai.capture_run_messages] returns.
+- The SDK resumes a dropped stream from its last continuation token. If output was streamed after that token, the
+  model request fails as above instead, since the resumed request would repeat that output.
+- On [Temporal](../durable_execution/temporal.md#activity-configuration), the whole long decode runs in one model
+  request activity, so its `start_to_close_timeout` must cover every request. A retried activity starts the response
+  over. The merged response is the activity's one result, so a very long output can exceed Temporal's
+  [payload limit](../durable_execution/temporal.md#large-payloads).
+
+Without `max_tokens`, Google's default output limit applies, and a response that reaches it ends with
+`finish_reason='length'`.
+
+On [Google Cloud](google-cloud.md), `gemini-4-argon` is served on the `global` location and the `us` and `eu`
+multi-regions, not in single regions such as the default `us-central1`: pass one of those as the provider's
+[`location`](google-cloud.md#customizing-location-or-project).
 
 ## Streaming cancellation
 

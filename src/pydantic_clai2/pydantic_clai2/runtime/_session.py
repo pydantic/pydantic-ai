@@ -16,6 +16,7 @@ from uuid import uuid4
 from anyio import get_cancelled_exc_class, move_on_after
 
 from pydantic_ai import Agent, AgentModelSettings, AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
+from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -45,6 +46,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
 from pydantic_clai2.plugins import ConversationChanged
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
+from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
@@ -341,6 +343,12 @@ class Session(Generic[DepsT, OutputT]):
         self.step_store: StepStore | None = (
             SqliteStepStore(database=conversations.database, max_snapshots_per_run=8) if conversations else None
         )
+        self.repl_states: ReplStates | None = (
+            ReplStates(directory=conversations.database.with_suffix('.repl'), session_id=current_session_id)
+            if conversations
+            else None
+        )
+        """Where code mode keeps each saved conversation's `run_code` REPL between prompts."""
         self.model: str | None = None
         self.model_chosen = True
         """Whether the user chose `model`. A stock agent takes CLAI's default as its own model instead,
@@ -415,6 +423,9 @@ class Session(Generic[DepsT, OutputT]):
         """
         if conversation_id is not None:
             await self._ensure_unused(conversation_id)
+            if self.repl_states is not None:
+                # A REPL left by a session deleted outside CLAI must not reach the new conversation.
+                self.repl_states.delete(conversation_id)
         cleared = len(self._messages)
         self.replace_messages(())
         telemetry.record('conversation cleared', messages=cleared)
@@ -445,9 +456,15 @@ class Session(Generic[DepsT, OutputT]):
             model=self.model,
         )
         self.summary = await self.conversations.save(summary=copy, messages=self._messages)
+        self._copy_repl(source.id, self.summary.id)
         telemetry.record('conversation forked', messages=len(self._messages))
         await self._publish()
         return f'Forked {source.title} ({source.id}) into {self.summary.id}.'
+
+    def _copy_repl(self, source: str, target: str) -> None:
+        """Give the fork `target` its own copy of the `run_code` REPL `source` saved."""
+        if self.repl_states is not None:
+            self.repl_states.copy(source=source, target=target)
 
     async def _ensure_unused(self, conversation_id: str) -> None:
         if self.conversations is None:
@@ -532,6 +549,7 @@ class Session(Generic[DepsT, OutputT]):
             notice = f'Resumed {summary.title} ({summary.id}).{warning}'
             if busy is not None:
                 summary = await self.conversations.save(summary=_fork_summary(saved.summary), messages=messages)
+                self._copy_repl(saved.summary.id, summary.id)
                 notice = (
                     f'{busy} Resumed a fork of it instead: {summary.title} ({summary.id}). '
                     'The original keeps running there and may still change files. No tools were replayed.'
@@ -755,7 +773,7 @@ class Session(Generic[DepsT, OutputT]):
                 if self.on_context_usage is not None:
                     for message in reversed(ctx.messages):
                         if isinstance(message, ModelResponse) and message.usage.input_tokens:
-                            self.on_context_usage(message.usage.total_tokens)
+                            self.on_context_usage(context_tokens(message))
                             break
                 if self.on_stream_event is not None:
                     await self.on_stream_event(event)

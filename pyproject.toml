@@ -218,6 +218,9 @@ anthropic = "2026-10-08T03:42:01.588842Z"
 # OpenAI 3.26.0 is the first release with `client.decisions`, and the `openai` floor.
 # TODO(dsfaccini): Remove after 2026-10-13 21:32 UTC.
 openai = "2026-10-06T21:31:20Z"
+# google-genai 2.30.0 is the `google-genai` floor: it continues long decode itself.
+# TODO(dsfaccini): Remove after 2026-10-20 00:39 UTC.
+google-genai = "2026-10-13T00:38:20Z"
 # asyncpg 0.32.0 is the first release with cp315 wheels, so Python 3.15 CI installs it instead of compiling
 # from source. This admits its artifacts through one second after the last upload.
 # TODO(adtyavrdhn): Remove after 2026-10-13 20:33 UTC, then run `uv lock` and
@@ -397,6 +400,7 @@ banned-module-level-imports = [
     "prefect",
     "sentence_transformers",
     "sklearn",
+    "smol",
     "temporalio",
     "torch",
     "transformers",
@@ -442,6 +446,7 @@ quote-style = "single"
 "tests/durable_exec/**/*.py" = ["TID253"]
 "tests/**/*{temporal,dbos,prefect,durable}*.py" = ["TID253"]
 "tests/harness/e2b_sandbox/*.py" = ["TID253"]
+"tests/harness/smol_sandbox/*.py" = ["TID253"]
 
 [tool.pyright]
 pythonVersion = "3.11"
@@ -498,6 +503,7 @@ markers = [
     "modal_live: runs against a real Modal control plane; needs credentials",
     "e2b_live: runs against a real E2B sandbox; needs credentials",
     "sprites_live: runs against a real Sprites control plane; needs credentials",
+    "smol_live: boots real smolvm VMs; needs a host that can run them",
     "temporal: starts or connects to a local Temporal dev server",
     "subprocess(reason, conditional=False): launches a Python interpreter, which the cost guard otherwise fails; reason required. `conditional=True` skips the stale-marker check for a test that only launches one on some platforms or installs",
     "slow(reason): exempt from the per-test time budget (`PYTEST_TEST_BUDGET_SECONDS`); reason required",

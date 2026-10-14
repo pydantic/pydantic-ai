@@ -21,6 +21,7 @@ from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent
+from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
@@ -875,7 +876,7 @@ def create_shell(
         interrupts=Interrupts(),
         screen=screen,
         sessions=sessions,
-        speculation=Speculation(context=context, console=console),
+        speculation=Speculation(context=context, console=console, repl_states=session.repl_states),
         session_settings=session_settings,
         spinners=spinners,
         updates=updates,
@@ -1039,6 +1040,8 @@ class _Shell(Generic[DepsT, OutputT]):
         child.model_settings = self.context.live_model_overrides(child.model or _model_label(self.agent))
         child.model_defaults = self.context.model_defaults(child.model or _model_label(self.agent))
         child.on_setup_error = self.capability_failed
+        if child.repl_states is not None:
+            child.repl_states.copy(source=self.session.summary.id, target=child.summary.id)
         return child
 
     async def tasks_command(self, args: list[str]) -> str:
@@ -1584,7 +1587,7 @@ async def _run_prompt(
         status.output_tokens = result.usage.output_tokens
         for message in reversed(result.all_messages()):  # pragma: no branch -- successful runs contain a response.
             if isinstance(message, ModelResponse):
-                status.context_tokens = message.usage.total_tokens or None
+                status.context_tokens = context_tokens(message) or None
                 break
         if not renderer.rendered_text or not isinstance(result.output, str):
             console.print(str(result.output), markup=False)

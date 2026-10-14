@@ -334,7 +334,7 @@ EXPECTED_TOOL_CHOICE: dict[tuple[str, Scenario], Any] = {
         {
             'type': 'allowed_tools',
             'mode': 'required',
-            'tools': [{'type': 'function', 'name': 'final_result'}, {'type': 'function', 'name': 'get_weather'}],
+            'tools': [{'type': 'function', 'name': 'get_weather'}, {'type': 'function', 'name': 'final_result'}],
         }
     ),
     ('anthropic', 'auto'): snapshot('auto'),
