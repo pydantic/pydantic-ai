@@ -1577,6 +1577,8 @@ naming token counts separately; `/cost` remains retained foreground-history cost
 
 Conversations, metadata, and step records live in `sessions.db` beside the settings
 database. `--database` therefore also selects the directory for saved sessions.
+Code mode's saved sandbox state lives in `sessions.repl/`, one owner-only file
+per session, next to it.
 New conversation databases use owner-only file permissions where supported. The
 contents are **not encrypted**: prompts, replies, tool results, and media may
 contain secrets. Do not share the database between machines. An unfinished run
@@ -2119,6 +2121,15 @@ native as `CodeMode` keeps them by default.
 `run_code` is a persistent Python sandbox with isolated environment variables,
 the host clock (through `datetime`), and no network. The model writes one snippet that calls many tools, and CLAI runs it while the model
 is still writing.
+
+The sandbox keeps its variables, functions, and imports from one prompt to the
+next. CLAI saves them with the session when each turn ends, so `/resume` and
+`--resume` bring them back with the history, and `--fork-session`, `/fork`, and
+resuming a busy session give the copy its own state. When the model passes
+`restart: true`, the saved state is cleared. Deleting a session in the `/resume`
+browser deletes its state. Sub-agents start each task with an empty sandbox.
+A state Monty cannot load starts a fresh sandbox, and a state over 32 MiB is not
+saved, so the next session starts fresh.
 
 The sandbox's `pathlib` only reaches what the file tools may reach. `pathlib`
 calls on a mount skip the `FileSystem` checks, so CLAI mounts the workspace's

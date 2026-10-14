@@ -264,6 +264,41 @@ the durability capability to run nested calls one at a time.
 
 State persists between `run_code` calls within the same agent run -- variables, imports, and function definitions carry over. Pass `restart: true` in the tool call to reset state. If a worker crash or host-side execution failure invalidates the session, `run_code` returns a model retry that reports the reset and the nested calls that already started; the next snippet must recreate any required state.
 
+### Keep the REPL across runs
+
+Each agent run starts its own REPL, so a conversation made of several runs loses its sandbox state between them. Pass a `repl_store` to keep it: a run that calls `run_code` loads the state the store returns before its first snippet, and saves the REPL to the store when the run ends. The store is any object with async `load` and `save` methods (`CodeModeReplStore`), and the state is Monty's opaque dump of the REPL. Key it by `ctx.conversation_id`, which stays the same across runs when you pass `conversation_id` or the previous run's `message_history`:
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness import CodeMode
+
+
+class InMemoryReplStore:
+    def __init__(self) -> None:
+        self.states: dict[str, bytes] = {}
+
+    async def load(self, ctx: RunContext) -> bytes | None:
+        return self.states.get(ctx.conversation_id or '')
+
+    async def save(self, ctx: RunContext, state: bytes | None) -> None:
+        key = ctx.conversation_id or ''
+        if state is None:
+            self.states.pop(key, None)
+        else:
+            self.states[key] = state
+
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(repl_store=InMemoryReplStore())])
+```
+
+- A run that never calls `run_code` neither loads nor saves.
+- `restart: true` skips the saved state. The run then saves its new REPL, or calls `save(ctx, None)` when the restarted snippet failed before creating one.
+- A state Monty cannot load, such as a truncated dump or one from an incompatible Monty version, is dropped with a logged warning, and the run starts a fresh REPL.
+- A timeout, worker crash, or cancelled snippet that resets the REPL keeps the state saved before the run. A cancelled run still saves an idle REPL.
+- Restored state skips the type check a fresh REPL's first snippet gets, since the checker does not know the restored names.
+- The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one.
+- The store is not used under durable execution, where its I/O would run in replayed workflow code.
+
 ## Eager execution
 
 Normally, `CodeMode` waits for the model to finish writing a `run_code` call before it
@@ -714,6 +749,7 @@ CodeMode(
     mount=None,           # host directories to share with the sandbox
     resource_limits=None, # sandbox time and memory caps; 'unlimited' removes them
     monty_sandbox_url=None, # ws:// or wss:// URL of a remote Monty worker server
+    repl_store=None,      # keep the run_code REPL across runs (CodeModeReplStore)
     dynamic_catalog=False,
 )
 ```
