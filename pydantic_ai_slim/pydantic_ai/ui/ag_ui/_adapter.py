@@ -372,12 +372,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     def _answer_without_run(self) -> AsyncIterator[BaseEvent] | None:
         props = self.run_input.forwarded_props
-        request = props.get('__proxiedMCPRequest') if is_str_dict(props) else None
-        if not self.mcp_app_toolsets or not is_str_dict(request):
+        if not self.mcp_app_toolsets or not is_str_dict(props) or '__proxiedMCPRequest' not in props:
             return None
-        return self._answer_mcp_app_request(request)
+        return self._answer_mcp_app_request(props['__proxiedMCPRequest'])
 
-    async def _answer_mcp_app_request(self, request: dict[str, Any]) -> AsyncIterator[BaseEvent]:
+    async def _answer_mcp_app_request(self, request: Any) -> AsyncIterator[BaseEvent]:
         """Answer a page's MCP request the way the AG-UI MCP Apps middleware does."""
         thread_id, run_id = self.run_input.thread_id, self.run_input.run_id
         yield RunStartedEvent(thread_id=thread_id, run_id=run_id, timestamp=_timestamp())
@@ -388,9 +387,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             return
         yield RunFinishedEvent(thread_id=thread_id, run_id=run_id, result=result, timestamp=_timestamp())
 
-    async def _mcp_app_request_result(self, request: dict[str, Any]) -> dict[str, Any]:
+    async def _mcp_app_request_result(self, request: Any) -> dict[str, Any]:
         from ...mcp import MCPError
 
+        if not is_str_dict(request):
+            return {'error': 'Invalid MCP request'}
         # Like the middleware, prefer `serverId` and fall back to `serverHash`; both carry the toolset ID.
         toolset = next(
             (

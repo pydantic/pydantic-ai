@@ -610,7 +610,7 @@ def agui_app(agent: Agent[None, str], mcp_app_toolsets: Sequence[MCPToolset[Any]
 @dataclass(frozen=True)
 class ProxiedRequestCase:
     id: str
-    request: dict[str, Any]
+    request: dict[str, Any] | str
     result: Any
 
 
@@ -673,6 +673,9 @@ PROXIED_REQUEST_CASES = [
             'params': {'name': 'select_day', 'arguments': []},
         },
         result=snapshot({'error': 'Tool arguments must be an object'}),
+    ),
+    ProxiedRequestCase(
+        id='request-not-an-object', request='tools/call', result=snapshot({'error': 'Invalid MCP request'})
     ),
 ]
 

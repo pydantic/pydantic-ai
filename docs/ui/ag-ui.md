@@ -316,7 +316,7 @@ Anything that isn't meant for the model at all — a Slack channel ID, a locale 
 
 When the agent's events reach you outside the request that serves the frontend, there's no run input to read them off at all — see ["Encoding events without a request"](./overview.md#encoding-events-without-a-request), where [`AGUIEventStream.thread_id`][pydantic_ai.ui.ag_ui.AGUIEventStream.thread_id] and [`run_id`][pydantic_ai.ui.ag_ui.AGUIEventStream.run_id] take over as the source of the identity the protocol requires.
 
-`context`, `forwardedProps` and `parentRunId` are read straight off [`run_input`][pydantic_ai.ui.UIAdapter.run_input] rather than through adapter properties of their own. The adapter's properties — `messages`, `toolset`, `state`, `conversation_id`, `deferred_tool_results` — are the concepts every UI protocol shares and that the adapter itself feeds into the agent run. These three are AG-UI-specific and consumed only by your code, so they stay on the protocol object where their types are the protocol's own.
+`context`, `forwardedProps` and `parentRunId` are read straight off [`run_input`][pydantic_ai.ui.UIAdapter.run_input] rather than through adapter properties of their own. The adapter's properties — `messages`, `toolset`, `state`, `conversation_id`, `deferred_tool_results` — are the concepts every UI protocol shares and that the adapter itself feeds into the agent run. These three are AG-UI-specific and consumed by your code (the adapter only reads `forwardedProps.__proxiedMCPRequest`, for [MCP Apps](#mcp-apps)), so they stay on the protocol object where their types are the protocol's own.
 
 ### Tool approval (interrupts)
 
@@ -547,7 +547,7 @@ async def run_agent(request: Request) -> Response:
 app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
 ```
 
-Toolsets are matched by `id`. Tool calls go through [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] (app-visible tools only, no `process_tool_call`) and resource reads through [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] (any resource). MCP errors come back as `{"error": ...}` in the result; other failures end the run with `RUN_ERROR`. Keep the toolsets entered (`async with weather:`) while your app runs.
+Toolsets are matched by `id`, so each one needs an `id`. Tool calls go through [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] (app-visible tools only, no `process_tool_call`) and resource reads through [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] (any resource). MCP errors come back as `{"error": ...}` in the result; other failures end the run with `RUN_ERROR`. Keep the toolsets entered (`async with weather:`) while your app runs.
 
 ### Assistant message identity
 
