@@ -1,8 +1,9 @@
 """The `web` plugin end to end: a shell driven over HTTP, its WebSocket stream, and the access checks."""
 
+import asyncio
 import html
 import io
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from concurrent.futures import Future
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
@@ -26,6 +27,7 @@ from websockets.typing import Origin
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
@@ -190,7 +192,8 @@ def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb') -> None:
         running = web_.run()
         assert web_.post('/api/input', {'text': 'look it up'}).status_code == 204
         messages, end = receive_until(socket, TurnEnded)
-        assert isinstance(messages[0], TurnStarted) and messages[0].item.text == 'look it up'
+        [started] = [message.item for message in messages if isinstance(message, TurnStarted)]
+        assert started is not None and started.text == 'look it up'
         items = [message.item for message in messages if isinstance(message, ItemAdded)]
         [tool] = [item for item in items if item.kind == 'tool']
         assert (tool.name, tool.state) == ('lookup', 'running')
@@ -212,6 +215,46 @@ def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb') -> None:
         assert (notice.level, notice.text) == ('error', 'Unknown command /missing. Use /help.')
         web_.post('/api/input', {'text': '/exit'})
         assert running.result(timeout=10) == 'exit'
+
+
+def test_a_background_fork_is_not_a_turn(make_web: 'MakeWeb') -> None:
+    """`/fork` fires the turn moments for its background run; the browser shows only the held conversation's turns."""
+    web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='ok'), deps_type=type(None)))
+    shell = web_.shell
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': '/fork look elsewhere'})
+        forked, _ = receive_until(socket, Notice)
+
+        async def forks_finished() -> None:
+            await asyncio.gather(*(record.task for record in shell.forks.records))
+
+        web_.portal.call(forks_finished)
+        assert not web_.plugin.remote.running
+        web_.post('/api/input', {'text': 'here'})
+        messages, end = receive_until(socket, TurnEnded)
+        started = [message for message in [*forked, *messages] if isinstance(message, TurnStarted)]
+        assert [message.item.text for message in started if message.item] == ['here']
+        assert end.outcome == 'completed'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
+def test_a_failed_turn(make_web: 'MakeWeb') -> None:
+    async def fail(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise RuntimeError('model unavailable')
+        yield  # pragma: no cover
+
+    web_ = make_web(Agent(FunctionModel(stream_function=fail), deps_type=type(None)))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'try'})
+        end = receive_until(socket, TurnEnded)[1]
+        assert (end.outcome, end.error, end.usage) == ('failed', 'model unavailable', None)
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
 
 
 def test_input_the_browser_cannot_send(make_web: 'MakeWeb') -> None:

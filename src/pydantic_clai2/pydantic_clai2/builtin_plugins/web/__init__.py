@@ -29,8 +29,6 @@ from pydantic_clai2.plugins import (
     Plugin,
     PluginHost,
     SessionEnd,
-    TurnEnd,
-    TurnStart,
 )
 from pydantic_clai2.ui.browser import open_browser
 
@@ -157,12 +155,6 @@ class WebPlugin(Plugin[WebSettings]):
 
     async def on_session_end(self, event: SessionEnd) -> None:
         await self.stop()
-
-    async def on_turn_start(self, event: TurnStart) -> None:
-        self.remote.turn_started(event.text)
-
-    async def on_turn_end(self, event: TurnEnd) -> None:
-        self.remote.turn_ended(event)
 
     async def on_conversation_changed(self, event: ConversationChanged) -> None:
         self.remote.conversation_changed(event)
