@@ -103,16 +103,78 @@ async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: 
     )
 
 
-async def test_deepseek_auto_mode_backfills_current_turn_tool_call(
-    allow_model_requests: None, deepseek_api_key: str, request_capture: RequestCapture
-):
-    """DeepSeek through a generic `OpenAIProvider` accepts a current-turn tool call that had no thinking.
+_WEATHER_TURN: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart('What is the weather in Paris and then London? One tool call per city.')]),
+    ModelResponse(
+        parts=[
+            ThinkingPart('Check Paris first.', id='reasoning_content', provider_name='openai'),
+            ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_1'),
+        ],
+        provider_name='openai',
+    ),
+    ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id='call_1')]),
+    ModelResponse(
+        parts=[ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='call_2')], provider_name='openai'
+    ),
+    ModelRequest(parts=[ToolReturnPart('get_weather', 'rainy', tool_call_id='call_2')]),
+]
 
-    A generic provider leaves `openai_chat_send_back_thinking_parts` at `'auto'`. The second tool call
-    in this user turn carries no `ThinkingPart`, as when another model served that step; DeepSeek
-    rejects it with a 400 unless it carries `reasoning_content`, so `'auto'` sends the field the first
-    turn already carries, empty. The run completing is the API accepting it; the request assertion
-    pins what was sent.
+
+@dataclass(frozen=True)
+class AutoBackfillCase:
+    id: str
+    history: list[ModelMessage]
+    prompt: str | None
+    sent_reasoning: list[str | None]
+    output: str
+
+
+AUTO_BACKFILL_CASES = [
+    AutoBackfillCase(
+        id='current_turn',
+        history=_WEATHER_TURN,
+        prompt=None,
+        sent_reasoning=['Check Paris first.', ''],
+        output=snapshot("""\
+Here's the weather for both cities:
+
+- **Paris:** Sunny ☀️
+- **London:** Rainy 🌧️
+
+Let me know if you'd like the weather for any other cities.\
+"""),
+    ),
+    AutoBackfillCase(
+        id='earlier_turn',
+        history=[
+            *_WEATHER_TURN,
+            ModelResponse(
+                parts=[
+                    ThinkingPart('Both done.', id='reasoning_content', provider_name='openai'),
+                    TextPart('Paris is sunny and London is rainy.'),
+                ],
+                provider_name='openai',
+            ),
+        ],
+        prompt='Which city should I visit? One word.',
+        sent_reasoning=['Check Paris first.', None, 'Both done.'],
+        output=snapshot('Paris'),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', AUTO_BACKFILL_CASES, ids=lambda case: case.id)
+async def test_deepseek_auto_mode_thinking_backfill(
+    case: AutoBackfillCase, allow_model_requests: None, deepseek_api_key: str, request_capture: RequestCapture
+):
+    """DeepSeek through a generic `OpenAIProvider` accepts what `'auto'` sends for a tool call that had no thinking.
+
+    A generic provider leaves `openai_chat_send_back_thinking_parts` at `'auto'`. The London tool call
+    carries no `ThinkingPart`, as when another model served that step. In the current user turn DeepSeek
+    rejects it with a 400 unless it carries `reasoning_content`, so `'auto'` sends the field the Paris
+    call already carries, empty. DeepSeek's thinking-mode guide asks for the field on every earlier turn
+    too, but accepts that call without it once a newer user message follows, which is what `'auto'`
+    sends there. The run completing is the API accepting the request; the request assertion pins it.
     """
     provider = OpenAIProvider(
         base_url='https://api.deepseek.com', api_key=deepseek_api_key, http_client=request_capture.client
@@ -124,33 +186,13 @@ async def test_deepseek_auto_mode_backfills_current_turn_tool_call(
         """Get the weather for a city."""
         return 'sunny'  # pragma: no cover
 
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('What is the weather in Paris and then London? One tool call per city.')]),
-        ModelResponse(
-            parts=[
-                ThinkingPart('Check Paris first.', id='reasoning_content', provider_name='openai'),
-                ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_1'),
-            ],
-            provider_name='openai',
-        ),
-        ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id='call_1')]),
-        ModelResponse(
-            parts=[ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='call_2')], provider_name='openai'
-        ),
-        ModelRequest(parts=[ToolReturnPart('get_weather', 'rainy', tool_call_id='call_2')]),
-    ]
-    result = await agent.run(message_history=history)
+    result = await agent.run(case.prompt, message_history=case.history)
 
-    assert result.output == snapshot("""\
-Here's what I found:
-
-- **Paris:** sunny
-- **London:** rainy\
-""")
+    assert result.output == case.output
     messages = request_capture.body('/chat/completions')['messages']
     assert [
         message.get('reasoning_content') for message in json_objects(messages) if message['role'] == 'assistant'
-    ] == snapshot(['Check Paris first.', ''])
+    ] == case.sent_reasoning
 
 
 async def test_deepseek_model_thinking_part(

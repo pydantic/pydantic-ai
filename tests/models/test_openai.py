@@ -5507,7 +5507,7 @@ async def test_field_mode_thinking_backfill_on_synthetic_tool_search_turn(
     left off otherwise. Parametrized over the three providers that use this mode — DeepSeek and
     MoonshotAI (`reasoning_content`) and OpenRouter (`reasoning`) — to pin that the backfill is
     field-name-agnostic (it reads `openai_chat_thinking_field`). DeepSeek accepting the empty field is
-    recorded by `test_deepseek.py::test_deepseek_auto_mode_backfills_current_turn_tool_call`.
+    recorded by `test_deepseek.py::test_deepseek_auto_mode_thinking_backfill`.
 
     A deferred capability load used to be the trigger, because the reveal was rendered as a
     fabricated `search_tools` call/return pair. It's a system instruction now and produces no
@@ -5700,6 +5700,19 @@ AUTO_THINKING_BACKFILL_CASES = [
         assistant_turns=snapshot([{'tool_calls': ['get_weather']}]),
     ),
     # An `OpenAIResponsesModel` reasoning item replayed through Chat: its id is not a Chat thinking field.
+    # Thinking from another provider goes back as tags in `content`, so the request carries no field to backfill.
+    AutoThinkingBackfillCase(
+        id='foreign_thinking_only',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(
+                parts=[ThinkingPart('Paris first.', provider_name='anthropic'), _weather_call('Paris', 'toolu_1')],
+                provider_name='anthropic',
+            ),
+            _weather_return('toolu_1'),
+        ],
+        assistant_turns=snapshot([{'tool_calls': ['get_weather']}]),
+    ),
     AutoThinkingBackfillCase(
         id='responses_reasoning_id',
         history=[
@@ -5753,7 +5766,7 @@ async def test_auto_mode_thinking_backfill(allow_model_requests: None, case: Aut
     cases pin what stays unchanged: earlier user turns, a request carrying no thinking field or two of them,
     and a key that isn't a Chat thinking field. A mock transport stands in for a cassette because the claim is
     the request each synthetic history produces, which no provider response affects;
-    `test_deepseek.py::test_deepseek_auto_mode_backfills_current_turn_tool_call` is the live counterpart.
+    `test_deepseek.py::test_deepseek_auto_mode_thinking_backfill` is the live counterpart.
     """
     request_bodies: list[bytes] = []
 
