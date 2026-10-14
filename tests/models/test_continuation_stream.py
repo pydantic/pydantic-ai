@@ -862,9 +862,9 @@ async def test_aclose_does_not_cancel_suspended_job_when_cancelling_active_pull(
 
     class _BlockedStream(_FakeStream):
         async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            yield PartStartEvent(index=0, part=TextPart('b'))
             iterator_started.set()
             await asyncio.Event().wait()
-            yield PartStartEvent(index=0, part=TextPart('b'))
 
     class _ModelWithBlockedContinuation(_FakeModel):
         @asynccontextmanager
@@ -892,6 +892,7 @@ async def test_aclose_does_not_cancel_suspended_job_when_cancelling_active_pull(
     )
     stream = _composite(model)
     iterator = stream.__aiter__()
+    await anext(iterator)
     await anext(iterator)
 
     async def prefetch_next() -> ModelResponseStreamEvent | None:
