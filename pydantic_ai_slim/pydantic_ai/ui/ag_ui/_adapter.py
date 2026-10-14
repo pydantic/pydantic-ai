@@ -296,6 +296,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     one of these toolsets, the adapter answers it from that toolset with
     [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] or
     [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] instead of running the agent.
+    Tool calls are limited to tools visible to apps; any resource on these servers can be read.
 
     Defaults to no toolsets, which runs the agent for every request.
     """

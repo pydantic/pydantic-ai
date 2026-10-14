@@ -1782,7 +1782,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """Read a resource for an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) page.
 
         The counterpart of [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] for the page's
-        `resources/read` requests. Send the result back to the page as is.
+        `resources/read` requests. Send the result back to the page as is. MCP Apps has no visibility setting for
+        resources, so any resource on the server can be read; check `uri` first if a page should only reach some.
 
         Args:
             uri: The URI of the resource the page asked for.
