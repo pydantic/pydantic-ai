@@ -331,6 +331,18 @@ async def test_shell_header_stops_highlighting_inline_code_at_the_row_cap() -> N
     assert empty.plain == "● shell python3 -c ''\n"
 
 
+async def test_shell_header_lexes_a_long_one_liner_only_as_far_as_its_shown_rows() -> None:
+    command = "python3 -c '" + 'x = 1; ' * 2000 + "'"
+    plain = io.StringIO()
+    await _print_shell_call(Console(file=plain, width=60), command)
+    console, text = await _highlighted_header(command, width=60)
+    lines = text.plain.splitlines()
+    assert len(lines) == 11
+    assert lines[-1] == f'        … +{len(Text(command).wrap(console, 52, overflow="fold")) - 10} lines'
+    assert text.plain == Text.from_ansi(plain.getvalue()).plain
+    assert _color(console, text, 'x = 1') is None, 'Python, not a Bash string'
+
+
 @pytest.mark.parametrize('name', ['default', 'github_light', 'tokyo_night'])
 async def test_shell_header_uses_the_palette_syntax_colours(name: str) -> None:
     with theme.use(lambda: name):

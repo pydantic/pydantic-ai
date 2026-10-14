@@ -101,12 +101,12 @@ def _print_shell_header(console: Console, command: str) -> None:
     width = max(console.width - head.cell_len, 1)
     # Escape control characters before highlighting, so no style can carry them to the terminal.
     command = terminal_text(command.strip('\n'))
-    lines = command.split('\n')
-    # Every line takes at least one row, so the lines past the shown rows are only counted, not lexed.
-    shown = '\n'.join(lines[:SHELL_COMMAND_ROWS])
-    rows = highlight_command(command, end=len(shown)).wrap(console, width, overflow='fold')
-    hidden = lines[SHELL_COMMAND_ROWS:]
-    total = len(rows) + (len(Text('\n'.join(hidden)).wrap(console, width, overflow='fold')) if hidden else 0)
+    # Each line takes a row or more, and each row `width` cells or fewer, so lex no further than the
+    # shown rows reach. One row of slack keeps the last shown word whole.
+    shown = len('\n'.join(command.split('\n')[:SHELL_COMMAND_ROWS]))
+    end = min(shown, (SHELL_COMMAND_ROWS + 1) * width)
+    rows = highlight_command(command, end=end).wrap(console, width, overflow='fold')
+    total = len(Text(command).wrap(console, width, overflow='fold'))
     for index, row in enumerate(rows[:SHELL_COMMAND_ROWS]):
         row.rstrip()
         console.print((head if index == 0 else indent) + row, overflow='ellipsis', no_wrap=True)

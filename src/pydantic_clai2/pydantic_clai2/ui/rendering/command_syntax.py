@@ -55,7 +55,9 @@ _NAMES = {
 _INLINE_FLAGS = {'python': 'c', 'javascript': 'ep', 'ruby': 'e', 'perl': 'eE', 'sql': 'ce', 'bash': 'c'}
 """The flags whose argument is code, by language: `python -c`, `node -e`, `psql -c`, `bash -c`."""
 
-_HEREDOC = re.compile(r'(?<!<)<<(-?)[ \t]*([\'"]?)([A-Za-z_]\w*)\2')
+_HEREDOC = re.compile(r'(?<!<)<<(-?)[ \t]*\\?([\'"]?)([A-Za-z_]\w*)\2')
+_LITERAL = re.compile(r'\'[^\']*\'|"(?:[^"\\]|\\.)*"|\\.|(?<!\S)#[^\n]*\n')
+"""Closed quotes, escaped characters, and whole comment lines, in which `<<` is text."""
 _SEPARATOR = re.compile(r'[;&|(){}`]|\$\(')
 _TARGET = re.compile(r'(?:>{1,2}|\btee(?:[ \t]+-\w+)*)[ \t]*([^\s<>;&|]+)')
 _INLINE = re.compile(
@@ -96,9 +98,12 @@ def command_segments(command: str) -> list[Segment]:
             segments.append(Segment(text=body, language=language))
             body = ''
             pending.pop(0)
+        start = len(shell)
         shell += line
         pending.extend(
-            (match[3], bool(match[1]), _heredoc_language(line, match=match)) for match in _HEREDOC.finditer(line)
+            (match[3], bool(match[1]), _heredoc_language(line, match=match))
+            for match in _HEREDOC.finditer(line)
+            if _opens_heredoc(shell[: start + match.start()])
         )
         if pending:
             segments.append(_shell_segment(shell))
@@ -107,6 +112,12 @@ def command_segments(command: str) -> list[Segment]:
         segments.append(Segment(text=body, language=pending[0][2]))
     segments.append(_shell_segment(shell))
     return [segment for segment in segments if segment.text]
+
+
+def _opens_heredoc(before: str) -> bool:
+    """Whether a `<<` after `before`, the Bash run so far, is an operator: not in quotes, a comment, or `$((1<<n))`."""
+    code = _LITERAL.sub('', before)
+    return not re.search(r'[\'"]|(?<!\S)#', code) and code.count('((') <= code.count('))')
 
 
 def _heredoc_language(line: str, *, match: re.Match[str]) -> str | None:

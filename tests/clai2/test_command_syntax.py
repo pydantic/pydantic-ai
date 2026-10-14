@@ -82,6 +82,17 @@ from pydantic_clai2.ui.rendering.command_syntax import command_segments
         pytest.param(
             'echo $((1<<2)); python3 <<< "1"', [('echo $((1<<2)); python3 <<< "1"', 'bash')], id='not-heredocs'
         ),
+        pytest.param('echo $((1<<BITS))\nls -la', [('echo $((1<<BITS))\nls -la', 'bash')], id='shift-in-arithmetic'),
+        pytest.param('echo "use <<EOF here"\nls', [('echo "use <<EOF here"\nls', 'bash')], id='in-double-quotes'),
+        pytest.param(
+            "ruby -e '\nitems << EOF\n'\nls", [("ruby -e '\nitems << EOF\n'\nls", 'bash')], id='in-quotes-across-lines'
+        ),
+        pytest.param('# see cat <<EOF\nls', [('# see cat <<EOF\nls', 'bash')], id='in-a-comment'),
+        pytest.param(
+            '# don\'t stop\necho \\" <<\\PYEOF\nx = 1\nPYEOF',
+            [('# don\'t stop\necho \\" <<\\PYEOF\n', 'bash'), ('x = 1\n', 'python'), ('PYEOF', 'bash')],
+            id='after-a-comment-and-an-escape',
+        ),
         pytest.param('', [], id='empty'),
     ],
 )
