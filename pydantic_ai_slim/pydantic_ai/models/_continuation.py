@@ -329,10 +329,8 @@ class _ContinuationStreamedResponse(StreamedResponse):
     # server-side and the run should be recorded as resumable `'suspended'` — from a live, still-streaming
     # snapshot (`'incomplete'`). See `get()`.
     _detached: bool = field(default=False, init=False)
-    # The inner segment-stitching generator, kept separately so `aclose()` can tear it down
-    # directly: the outer cancel-guard's `async for … in iterator` does NOT forward `aclose()`
-    # to it, and this generator owns each segment's `async with request_stream(...)`.
-    _segment_iterator: AsyncGenerator[ModelResponseStreamEvent, None] | None = field(default=None, init=False)
+    # The inner segment stream owns each segment's `async with request_stream(...)`; keep it
+    # separately because the outer cancel-guard's `async for` does not forward `aclose()`.
     _segment_stream: _utils.PeekableAsyncStream[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -349,8 +347,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
         populate it. This is acceptable because parts never merge across segment boundaries.
         """
         if self._event_iterator is None:
-            self._segment_iterator = self._get_event_iterator()
-            self._segment_stream = _utils.PeekableAsyncStream(self._segment_iterator)
+            self._segment_stream = _utils.PeekableAsyncStream(self._get_event_iterator())
             self._event_iterator = self._iterator_with_cancel_guard(self._segment_stream)
         return self._event_iterator
 
@@ -654,15 +651,12 @@ class _ContinuationStreamedResponse(StreamedResponse):
         # live `'incomplete'` snapshot; `_finished`/`_cancelled` take precedence, so this is a no-op
         # after a fully-drained (`'complete'`) or cancelled (`'interrupted'`) stream.
         self._detached = True
-        if self._segment_iterator is not None:
+        if self._segment_stream is not None:
             # Stream teardown can run inside a cancelled graph scope. The wrapper must finish cancelling and
             # draining its active pull before closing the segment generator, even when cancellation triggered
             # this cleanup.
             with anyio.CancelScope(shield=True):
-                if self._segment_stream is not None:
-                    await self._segment_stream.aclose()
-                else:
-                    await self._segment_iterator.aclose()
+                await self._segment_stream.aclose()
 
     @property
     def model_name(self) -> str:
