@@ -225,7 +225,7 @@ On OpenAI, Azure OpenAI, and xAI, history follows the order of the provider's ow
   call, or `'final_answer'`) as `'phase'` in the part's `provider_details`, the way a standard OpenAI run
   records [text phases](../models/openai.md#text-phases).
 
-On Gemini Live and GPT-Live, a turn the user starts while the model is still answering, whether they
+On Gemini Live, GPT-Live, and ElevenLabs, a turn the user starts while the model is still answering, whether they
 [barge in](turns.md#barge-in) or push to talk over it, is recorded after that answer. Such a turn joins
 history once the provider ends the answer it cut off, or after a few seconds if the provider never does.
 In that fallback the turn is recorded where history stands, so it lands before the answer it interrupted,
