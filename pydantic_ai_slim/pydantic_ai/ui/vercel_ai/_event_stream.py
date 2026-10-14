@@ -43,6 +43,7 @@ from ._utils import (
     dump_message_metadata,
     dump_provider_metadata,
     iter_metadata_chunks,
+    mcp_app_tool_metadata,
     tool_return_output,
 )
 from .request_types import RequestData
@@ -480,7 +481,11 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             # `'success'` and `'interrupted'` both render as neutral tool output. Only `'failed'` is
             # an error; a synthesized `'interrupted'` return (from message-history repair) must never
             # be surfaced as one — its content string carries the interruption message as the output.
-            yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=tool_return_output(part))
+            yield ToolOutputAvailableChunk(
+                tool_call_id=tool_call_id,
+                output=tool_return_output(part),
+                tool_metadata=mcp_app_tool_metadata(part) if isinstance(part, ToolReturnPart) else None,
+            )
 
         # ToolOutputAvailableChunk/ToolOutputErrorChunk.output may hold user parts
         # (e.g. text, images) that Vercel AI does not currently have chunk types for.

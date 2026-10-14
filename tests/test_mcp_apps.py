@@ -302,6 +302,28 @@ async def test_vercel_ai_frontend_receives_app_after_tool_result(agent: Agent[No
     assert model_view(VercelAIAdapter.load_messages(dumped)) == model_view(VercelAIAdapter.load_messages(without_app))
 
 
+@pytest.mark.parametrize('sdk_version', [6, 7])
+async def test_vercel_ai_tool_output_names_app_for_renderer(agent: Agent[None, str], sdk_version: Literal[6, 7]):
+    """On AI SDK v7, the UI tool's output chunk carries the `toolMetadata.app` that `experimental_MCPAppRenderer` reads.
+
+    Earlier SDK versions reject unknown keys on this chunk, so it is left out for them.
+    """
+    request = SubmitMessage(id='chat', messages=[UIMessage(id='u1', role='user', parts=[TextUIPart(text='Weather?')])])
+    adapter = VercelAIAdapter(agent, request, sdk_version=sdk_version)
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in encoded
+    ]
+
+    tool_output = next(c for c in chunks if c['type'] == 'tool-output-available' and c['toolCallId'] == 'forecast-1')
+    assert tool_output.get('toolMetadata') == (
+        {'app': {'resourceUri': 'ui://weather/forecast', 'mimeType': 'text/html;profile=mcp-app'}}
+        if sdk_version == 7
+        else None
+    )
+
+
 async def test_vercel_ai_app_chunk_without_toolset_id_or_with_malformed_record():
     """A record from a toolset without an `id` is sent without `serverId`/`serverHash`; a malformed one is not sent.
 

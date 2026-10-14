@@ -185,6 +185,13 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 DATA_CHUNK_TYPES = (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)
 
 
+def mcp_app_tool_metadata(tool_result: ToolReturnPart) -> dict[str, Any] | None:
+    """The `toolMetadata` that AI SDK UI's `experimental_MCPAppRenderer` reads to show an MCP Apps page."""
+    if (app := get_mcp_app_tool_result(tool_result.metadata)) is None:
+        return None
+    return {'app': {'resourceUri': app['resource_uri'], 'mimeType': 'text/html;profile=mcp-app'}}
+
+
 def iter_metadata_chunks(
     tool_result: ToolReturnPart,
 ) -> Iterator[DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk]:
