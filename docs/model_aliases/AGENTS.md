@@ -9,6 +9,8 @@ covers choosing those models. How pages write aliases is in the "Model names" se
 - Place a model in a tier by its price per token, on the scale of Anthropic's lineup: `small` is
   Haiku-priced, `medium` Sonnet-priced, `large` Opus-priced, and `xlarge` Fable-priced. Anthropic is
   the scale because it offers a model at all four prices.
+- Place a model priced between two tiers in the nearer one. Keep each provider's tiers in price
+  order: a cheaper model never sits above a pricier one.
 - Never rank a provider's models only against each other. Each provider's top model would then share
   one tier name across providers at very different prices.
 - Read prices from the `genai-prices` package (`genai_prices.data`), which Pydantic AI already
