@@ -1775,7 +1775,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 print(result.output)
         ```
         """
-        selection = self._get_model_selection_outside_run()
+        selection = self._get_connection_model_selection()
         async with AsyncExitStack() as stack:
             if isinstance(selection, str):
                 model = models.infer_model(selection)
@@ -1786,10 +1786,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 with self._use_connected_model(connected):
                     yield self
 
-    def _get_model_selection_outside_run(
-        self, model: models.Model | models.KnownModelName | str | None = None
-    ) -> models.Model | str:
-        """Resolve the configured model selection for operations that do not have run dependencies."""
+    def _get_connection_model_selection(self) -> models.Model | str:
+        """Resolve the model to connect: a model instance it borrows, or a model ID it infers and owns."""
         raise NotImplementedError
 
     def _use_connected_model(self, model: models.Model) -> AbstractContextManager[None]:

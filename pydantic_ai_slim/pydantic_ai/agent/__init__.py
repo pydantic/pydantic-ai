@@ -3213,26 +3213,36 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> models.Model | str:
         """Resolve a configured or static capability model selection where run deps are unavailable."""
         capability = self._effective_root_capability()
-        use_capability_model = model is None and self._override_model.get() is None
-        if not use_capability_model:
-            selection = self._pick_raw_model(model)
-        else:
-            contribution = capability.get_model()
-            if callable(contribution) and not _is_model(contribution):
-                raise exceptions.UserError(
-                    'The capability model is dynamic and can only be selected during a run with run dependencies. '
-                    'Pass a concrete model explicitly.'
-                )
-            selection = contribution if contribution is not None else self._pick_raw_model(None)
+        if model is not None or self._override_model.get() is not None:
+            return self._pick_raw_model(model)
+        contribution = capability.get_model()
+        if callable(contribution) and not _is_model(contribution):
+            raise exceptions.UserError(
+                'The capability model is dynamic and can only be selected during a run with run dependencies. '
+                'Pass a concrete model explicitly.'
+            )
+        selection = contribution if contribution is not None else self._pick_raw_model(None)
         if isinstance(selection, str) and capability.has_resolve_model_id:
             raise exceptions.UserError(
                 'The configured model ID is resolved by a capability using run dependencies. '
                 'Pass a concrete model explicitly.'
             )
-        if use_capability_model and isinstance(selection, str):
-            if entered_model := self._entered_models_by_selection.get((id(capability), selection)):
-                return entered_model
         return selection
+
+    def _get_connection_model_selection(self) -> models.Model | str:
+        selection = self._get_model_selection_outside_run()
+        if not isinstance(selection, str):
+            return selection
+        capability = self._effective_root_capability()
+        if capability.has_resolve_model_id:
+            # `override()` keeps a string only when a capability resolves model IDs; the configured
+            # selection already raised above.
+            raise exceptions.UserError(
+                'The configured model ID is resolved by a capability using run dependencies. '
+                'Pass a concrete model explicitly.'
+            )
+        # Borrow the model the agent context entered rather than opening a second provider client.
+        return self._entered_models_by_selection.get((id(capability), selection), selection)
 
     @contextmanager
     def _use_connected_model(self, model: models.Model) -> Generator[None]:

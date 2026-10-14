@@ -119,10 +119,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
     async def __aexit__(self, *args: Any) -> bool | None:
         return await self.wrapped.__aexit__(*args)
 
-    def _get_model_selection_outside_run(
-        self, model: models.Model | models.KnownModelName | str | None = None
-    ) -> models.Model | str:
-        return self.wrapped._get_model_selection_outside_run(model)
+    def _get_connection_model_selection(self) -> models.Model | str:
+        return self.wrapped._get_connection_model_selection()
 
     def _use_connected_model(self, model: models.Model) -> AbstractContextManager[None]:
         return self.wrapped._use_connected_model(model)
