@@ -455,6 +455,9 @@ S = TypeVar('S')
 _PreparedDepsT = TypeVar('_PreparedDepsT')
 _PreparedOutputT = TypeVar('_PreparedOutputT')
 NoneType = type(None)
+_RESOLVED_MODEL_ID_OUTSIDE_RUN_ERROR = (
+    'The configured model ID is resolved by a capability using run dependencies. Pass a concrete model explicitly.'
+)
 
 
 @dataclasses.dataclass
@@ -3223,10 +3226,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
         selection = contribution if contribution is not None else self._pick_raw_model(None)
         if isinstance(selection, str) and capability.has_resolve_model_id:
-            raise exceptions.UserError(
-                'The configured model ID is resolved by a capability using run dependencies. '
-                'Pass a concrete model explicitly.'
-            )
+            raise exceptions.UserError(_RESOLVED_MODEL_ID_OUTSIDE_RUN_ERROR)
         return selection
 
     def _get_connection_model_selection(self) -> models.Model | str:
@@ -3237,10 +3237,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if capability.has_resolve_model_id:
             # `override()` keeps a string only when a capability resolves model IDs; the configured
             # selection already raised above.
-            raise exceptions.UserError(
-                'The configured model ID is resolved by a capability using run dependencies. '
-                'Pass a concrete model explicitly.'
-            )
+            raise exceptions.UserError(_RESOLVED_MODEL_ID_OUTSIDE_RUN_ERROR)
         # Borrow the model the agent context entered rather than opening a second provider client.
         return self._entered_models_by_selection.get((id(capability), selection), selection)
 
