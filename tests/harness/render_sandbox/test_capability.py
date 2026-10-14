@@ -608,11 +608,32 @@ async def test_wrapped_isolation_oracle_rejects_shared_state(
 
 async def test_wrapped_caller_failure_surfaces_without_waiting_for_other_runs(
     isolated_workspace_harness: WorkspaceHarness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Hold both owned runs in an upload before the caller fails. This reproduces
+    # cancellation during setup without relying on which local process finishes first.
+    uploads_ready = asyncio.Event()
+    owned_uploads: set[str] = set()
+    sdk = isolated_workspace_harness.client.experimental.sandboxes
+    copy_to = sdk.copy_to
+
+    async def hold_owned_uploads(identifier: str, local: Path, remote: str) -> None:
+        if isolated_workspace_harness.create_calls[identifier].env['RUN_LABEL'] != 'caller':
+            owned_uploads.add(identifier)
+            if len(owned_uploads) == 2:
+                uploads_ready.set()
+            # The test's sibling cancellation releases this deliberately pending operation.
+            await asyncio.Future[None]()
+        await uploads_ready.wait()
+        await copy_to(identifier, local, remote)
+
+    monkeypatch.setattr(sdk, 'copy_to', hold_owned_uploads)
     original = RuntimeError('caller model failed before the barrier')
     with pytest.raises(RuntimeError, match='caller model failed') as caught:
         await exercise_wrapped_run_isolation(isolated_workspace_harness, caller_model_error=original)
     assert caught.value is original
+    # Both owned uploads were interrupted, so the cleanup assertion covers both siblings.
+    assert len(owned_uploads) == 2
     assert set(isolated_workspace_harness.terminated) == set(isolated_workspace_harness.created)
 
 
