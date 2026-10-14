@@ -58,6 +58,9 @@ _INLINE_FLAGS = {'python': 'c', 'javascript': 'ep', 'ruby': 'e', 'perl': 'eE', '
 _HEREDOC = re.compile(r'(?<!<)<<(-?)[ \t]*\\?([\'"]?)([A-Za-z_]\w*)\2')
 _LITERAL = re.compile(r'\$\'(?:[^\'\\]|\\.)*\'|\'[^\']*\'|"(?:[^"\\]|\\.)*"|\\.|(?<![^\s;&|(])#[^\n]*\n')
 """Closed quotes, escaped characters, and whole comment lines, in which `<<` is text."""
+_OPEN_QUOTE_OR_COMMENT = re.compile(r'[\'"]|(?<![^\s;&|(])#')
+_VERSION = re.compile(r'[\d.]+$')
+"""A version suffix on a command name: `python3.12`, `sqlite3`."""
 _SEPARATOR = re.compile(r'[;&|(){}`]|\$\(')
 _TARGET = re.compile(r'(?:>{1,2}|\btee(?:[ \t]+-\w+)*)[ \t]*([^\s<>;&|]+)')
 _INLINE = re.compile(
@@ -126,7 +129,7 @@ def command_segments(command: str, *, end: int | None = None) -> list[Segment]:
 def _opens_heredoc(before: str) -> bool:
     """Whether a `<<` after `before`, the Bash run so far, is an operator: not in quotes, a comment, or `$((1<<n))`."""
     code = _LITERAL.sub('', before)
-    return not re.search(r'[\'"]|(?<![^\s;&|(])#', code) and code.count('((') <= code.count('))')
+    return not _OPEN_QUOTE_OR_COMMENT.search(code) and code.count('((') <= code.count('))')
 
 
 def _heredoc_language(line: str, *, match: re.Match[str]) -> str | None:
@@ -153,7 +156,7 @@ def _heredoc_language(line: str, *, match: re.Match[str]) -> str | None:
 
 
 def _command_name(word: str) -> str:
-    return re.sub(r'[\d.]+$', '', word.rpartition('/')[2])
+    return _VERSION.sub('', word.rpartition('/')[2])
 
 
 def _extension_language(path: str) -> str | None:
