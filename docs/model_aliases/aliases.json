@@ -7,7 +7,7 @@
   "openai:medium": "openai:gpt-6.1-sol",
   "openai:large": "openai:gpt-6-astra",
   "openai:xlarge": "openai:gpt-6-astra",
-  "google:small": "google:gemini-3.5-flash-lite",
+  "google:small": "google:gemini-3.1-flash-lite",
   "google:medium": "google:gemini-3.8-flash",
   "google:large": "google:gemini-4-argon",
   "google:xlarge": "google:gemini-4-argon",

@@ -45,9 +45,9 @@ Update this table whenever a change to `aliases.json` fills, opens, or moves a g
 
 | Alias | Model | Reason |
 |---|---|---|
-| `openai:large`, `openai:xlarge` | `gpt-6-astra` | Astra is Fable-priced. `gpt-6.1-sol` replaced the Opus-priced `gpt-5.6-sol` at half the price, so `large` takes Astra, the nearest model above. |
+| `openai:large`, `openai:xlarge` | `gpt-6-astra` | Astra is Fable-priced. `gpt-6.1-sol` replaced the Opus-priced GPT-5.4 to 5.6 models at a lower price, so `large` takes Astra, the nearest model above. |
 | `google:large`, `google:xlarge` | `gemini-4-argon` | Google's most capable model. `genai-prices` has no Argon price yet; re-place it when it does. |
-| `google:small` | `gemini-3.5-flash-lite` | Google's cheapest current model. Its output price is nearer Sonnet's than Haiku's, so `small` takes it as the nearest model above. |
+| `google:small` | `gemini-3.1-flash-lite` | Haiku-priced, and Google's newest model at that price. `gemini-3.5-flash-lite` is Sonnet-priced by output, so it can't replace it. |
 | `xai:small` | `grok-4.3` | xAI's cheapest general chat model. Its output price is nearer Sonnet's than Haiku's, so `small` takes it as the nearest model above. |
 | `xai:medium`, `xai:large`, `xai:xlarge` | `grok-4.7` | Sonnet-priced and newer than `grok-4.3`. It replaced `grok-4.6` at the same price. Nothing sits above it. |
 | `openai:image` | `gpt-image-2.5-flare` | Same price as `gpt-image-2`, newer. Sunburst is OpenAI's slower premium editing model. |
