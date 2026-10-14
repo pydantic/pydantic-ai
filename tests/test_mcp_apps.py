@@ -41,7 +41,8 @@ with try_import() as imports_successful:
     from pydantic_ai.ui.ag_ui import AGUIAdapter
     from pydantic_ai.ui.ag_ui._utils import ACTIVITY_EVENTS_VERSION, detect_ag_ui_version, parse_ag_ui_version
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter
-    from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
+    from pydantic_ai.ui.vercel_ai._utils import mcp_app_model_output
+    from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, ToolOutputAvailablePart, UIMessage
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='fastmcp, ag-ui-protocol or starlette not installed')
 
@@ -216,7 +217,9 @@ async def test_tool_returns_carry_tool_info_and_app_data(weather: MCPToolset[Any
     }
 
 
-HookKind = Literal['passthrough', 'rewrite', 'rewrite-in-place', 'other-tool', 'other-arguments', 'arguments-in-place']
+HookKind = Literal[
+    'passthrough', 'rewrite', 'rewrite-in-place', 'other-tool', 'other-arguments', 'arguments-in-place', 'tool-return'
+]
 
 
 @pytest.fixture
@@ -238,6 +241,8 @@ def hooked_weather(request: pytest.FixtureRequest) -> MCPToolset[Any]:
         if hook_kind == 'rewrite-in-place':
             assert isinstance(result, dict)
             del result['city']
+        if hook_kind == 'tool-return':
+            return cast(Any, ToolReturn(return_value=result, metadata={'own': True}))
         return result
 
     return MCPToolset(weather_server(), process_tool_call=hook)
@@ -399,6 +404,109 @@ async def test_vercel_ai_v7_tool_outputs_carry_tool_metadata(agent: Agent[None, 
     ]
     v6 = VercelAIAdapter.dump_messages(result.all_messages(), sdk_version=6)
     assert model_view(VercelAIAdapter.load_messages(sent_back)) == model_view(VercelAIAdapter.load_messages(v6))
+
+
+@pytest.mark.parametrize('hooked_weather', ['tool-return'], indirect=True)
+async def test_process_tool_call_returning_a_tool_return_owns_the_result(hooked_weather: MCPToolset[Any]):
+    """A hook that builds its own `ToolReturn` decides what leaves the toolset; no record is added to it."""
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    async with hooked_weather:
+        tools = await hooked_weather.get_tools(run_context)
+        returned = await hooked_weather.call_tool('get_forecast', {'city': 'a'}, run_context, tools['get_forecast'])
+    assert returned == ToolReturn(return_value={'city': 'a', 'temp_c': 14}, metadata={'own': True})
+
+
+async def test_vercel_ai_v7_tool_metadata_from_hand_built_records():
+    """Records built by hand: an app record alone, a tool record alone, and malformed or missing records.
+
+    `MCPToolset` always attaches both records, so these shapes only come from other code.
+    """
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {
+                0: DeltaToolCall(name='app_only', json_args='{}', tool_call_id='call_1'),
+                1: DeltaToolCall(name='tool_only', json_args='{}', tool_call_id='call_2'),
+                2: DeltaToolCall(name='malformed', json_args='{}', tool_call_id='call_3'),
+                3: DeltaToolCall(name='other_metadata', json_args='{}', tool_call_id='call_4'),
+            }
+        else:
+            yield 'Done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    async def app_only() -> ToolReturn:
+        app: dict[str, Any] = {
+            'resource_uri': 'ui://weather/forecast',
+            'tool_input': {},
+            'result': {},
+            'toolset_id': None,
+        }
+        return ToolReturn(return_value='app', metadata={'mcp_app': app})
+
+    @agent.tool_plain
+    async def tool_only() -> ToolReturn:
+        return ToolReturn(
+            return_value='tool', metadata={'mcp_tool': {'toolset_id': 'srv', 'title': None, 'annotations': None}}
+        )
+
+    @agent.tool_plain
+    async def malformed() -> ToolReturn:
+        return ToolReturn(return_value='bad', metadata={'mcp_app': {'resource_uri': 1}, 'mcp_tool': {'toolset_id': 1}})
+
+    @agent.tool_plain
+    async def other_metadata() -> ToolReturn:
+        return ToolReturn(return_value='other', metadata={'theirs': True})
+
+    request = SubmitMessage(id='chat', messages=[UIMessage(id='u1', role='user', parts=[TextUIPart(text='Hi')])])
+    adapter = VercelAIAdapter(agent, request, sdk_version=7)
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in encoded
+    ]
+    outputs = {c['toolCallId']: c for c in chunks if c['type'] == 'tool-output-available'}
+    assert {call_id: c.get('toolMetadata') for call_id, c in outputs.items()} == snapshot(
+        {
+            'call_1': {
+                'toolName': 'app_only',
+                'app': {'resourceUri': 'ui://weather/forecast', 'mimeType': 'text/html;profile=mcp-app'},
+            },
+            'call_2': {'clientName': 'srv', 'toolName': 'tool_only'},
+            'call_3': None,
+            'call_4': None,
+        }
+    )
+    assert outputs['call_1']['output'] == {}
+    assert outputs['call_2']['output'] == 'tool'
+
+
+@pytest.mark.parametrize(
+    ('output', 'expected'),
+    [
+        pytest.param({'content': [{'type': 'text', 'text': 'a: 14C'}]}, 'a: 14C', id='one-text-block'),
+        pytest.param(
+            {'content': [{'type': 'text', 'text': 'a'}, {'type': 'text', 'text': 'b'}]}, ['a', 'b'], id='text-blocks'
+        ),
+        pytest.param(
+            {'content': [{'type': 'text', 'text': 'a'}, {'type': 'image', 'data': 'AA==', 'mimeType': 'image/png'}]},
+            [{'type': 'text', 'text': 'a'}, {'type': 'image', 'data': 'AA==', 'mimeType': 'image/png'}],
+            id='mixed-blocks',
+        ),
+        pytest.param({'content': 'not a list'}, {'content': 'not a list'}, id='content-not-a-list'),
+        pytest.param('plain', 'plain', id='output-not-a-result'),
+    ],
+)
+def test_mcp_app_model_output_rebuilt_from_result(output: Any, expected: Any):
+    """Without `structuredContent` and without the model's view, the model gets the result's text blocks."""
+    part = ToolOutputAvailablePart(
+        type='tool-get_forecast',
+        tool_call_id='forecast-1',
+        output=output,
+        tool_metadata={'app': {'resourceUri': 'ui://weather/forecast', 'mimeType': 'text/html;profile=mcp-app'}},
+    )
+    assert mcp_app_model_output(part) == expected
 
 
 async def test_vercel_ai_v7_history_without_model_view(agent: Agent[None, str]):
