@@ -99,6 +99,8 @@ async def _stream_response_parts(
             case PartDeltaEvent(delta=ToolCallPartDelta(tool_call_id=call_id)):
                 assert call_id is not None
                 event_ids.append(('delta', call_id))
+            case _:
+                pass
     return list(streamed.get().parts), event_ids
 
 
@@ -248,8 +250,12 @@ async def test_agentic_video_processing(
     assert replayed_model_content == snapshot(
         {'parts': [{'text': IsStr(), 'thoughtSignature': IsStr()}], 'role': 'model'}
     )
-    assert replayed_model_content['parts'][0]['text'] == final_text.content
-    replayed_signature = replayed_model_content['parts'][0]['thoughtSignature']
+    replayed_parts = replayed_model_content['parts']
+    assert isinstance(replayed_parts, list)
+    replayed_text = replayed_parts[0]
+    assert isinstance(replayed_text, dict)
+    assert replayed_text['text'] == final_text.content
+    replayed_signature = replayed_text['thoughtSignature']
     assert isinstance(replayed_signature, str)
     assert base64.urlsafe_b64decode(replayed_signature) == base64.b64decode(final_signature, validate=True)
 
@@ -325,14 +331,16 @@ async def test_streaming_media_processing_pairs_reset_between_calls() -> None:
 
 @pytest.mark.parametrize('stream', [False, True], ids=['non-streaming', 'streaming'])
 async def test_signature_only_parts_are_skipped(stream: bool) -> None:
-    """Unit test: isolate a signature-only part, independently of other recorded response parts."""
-    parts: list[dict[str, object]] = [{'thought_signature': b'a'}]
+    """Unit test: isolate a signature-only part and retain ordinary signed text independently of recordings."""
+    parts: list[dict[str, object]] = [{'thought_signature': b'a'}, {'text': 'answer', 'thought_signature': b'b'}]
     if stream:
         response_parts, _ = await _stream_response_parts([parts])
     else:
         response_parts = _process_response(parts, grounding={}).parts
 
-    assert response_parts == []
+    assert response_parts == snapshot(
+        [TextPart(content='answer', provider_name='google-gla', provider_details={'thought_signature': 'Yg=='})]
+    )
 
 
 @pytest.mark.parametrize('stream', [False, True], ids=['non-streaming', 'streaming'])
@@ -481,8 +489,12 @@ async def test_agentic_video_processing_vertex(
     assert replayed_model_content == snapshot(
         {'parts': [{'text': IsStr(), 'thoughtSignature': IsStr()}], 'role': 'model'}
     )
-    assert replayed_model_content['parts'][0]['text'] == final_text.content
-    replayed_signature = replayed_model_content['parts'][0]['thoughtSignature']
+    replayed_parts = replayed_model_content['parts']
+    assert isinstance(replayed_parts, list)
+    replayed_text = replayed_parts[0]
+    assert isinstance(replayed_text, dict)
+    assert replayed_text['text'] == final_text.content
+    replayed_signature = replayed_text['thoughtSignature']
     assert isinstance(replayed_signature, str)
     assert base64.urlsafe_b64decode(replayed_signature) == base64.b64decode(final_signature, validate=True)
 
