@@ -1,4 +1,4 @@
-"""The MCP Apps (SEP-1865) record `MCPToolset` attaches to a tool return, and its UI wire payload.
+"""The records `MCPToolset` attaches to a tool return, and the MCP Apps (SEP-1865) UI wire payload.
 
 This module has no `mcp` dependency, so the UI adapters can read the record without the `mcp` extra.
 """
@@ -12,14 +12,36 @@ from typing_extensions import TypedDict
 
 from ._utils import is_str_dict
 
+MCP_TOOL_METADATA_KEY: Final = 'mcp_tool'
+"""Key under which the `MCPToolInfo` record sits in `ToolReturnPart.metadata`."""
+
 MCP_APP_METADATA_KEY: Final = 'mcp_app'
-"""Key under which the record sits in `ToolReturnPart.metadata`."""
+"""Key under which the `MCPAppToolResult` record sits in `ToolReturnPart.metadata`."""
 
 MCP_APPS_UI_TYPE: Final = 'mcp-apps'
 """Name of the UI event that carries the record: the AG-UI activity type and the Vercel AI `data-*` suffix."""
 
 MCP_APP_MIME_TYPE: Final = 'text/html;profile=mcp-app'
 """MIME type of an MCP Apps page."""
+
+
+class MCPToolInfo(TypedDict):
+    """Which server and tool one MCP tool call went to.
+
+    [`MCPToolset`][pydantic_ai.mcp.MCPToolset] attaches this to every tool call it runs, under the `'mcp_tool'` key
+    of [`ToolReturnPart.metadata`][pydantic_ai.messages.ToolReturnPart.metadata], so a frontend can label the call.
+    It is never sent to the model.
+    """
+
+    toolset_id: str | None
+    """The [`id`][pydantic_ai.mcp.MCPToolset.id] of the toolset that ran the tool."""
+
+    title: str | None
+    """The tool's title, if the server set one."""
+
+    annotations: dict[str, Any] | None
+    """The tool's [annotations](https://modelcontextprotocol.io/specification/2025-06-18/server/tools#tool-annotations)
+    in wire format (camelCase keys), if the server set any."""
 
 
 class MCPAppToolResult(TypedDict):
@@ -44,7 +66,18 @@ class MCPAppToolResult(TypedDict):
     """The [`id`][pydantic_ai.mcp.MCPToolset.id] of the toolset that ran the tool, to route resource reads."""
 
 
+_MCP_TOOL_INFO_ADAPTER: TypeAdapter[MCPToolInfo] = TypeAdapter(MCPToolInfo)
 _MCP_APP_TOOL_RESULT_ADAPTER: TypeAdapter[MCPAppToolResult] = TypeAdapter(MCPAppToolResult)
+
+
+def get_mcp_tool_info(metadata: Any) -> MCPToolInfo | None:
+    """Return the MCP tool record from a tool return's metadata, or `None` if there is no valid one."""
+    if not is_str_dict(metadata) or (value := metadata.get(MCP_TOOL_METADATA_KEY)) is None:
+        return None
+    try:
+        return _MCP_TOOL_INFO_ADAPTER.validate_python(value)
+    except ValidationError:
+        return None
 
 
 def get_mcp_app_tool_result(metadata: Any) -> MCPAppToolResult | None:

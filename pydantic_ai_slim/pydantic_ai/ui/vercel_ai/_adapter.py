@@ -70,7 +70,7 @@ from ._utils import (
     iter_tool_approval_responses,
     load_provider_metadata,
     mcp_app_model_output,
-    mcp_app_tool_output,
+    mcp_tool_output,
     tool_return_output,
 )
 from .request_types import (
@@ -940,17 +940,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 # `'success'` and `'interrupted'` both render as neutral tool output; only `'failed'`
                 # is an error, so a synthesized `'interrupted'` return (from message-history repair)
                 # shows its interruption message as the output rather than an error.
-                app_output = mcp_app_tool_output(tool_result) if sdk_version >= 7 else None
+                mcp_output = mcp_tool_output(tool_result) if sdk_version >= 7 else None
                 ui_parts.append(
                     ToolOutputAvailablePart(
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
                         input=part.args_as_dict(),
-                        output=app_output['output'] if app_output else tool_return_output(tool_result),
+                        output=mcp_output['output'] if mcp_output else tool_return_output(tool_result),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
-                        tool_metadata=app_output['tool_metadata'] if app_output else None,
-                        result_provider_metadata=app_output['provider_metadata'] if app_output else None,
+                        tool_metadata=mcp_output['tool_metadata'] if mcp_output else None,
+                        result_provider_metadata=mcp_output['provider_metadata'] if mcp_output else None,
                     )
                 )
             # Check for Vercel AI chunks returned by tool calls via metadata.

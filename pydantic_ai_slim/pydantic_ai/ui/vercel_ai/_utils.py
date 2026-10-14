@@ -7,7 +7,13 @@ from typing import Any, cast
 from pydantic import BaseModel, ConfigDict, ValidationError
 from typing_extensions import TypedDict
 
-from pydantic_ai._mcp_apps import MCP_APP_MIME_TYPE, MCP_APPS_UI_TYPE, get_mcp_app_tool_result, mcp_app_ui_payload
+from pydantic_ai._mcp_apps import (
+    MCP_APP_MIME_TYPE,
+    MCP_APPS_UI_TYPE,
+    get_mcp_app_tool_result,
+    get_mcp_tool_info,
+    mcp_app_ui_payload,
+)
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     BaseToolReturnPart,
@@ -189,36 +195,57 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 DATA_CHUNK_TYPES = (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)
 
 
-class MCPAppToolOutput(TypedDict):
-    """The `tool-output-available` fields that show an MCP Apps page on AI SDK UI v7 without frontend code."""
+class MCPToolOutput(TypedDict):
+    """The `tool-output-available` fields for an MCP tool call on AI SDK UI v7."""
 
-    output: dict[str, Any]
-    """The server's full `CallToolResult`, which the renderer hands to the page."""
+    output: Any
+    """What the model saw, or for a tool with an MCP Apps page the server's full `CallToolResult` for the renderer."""
     tool_metadata: dict[str, Any]
-    """`toolMetadata` naming the page, in the shape AI SDK's own MCP client sets."""
-    provider_metadata: dict[str, Any]
-    """Provider metadata holding what the model saw, so `load_messages` can restore it."""
+    """`toolMetadata` labelling the call, in the shape AI SDK's own MCP client sets."""
+    provider_metadata: dict[str, Any] | None
+    """For a tool with a page, what the model saw, so `load_messages` can restore it."""
 
 
-def mcp_app_tool_output(tool_result: ToolReturnPart) -> MCPAppToolOutput | None:
-    """Build the tool output for an MCP Apps tool call on AI SDK UI v7, or `None` for a tool without a page.
+_TOOL_ANNOTATION_KEYS = ('title', 'readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint')
+
+
+def mcp_tool_output(tool_result: ToolReturnPart) -> MCPToolOutput | None:
+    """Build the tool output for an MCP tool call on AI SDK UI v7, or `None` for a call `MCPToolset` didn't run.
+
+    `toolMetadata` holds what AI SDK's own MCP client sets: `clientName`, `toolName`, `title`, `annotations` and,
+    for a tool with an MCP Apps page, `app`. AI SDK fills `clientName` with its MCP client's name; here it is the
+    toolset `id`. `ToolDefinition.metadata` is never sent as is; it holds keys meant for the backend.
 
     AI SDK UI's `experimental_MCPAppRenderer` shows a page for a tool part whose `toolMetadata.app` names it and
-    gives the page the part's `output`, so `output` is the server's full result rather than what the model saw.
-    `toolMetadata` is a fixed subset of what AI SDK's own MCP client sets: `clientName`, `toolName` and `app`.
-    AI SDK fills `clientName` with its MCP client's name; here it is the toolset `id`, the only field on the part that
-    names the server. `ToolDefinition.metadata` is never sent; it holds keys meant for the backend.
-    What the model saw is kept in the provider metadata, where `load_messages` reads it back.
+    gives the page the part's `output`, so for those tools `output` is the server's full result and what the model
+    saw is kept in the provider metadata, where `load_messages` reads it back.
     """
-    if (app := get_mcp_app_tool_result(tool_result.metadata)) is None:
+    info = get_mcp_tool_info(tool_result.metadata)
+    app = get_mcp_app_tool_result(tool_result.metadata)
+    if info is not None:
+        toolset_id = info['toolset_id']
+    elif app is not None:
+        toolset_id = app['toolset_id']
+    else:
         return None
-    tool_metadata: dict[str, Any] = {
-        'toolName': tool_result.tool_name,
-        'app': {'resourceUri': app['resource_uri'], 'mimeType': MCP_APP_MIME_TYPE},
-    }
-    if app['toolset_id'] is not None:
-        tool_metadata = {'clientName': app['toolset_id'], **tool_metadata}
-    return MCPAppToolOutput(
+    tool_metadata: dict[str, Any] = {}
+    if toolset_id is not None:
+        tool_metadata['clientName'] = toolset_id
+    tool_metadata['toolName'] = tool_result.tool_name
+    if info is not None:
+        annotations = {
+            k: v for k, v in (info['annotations'] or {}).items() if k in _TOOL_ANNOTATION_KEYS and v is not None
+        }
+        if (title := info['title'] or annotations.get('title')) is not None:
+            tool_metadata['title'] = title
+        if annotations:
+            tool_metadata['annotations'] = annotations
+    if app is None:
+        return MCPToolOutput(
+            output=tool_return_output(tool_result), tool_metadata=tool_metadata, provider_metadata=None
+        )
+    tool_metadata['app'] = {'resourceUri': app['resource_uri'], 'mimeType': MCP_APP_MIME_TYPE}
+    return MCPToolOutput(
         output=app['result'],
         tool_metadata=tool_metadata,
         provider_metadata={PROVIDER_METADATA_KEY: {MCP_APP_MODEL_OUTPUT_KEY: tool_return_output(tool_result)}},
@@ -229,7 +256,7 @@ def mcp_app_model_output(part: ToolOutputAvailablePart | DynamicToolOutputAvaila
     """What the model saw for a tool output part sent back by the frontend.
 
     For an MCP Apps tool call on AI SDK v7, `output` is the server's full result and what the model saw is kept in
-    the result provider metadata by `mcp_app_tool_output`. If a frontend dropped that metadata, the model's view is
+    the result provider metadata by `mcp_tool_output`. If a frontend dropped that metadata, the model's view is
     rebuilt from the result the way `MCPToolset` maps it: the structured content, else the text blocks. The page's
     `_meta` never reaches the model.
     """

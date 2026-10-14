@@ -483,7 +483,7 @@ _(This example is complete, it can be run "as is")_
 
 An [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) is an HTML page a server attaches to a tool through the tool's `_meta.ui.resourceUri`. Pydantic AI doesn't render it; it gives your frontend what it needs to.
 
-When the agent calls such a tool, the [`ToolReturn`][pydantic_ai.messages.ToolReturn] carries an [`MCPAppToolResult`][pydantic_ai.mcp.MCPAppToolResult] in `metadata['mcp_app']`: the resource URI, the tool input, the full MCP result with `structuredContent` and `_meta`, and the toolset `id`. The model doesn't see it. The [AG-UI](../ui/ag-ui.md#mcp-apps) and [Vercel AI](../ui/vercel-ai.md#mcp-apps) adapters send it to the frontend. If a [`process_tool_call`](#tool-call-customization) hook changes the arguments or the result, it isn't attached.
+Every tool call through `MCPToolset` returns a [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose `metadata['mcp_tool']` is an [`MCPToolInfo`][pydantic_ai.mcp.MCPToolInfo]: the toolset `id` and the tool's title and annotations, so a frontend can label the call. When the agent calls a tool with a page, the `ToolReturn` also carries an [`MCPAppToolResult`][pydantic_ai.mcp.MCPAppToolResult] in `metadata['mcp_app']`: the resource URI, the tool input, the full MCP result with `structuredContent` and `_meta`, and the toolset `id`. The model doesn't see it. The [AG-UI](../ui/ag-ui.md#mcp-apps) and [Vercel AI](../ui/vercel-ai.md#mcp-apps) adapters send it to the frontend. If a [`process_tool_call`](#tool-call-customization) hook changes the arguments or the result, it isn't attached.
 
 Your frontend needs three things from your backend:
 

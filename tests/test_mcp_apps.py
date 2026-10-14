@@ -56,6 +56,15 @@ READ_FIELDS: dict[str, Any] = (
 )
 """The fields FastMCP 4 adds to every `resources/read` result."""
 
+TIME_ANNOTATIONS = {
+    'title': None,
+    'readOnlyHint': True,
+    'destructiveHint': None,
+    'idempotentHint': None,
+    'openWorldHint': None,
+}
+"""`get_time`'s annotations as `MCPToolset` records them: every spec key, unset ones `None`."""
+
 
 def weather_server() -> FastMCP[None]:
     """Tools with an MCP Apps UI (under the current and the deprecated `_meta` key), a tool without one, tools only
@@ -84,7 +93,7 @@ def weather_server() -> FastMCP[None]:
     def legacy_forecast(city: str) -> FastMCPToolResult:
         return FastMCPToolResult(content=[TextContent(type='text', text=f'{city}: 14C')])
 
-    @server.tool
+    @server.tool(title='Local time', annotations={'readOnlyHint': True})
     def get_time(city: str) -> str:
         """Has no UI."""
         return f'{city}: 09:00'
@@ -159,8 +168,11 @@ async def test_server_declares_mcp_apps_extension(weather: MCPToolset[Any]):
         assert weather.capabilities.extensions == snapshot({'io.modelcontextprotocol/ui': {}})
 
 
-async def test_app_tool_returns_carry_app_data(weather: MCPToolset[Any]):
-    """Calls to UI tools keep the full result for the app, without changing what the model sees."""
+async def test_tool_returns_carry_tool_info_and_app_data(weather: MCPToolset[Any]):
+    """Every call records which server and tool it went to; calls to UI tools also keep the full result for the app.
+
+    Neither changes what the model sees.
+    """
     agent = Agent(TestModel(call_tools=['get_forecast', 'legacy_forecast', 'get_time']), toolsets=[weather])
     result = await agent.run('Forecast?')
     returns = {
@@ -171,17 +183,19 @@ async def test_app_tool_returns_carry_app_data(weather: MCPToolset[Any]):
         'get_forecast': (
             {'city': 'a', 'temp_c': 14},
             {
+                'mcp_tool': {'toolset_id': 'weather', 'title': None, 'annotations': None},
                 'mcp_app': {
                     'resource_uri': 'ui://weather/forecast',
                     'tool_input': {'city': 'a'},
                     'result': forecast_result('a'),
                     'toolset_id': 'weather',
-                }
+                },
             },
         ),
         'legacy_forecast': (
             'a: 14C',
             {
+                'mcp_tool': {'toolset_id': 'weather', 'title': None, 'annotations': None},
                 'mcp_app': {
                     'resource_uri': 'ui://weather/forecast',
                     'tool_input': {'city': 'a'},
@@ -191,10 +205,13 @@ async def test_app_tool_returns_carry_app_data(weather: MCPToolset[Any]):
                         'isError': False,
                     },
                     'toolset_id': 'weather',
-                }
+                },
             },
         ),
-        'get_time': ('a: 09:00', None),
+        'get_time': (
+            'a: 09:00',
+            {'mcp_tool': {'toolset_id': 'weather', 'title': 'Local time', 'annotations': TIME_ANNOTATIONS}},
+        ),
     }
 
 
@@ -226,42 +243,37 @@ def hooked_weather(request: pytest.FixtureRequest) -> MCPToolset[Any]:
 
 
 @pytest.mark.parametrize(
-    ('hooked_weather', 'expected'),
+    ('hooked_weather', 'expected', 'app_kept'),
     [
-        pytest.param(
-            'passthrough',
-            ToolReturn(
-                return_value={'city': 'a', 'temp_c': 14},
-                metadata={
-                    'mcp_app': {
-                        'resource_uri': 'ui://weather/forecast',
-                        'tool_input': {'city': 'a'},
-                        'result': forecast_result('a'),
-                        'toolset_id': None,
-                    }
-                },
-            ),
-            id='passthrough',
-        ),
-        pytest.param('rewrite', {'temp_c': 14}, id='rewritten-result'),
-        pytest.param('rewrite-in-place', {'temp_c': 14}, id='result-rewritten-in-place'),
-        pytest.param('other-tool', 'a: 09:00', id='other-tool'),
-        pytest.param('other-arguments', {'city': 'b', 'temp_c': 14}, id='other-arguments'),
-        pytest.param('arguments-in-place', {'city': 'b', 'temp_c': 14}, id='arguments-rewritten-in-place'),
+        pytest.param('passthrough', {'city': 'a', 'temp_c': 14}, True, id='passthrough'),
+        pytest.param('rewrite', {'temp_c': 14}, False, id='rewritten-result'),
+        pytest.param('rewrite-in-place', {'temp_c': 14}, False, id='result-rewritten-in-place'),
+        pytest.param('other-tool', 'a: 09:00', False, id='other-tool'),
+        pytest.param('other-arguments', {'city': 'b', 'temp_c': 14}, False, id='other-arguments'),
+        pytest.param('arguments-in-place', {'city': 'b', 'temp_c': 14}, False, id='arguments-rewritten-in-place'),
     ],
     indirect=['hooked_weather'],
 )
-async def test_app_data_with_process_tool_call(hooked_weather: MCPToolset[Any], expected: Any):
+async def test_app_data_with_process_tool_call(hooked_weather: MCPToolset[Any], expected: Any, app_kept: bool):
     """App data is kept only when a `process_tool_call` hook returns the result of the model's own call unchanged.
 
     A hook that changes the arguments or the result, including by editing it in place, decides
-    what leaves the toolset, so the raw result is not forwarded.
+    what leaves the toolset, so the raw result is not forwarded. The tool record is always attached.
     """
     run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     async with hooked_weather:
         tools = await hooked_weather.get_tools(run_context)
         returned = await hooked_weather.call_tool('get_forecast', {'city': 'a'}, run_context, tools['get_forecast'])
-    assert returned == expected
+    assert returned.return_value == expected
+    metadata: dict[str, Any] = {'mcp_tool': {'toolset_id': None, 'title': None, 'annotations': None}}
+    if app_kept:
+        metadata['mcp_app'] = {
+            'resource_uri': 'ui://weather/forecast',
+            'tool_input': {'city': 'a'},
+            'result': forecast_result('a'),
+            'toolset_id': None,
+        }
+    assert returned.metadata == metadata
 
 
 async def test_read_resource_contents_keeps_mime_type_and_meta(weather: MCPToolset[Any]):
@@ -334,12 +346,13 @@ async def test_vercel_ai_frontend_receives_app_after_tool_result(agent: Agent[No
     assert model_view(VercelAIAdapter.load_messages(dumped)) == model_view(VercelAIAdapter.load_messages(without_app))
 
 
-async def test_vercel_ai_v7_tool_output_shows_app_without_frontend_code(agent: Agent[None, str]):
-    """On AI SDK v7, the UI tool's output is what `experimental_MCPAppRenderer` needs to show the app as is.
+async def test_vercel_ai_v7_tool_outputs_carry_tool_metadata(agent: Agent[None, str]):
+    """On AI SDK v7, every MCP tool output carries `toolMetadata` in the shape AI SDK's own MCP client sets.
 
-    `toolMetadata` is a fixed subset of what AI SDK's own MCP client sets (`clientName`, `toolName`, `app`), never
-    `ToolDefinition.metadata`; `output` is the server's full result, which the renderer hands the app. What the
-    model saw is kept in the provider metadata, so history the frontend sends back loads as it does on v6.
+    A tool without a page gets `clientName`, `toolName`, `title` and `annotations`; `ToolDefinition.metadata` is
+    never sent as is. A tool with a page also gets `app`, and its `output` is the server's full result, which
+    `experimental_MCPAppRenderer` hands the page. What the model saw is kept in the provider metadata, so history the
+    frontend sends back loads as it does on v6.
     """
     request = SubmitMessage(id='chat', messages=[UIMessage(id='u1', role='user', parts=[TextUIPart(text='Weather?')])])
     adapter = VercelAIAdapter(agent, request, sdk_version=7)
@@ -348,8 +361,21 @@ async def test_vercel_ai_v7_tool_output_shows_app_without_frontend_code(agent: A
         async for encoded in adapter.encode_stream(adapter.run_stream())
         if '[DONE]' not in encoded
     ]
-    tool_output = next(c for c in chunks if c['type'] == 'tool-output-available' and c['toolCallId'] == 'forecast-1')
-    assert tool_output == snapshot(
+    outputs = {c['toolCallId']: c for c in chunks if c['type'] == 'tool-output-available'}
+    assert outputs['time-1'] == snapshot(
+        {
+            'type': 'tool-output-available',
+            'toolCallId': 'time-1',
+            'output': 'Den Haag: 09:00',
+            'toolMetadata': {
+                'clientName': 'weather',
+                'toolName': 'get_time',
+                'title': 'Local time',
+                'annotations': {'readOnlyHint': True},
+            },
+        }
+    )
+    assert outputs['forecast-1'] == snapshot(
         {
             'type': 'tool-output-available',
             'toolCallId': 'forecast-1',

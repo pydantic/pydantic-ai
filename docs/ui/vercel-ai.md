@@ -245,7 +245,7 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 
 After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stream carries a `data-mcp-apps` [data chunk](#data-chunks) with `id` set to the tool call ID. Its `data`: `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`), and `serverId` and `serverHash` (both the toolset `id`, when set). Dumped history keeps it as a data part; loading ignores it.
 
-With `sdk_version=7`, the tool call's `tool-output-available` chunk also carries `toolMetadata` (a fixed subset of what AI SDK's own MCP client sets: `clientName`, the toolset `id`; `toolName`; and `app` with `resourceUri` and `mimeType`) and the full result as `output`. AI SDK UI's `experimental_MCPAppRenderer` (AI SDK 7.0.120 or later) shows the page from that:
+With `sdk_version=7`, the `tool-output-available` chunk of every [`MCPToolset`](../mcp/client.md) tool call carries `toolMetadata` in the shape AI SDK's own MCP client sets: `clientName` (the toolset `id`), `toolName`, and `title` and `annotations` when the server sets them. For a tool with a page it also has `app` with `resourceUri` and `mimeType`, and `output` is the full result. AI SDK UI's `experimental_MCPAppRenderer` (AI SDK 7.0.120 or later) shows the page from that:
 
 ```tsx
 return part.toolMetadata?.app ? (
@@ -258,7 +258,7 @@ return part.toolMetadata?.app ? (
 ) : null;
 ```
 
-`clientName` is the toolset `id`, not AI SDK's client name. What the model saw is in the chunk's `providerMetadata`; send parts back unchanged and history loads as on `sdk_version=6`. If that metadata is missing, the model gets the result's `structuredContent` or text, never its `_meta`. `ToolDefinition.metadata` is never sent.
+What the model saw is in the chunk's `providerMetadata`; send parts back unchanged and history loads as on `sdk_version=6`. If that metadata is missing, the model gets the result's `structuredContent` or text, never its `_meta`. `ToolDefinition.metadata` is never sent as is.
 
 On `sdk_version` 5 and 6, give the renderer the resource URI and the full result from the chunk:
 

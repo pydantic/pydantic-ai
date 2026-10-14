@@ -824,14 +824,14 @@ class TestMCPToolsetIntegration:
         async with toolset:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('add', {'a': 2, 'b': 3}, run_context, tools['add'])
-        assert result == {'sum': 5}
+        assert result.return_value == {'sum': 5}
 
     async def test_call_tool_returns_text(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
-        assert result == 'Echo: hi'
+        assert result.return_value == 'Echo: hi'
 
     async def test_tool_error_raises_model_retry(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server)
@@ -1092,7 +1092,7 @@ class TestMCPToolsetIntegration:
         async with toolset:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
-        assert result == 'Echo: hi'
+        assert result.return_value == 'Echo: hi'
         assert seen == [('echo', {'message': 'hi'})]
 
     async def test_list_resources_returns_pai_types(self, fastmcp_server: FastMCP[None]):
@@ -1491,8 +1491,8 @@ class TestMCPToolsetIntegration:
         async with toolset:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('image_tool', {}, run_context, tools['image_tool'])
-        assert isinstance(result, BinaryContent)
-        assert result.media_type == 'image/png'
+        assert isinstance(result.return_value, BinaryContent)
+        assert result.return_value.media_type == 'image/png'
 
     async def test_call_tool_returns_embedded_blob(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         from pydantic_ai.messages import BinaryContent
@@ -1501,7 +1501,7 @@ class TestMCPToolsetIntegration:
         async with toolset:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('embedded_blob_tool', {}, run_context, tools['embedded_blob_tool'])
-        assert isinstance(result, BinaryContent)
+        assert isinstance(result.return_value, BinaryContent)
 
     async def test_call_tool_returns_resource_link_uri(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server)
@@ -1509,7 +1509,7 @@ class TestMCPToolsetIntegration:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('resource_link_tool', {}, run_context, tools['resource_link_tool'])
         # `_map_mcp_tool_result` for ResourceLink returns the URI string.
-        assert result == 'resource://greeting.txt'
+        assert result.return_value == 'resource://greeting.txt'
 
     async def test_log_level_is_set_after_aenter(self, fastmcp_server: FastMCP[None]):
         client = make_legacy_client(fastmcp_server)
@@ -2509,7 +2509,7 @@ class TestMCPToolsetBackgroundTasks:
         assert metadata['task'] is False
         result = await toolset.call_tool('forbidden_tool', {}, run_context, tools['forbidden_tool'])
 
-        assert result == 'completed'
+        assert result.return_value == 'completed'
         direct_call_tool.assert_awaited_once_with('forbidden_tool', {}, use_task=False)
 
     async def test_required_tool_follows_generation_task_semantics(
@@ -2521,7 +2521,7 @@ class TestMCPToolsetBackgroundTasks:
             tools = await toolset.get_tools(run_context)
             assert (tools['task_required_tool'].tool_def.metadata or {}).get('task') is (not MCP_SDK_V2)
             result = await toolset.call_tool('task_required_tool', {}, run_context, tools['task_required_tool'])
-        assert result == 'task_required_completed'
+        assert result.return_value == 'task_required_completed'
 
     async def test_optional_tool_follows_default_generation_task_semantics(
         self, task_server: FastMCP[None], run_context: RunContext[None]
@@ -2532,7 +2532,7 @@ class TestMCPToolsetBackgroundTasks:
             tools = await toolset.get_tools(run_context)
             assert (tools['task_optional_tool'].tool_def.metadata or {}).get('task') is (not MCP_SDK_V2)
             result = await toolset.call_tool('task_optional_tool', {}, run_context, tools['task_optional_tool'])
-        assert result == 'task_optional_task'
+        assert result.return_value == 'task_optional_task'
 
     async def test_optional_tool_follows_generation_semantics_when_tasks_disabled(
         self, task_server: FastMCP[None], run_context: RunContext[None]
@@ -2541,7 +2541,7 @@ class TestMCPToolsetBackgroundTasks:
         async with toolset:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('task_optional_tool', {}, run_context, tools['task_optional_tool'])
-        assert result == ('task_optional_task' if MCP_SDK_V2 else 'task_optional_sync')
+        assert result.return_value == ('task_optional_task' if MCP_SDK_V2 else 'task_optional_sync')
 
     async def test_agent_follows_generation_semantics_when_tasks_disabled(self, task_server: FastMCP[None]) -> None:
         toolset = MCPToolset(task_server, prefer_tasks=False)
@@ -2578,8 +2578,8 @@ class TestMCPToolsetBackgroundTasks:
                 'task_required_tool', {}, run_context, round_trip('task_required_tool')
             )
 
-        assert optional_result == ('task_optional_task' if MCP_SDK_V2 else 'task_optional_sync')
-        assert required_result == 'task_required_completed'
+        assert optional_result.return_value == ('task_optional_task' if MCP_SDK_V2 else 'task_optional_sync')
+        assert required_result.return_value == 'task_required_completed'
 
     async def test_forbidden_tool_stays_on_sync_path(
         self, task_server: FastMCP[None], run_context: RunContext[None]
@@ -2588,7 +2588,7 @@ class TestMCPToolsetBackgroundTasks:
         async with toolset:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('task_forbidden_tool', {}, run_context, tools['task_forbidden_tool'])
-        assert result == 'task_forbidden_completed'
+        assert result.return_value == 'task_forbidden_completed'
 
     async def test_plain_tool_stays_on_sync_path(
         self, task_server: FastMCP[None], run_context: RunContext[None]
@@ -2599,7 +2599,7 @@ class TestMCPToolsetBackgroundTasks:
         async with toolset:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('plain_tool', {}, run_context, tools['plain_tool'])
-        assert result == 'plain_completed'
+        assert result.return_value == 'plain_completed'
 
     async def test_direct_call_tool_with_use_task(self, task_server: FastMCP[None]) -> None:
         """`direct_call_tool(..., use_task=True)` is the low-level escape hatch for users calling without
@@ -2685,7 +2685,7 @@ class TestMCPToolsetBackgroundTasks:
         async with toolset:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('task_optional_tool', {}, run_context, tools['task_optional_tool'])
-        assert result == ('task_optional_task' if MCP_SDK_V2 or prefer_tasks else 'task_optional_sync')
+        assert result.return_value == ('task_optional_task' if MCP_SDK_V2 or prefer_tasks else 'task_optional_sync')
 
     async def test_process_tool_call_preserves_metadata_and_task_preference(
         self,
@@ -2711,7 +2711,7 @@ class TestMCPToolsetBackgroundTasks:
 
         result = await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
 
-        assert result == 'completed'
+        assert result.return_value == 'completed'
         direct_call_tool.assert_awaited_once_with(
             'echo',
             {'message': 'hi'},
@@ -2737,5 +2737,5 @@ class TestMCPToolsetBackgroundTasks:
 
         result = await toolset.call_tool('durable_tool', {}, run_context, tool)
 
-        assert result == 'cached'
+        assert result.return_value == 'cached'
         direct_call_tool.assert_not_awaited()
