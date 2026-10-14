@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from ... import ExternalToolset, ToolDefinition
 from ..._mcp_apps import MCP_APPS_UI_TYPE, get_mcp_app_tool_result, mcp_app_ui_payload
-from ..._utils import is_str_dict
+from ..._utils import is_str_dict, now_utc
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -194,6 +194,11 @@ class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
 def _new_message_id() -> str:
     """Generate a new unique message ID."""
     return str(uuid.uuid4())
+
+
+def _timestamp() -> int:
+    """The current time in milliseconds, as `AGUIEventStream` stamps the events of an agent run."""
+    return int(now_utc().timestamp() * 1_000)
 
 
 def _user_content_to_input(
@@ -375,13 +380,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     async def _answer_mcp_app_request(self, request: dict[str, Any]) -> AsyncIterator[BaseEvent]:
         """Answer a page's MCP request the way the AG-UI MCP Apps middleware does."""
         thread_id, run_id = self.run_input.thread_id, self.run_input.run_id
-        yield RunStartedEvent(thread_id=thread_id, run_id=run_id)
+        yield RunStartedEvent(thread_id=thread_id, run_id=run_id, timestamp=_timestamp())
         try:
             result = await self._mcp_app_request_result(request)
         except Exception as e:
-            yield RunErrorEvent(message=str(e))
+            yield RunErrorEvent(message=str(e), timestamp=_timestamp())
             return
-        yield RunFinishedEvent(thread_id=thread_id, run_id=run_id, result=result)
+        yield RunFinishedEvent(thread_id=thread_id, run_id=run_id, result=result, timestamp=_timestamp())
 
     async def _mcp_app_request_result(self, request: dict[str, Any]) -> dict[str, Any]:
         from ...mcp import MCPError
@@ -402,12 +407,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         raw_params = request.get('params')
         params: dict[str, Any] = raw_params if is_str_dict(raw_params) else {}
         name, uri = params.get('name'), params.get('uri')
-        arguments: Any = params.get('arguments')
-        if arguments is None:
-            arguments = {}
         try:
-            if method == 'tools/call' and isinstance(name, str) and is_str_dict(arguments):
-                return await toolset.call_tool_for_app(name, arguments)
+            if method == 'tools/call' and isinstance(name, str):
+                return await toolset.call_tool_for_app(name, params.get('arguments'))
             if method == 'resources/read' and isinstance(uri, str):
                 return await toolset.read_resource_for_app(uri)
         except MCPError as e:
