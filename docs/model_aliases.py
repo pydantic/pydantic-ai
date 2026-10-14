@@ -24,7 +24,7 @@ MODEL_ALIASES = {
     # Realtime, image generation and embedding models.
     'openai:realtime': 'openai:gpt-realtime-2.1',
     'google:realtime': 'google:gemini-3.8-live',
-    'openai:image': 'openai:gpt-image-2',
+    'openai:image': 'openai:gpt-image-2.5-flare',
     'google:image': 'google:gemini-3.1-flash-image',
     'xai:image': 'xai:grok-imagine-image-2.0',
     'openai:embedding': 'openai:text-embedding-3-large',

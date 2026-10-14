@@ -64,8 +64,8 @@ _KINDS = {
         ('embedding', KnownEmbeddingModelName),
     )
 }
-# Models the providers serve that `KnownModelName` doesn't list yet; drop each once it does.
-_NOT_YET_KNOWN = {'xai:grok-4.7'}
+# Models the providers serve that Pydantic AI doesn't list as known yet; drop each once it does.
+_NOT_YET_KNOWN = {'xai:grok-4.7', 'openai:gpt-image-2.5-flare'}
 # Chat models the tiers don't cover, such as audio and research models, may be named directly.
 _UNTIERED = re.compile(r'image|audio|tts|whisper|guard|moderation|computer-use|research|codex|multi-agent|^o\d')
 
@@ -164,10 +164,13 @@ def test_aliases_name_known_models():
     for alias, model in MODEL_ALIASES.items():
         provider, _, tier = alias.partition(':')
         assert model.startswith(f'{provider}:'), f'{alias!r} should name a `{provider}:` model'
-        known = _KNOWN_MODELS | _NOT_YET_KNOWN if tier in _TIERS else _KINDS.get(tier)
+        known = _KNOWN_MODELS if tier in _TIERS else _KINDS.get(tier)
         assert known is not None, f'{alias!r} should use a tier from {_TIERS} or a kind from {tuple(_KINDS)}'
-        assert model in known, f'{alias!r} names {model!r}, which Pydantic AI does not list as a known model'
-    assert not _NOT_YET_KNOWN & _KNOWN_MODELS, 'Drop the models `KnownModelName` now lists from `_NOT_YET_KNOWN`'
+        assert model in known | _NOT_YET_KNOWN, (
+            f'{alias!r} names {model!r}, which Pydantic AI does not list as a known model'
+        )
+    all_known = _KNOWN_MODELS.union(*_KINDS.values())
+    assert not _NOT_YET_KNOWN & all_known, 'Drop the models Pydantic AI now lists from `_NOT_YET_KNOWN`'
 
 
 def test_docs_aliases_resolve_to_known_models():
@@ -186,7 +189,7 @@ def test_docs_name_models_by_alias():
 
 def test_checks_flag_misspelled_aliases_and_model_ids():
     model = MODEL_ALIASES['openai:medium']
-    image = MODEL_ALIASES['openai:image']
+    image = min(model for model in _KINDS['image'] if model.startswith('openai:'))
     embedding = MODEL_ALIASES['openai:embedding'].partition(':')[2]
     text = (
         "Agent('{{openai:medium}}'), Agent('{{ openai:huge }}'), Agent('azure:{{ openai:medium.name }}'),\n"

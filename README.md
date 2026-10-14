@@ -202,7 +202,7 @@ from pathlib import Path
 
 from pydantic_ai import ImageGenerator
 
-generator = ImageGenerator('openai:gpt-image-2')
+generator = ImageGenerator('openai:gpt-image-2.5-flare')
 result = generator.generate_sync('A minimalist logo for a coffee shop called Extract.')
 Path('logo.png').write_bytes(result.image.data)
 ```
