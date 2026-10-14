@@ -16,7 +16,7 @@ Follow the general [documentation guidance](../agent_docs/documentation.md). The
 
 - Keep code examples executable unless they require external services, credentials, or non-deterministic behavior. Use mocks or fixtures when they keep the example representative.
 - Put example-level exclusions on the fence, such as `{test="skip" lint="skip"}`, rather than adding tooling suppressions to pedagogical code. Examples that are linted are also type-checked with pyright; opt one out with `typecheck="skip - <reason>"` only when no natural fix exists, such as a deliberate type error or an uninstalled dependency.
-- Use `{gateway_toggle="skip"}` to suppress rendered Gateway variants for a provider-only example. Mark provider-only examples even when an explicit model constructor currently prevents automatic Gateway toggles.
+- Use `{gateway_toggle="skip"}` for examples that use features unavailable through Pydantic AI Gateway. Keep the marker on unsupported examples even when the renderer does not automatically toggle explicit provider constructors; see the [renderer contract](https://github.com/pydantic/unified-docs/blob/877c3a80f635bd100b86599c76e1873f3983ec57/README.md#gateway-toggle-examples).
 - Check Google examples against Google Cloud support before allowing Gateway variants. Mark Gemini API-only examples with `{gateway_toggle="skip"}`. Link to [Google model guidance](models/google.md) when documenting Gateway support.
 - Keep `gateway_toggle` separate from `test` and `lint` metadata. The flag controls rendered Gateway variants and does not suppress example checks.
 - Combine parameter variations when one example plus notes preserves every meaningful difference. Split examples when use cases, prerequisites, or constraints differ.
@@ -24,14 +24,10 @@ Follow the general [documentation guidance](../agent_docs/documentation.md). The
 
 ## Review
 
-- Use `trigger:docs-preview` on a Pydantic AI pull request to dispatch navigation validation to unified-docs. This workflow does not render an HTML preview.
-- Read the unified-docs result comment and verify its reported SHA matches the current pull request head.
-- The workflow removes `trigger:docs-preview` after dispatch. Re-add the label to request validation for the current pull request head.
-- Ask a maintainer to arrange a pinned-source preview for the current Pydantic AI pull request head.
-- Render the current PR head in a unified-docs preview before merging.
-- Verify the preview's reported SHA matches that head.
-- Treat navigation success and rendered-preview success as separate gates.
-- Unified-docs renderer pull requests use their separate `trigger:docs` label. Docs Self-Preview builds the site and posts its rendered URL.
+- On a Pydantic AI pull request, apply `trigger:docs-preview` to dispatch navigation validation to unified-docs. Dispatch removes the label; re-add it after source changes.
+- Read the result and verify its reported SHA matches the current Pydantic AI pull request head. This workflow validates navigation; it does not render HTML.
+- Before merging, have a maintainer arrange a rendered preview pinned to the current Pydantic AI source head. Verify the preview's reported SHA. Navigation validation and the rendered preview are separate gates.
+- On a unified-docs renderer pull request, use its separate `trigger:docs` label for Docs Self-Preview. It builds the site and posts its rendered URL.
 
 <!-- /braindump -->
 
