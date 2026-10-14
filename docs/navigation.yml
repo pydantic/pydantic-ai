@@ -490,6 +490,9 @@ navigation:
           - page: "Tool Call Judge"
             path: "harness/tool-call-judge.md"
             slug: "harness/tool-call-judge"
+          - page: "Approval Reviewer"
+            path: "harness/approval-reviewer.md"
+            slug: "harness/approval-reviewer"
       - section: "Self-Extension"
         slug: ""
         contents:
