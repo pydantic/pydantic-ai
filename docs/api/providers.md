@@ -68,6 +68,8 @@
 
 ::: pydantic_ai.providers.huggingface.HuggingFaceProvider
 
+::: pydantic_ai.providers.meta.MetaProvider
+
 ::: pydantic_ai.providers.moonshotai.MoonshotAIProvider
 
 ::: pydantic_ai.providers.ollama.OllamaProvider
