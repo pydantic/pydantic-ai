@@ -176,10 +176,10 @@ async def test_compact_counts_tokens_the_provider_reported() -> None:
         history.append(ModelRequest.user_text_prompt(f'next {turn}'))
     transcript = Transcript(messages=history, model=TestModel(custom_output_text='the gist'))
     notice = await make_plugin(transcript, protected_tokens=15_000).commands.execute_async('/compact')
-    assert notice == 'Compacted 13 messages down to 5; about 49,989 of 59,002 tokens saved.'
+    assert notice == 'Compacted 13 messages down to 6; about 39,990 of 59,002 tokens saved.'
     summary, first, *tail = transcript.messages
     assert isinstance(summary.parts[0], SystemPromptPart) and first is history[0]
-    assert tail == history[-3:], 'the last 15,000 reported tokens are kept verbatim'
+    assert tail == history[-4:], 'at least the last 15,000 reported tokens are kept verbatim'
 
 
 async def test_compact_is_traced_with_the_global_agent_instrumentation() -> None:

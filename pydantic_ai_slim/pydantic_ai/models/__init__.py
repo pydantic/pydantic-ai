@@ -143,6 +143,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'github-copilot',
         'heroku',
         'litellm',
+        'meta',
         'moonshotai',
         'nebius',
         'ollama',
@@ -162,6 +163,7 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'azure',
         'deepseek',
         'fireworks',
+        'meta',
         'nebius',
         'openai-codex',
         'openrouter',
@@ -1945,7 +1947,9 @@ def infer_model(  # noqa: C901
         from .openai_codex import OpenAICodexModel
 
         return OpenAICodexModel(model_name, provider=provider)
-    elif model_kind in ('openai', 'openai-responses', 'azure-responses'):
+    # Meta's Chat Completions API doesn't return reasoning or accept the `phase` and encrypted reasoning that
+    # keep multi-turn Muse runs on track, so `meta:` uses the Responses API.
+    elif model_kind in ('openai', 'openai-responses', 'azure-responses', 'meta'):
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)

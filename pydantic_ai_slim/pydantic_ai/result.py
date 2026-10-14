@@ -13,6 +13,7 @@ import anyio
 from pydantic import ValidationError
 
 from . import _utils, exceptions, messages as _messages, models
+from ._context_size import context_input_tokens
 from ._genai_prices import best_effort_price
 from ._output import (
     OutputDataT_inv,
@@ -439,7 +440,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 self._model_events(),
                 self._usage_limits,
                 lambda: self._initial_run_ctx_usage + self._raw_stream_response.usage,
-                lambda: self._raw_stream_response.usage.input_tokens,
+                lambda: context_input_tokens(self._raw_stream_response.get()),
             )
             # Wrap once, so a capability's `wrap_run_event_stream` sees each event exactly once no
             # matter how many times this stream is iterated (e.g. `stream_text()` then a drain).
@@ -1223,7 +1224,9 @@ def _get_usage_checking_stream_response(
         async def _usage_checking_iterator():
             async for item in events:
                 limits.check_tokens(get_usage())
-                limits.check_per_request_input_tokens(get_request_input_tokens())
+                # `get_request_input_tokens` builds a response snapshot, so only pay for it when the limit is set.
+                if limits.per_request_input_tokens_limit is not None:
+                    limits.check_per_request_input_tokens(get_request_input_tokens())
                 yield item
 
         return _usage_checking_iterator()

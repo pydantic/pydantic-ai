@@ -9,11 +9,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
 from typing import Any, Literal, assert_never, cast, get_args, overload
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx2
 
 from .. import UnexpectedModelBehavior, _utils, usage
+from .._context_size import mark_initial_input_tokens
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
@@ -169,6 +170,7 @@ LatestGoogleModelNames = Literal[
     'gemini-3.6-flash',
     'gemini-3.7-flash',
     'gemini-3.8-flash',
+    'gemini-4-argon',
 ]
 """Latest Gemini models."""
 
@@ -187,6 +189,9 @@ _FINISH_REASON_MAP: dict[str, FinishReason | None] = {
     GoogleFinishReason.FINISH_REASON_UNSPECIFIED.value: None,
     GoogleFinishReason.STOP.value: 'stop',
     GoogleFinishReason.MAX_TOKENS.value: 'length',
+    # Long decode: the per-request output cap was reached with budget left. google-genai continues such a response in
+    # another request, so this only shows when it couldn't (no continuation token).
+    GoogleFinishReason.CONTINUATION.value: 'length',
     GoogleFinishReason.SAFETY.value: 'content_filter',
     GoogleFinishReason.RECITATION.value: 'content_filter',
     GoogleFinishReason.LANGUAGE.value: 'error',
@@ -1175,7 +1180,7 @@ class GoogleModel(Model[Client]):
         grounding_metadata = candidate.grounding_metadata if candidate else None
         url_context_metadata = candidate.url_context_metadata if candidate else None
 
-        return _process_response_from_parts(
+        model_response = _process_response_from_parts(
             parts,
             grounding_metadata,
             response.model_version or self._model_name,
@@ -1188,6 +1193,9 @@ class GoogleModel(Model[Client]):
             url_context_metadata=url_context_metadata,
             file_search_enabled=_file_search_enabled(model_request_parameters),
         )
+        if (initial_input_tokens := _initial_input_tokens(response)) is not None:
+            mark_initial_input_tokens(model_response, initial_input_tokens)
+        return model_response
 
     async def _process_streamed_response(
         self, response: AsyncIterator[GenerateContentResponse], model_request_parameters: ModelRequestParameters
@@ -1521,9 +1529,20 @@ class GeminiStreamedResponse(StreamedResponse):
         if self._provider_timestamp is not None:
             self.provider_details = {'timestamp': self._provider_timestamp}
         grounding_metadata: GroundingMetadata | None = None
+        # google-genai streams a long decode's continuation requests as one stream, each request's chunks under its own
+        # `response_id`. The first text or thinking of a new request starts a new part, as in the unary response, which
+        # the SDK merges from each request's parts.
+        new_request_vendor_part_id: UUID | None = None
+        # A continuation token checkpoints the output up to and including its chunk. When a stream drops after a
+        # checkpoint, google-genai resumes from that token without retracting the chunks it already yielded after it,
+        # so the resumed request would repeat them. Live Argon streams carry a token on every chunk from the first
+        # checkpoint on, except a request's final `STOP` chunk (2026-10-09), so this hasn't been seen.
+        uncheckpointed_output = False
         try:
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name, errors.UnknownApiResponseError):
                 self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage)
+                if (initial_input_tokens := _initial_input_tokens(chunk)) is not None:
+                    mark_initial_input_tokens(self, initial_input_tokens)
                 # Grounding is counted from each chunk alone, and `web_searches` isn't carried forward like the token
                 # fields in `_usage_metadata_as_usage`: Gemini sends all grounding metadata once, on the final chunk,
                 # with the last `usage_metadata`. Seen in every grounded stream cassette and in live streams on
@@ -1573,7 +1592,19 @@ class GeminiStreamedResponse(StreamedResponse):
                 candidate = chunk.candidates[0]
 
                 if chunk.response_id:  # pragma: no branch
+                    if self.provider_response_id not in (None, chunk.response_id):
+                        if uncheckpointed_output:
+                            raise ModelAPIError(
+                                self._model_name,
+                                'The stream was interrupted after output that no continuation token covers, '
+                                'and `google-genai` resumed it, which would repeat that output.',
+                            )
+                        new_request_vendor_part_id = uuid4()
                     self.provider_response_id = chunk.response_id
+                if candidate.continuation_token:
+                    uncheckpointed_output = False
+                elif candidate.content and candidate.content.parts:
+                    uncheckpointed_output = True
 
                 raw_finish_reason = candidate.finish_reason
                 if raw_finish_reason and not self._has_content_filter:
@@ -1635,7 +1666,7 @@ class GeminiStreamedResponse(StreamedResponse):
                             continue
                         if part.thought:
                             for event in self._parts_manager.handle_thinking_delta(
-                                vendor_part_id=None,
+                                vendor_part_id=new_request_vendor_part_id,
                                 content=part.text,
                                 provider_name=self.provider_name if provider_details else None,
                                 provider_details=provider_details,
@@ -1643,12 +1674,13 @@ class GeminiStreamedResponse(StreamedResponse):
                                 yield event
                         else:
                             for event in self._parts_manager.handle_text_delta(
-                                vendor_part_id=None,
+                                vendor_part_id=new_request_vendor_part_id,
                                 content=part.text,
                                 provider_name=self.provider_name if provider_details else None,
                                 provider_details=provider_details,
                             ):
                                 yield event
+                        new_request_vendor_part_id = None
                     elif part.function_call:
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=uuid4(),
@@ -2102,6 +2134,19 @@ def _metadata_as_usage(
         provider_url=provider_url,
         existing_usage=existing_usage,
     )
+
+
+def _initial_input_tokens(response: GenerateContentResponse) -> int | None:
+    """The first request's prompt tokens of a long decode google-genai continued in more requests, else `None`.
+
+    The SDK sums usage over the requests, so `prompt_token_count` re-counts the output of every request but the last.
+    `initial_prompt_token_count` is the first request's, and falls back to `prompt_token_count`, so the two differ only
+    once a request has been continued. A stream's chunks carry the usage summed so far.
+    """
+    usage_metadata = response.usage_metadata
+    if usage_metadata is None or usage_metadata.initial_prompt_token_count == usage_metadata.prompt_token_count:
+        return None
+    return usage_metadata.initial_prompt_token_count
 
 
 def _grounding_searches(response: GenerateContentResponse) -> tuple[set[str], bool]:

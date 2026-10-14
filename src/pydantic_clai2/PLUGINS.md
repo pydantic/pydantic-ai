@@ -411,7 +411,7 @@ with their exception and traceback, also without `ui_events`:
   `on_plugin_load_failed`), with the plugin's name.
 
 The exception message and traceback get Logfire's normal scrubbing. They can quote a prompt
-or a pasted secret, so with `include_content: false` these records, and startup load
+or a pasted secret, so with `include_content: false`, the default, these records, and startup load
 failures, keep only the exception's type in their `exception` event, as agent spans do.
 
 Credentials are read from `LOGFIRE_TOKEN` or the SDK's `logfire_credentials.json`
@@ -450,17 +450,27 @@ run uses it. Without a chosen project, that row notes whether `LOGFIRE_TOKEN` or
 credentials file was found. Scripts can replace the declaration instead:
 
 ```text
-/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": true, "include_binary_content": true}'
 ```
 
 Options are `service_name` (default `pydantic-clai2`), `include_content` and
-`include_binary_content` (both default `true`), `httpx` (default `false`), and `send_to_logfire` (default
+`include_binary_content` (both default `false`, so credentials alone never export
+prompts, results, or files; settings saved before that default that never set them
+also leave content out), `httpx` (default `false`), and `send_to_logfire` (default
 `"if-token-present"`, or `false`). The explicit plugin option takes precedence
 over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings;
 `token` takes only the name of a `/keys` entry (`{"name": "CLAI2_LOGFIRE_TOKEN"}`),
 whose write token then replaces `LOGFIRE_TOKEN` and the credential file, so its
 project receives the telemetry. If that key is missing, the plugin warns and
 exports nothing rather than falling back to another project.
+`variables_key` likewise takes the name of a `/keys` entry, holding a Logfire API
+key with the `project:read_variables` scope, which the plugin passes to
+`logfire.configure(api_key=...)` instead of `LOGFIRE_API_KEY`. A capability that
+reads Logfire managed variables through the plugin's instance then reads them
+from that key's project; write tokens cannot read variables. The key is used only
+when something reads a variable. If it is missing, the plugin warns and the SDK
+reads `LOGFIRE_API_KEY` as if no key were chosen. The **Variables API key** row
+sets it. The stock agent is named `clai2`, the name its run spans carry.
 Content flags do not suppress all metadata: tool names and definitions may still
 be recorded. Logfire's usual scrubbing is enabled. Set `httpx` to `true` to
 instrument `httpx` and `httpx2` requests process-wide while this plugin is loaded.
@@ -1073,7 +1083,7 @@ so two compaction chains never run together.
 
 `compaction` directly registers harness `FallbackCompaction` with
 `max_fraction=threshold`; harness owns the automatic trigger. `/compact` runs the
-same chain unconditionally, with the protected tail capped at half the
+same chain unconditionally, with the protected-token target capped at half the
 conversation, and keeps the history unless the result is smaller, counted as the provider reported
 the tokens. Its optional
 focus is free text, not shell arguments:
