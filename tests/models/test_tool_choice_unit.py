@@ -900,9 +900,11 @@ def test_openai_responses_allowed_tools_ignore_unavailable_tools(tool_choice: To
 
     A unit test rather than VCR: cassette replay doesn't match on the request body, so only the built payload shows
     an unknown name or a changed order. The live API returns a 400 for an `allowed_tools` name the request doesn't
-    define. `tool_b` is revealed via history, so it is absent from `declared_tool_defs` but stays forceable.
+    define. `tool_b` is revealed via history, so it is absent from `declared_tool_defs`, and GPT-5.6 accepts it in
+    `allowed_tools` all the same; earlier models get it redeclared in `tools`, which
+    `test_tool_availability_delta_resolves_tool_choice_from_revealed_tools` covers.
     """
-    m = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=MagicMock()))
+    m = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=MagicMock()))
     params = ModelRequestParameters(
         function_tools=[make_tool('tool_c'), make_tool('tool_a'), make_tool('tool_b')],
         output_tools=[make_tool('final_result')],
@@ -912,7 +914,8 @@ def test_openai_responses_allowed_tools_ignore_unavailable_tools(tool_choice: To
     settings: OpenAIResponsesModelSettings = {'tool_choice': tool_choice}
 
     with pytest.warns(UserWarning, match=re.escape("will be ignored: ['typo']")):
-        _, responses_tool_choice = m._get_responses_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+        resolved_tool_choice = resolve_tool_choice(settings, params)
+    _, responses_tool_choice = m._get_responses_tool_choice(resolved_tool_choice, settings, params)  # pyright: ignore[reportPrivateUsage]
 
     assert responses_tool_choice == {
         'type': 'allowed_tools',
@@ -1117,8 +1120,9 @@ async def test_openai_responses_fallback_single_tool_uses_allowed_tools(allow_mo
     m = OpenAIResponsesModel('gpt-4o-mini', provider=provider, profile=profile)
     params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=True)
 
+    settings: OpenAIResponsesModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
     tools, tool_choice = m._get_responses_tool_choice(  # pyright: ignore[reportPrivateUsage]
-        {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}, params
+        resolve_tool_choice(settings, params), settings, params
     )
     assert isinstance(tool_choice, dict)
     assert tool_choice['type'] == 'allowed_tools'
@@ -1180,7 +1184,7 @@ async def test_openai_responses_forcing_follows_thinking_state(
     )
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False, thinking=thinking)
 
-    _, tool_choice = m._get_responses_tool_choice({}, params)  # pyright: ignore[reportPrivateUsage]
+    _, tool_choice = m._get_responses_tool_choice(resolve_tool_choice({}, params), {}, params)  # pyright: ignore[reportPrivateUsage]
     assert tool_choice == expected_tool_choice
 
 
@@ -1222,9 +1226,10 @@ async def test_openai_responses_explicit_forcing_with_thinking_raises(
         'stub', provider=OpenAIProvider(openai_client=MagicMock()), profile=thinking_conditional_profile()
     )
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False)
+    settings: OpenAIResponsesModelSettings = {'tool_choice': tool_choice}
 
     with pytest.raises(UserError, match=r'does not support forcing tool use while thinking is enabled'):
-        m._get_responses_tool_choice({'tool_choice': tool_choice}, params)  # pyright: ignore[reportPrivateUsage]
+        m._get_responses_tool_choice(resolve_tool_choice(settings, params), settings, params)  # pyright: ignore[reportPrivateUsage]
 
 
 @skip_if_no_openai
@@ -1255,7 +1260,7 @@ async def test_openai_responses_tool_or_output_forcing_without_required_support_
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False)
     settings: OpenAIResponsesModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
 
-    _, tool_choice = m._get_responses_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+    _, tool_choice = m._get_responses_tool_choice(resolve_tool_choice(settings, params), settings, params)  # pyright: ignore[reportPrivateUsage]
     assert tool_choice == 'auto'
 
 

@@ -61,8 +61,10 @@ def resolve_tool_choice(  # noqa: C901
         # Named for the `ToolVisibility` literal it filters on rather than the looser "hidden":
         # only `'withheld'` names are absent from the wire. A `'deferred'` declaration sits in the
         # `tools` collection and a `'via_history'` definition travels on the tool-addition channel,
-        # and OpenAI honors `tool_choice` forcing for both, so neither is withheld here — though
-        # prose elsewhere would call all three "hidden from the model".
+        # so neither is withheld here — though prose elsewhere would call all three "hidden from the
+        # model". Making a forced name acceptable to the provider is the adapter's job: OpenAI
+        # Responses models before GPT-5.6 reject a `tool_choice` naming a `'via_history'` tool, so
+        # that adapter redeclares a forced one in `tools`.
         withheld_tool_names = {
             tool.name
             for tool in model_request_parameters.function_tools

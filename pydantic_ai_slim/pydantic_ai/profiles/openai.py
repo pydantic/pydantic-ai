@@ -384,6 +384,16 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Responses APIs. When disabled, `CachePoint` markers are filtered out.
     """
 
+    openai_responses_tool_choice_accepts_additional_tools: bool
+    """Whether the Responses API accepts a `tool_choice` naming a tool that only an `additional_tools` input item
+    declares. Default: `False`.
+
+    GPT-5.6 and later accept it, by name and in `allowed_tools`. Earlier models reject it with
+    `Tool choice '<name>' not found in 'tools' parameter.`, so when a request forces a tool revealed that way,
+    `OpenAIResponsesModel` declares it in `tools` for that request instead, which changes that request's cached
+    prompt prefix.
+    """
+
     openai_responses_supports_prompt_cache_diagnostics: bool
     """Whether the Responses endpoint serves prompt cache diagnostics for this model. Default: `False`.
 
@@ -485,6 +495,10 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_phase=supports_phase,
         openai_supports_prompt_cache_breakpoints=supports_prompt_cache_breakpoints,
         openai_supports_minimal_reasoning_effort=not model_name.startswith(('gpt-5.6', *_GPT_6_MODEL_PREFIXES)),
+        # Measured live: every model from `gpt-4o-mini` through `gpt-5.5` rejects the name, GPT-5.6 and GPT-6 accept it.
+        openai_responses_tool_choice_accepts_additional_tools=model_name.startswith(
+            ('gpt-5.6', *_GPT_6_MODEL_PREFIXES)
+        ),
         supported_native_tools=supported_native_tools,
     )
 

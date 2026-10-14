@@ -451,9 +451,11 @@ selected function tools plus all output tools available and also allows text or 
 Tools hidden by [deferred loading](#tool-search) interact with `tool_choice`: a tool that is still
 hidden is ignored when forcing by name, and an explicit choice raises only when every requested
 tool is hidden. `'required'` raises when every function
-tool is hidden. A tool *declared* with its schema deferred can be forced. On providers that carry
-revealed definitions outside the `tools` list (OpenAI Responses `additional_tools`), a revealed
-tool can't be forced by name either, since by-name forcing can only target declared tools.
+tool is hidden. A tool *declared* with its schema deferred can be forced on Anthropic, while OpenAI
+Responses rejects forcing one that nothing has revealed yet. On OpenAI Responses, a revealed tool
+that travels in the `additional_tools` item alone can be forced on GPT-5.6 and later. Earlier models
+reject a `tool_choice` naming it, so the request that forces it declares the tool in `tools` instead
+and misses the prompt cache.
 
 ### Example
 
@@ -567,7 +569,7 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 | Mistral | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
 | Cohere | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
 | xAI | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
-| OpenAI Responses | Never — `allowed_tools` handles all cases natively |
+| OpenAI Responses | Only a forced tool that the `additional_tools` item alone declares, on models before GPT-5.6, which get it declared in `tools` for that request; `allowed_tools` handles every other case natively |
 | Google | Never — `allowed_function_names` handles all cases natively |
 
 If preserving cache hits matters, prefer providers/cases marked "Never", or use `ToolOrOutput` (which keeps the full set) instead of a restrictive list.
