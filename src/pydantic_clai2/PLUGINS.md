@@ -1115,7 +1115,8 @@ The plugin's `render` replaces the tool's argument dump with a header that lists
 the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
 the editor's input reader. It keeps the live panel's alternate screen. The draft
 is restored on exit, and the question and your picks are printed to the transcript afterwards.
-`/plugins disable ask_user` takes the tool away.
+`/plugins disable ask_user` takes the tool away. While the [`web` plugin](#web-this-session-in-your-browser)
+is loaded, it asks the questions instead, in the browser and this picker at once.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
@@ -1162,6 +1163,50 @@ The request and its response are also emitted as `AskUserRequestedEvent` and
 `AskUserAnsweredEvent`, so a plugin that only wants to watch (log the question,
 show a "waiting for you" state) returns a `Hooks` capability with
 `hooks.on.event(EventClass)`, or overrides `render`, without being the answerer.
+
+### `web`: this session in your browser
+
+The built-in `web` plugin (`pydantic_clai2.builtin_plugins.web`) starts disabled. Enable it with
+`/plugins enable web`, then run `/web`: it starts a local server and opens the browser on a web
+UI for the running session. `clai2 --web` starts CLAI with only the browser to drive it, loading
+`web` for that launch without saving anything. `/web stop` ends the server and `/web status`
+shows its address and how many browsers are connected.
+
+Everything the browser does goes through the prompt, as typing there would
+(`host.send_input`): prompts and `/commands` run in the same session, in order with what the
+terminal enters, and both show them. The browser receives the run's stream events (text,
+thinking, tool calls and results, shell output, diffs) from a capability the plugin binds, the
+turn and command results from CLAI's moments, and history from `host.conversation`. The
+sidebar lists `host.sessions`, the store `/resume` uses: clicking a session sends
+`/resume ID`, so a session saved in another directory, which `/resume ID` refuses, opens
+read-only. Shell lines (`!`) run only in the terminal. A bare command that opens a terminal
+menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
+`/model NAME` instead.
+
+While `web` is loaded it answers `ask_user_question` itself, in the browser and in the
+terminal picker at once, whichever answers first; the `ask_user` plugin stays off meanwhile,
+as `/plugins` shows. Settings, as `/plugins add web pydantic_clai2.builtin_plugins.web '{...}'`:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `host` | `127.0.0.1` | One address to listen on, not `0.0.0.0`. Anything but loopback lets other machines reach it. |
+| `port` | `0` | Port to listen on; `0` picks a free one each launch. |
+| `open_browser` | `true` | Open the browser when the server starts. |
+| `ask_user` | `true` | Answer questions in the browser too, taking over from the `ask_user` plugin. |
+
+Security: the browser can make the agent run commands as you. The server binds `127.0.0.1` by
+default and checks every request. The `Host` header must name the server's own address, which
+stops DNS rebinding. Every request must carry a random token, new each launch: API calls in a
+header that another site's page cannot set, the page and its files in the address, as the
+printed link does, and the WebSocket as a query parameter, from the server's own origin. No
+cookie holds it, since browsers send a host's cookies to all of its ports. `/web` opens the
+browser through a page only you can read, so the token never appears on a command line. Model
+output is rendered as sanitized Markdown. Anyone with the link can drive the session, so keep it
+private. `/web stop` is refused under `clai2 --web`, where the browser is the only way in.
+
+The UI is a React app in `web-ui/` in the CLAI source tree. Its built files ship inside the
+package, so running it needs no Node. After changing it, run `npm ci && npm run build` there and
+commit the rebuilt `pydantic_clai2/builtin_plugins/web/static/`.
 
 ### `github`: tools from GitHub's hosted MCP server
 

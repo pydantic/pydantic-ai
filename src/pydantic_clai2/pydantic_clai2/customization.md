@@ -740,6 +740,10 @@ than monkeypatching a private global registry.
 
 ## Headless invocation
 
+`clai2 --web` (or `/web` in a session, once `/plugins enable web` is on) drives CLAI
+from a local browser UI instead; the built-in `web` plugin is a worked example of
+`host.send_input`, `host.complete`, `host.sessions`, and `on_command_end`.
+
 `clai2 -p "PROMPT" -m PROVIDER:NAME` runs one saved turn and prints only the final
 answer. Prompt text is required as an argument; stdin is not read. Use
 `--resume SESSION-ID` to continue saved history without opening the browser.
