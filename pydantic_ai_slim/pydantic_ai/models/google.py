@@ -2396,7 +2396,10 @@ def _map_code_execution_result(
     )
 
 
-def _resolve_native_tool_name(tool_type: ToolType | None) -> str:
+def _resolve_native_tool_name(tool: ToolCall | ToolResponse) -> str:
+    if _is_media_processing_step(tool):
+        return _MEDIA_PROCESSING_TOOL_NAME
+    tool_type = tool.tool_type
     if tool_type is None:
         raise UnexpectedModelBehavior('Missing tool_type on native tool part')
     tool_name = _TOOL_TYPE_TO_NATIVE_TOOL_NAME.get(tool_type)
@@ -2406,26 +2409,18 @@ def _resolve_native_tool_name(tool_type: ToolType | None) -> str:
 
 
 def _map_tool_call(tool_call: ToolCall, provider_name: str) -> NativeToolCallPart:
-    if _is_media_processing_step(tool_call):
-        tool_name = _MEDIA_PROCESSING_TOOL_NAME
-    else:
-        tool_name = _resolve_native_tool_name(tool_call.tool_type)
     return NativeToolCallPart(
         provider_name=provider_name,
-        tool_name=tool_name,
+        tool_name=_resolve_native_tool_name(tool_call),
         tool_call_id=tool_call.id or _utils.generate_tool_call_id(),
         args=tool_call.args,
     )
 
 
 def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> NativeToolReturnPart:
-    if _is_media_processing_step(tool_response):
-        tool_name = _MEDIA_PROCESSING_TOOL_NAME
-    else:
-        tool_name = _resolve_native_tool_name(tool_response.tool_type)
     return NativeToolReturnPart(
         provider_name=provider_name,
-        tool_name=tool_name,
+        tool_name=_resolve_native_tool_name(tool_response),
         tool_call_id=tool_response.id or _utils.generate_tool_call_id(),
         content=tool_response.response,
     )
