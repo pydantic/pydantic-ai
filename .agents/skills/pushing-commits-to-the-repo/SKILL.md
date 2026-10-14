@@ -136,6 +136,11 @@ before handing the PR back or requesting merge:
   `agent_docs/` — a security guard against a PR editing the reviewer's own instructions. The guard
   is skipped for an author with write or admin access on the repo. Don't apply the label to a PR the
   guard covers; the red check is the guard working.
+- When a maintainer explicitly requests review of those protected paths, apply
+  `douwebot:review-agent-config`. It authorizes one review only when its first `labeled` event came
+  from a `User` with current write or admin permission and the PR still has the event head. Do not
+  treat label presence as approval for an ordinary `douwebot` trigger or a later head. If the run
+  fails or is canceled, remove and reapply the label; rerunning the old event is denied.
 - **Afterwards, re-enter the loop.** The review posts inline comments and a formal verdict that
   need the same triage as any other review.
 
