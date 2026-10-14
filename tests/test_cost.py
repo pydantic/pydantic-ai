@@ -23,7 +23,7 @@ from genai_prices.types import ClauseEquals, ModelInfo, ModelPrice, Provider
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, CostCalculationFailedWarning
-from pydantic_ai._genai_prices import best_effort_price, lookup_context_window
+from pydantic_ai._genai_prices import best_effort_price, lookup_context_window, response_price_context
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -183,6 +183,68 @@ async def test_cost_matches_response_price(allow_model_requests: None, stream: b
     assert usage.cost == price_calculation.total_price
     assert usage.cost == response.cost().total_price
     assert usage.cost == snapshot(Decimal('0.00075'))
+
+
+_TIER_UPDATE = {'created': 1791849600, 'model': 'gpt-6.1-sol'}  # 2026-10-13, after genai-prices' tier rates start
+
+
+@requires_openai
+@pytest.mark.parametrize('stream', [False, True])
+async def test_cost_uses_openai_service_tier(allow_model_requests: None, stream: bool):
+    """The service tier OpenAI reports selects its tier rates, here priority instead of standard."""
+    update = {**_TIER_UPDATE, 'service_tier': 'priority'}
+    if stream:
+        client = MockOpenAI.create_mock_stream([chunk.model_copy(update=update) for chunk in _chunks()])
+    else:
+        client = MockOpenAI.create_mock(_completion().model_copy(update=update))
+    agent = Agent(OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(openai_client=client)))
+
+    if stream:
+        async with agent.run_stream('hello') as result:
+            await result.get_output()
+            usage = result.usage
+            messages = result.all_messages()
+    else:
+        run_result = await agent.run('hello')
+        usage = run_result.usage
+        messages = run_result.all_messages()
+
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert usage.cost == response.cost().total_price
+    # 100 input tokens at $4/MTok + 50 output tokens at $20/MTok; standard would be $0.0007.
+    assert usage.cost == snapshot(Decimal('0.0014'))
+
+
+@requires_openai
+async def test_cost_service_tier_without_tier_rates_is_standard(allow_model_requests: None):
+    """A tier genai-prices has no rates for (OpenAI's `scale`) is priced at standard rates, without warning."""
+    completion = _completion().model_copy(update={**_TIER_UPDATE, 'service_tier': 'scale'})
+    agent = Agent(
+        OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        result = await agent.run('hello')
+    # 100 input tokens at $2/MTok + 50 output tokens at $10/MTok.
+    assert result.usage.cost == snapshot(Decimal('0.0007'))
+
+
+@pytest.mark.parametrize(
+    ('provider_name', 'provider_details', 'expected'),
+    [
+        ('openai', {'service_tier': 'flex'}, {'service_tier': 'flex'}),
+        ('openai', {'service_tier': 'default'}, None),
+        ('openai', None, None),
+        ('openrouter', {'service_tier': 'flex'}, None),
+    ],
+)
+def test_response_price_context(
+    provider_name: str, provider_details: dict[str, str] | None, expected: dict[str, str] | None
+):
+    """Only OpenAI's own non-standard tiers become a genai-prices `price_context`."""
+    response = ModelResponse(parts=[], provider_name=provider_name, provider_details=provider_details)
+    assert response_price_context(response) == expected
 
 
 async def test_cost_is_silent_for_unpriceable_model(allow_model_requests: None):

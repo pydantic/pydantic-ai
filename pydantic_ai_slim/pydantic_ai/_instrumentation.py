@@ -20,7 +20,7 @@ from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
 
-from ._genai_prices import best_effort_price
+from ._genai_prices import best_effort_price, response_price_context
 
 if TYPE_CHECKING:
     from typing import Self
@@ -610,6 +610,7 @@ def response_price_calculation(response: ModelResponse) -> PriceCalculation | No
         provider_api_url=response.provider_url,
         provider_name=response.provider_name,
         genai_request_timestamp=response.timestamp,
+        price_context=response_price_context(response),
     )
 
 

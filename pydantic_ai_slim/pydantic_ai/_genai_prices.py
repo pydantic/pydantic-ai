@@ -14,7 +14,7 @@ from ._warnings import CostCalculationFailedWarning
 from .exceptions import UserError
 
 if TYPE_CHECKING:
-    from genai_prices.types import PriceCalculation
+    from genai_prices.types import PriceCalculation, PriceContext
 
     from .messages import ModelResponse
     from .models._abstract import AbstractModel
@@ -90,6 +90,7 @@ def calculate_price_for_usage(
     provider_api_url: str | None = None,
     provider_name: str | None = None,
     genai_request_timestamp: datetime | None = None,
+    price_context: PriceContext | None = None,
 ) -> PriceCalculation:
     """Price a usage object with [genai-prices](https://github.com/pydantic/genai-prices), propagating its errors.
 
@@ -104,6 +105,7 @@ def calculate_price_for_usage(
                 model_name,
                 provider_api_url=provider_api_url,
                 genai_request_timestamp=genai_request_timestamp,
+                price_context=price_context,
             )
         except LookupError:
             # genai-prices doesn't know this URL, but the provider name may still resolve.
@@ -114,7 +116,23 @@ def calculate_price_for_usage(
         model_name,
         provider_id=provider_name,
         genai_request_timestamp=genai_request_timestamp,
+        price_context=price_context,
     )
+
+
+def response_price_context(response: ModelResponse) -> PriceContext | None:
+    """The genai-prices `price_context` for a response: the service tier OpenAI reports it was served at.
+
+    genai-prices has flex and priority rates for OpenAI only, so other providers (including OpenAI-compatible ones,
+    which report their own tier names) get no context. `default` is left out too: it means standard prices, and
+    passing it for a model without tier rates would only make genai-prices warn.
+    """
+    if response.provider_name != 'openai' or not response.provider_details:
+        return None
+    service_tier = response.provider_details.get('service_tier')
+    if not isinstance(service_tier, str) or service_tier == 'default':
+        return None
+    return {'service_tier': service_tier}
 
 
 def best_effort_price(
@@ -124,6 +142,7 @@ def best_effort_price(
     provider_api_url: str | None = None,
     provider_name: str | None = None,
     genai_request_timestamp: datetime | None = None,
+    price_context: PriceContext | None = None,
 ) -> PriceCalculation | None:
     """Price a usage object, degrading any failure to `None`; pricing must never fail a run.
 
@@ -132,17 +151,23 @@ def best_effort_price(
     `function` models) and `ValueError` for usage it can't price (e.g. cache token counts that imply a
     negative uncached remainder); both are expected. Anything else is unexpected and surfaces as a
     `CostCalculationFailedWarning` rather than being raised.
+
+    A `price_context` that matches no tier rates (e.g. a model or date genai-prices has no tier data for) falls
+    back to standard prices, and genai-prices' warning about it is silenced like the errors above.
     """
     if not model_name:
         return None
     try:
-        return calculate_price_for_usage(
-            usage,
-            model_name=model_name,
-            provider_api_url=provider_api_url,
-            provider_name=provider_name,
-            genai_request_timestamp=genai_request_timestamp,
-        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', message='No price variant matched', category=UserWarning)
+            return calculate_price_for_usage(
+                usage,
+                model_name=model_name,
+                provider_api_url=provider_api_url,
+                provider_name=provider_name,
+                genai_request_timestamp=genai_request_timestamp,
+                price_context=price_context,
+            )
     except (LookupError, ValueError):
         # NOTE(Marcelo): We can allow some kind of hook on the provider level, which we could retrieve via
         # `ctx.deps.model.provider.calculate_cost`, but I'm not sure how would the API look like. Maybe a new parameter
@@ -169,6 +194,7 @@ def fill_response_cost(response: ModelResponse) -> None:
                 provider_api_url=response.provider_url,
                 provider_name=response.provider_name,
                 genai_request_timestamp=response.timestamp,
+                price_context=response_price_context(response),
             )
         )
         is not None
