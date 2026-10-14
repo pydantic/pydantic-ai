@@ -191,11 +191,11 @@ async def _stop_shielded(
     with anyio.CancelScope(shield=True):
         while not task.done():
             try:
-                await asyncio.shield(task)
+                # Wait for completion without forwarding cancellation or installing
+                # shield's Python 3.14+ detached-error logger. Read the result below.
+                await asyncio.wait((task,))
             except asyncio.CancelledError as exc:
                 interrupted = exc
-            except Exception:
-                break
     try:
         task.result()
     except BaseException as error:

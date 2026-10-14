@@ -137,11 +137,11 @@ async def finish_despite_cancellation(operation: Coroutine[object, object, _T]) 
     with anyio.CancelScope(shield=True):
         while not task.done():
             try:
-                await asyncio.shield(task)
+                # Wait for completion without forwarding cancellation or installing
+                # shield's Python 3.14+ detached-error logger. Read the result below.
+                await asyncio.wait((task,))
             except asyncio.CancelledError as error:
                 cancelled = error
-            except Exception:
-                break
     try:
         result = task.result()
     except BaseException as error:
