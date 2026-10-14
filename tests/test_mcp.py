@@ -819,6 +819,11 @@ class TestMCPToolsetIntegration:
 
         return server
 
+    async def test_capabilities_include_server_extensions(self):
+        """The extensions a server declares, such as MCP Apps, are kept with their settings."""
+        async with MCPToolset(self._mcp_apps_server()) as toolset:
+            assert toolset.capabilities.extensions == snapshot({'io.modelcontextprotocol/ui': {}})
+
     async def test_app_tool_returns_carry_app_data(self):
         """Calls to MCP Apps tools keep the full result for the UI, without changing what the model sees."""
         toolset = MCPToolset(self._mcp_apps_server(), id='weather')

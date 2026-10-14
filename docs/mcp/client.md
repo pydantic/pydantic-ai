@@ -504,6 +504,8 @@ async def app_page(resource_uri: str) -> tuple[str, dict[str, Any]]:
     return contents.content, (contents.metadata or {}).get('ui', {})
 ```
 
+A server that supports MCP Apps lists `'io.modelcontextprotocol/ui'` in [`capabilities.extensions`][pydantic_ai.mcp.ServerCapabilities.extensions].
+
 `MCPToolset` doesn't yet tell servers it supports MCP Apps (the `io.modelcontextprotocol/ui` client capability), so a server that only offers app tools to clients that do will not offer them.
 
 ## HTTP authentication

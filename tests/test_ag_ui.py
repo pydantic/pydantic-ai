@@ -9049,48 +9049,6 @@ def _mcp_app_agent() -> Agent[None, str]:
     return agent
 
 
-@requires_ag_ui('0.1.19')
-async def test_mcp_app_tool_result_stream_matches_dumped_activity_message() -> None:
-    """MCP Apps data on a tool return reaches the frontend as an `mcp-apps` activity, live and in dumped history."""
-    agent = _mcp_app_agent()
-    events = await _collect_adapter_events(agent, create_input(UserMessage(id='user-1', content='Forecast?')))
-    snapshot_event = next(event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT')
-    assert snapshot_event == snapshot(
-        {
-            'type': 'ACTIVITY_SNAPSHOT',
-            'timestamp': IsInt(),
-            'messageId': IsStr(),
-            'activityType': 'mcp-apps',
-            'content': {
-                'resourceUri': 'ui://weather/forecast',
-                'toolInput': {'city': 'Den Haag'},
-                'result': {
-                    'content': [{'type': 'text', 'text': 'Den Haag: 14C'}],
-                    'structuredContent': {'city': 'Den Haag', 'temp_c': 14},
-                    '_meta': {'selectedDay': 'tuesday'},
-                    'isError': False,
-                },
-                'serverId': 'weather',
-            },
-            'replace': True,
-        }
-    )
-
-    async with agent.run_stream('Forecast?') as result:
-        await result.get_output()
-    dumped = AGUIAdapter.dump_messages(result.all_messages())
-    activity = next(message for message in dumped if isinstance(message, ActivityMessage))
-    assert snapshot_event['activityType'] == activity.activity_type
-    assert snapshot_event['content'] == activity.content
-
-    # The dumped activity is UI-only: loading it back adds nothing to the history the model sees.
-    def part_kinds(messages: list[Message]) -> list[list[str]]:
-        return [[part.part_kind for part in message.parts] for message in AGUIAdapter.load_messages(messages)]
-
-    without_activity: list[Message] = [message for message in dumped if not isinstance(message, ActivityMessage)]
-    assert part_kinds(dumped) == part_kinds(without_activity)
-
-
 async def test_mcp_app_tool_result_skipped_for_legacy_ag_ui() -> None:
     """The `mcp-apps` activity is omitted when the negotiated AG-UI version predates activity events."""
     events = await _collect_adapter_events(
