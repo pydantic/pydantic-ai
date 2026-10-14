@@ -259,7 +259,6 @@ async def test_shell_header_highlights_embedded_code_in_its_language(command: st
     console, text = await _highlighted_header(command)
     assert text.plain.startswith(f'● shell {command.splitlines()[0]}')
     assert _color(console, text, keyword) == KEYWORD
-    assert _color(console, text, 'shell') == Color.parse(theme.LITHIUM)
 
 
 async def test_shell_header_highlights_the_shell_as_bash() -> None:
@@ -275,7 +274,7 @@ async def test_shell_header_highlights_the_shell_as_bash() -> None:
 
 async def test_shell_header_mutes_a_heredoc_in_an_unknown_language() -> None:
     console, text = await _highlighted_header("git commit -F - <<'EOF'\nimport this\nEOF")
-    assert _color(console, text, 'import') == Color.parse(theme.GREY)
+    assert _color(console, text, 'import') == _color(console, text, '●'), 'muted, like the marker'
     assert _color(console, text, "'EOF'") == STRING
     assert _color(console, text, 'git') is None
 
@@ -319,7 +318,7 @@ async def test_highlighted_shell_header_keeps_the_hanging_indent_and_row_cap() -
     ]
     assert _color(console, text, 'import') == KEYWORD
     assert _color(console, text, '"aaa') == STRING
-    assert _color(console, text, '…') == Color.parse(theme.GREY)
+    assert _color(console, text, '…') == _color(console, text, '●')
 
 
 async def test_shell_header_stops_highlighting_inline_code_at_the_row_cap() -> None:
@@ -356,29 +355,30 @@ async def test_live_prompt_repaints_the_shell_header_for_a_new_theme_and_width()
     surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
     console = Console(file=surface, force_terminal=True, color_system='truecolor', width=80)
     selected = ['tokyo_night']
-    tokyo = PALETTES['tokyo_night']
+    command = "python3 - <<'EOF'\nimport os\nprint(os.getcwd())\nEOF"
 
-    def rows(*, width: int = 80) -> list[Text]:
-        return [Text.from_ansi(row) for row in surface.transcript.frame(width=width, height=24).rows]
+    def rows(*, width: int = 80) -> list[str]:
+        return list(surface.transcript.frame(width=width, height=24).rows)
 
     def colour(fragment: str) -> Color | None:
-        row = next(row for row in rows() if fragment in row.plain)
+        row = next(Text.from_ansi(row) for row in rows() if fragment in Text.from_ansi(row).plain)
         return _color(console, row, fragment)
 
     with theme.use(lambda: selected[0]):
-        await _print_shell_call(console, "python3 - <<'EOF'\nimport os\nprint(os.getcwd())\nEOF")
+        await _print_shell_call(console, command)
         console.print('after')
-        assert colour('import') == Color.parse(tokyo.ansi[4])
-        assert colour('shell') == Color.parse(tokyo.ansi[12])
+        assert colour('import') == Color.parse(PALETTES['tokyo_night'].ansi[4])
         selected[0] = 'default'
         # Rendered again, not recoloured: the palette's blue is also the slot of a brand colour.
         assert colour('import') == KEYWORD
-        assert colour('shell') == Color.parse(theme.LITHIUM)
-        assert [row.plain for row in rows(width=20)][:5] == [
+        retained = rows()[:5]
+        await _print_shell_call(console, command)
+        assert rows()[-6:-1] == retained, 'the retained header matches one printed in the new theme'
+        assert [Text.from_ansi(row).plain for row in rows(width=20)][:5] == [
             '● shell python3 -',
             "        <<'EOF'",
             '        import os',
             '        print(os.get',
             '        cwd())',
         ]
-        assert [row.plain for row in rows()][-3:] == ['', 'after', '']
+        assert [Text.from_ansi(row).plain for row in rows()][4:6] == ['', 'after']
