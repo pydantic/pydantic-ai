@@ -260,6 +260,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
       fidelity of thinking signatures and provider metadata.
     - `>= 0.1.15`: emits typed multimodal input content (`ImageInputContent`, `AudioInputContent`,
       `VideoInputContent`, `DocumentInputContent`) instead of generic `BinaryInputContent`.
+    - `>= 0.1.19`: emits `ACTIVITY_SNAPSHOT` events for tool availability, compaction and
+      [MCP Apps](../mcp/client.md#mcp-apps) during streaming.
 
     `load_messages` always accepts `ReasoningMessage` and multimodal content types regardless
     of this setting, and `build_run_input` skips inbound content types the installed

@@ -5,7 +5,7 @@ This module has no `mcp` dependency, so the UI adapters can read the record with
 
 from __future__ import annotations
 
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypedDict
@@ -52,6 +52,33 @@ def get_mcp_app_tool_result(metadata: Any) -> MCPAppToolResult | None:
         return _MCP_APP_TOOL_RESULT_ADAPTER.validate_python(value)
     except ValidationError:
         return None
+
+
+def redact_mcp_app_binary(metadata: Any) -> Any:
+    """Return tool return metadata with the binary data in its MCP Apps record's result dropped.
+
+    The record keeps the result in wire form, so image, audio and blob data are base64 strings that
+    instrumentation's `include_binary_content=False` can't recognize as binary on its own.
+    """
+    if not (
+        is_str_dict(metadata)
+        and is_str_dict(app := metadata.get(MCP_APP_METADATA_KEY))
+        and is_str_dict(result := app.get('result'))
+        and isinstance(content := result.get('content'), list)
+    ):
+        return metadata
+    blocks = [_redact_wire_block(block) for block in cast(list[Any], content)]
+    return {**metadata, MCP_APP_METADATA_KEY: {**app, 'result': {**result, 'content': blocks}}}
+
+
+def _redact_wire_block(block: Any) -> Any:
+    match block:
+        case {'type': 'image' | 'audio'}:
+            return {key: value for key, value in block.items() if key != 'data'}
+        case {'type': 'resource', 'resource': {'blob': _} as resource}:
+            return {**block, 'resource': {key: value for key, value in resource.items() if key != 'blob'}}
+        case _:
+            return block
 
 
 def mcp_app_ui_payload(app: MCPAppToolResult) -> dict[str, Any]:
