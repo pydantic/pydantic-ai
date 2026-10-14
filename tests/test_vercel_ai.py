@@ -4916,6 +4916,37 @@ async def test_adapter_load_messages():
     )
 
 
+async def test_adapter_load_messages_tool_part_with_tool_metadata():
+    """AI SDK v7 tool parts carry `toolMetadata` and `resultProviderMetadata`; history with them loads as before."""
+    data = SubmitMessage.model_validate(
+        {
+            'trigger': 'submit-message',
+            'id': 'chat',
+            'messages': [
+                {'id': 'u1', 'role': 'user', 'parts': [{'type': 'text', 'text': 'Weather?'}]},
+                {
+                    'id': 'a1',
+                    'role': 'assistant',
+                    'parts': [
+                        {
+                            'type': 'tool-get_forecast',
+                            'toolCallId': 'call-1',
+                            'state': 'output-available',
+                            'input': {'city': 'Den Haag'},
+                            'output': {'temp_c': 14},
+                            'toolMetadata': {'clientName': 'weather', 'toolName': 'get_forecast'},
+                            'resultProviderMetadata': {'openai': {'itemId': 'fc_1'}},
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+    messages = VercelAIAdapter.load_messages(data.messages)
+    [tool_return] = [p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart)]
+    assert tool_return.content == snapshot({'temp_c': 14})
+
+
 async def test_adapter_load_messages_with_data_ui_part_in_user_message():
     data = SubmitMessage(
         trigger='submit-message',

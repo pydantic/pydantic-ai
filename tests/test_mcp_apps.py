@@ -334,11 +334,12 @@ async def test_vercel_ai_frontend_receives_app_after_tool_result(agent: Agent[No
     assert model_view(VercelAIAdapter.load_messages(dumped)) == model_view(VercelAIAdapter.load_messages(without_app))
 
 
-async def test_vercel_ai_v7_tool_output_shows_app_without_glue(agent: Agent[None, str]):
+async def test_vercel_ai_v7_tool_output_shows_app_without_frontend_code(agent: Agent[None, str]):
     """On AI SDK v7, the UI tool's output is what `experimental_MCPAppRenderer` needs to show the app as is.
 
-    `toolMetadata.app` names the page and `output` is the server's full result, which the renderer hands the app.
-    What the model saw rides in the provider metadata, so history the frontend sends back loads as it does on v6.
+    `toolMetadata` is a fixed subset of what AI SDK's own MCP client sets (`clientName`, `toolName`, `app`), never
+    `ToolDefinition.metadata`; `output` is the server's full result, which the renderer hands the app. What the
+    model saw is kept in the provider metadata, so history the frontend sends back loads as it does on v6.
     """
     request = SubmitMessage(id='chat', messages=[UIMessage(id='u1', role='user', parts=[TextUIPart(text='Weather?')])])
     adapter = VercelAIAdapter(agent, request, sdk_version=7)
@@ -359,7 +360,11 @@ async def test_vercel_ai_v7_tool_output_shows_app_without_glue(agent: Agent[None
                 'isError': False,
             },
             'providerMetadata': {'pydantic_ai': {'model_output': {'city': 'Den Haag', 'temp_c': 14}}},
-            'toolMetadata': {'app': {'resourceUri': 'ui://weather/forecast', 'mimeType': 'text/html;profile=mcp-app'}},
+            'toolMetadata': {
+                'clientName': 'weather',
+                'toolName': 'get_forecast',
+                'app': {'resourceUri': 'ui://weather/forecast', 'mimeType': 'text/html;profile=mcp-app'},
+            },
         }
     )
 
@@ -371,6 +376,24 @@ async def test_vercel_ai_v7_tool_output_shows_app_without_glue(agent: Agent[None
     ]
     v6 = VercelAIAdapter.dump_messages(result.all_messages(), sdk_version=6)
     assert model_view(VercelAIAdapter.load_messages(sent_back)) == model_view(VercelAIAdapter.load_messages(v6))
+
+
+async def test_vercel_ai_v7_history_without_model_view(agent: Agent[None, str]):
+    """A frontend that sends tool parts back without `resultProviderMetadata` still gives the model its own view.
+
+    The model's view is rebuilt from the result's `structuredContent`; the page's `_meta` never reaches the model.
+    """
+    async with agent.run_stream('Weather?') as result:
+        await result.get_output()
+    sent_back: list[UIMessage] = []
+    for message in VercelAIAdapter.dump_messages(result.all_messages(), sdk_version=7):
+        data = message.model_dump(by_alias=True, exclude_none=True)
+        for part in data['parts']:
+            part.pop('resultProviderMetadata', None)
+        sent_back.append(UIMessage.model_validate(data))
+    loaded = VercelAIAdapter.load_messages(sent_back)
+    [forecast] = [p for p in iter_message_parts(loaded, ModelRequest, ToolReturnPart) if p.tool_call_id == 'forecast-1']
+    assert forecast.content == snapshot({'city': 'Den Haag', 'temp_c': 14})
 
 
 async def test_vercel_ai_app_chunk_without_toolset_id_or_with_malformed_record():

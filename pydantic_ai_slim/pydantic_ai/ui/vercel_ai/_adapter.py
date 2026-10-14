@@ -69,6 +69,7 @@ from ._utils import (
     iter_metadata_chunks,
     iter_tool_approval_responses,
     load_provider_metadata,
+    mcp_app_model_output,
     mcp_app_tool_output,
     tool_return_output,
 )
@@ -164,9 +165,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     """Vercel AI SDK version to target. Default is 5 for backwards compatibility.
 
     Setting `sdk_version=6` enables tool approval streaming for human-in-the-loop workflows.
-    `sdk_version=7` emits the same wire as 6 (v7's data-stream protocol equals v6's); it is
-    accepted so the value reflects the client's real SDK major and reserves it for future
-    v7-only chunks.
+    `sdk_version=7` emits the v6 wire plus v7-only fields: the `tool-output-available` chunk of an
+    [MCP Apps](../mcp/client.md#mcp-apps) tool call carries `toolMetadata` and the server's full result
+    as `output`, so AI SDK UI's `experimental_MCPAppRenderer` (AI SDK 7.0.120 or later) shows the page
+    without frontend code.
     """
     server_message_id: str | None = None
     """Optional server-generated message ID to include in the `StartChunk`."""
@@ -588,12 +590,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 interrupted = provider_meta.get('outcome') == 'interrupted'
                                 # An MCP Apps tool output from AI SDK v7 holds the server's full result for the
                                 # page; what the model saw is kept in the provider metadata.
-                                result_meta = load_provider_metadata(
-                                    part.result_provider_metadata
+                                output = (
+                                    mcp_app_model_output(part)
                                     if isinstance(part, ToolOutputAvailablePart | DynamicToolOutputAvailablePart)
-                                    else None
+                                    else part.output
                                 )
-                                output = result_meta['model_output'] if 'model_output' in result_meta else part.output
                                 builder.add(
                                     ToolReturnPart(
                                         tool_name=tool_name,

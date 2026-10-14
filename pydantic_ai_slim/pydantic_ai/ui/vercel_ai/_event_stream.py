@@ -484,9 +484,16 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             app_output = (
                 mcp_app_tool_output(part) if self.sdk_version >= 7 and isinstance(part, ToolReturnPart) else None
             )
-            yield ToolOutputAvailableChunk(
-                tool_call_id=tool_call_id, **(app_output or {'output': tool_return_output(part)})
-            )
+            if app_output is not None:
+                # AI SDK UI v7 shows an MCP Apps page from `toolMetadata` and hands it the server's full `output`.
+                yield ToolOutputAvailableChunk(
+                    tool_call_id=tool_call_id,
+                    output=app_output['output'],
+                    tool_metadata=app_output['tool_metadata'],
+                    provider_metadata=app_output['provider_metadata'],
+                )
+            else:
+                yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=tool_return_output(part))
 
         # ToolOutputAvailableChunk/ToolOutputErrorChunk.output may hold user parts
         # (e.g. text, images) that Vercel AI does not currently have chunk types for.

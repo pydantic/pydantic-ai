@@ -18,6 +18,9 @@ MCP_APP_METADATA_KEY: Final = 'mcp_app'
 MCP_APPS_UI_TYPE: Final = 'mcp-apps'
 """Name of the UI event that carries the record: the AG-UI activity type and the Vercel AI `data-*` suffix."""
 
+MCP_APP_MIME_TYPE: Final = 'text/html;profile=mcp-app'
+"""MIME type of an MCP Apps page."""
+
 
 class MCPAppToolResult(TypedDict):
     """What a UI needs to render an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) for one tool call.
