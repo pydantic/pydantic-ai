@@ -10,7 +10,7 @@ import importlib
 import json
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -27,8 +27,9 @@ with try_import() as imports_successful:
     import httpx
     from ag_ui.core import RunAgentInput, ToolMessage, UserMessage
     from fastmcp import Client, Context, FastMCP
-    from fastmcp.exceptions import ToolError
+    from fastmcp.exceptions import McpError, ToolError
     from fastmcp.tools import ToolResult as FastMCPToolResult
+    from mcp import types as mcp_types
     from mcp.types import TextContent
     from starlette.applications import Starlette
     from starlette.requests import Request
@@ -44,11 +45,11 @@ with try_import() as imports_successful:
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='fastmcp, ag-ui-protocol or starlette not installed')
 
+MCP_SDK_V2 = imports_successful() and is_mcp_sdk_v2()
+
 # FastMCP 4 servers stamp every result's `_meta` with their identity, which the app data passes through.
 SERVER_INFO: dict[str, Any] = (
-    {'io.modelcontextprotocol/serverInfo': {'name': 'weather_server', 'version': IsStr()}}
-    if imports_successful() and is_mcp_sdk_v2()
-    else {}
+    {'io.modelcontextprotocol/serverInfo': {'name': 'weather_server', 'version': IsStr()}} if MCP_SDK_V2 else {}
 )
 READ_FIELDS: dict[str, Any] = (
     {'resultType': 'complete', 'cacheScope': 'private', 'ttlMs': 0, '_meta': SERVER_INFO} if SERVER_INFO else {}
@@ -466,6 +467,26 @@ async def test_call_tool_for_app_refuses_tools_hidden_from_apps(weather: MCPTool
     assert str(exc_info.value) == f'Tool {name!r} is not available to apps (code: -32602)'
 
 
+async def test_call_tool_for_app_raises_protocol_errors(weather: MCPToolset[Any], monkeypatch: pytest.MonkeyPatch):
+    """A JSON-RPC error from the server's `tools/call` is raised as `MCPError`.
+
+    The error is injected because in-process FastMCP servers turn every tool failure into an `isError` result.
+    """
+    # SDK v1 wraps an `ErrorData`; v2 takes the fields directly, and CI type-checks against v1.
+    error = (
+        cast(Any, McpError)(code=-32001, message='call refused')
+        if MCP_SDK_V2
+        else McpError(mcp_types.ErrorData(code=-32001, message='call refused'))
+    )
+
+    async def refuse(*args: Any, **kwargs: Any) -> Any:
+        raise error
+
+    monkeypatch.setattr(weather.client, 'call_tool', refuse)
+    with pytest.raises(MCPError, match='call refused'):
+        await weather.call_tool_for_app('select_day', {'day': 'friday'})
+
+
 async def test_read_resource_for_app(weather: MCPToolset[Any]):
     """A page's resource reads get the server's full result in wire form."""
     assert await weather.read_resource_for_app('ui://weather/forecast') == UI_RESOURCE_READ
@@ -473,9 +494,7 @@ async def test_read_resource_for_app(weather: MCPToolset[Any]):
         await weather.read_resource_for_app('ui://missing')
 
 
-@pytest.mark.skipif(
-    not imports_successful() or not is_mcp_sdk_v2(), reason='FastMCP 3 clients have no client extensions'
-)
+@pytest.mark.skipif(not MCP_SDK_V2, reason='FastMCP 3 clients have no client extensions')
 async def test_client_extension_announces_mcp_apps_support(weather: MCPToolset[Any]):
     """The documented FastMCP 4 client extension tells servers the client supports MCP Apps; a plain one doesn't."""
     # Only the MCP SDK v2 that FastMCP 4 uses has `advertise`, and CI type-checks against FastMCP 3.
