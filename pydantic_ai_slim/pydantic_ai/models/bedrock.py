@@ -1057,6 +1057,12 @@ class BedrockConverseModel(Model[BaseClient]):
                         )
                 elif tool_result := item.get('toolResult'):
                     if tool_result.get('type') == 'nova_code_interpreter_result':  # pragma: no branch
+                        # Nova's code interpreter returns one `json` block holding its standard schema
+                        # (https://docs.aws.amazon.com/nova/latest/nova2-userguide/using-tools.html), code errors
+                        # included, so `content` is normalized to that object, as decided in
+                        # https://github.com/pydantic/pydantic-ai/pull/3892#discussion_r2688437212.
+                        # A sandbox timeout returns `status: 'error'` with empty `content`, parsed as `None`; sending
+                        # it back as `[{'json': None}]` is deliberate, as Bedrock rejects an empty `content` list.
                         items.append(
                             NativeToolReturnPart(
                                 provider_name=self.system,
@@ -1988,8 +1994,10 @@ class BedrockStreamedResponse(StreamedResponse):
                                 # For now, only process `contentBlockDelta.toolResult` for Code Exe tool.
 
                                 if tr_content := delta['toolResult']:  # pragma: no branch
-                                    # Goal here is to convert to object form.
-                                    # This assumes the first item is the relevant one.
+                                    # Same contract as in `BedrockConverseModel._process_response`. On a sandbox
+                                    # timeout this delta holds a `text` item instead, which is the first token of
+                                    # the model's reply leaked by Bedrock rather than tool output, so `content`
+                                    # stays `None` and the token is missing from the reply's text part.
                                     return_part.content = tr_content[0].get('json')
 
                                 # Don't yield anything yet - we wait for content block end

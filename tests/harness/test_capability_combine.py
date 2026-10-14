@@ -307,6 +307,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'PromptInjectionDefender': Anonymous('one per `tool_filter`; several scopes compose'),
     'ToolGuardrail': Anonymous('several guards is the design'),
     'ToolCallJudge': Anonymous('one per risk question; stacked judges must all allow a call'),
+    'ApprovalReviewer': Anonymous('one per risk question; each answers the approval requests the ones before it left'),
     'ManagedPrompt': Anonymous('one per prompt name'),
     'LogfireMCP': Narrows(
         'one Logfire connection per id; two that differ need their own ids and PrefixTools',
