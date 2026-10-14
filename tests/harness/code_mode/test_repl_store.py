@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
 
 import anyio
@@ -104,6 +104,14 @@ SCRIPTS: Mapping[str, Mapping[str, object]] = {
 }
 
 
+def truncated(state: bytes) -> bytes:
+    return state[:-10]
+
+
+def foreign(state: bytes) -> bytes:
+    return b'not a monty dump'
+
+
 def agent_with(
     store: CodeModeReplStore[None], scripts: Mapping[str, Mapping[str, object]] = SCRIPTS, *, eager: bool = False
 ) -> Agent[None, str]:
@@ -169,19 +177,46 @@ class TestCodeModeReplStore:
         assert store.states == {}
         assert store.saves == [('c1', True), ('c1', False)]
 
-    async def test_unloadable_state_starts_a_fresh_repl(self, caplog: pytest.LogCaptureFixture) -> None:
-        store = MemoryReplStore(states={'c1': b'not a monty dump'})
-        agent = agent_with(
-            store, {**SCRIPTS, 'bad': {'code': 'await add(a="bad", b=1)'}, 'fresh': {'code': 'x = 1\nx'}}
-        )
+    @pytest.mark.parametrize(
+        ('damage', 'warning'),
+        [
+            pytest.param(truncated, 'could not restore the saved REPL state', id='truncated'),
+            pytest.param(foreign, 'saved in another format', id='foreign'),
+        ],
+    )
+    async def test_unloadable_state_starts_a_fresh_repl(
+        self, damage: Callable[[bytes], bytes], warning: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        store = MemoryReplStore()
+        scripts = {**SCRIPTS, 'bad': {'code': 'await add(a="bad", b=1)'}, 'fresh': {'code': 'x = 1\nx'}}
+        agent = agent_with(store, scripts)
+        await agent.run('set', conversation_id='c1')
+        store.states['c1'] = damage(store.states['c1'])
 
         with caplog.at_level(logging.WARNING):
             # The fresh REPL's first snippet is type-checked, as in a run without saved state.
             assert (await agent.run('bad', conversation_id='c1')).output.startswith('retry: Type error')
             assert (await agent.run('fresh', conversation_id='c1')).output == '1'
 
-        assert 'could not restore the saved REPL state' in caplog.text
+        assert warning in caplog.text
         assert (await agent.run('get', conversation_id='c1')).output == '2'
+
+    async def test_state_saved_under_other_limits_starts_fresh(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A restored REPL would keep the limits it was saved under, so changed limits start a fresh one."""
+        store = MemoryReplStore()
+        await agent_with(store).run('set', conversation_id='c1')
+        stricter = Agent(
+            scripted(SCRIPTS),
+            deps_type=type(None),
+            capabilities=[CodeMode[None](repl_store=store, resource_limits={'max_suspensions': 10})],
+        )
+        stricter.tool_plain(add)
+
+        with caplog.at_level(logging.WARNING):
+            output = (await stricter.run('get', conversation_id='c1')).output
+
+        assert output.startswith('retry: Type error') and '`x` used when not defined' in output
+        assert 'under other resource limits' in caplog.text
 
     async def test_cancelled_run_still_saves(self) -> None:
         store = MemoryReplStore()

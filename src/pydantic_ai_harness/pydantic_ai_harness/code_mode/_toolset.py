@@ -881,7 +881,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         run_state = MontyRunState(monty_sandbox_url=self.monty_sandbox_url)
         await self.wrapped.__aenter__()
         self._run_state = run_state
-        self._repl = None if self.repl_store is None else PersistentRepl(self.repl_store)
+        self._repl = (
+            None
+            if self.repl_store is None
+            else PersistentRepl(self.repl_store, limits=_resolve_resource_limits(self.resource_limits))
+        )
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:

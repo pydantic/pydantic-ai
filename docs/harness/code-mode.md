@@ -267,11 +267,12 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(repl_store=I
 
 - A run that never calls `run_code` neither loads nor saves.
 - `restart: true` skips the saved state. The run then saves its new REPL, or calls `save(ctx, None)` when the restarted snippet failed before creating one.
-- A state Monty cannot load, such as a truncated dump or one from an incompatible Monty version, is dropped with a logged warning, and the run starts a fresh REPL.
+- A restored REPL keeps the resource limits it was saved under, so the state records the run's resolved `resource_limits`. A state saved under other limits, or one Monty cannot load, such as a truncated dump or one from an incompatible Monty version, is dropped with a logged warning, and the run starts a fresh REPL.
+- Monty does not authenticate a dump. Return only states your application saved, from storage no one else can write to.
 - A timeout, worker crash, or cancelled snippet that resets the REPL keeps the state saved before the run, unless a later snippet in the run builds a new REPL, which is then saved. A cancelled run still saves an idle REPL.
 - A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save`, or one still running after 10 seconds, leaves the stored state as it was. Both are logged as warnings.
 - Restored state skips the type check a fresh REPL's first snippet gets, since the checker does not know the restored names.
-- The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one.
+- The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one. With `monty_sandbox_url`, a server that keeps sessions returns a record ID instead, which lives as long as the server keeps it, and a server that keeps nothing fails every save with a logged warning.
 - The store is not used under durable execution, where its I/O would run in replayed workflow code.
 
 ## Eager execution

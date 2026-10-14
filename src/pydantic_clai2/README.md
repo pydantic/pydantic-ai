@@ -228,7 +228,8 @@ Rewinding removes the selected prompt and all later messages from the saved
 conversation, then restores that prompt and its image attachments to the editor.
 This replaces any unsent draft and its attachments; cancel the menu to keep them.
 Edit the restored prompt and press Enter when ready. It does **not** undo file changes or other
-tool side effects, replay tools, or erase the terminal scrollback. Only prompts
+tool side effects, roll back code mode's saved sandbox state (the model can pass
+`restart: true` to clear it), replay tools, or erase the terminal scrollback. Only prompts
 still present in the retained history are available. Prompts predating retained
 rewritten context, such as a compaction summary, are disabled even if compaction
 kept a copy of the prompt. That summary can contain later facts, so the original

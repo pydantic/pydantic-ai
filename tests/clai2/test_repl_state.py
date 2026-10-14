@@ -305,3 +305,21 @@ class TestReplStates:
         assert 'Could not delete the REPL state' in caplog.text
         assert 'hard links are not supported' in caplog.text
         assert states.path(FORK_ID) is not None and not (tmp_path / 'states' / f'{FORK_ID}.bin').exists()
+
+    async def test_a_failed_write_keeps_the_saved_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        states = ReplStates(directory=tmp_path, session_id=lambda: SESSION_ID)
+        own = run_context(SESSION_ID)
+        await states.save(own, b'saved')
+
+        def interrupted(source: str, target: Path) -> None:
+            raise OSError('interrupted')
+
+        monkeypatch.setattr(os, 'replace', interrupted)
+        with caplog.at_level(logging.WARNING):
+            await states.save(own, b'newer')
+
+        assert 'Could not save the REPL state' in caplog.text
+        assert [path.name for path in tmp_path.iterdir()] == [f'{SESSION_ID}.bin']
+        assert await states.load(own) == b'saved'

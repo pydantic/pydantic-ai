@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Generic, Protocol
@@ -14,6 +15,9 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai_harness._monty_exec import MontyRunState, call_monty
 
 _logger = logging.getLogger(__name__)
+
+_STATE_HEADER = b'pydantic-ai-harness code-mode REPL v1\n'
+"""Starts every saved state, ahead of the JSON `resource_limits` line and the Monty dump."""
 
 SAVE_TIMEOUT_SECONDS = 10.0
 """How long the end of a run waits for the REPL dump and `CodeModeReplStore.save`.
@@ -31,8 +35,13 @@ class CodeModeReplStore(Protocol[AgentDepsT]):
     function definitions carry over to the next run. Key the state by what identifies the
     conversation, usually `ctx.conversation_id`.
 
-    The state is Monty's opaque dump of the REPL. Its size grows with the values the REPL holds;
-    a store that limits it can drop an oversized state and forget the old one.
+    The state is opaque: Monty's dump of the REPL, behind a header recording the `resource_limits`
+    it was saved under, since a restored REPL keeps the limits of the session it came from. A state
+    saved under other limits is dropped and the run starts fresh. Its size grows with the values the
+    REPL holds; a store that limits it can drop an oversized state and forget the old one.
+
+    Monty does not authenticate a dump, so return only states this application saved, from storage
+    no one else can write to.
 
     A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save`, or
     one still running after `SAVE_TIMEOUT_SECONDS`, leaves what the store held before. Both are
@@ -53,6 +62,8 @@ class PersistentRepl(Generic[AgentDepsT]):
     """One run's link between its REPL and a `CodeModeReplStore`, shared by the run's step copies."""
 
     store: CodeModeReplStore[AgentDepsT]
+    limits: ResourceLimits
+    """The run's resolved resource limits, which a restored REPL must have been saved under."""
     ctx: RunContext[AgentDepsT] | None = None
     """The context of the run's first `run_code` call. Until it is set, nothing is loaded or saved."""
     pending: bytes | None = None
@@ -72,17 +83,26 @@ class PersistentRepl(Generic[AgentDepsT]):
     async def restore(self, run_state: MontyRunState, *, limits: ResourceLimits, in_temporal_workflow: bool) -> bool:
         """Load the pending state into the run's first session; return whether it was restored.
 
-        A state Monty cannot load, such as a truncated dump or one from an incompatible Monty
-        version, is dropped, and the run continues in a fresh REPL, type-checked like any other.
+        A state saved under other resource limits, or one Monty cannot load, such as a truncated dump
+        or one from an incompatible Monty version, is dropped, and the run continues in a fresh REPL,
+        type-checked like any other.
         """
         if self.pending is None:
+            return False
+        dump = self._decode(self.pending)
+        if dump is None:
+            self.pending = None
+            _logger.warning(
+                'CodeMode is not restoring the saved REPL state, which was saved in another format or under '
+                'other resource limits, so this run starts fresh'
+            )
             return False
         session = await run_state.get_session(
             type_check=False, type_check_stubs=None, limits=limits, in_temporal_workflow=in_temporal_workflow
         )
-        state, self.pending = self.pending, None
+        self.pending = None
         try:
-            await call_monty(run_state.portal, session.load_session, state)
+            await call_monty(run_state.portal, session.load_session, dump)
         except MontyError as error:
             _logger.warning('CodeMode could not restore the saved REPL state, so this run starts fresh: %s', error)
             # A session that failed to load refuses another load, so the next checkout starts a new one.
@@ -128,4 +148,13 @@ class PersistentRepl(Generic[AgentDepsT]):
             if self.restarted:
                 await self.store.save(ctx, None)
             return
-        await self.store.save(ctx, await call_monty(run_state.portal, session.dump))
+        dump = await call_monty(run_state.portal, session.dump)
+        await self.store.save(ctx, _STATE_HEADER + self._limits_line() + dump)
+
+    def _limits_line(self) -> bytes:
+        return json.dumps(self.limits, sort_keys=True).encode() + b'\n'
+
+    def _decode(self, state: bytes) -> bytes | None:
+        """The Monty dump in `state`, or `None` when it was saved in another format or under other limits."""
+        prefix = _STATE_HEADER + self._limits_line()
+        return state[len(prefix) :] if state.startswith(prefix) else None

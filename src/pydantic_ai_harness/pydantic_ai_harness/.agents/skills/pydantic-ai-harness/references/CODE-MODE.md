@@ -136,7 +136,8 @@ State does not carry over to the next agent run unless `repl_store` is set: an o
 (`pydantic_ai_harness.code_mode.CodeModeReplStore`), usually
 keyed by `ctx.conversation_id`. A run that calls `run_code` restores the saved state before its first
 snippet and saves the REPL when it ends; `restart: true` replaces it (`save(ctx, None)` when nothing
-replaces it), and a state Monty cannot load is dropped so the run starts fresh. Restored state skips
+replaces it), and a state saved under other `resource_limits` or that Monty cannot load is dropped so
+the run starts fresh. Return only states the application saved: Monty does not authenticate them. Restored state skips
 the first-snippet type check. Store errors are logged, not raised. The store is not used under durable
 execution.
 
