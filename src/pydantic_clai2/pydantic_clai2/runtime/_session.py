@@ -16,6 +16,7 @@ from uuid import uuid4
 from anyio import get_cancelled_exc_class, move_on_after
 
 from pydantic_ai import Agent, AgentModelSettings, AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
+from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -71,7 +72,8 @@ FamilyDefaults = Callable[[str], ModelSettings | None]
 """CLAI's family default settings for a model, given its name."""
 
 
-def _supports_local_workspace() -> bool:
+def supports_local_workspace() -> bool:
+    """Whether CLAI can give runs a `LocalWorkspace` on this platform; it has none on Windows."""
     return sys.platform != 'win32'
 
 
@@ -228,7 +230,7 @@ def local_workspace(
     None is added on platforms without a local workspace, or when a capability loaded up front supplies
     the workspace, such as a sandbox. When only a capability function might, the local one defers to it.
     """
-    if not _supports_local_workspace() or _supplies_workspace(configured, include_dynamic=False):
+    if not supports_local_workspace() or _supplies_workspace(configured, include_dynamic=False):
         return None
     if _supplies_workspace(configured):
         # No id: a function's `LocalWorkspace` shares the default id and would replace this whole.
@@ -280,6 +282,7 @@ class StockAgent(Agent[DepsT, OutputT]):
         deps_type: type[DepsT],
         output_type: OutputSpec[OutputT],
         capabilities: Sequence[AgentCapability[DepsT]],
+        name: str | None = None,
         defer_model_check: bool = False,
     ) -> None:
         super().__init__(
@@ -287,6 +290,7 @@ class StockAgent(Agent[DepsT, OutputT]):
             deps_type=deps_type,
             output_type=output_type,
             capabilities=capabilities,
+            name=name,
             defer_model_check=defer_model_check,
         )
         self._stock_deps_type = deps_type
@@ -303,6 +307,7 @@ class StockAgent(Agent[DepsT, OutputT]):
             deps_type=self._stock_deps_type,
             output_type=self.output_type,
             capabilities=[self.root_capability, *plugins],
+            name=self.name,
             defer_model_check=model is not None,
         )
 
@@ -751,7 +756,7 @@ class Session(Generic[DepsT, OutputT]):
                 if self.on_context_usage is not None:
                     for message in reversed(ctx.messages):
                         if isinstance(message, ModelResponse) and message.usage.input_tokens:
-                            self.on_context_usage(message.usage.total_tokens)
+                            self.on_context_usage(context_tokens(message))
                             break
                 if self.on_stream_event is not None:
                     await self.on_stream_event(event)

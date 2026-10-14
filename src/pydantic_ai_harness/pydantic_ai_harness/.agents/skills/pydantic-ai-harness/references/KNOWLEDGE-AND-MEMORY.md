@@ -18,7 +18,8 @@ demand). Only `Skills` needs an extra.
 Gives the model four tools: `write_memory(content, file='MEMORY.md', old_text=None)` (append, or
 replace one unique fragment), `read_memory(file)`, `delete_memory(file)` (`MEMORY.md` is
 protected), and `search_memory(query)`. By default a bounded excerpt of `MEMORY.md` plus the list
-of other files is injected into each request as a delimited user-role part.
+of other files is injected into each request as a delimited user-role part, attached to the request
+that holds the latest user prompt (not after tool results), or to the last request when there is none.
 
 ```python
 from pydantic_ai import Agent

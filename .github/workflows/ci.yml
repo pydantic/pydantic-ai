@@ -555,7 +555,7 @@ jobs:
             command: "--no-sync"
             sync_command: >-
               --inexact --package pydantic-ai-harness --package pydantic-clai2
-              --extra code-mode --extra coder --extra logfire
+              --extra code-mode --extra coder --extra logfire --extra render
             # Its own suite: the rest of `tests/` is covered by the other cells.
             paths: tests/harness
           - name: pydantic-clai2
@@ -774,10 +774,12 @@ jobs:
       # `tests/harness/absurd` runs on Absurd's schema; an unreachable server fails rather than skips.
       ABSURD_REQUIRE_LIVE: "1"
       ABSURD_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      # `tests/harness/pgtask` runs on pgtask's schema in the same server.
+      PGTASK_REQUIRE_LIVE: "1"
+      PGTASK_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
     services:
       postgres:
-        # AWS's mirror of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
-        image: public.ecr.aws/docker/library/postgres:16
+        image: postgres:16
         ports:
           - 5432:5432
         env:
@@ -910,13 +912,14 @@ jobs:
           --baseline "$RUNNER_TEMP/$DURATIONS_BASELINE" --current "$RUNNER_TEMP/test-durations.json"
           --title "all-extras on ${{ matrix.python-version }}, shard $SHARD"
 
-      - name: cover Absurd without a database URL
+      - name: cover Absurd and pgtask without a database URL
         if: matrix.python-version == '3.14' && matrix.shard == 1
         run: >-
-          env -u ABSURD_TEST_DATABASE_URL
+          env -u ABSURD_TEST_DATABASE_URL -u PGTASK_TEST_DATABASE_URL
           uv run --all-packages --all-extras --no-extra mcp-tasks
           coverage run -m pytest
           tests/harness/absurd/test_absurd.py::TestDurability::test_replay_serves_cached_model_response
+          tests/harness/pgtask/test_pgtask.py::TestReplay::test_model_response_served_from_checkpoint
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
 
@@ -1040,6 +1043,27 @@ jobs:
         env:
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+
+      # The Render Workflows integration runs nested agents in separate worker processes on the
+      # keyless local runtime from the Render CLI. It adds about a minute, so one leg runs it; the
+      # live files are omitted from coverage.
+      - name: run Render local runtime tests
+        if: matrix.python-version == '3.13' && matrix.resolution == 'locked'
+        shell: bash
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/render-cli.zip" \
+            "https://github.com/render-oss/cli/releases/download/v${RENDER_CLI_VERSION}/cli_${RENDER_CLI_VERSION}_linux_amd64.zip"
+          echo "${RENDER_CLI_SHA256}  $RUNNER_TEMP/render-cli.zip" | sha256sum --check --quiet
+          unzip -q "$RUNNER_TEMP/render-cli.zip" "cli_v${RENDER_CLI_VERSION}" -d "$RUNNER_TEMP/render-cli"
+          mv "$RUNNER_TEMP/render-cli/cli_v${RENDER_CLI_VERSION}" "$RUNNER_TEMP/render-cli/render"
+          chmod +x "$RUNNER_TEMP/render-cli/render"
+          export PATH="$RUNNER_TEMP/render-cli:$PATH"
+          uv run --all-packages --all-extras --no-extra mcp-tasks \
+            pytest --durations=5 tests/harness/render/test_local_runtime_live.py
+        env:
+          RENDER_CLI_VERSION: 2.28.0
+          RENDER_CLI_SHA256: 00d1ca6f3c31b1f4bc7316837b8ee24acbeb11cf372b7593c7d2c3106a1987b4
+          PYDANTIC_AI_HARNESS_RENDER_LOCAL_RUNTIME: '1'
 
       # See the matching step in the `test` job.
       - name: combine coverage files
@@ -1814,8 +1838,6 @@ jobs:
       GIT_CONFIG_COUNT: '0'
       GIT_CONFIG_KEY_0: ''
       GIT_CONFIG_VALUE_0: ''
-    outputs:
-      version: ${{ steps.engine.outputs.version }}
     steps:
       # Consumers compile the definition from the default branch, which may have moved past the tag.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -1830,7 +1852,6 @@ jobs:
       - id: engine
         run: |
           version=$(uv run --script src/pydantic_ai_harness/scripts/gh_aw_engine_version.py)
-          echo "version=$version" >> "$GITHUB_OUTPUT"
 
   # `src/pydantic_ai_harness/gh-aw/pydantic.md` pins the `pydantic-ai-harness` release a generated
   # gh-aw workflow installs, and consumers compile the definition straight from the default branch.
