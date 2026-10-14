@@ -15,8 +15,10 @@ from typing import Any, Literal, cast
 import pytest
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelRequest, ToolReturn, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -30,7 +32,7 @@ with try_import() as imports_successful:
     from fastmcp.exceptions import McpError, ToolError
     from fastmcp.tools import ToolResult as FastMCPToolResult
     from mcp import types as mcp_types
-    from mcp.types import TextContent
+    from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
     from starlette.applications import Starlette
     from starlette.requests import Request
     from starlette.responses import Response
@@ -41,6 +43,10 @@ with try_import() as imports_successful:
     from pydantic_ai.ui.ag_ui import AGUIAdapter
     from pydantic_ai.ui.ag_ui._utils import ACTIVITY_EVENTS_VERSION, detect_ag_ui_version, parse_ag_ui_version
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
+
     from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='fastmcp, ag-ui-protocol or starlette not installed')
@@ -262,6 +268,46 @@ async def test_app_data_with_process_tool_call(hooked_weather: MCPToolset[Any], 
         tools = await hooked_weather.get_tools(run_context)
         returned = await hooked_weather.call_tool('get_forecast', {'city': 'a'}, run_context, tools['get_forecast'])
     assert returned == expected
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_tool_span_omits_app_binary_without_binary_content(capfire: CaptureLogfire):
+    """`include_binary_content=False` also drops the base64 data the app record keeps in wire form."""
+    server: FastMCP[None] = FastMCP('charts')
+
+    @server.tool(meta={'ui': {'resourceUri': 'ui://charts/view'}})
+    def chart() -> FastMCPToolResult:
+        return FastMCPToolResult(
+            content=[
+                TextContent(type='text', text='A chart'),
+                ImageContent(type='image', data='aGk=', mimeType='image/png'),
+                EmbeddedResource(
+                    type='resource',
+                    resource=BlobResourceContents.model_validate(
+                        {'uri': 'file:///chart.csv', 'blob': 'aGk=', 'mimeType': 'text/csv'}
+                    ),
+                ),
+            ]
+        )
+
+    agent = Agent(
+        TestModel(call_tools=['chart']),
+        toolsets=[MCPToolset(server, id='charts')],
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_binary_content=False))],
+    )
+    await agent.run('Chart?')
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    tool_result = next(span for span in spans if span['name'] == 'execute_tool chart')['attributes'][
+        'gen_ai.tool.call.result'
+    ]
+    assert tool_result['metadata']['mcp_app']['result']['content'] == snapshot(
+        [
+            {'type': 'text', 'text': 'A chart'},
+            {'type': 'image', 'mimeType': 'image/png'},
+            {'type': 'resource', 'resource': {'uri': 'file:///chart.csv', 'mimeType': 'text/csv'}},
+        ]
+    )
 
 
 async def test_read_resource_contents_keeps_mime_type_and_meta(weather: MCPToolset[Any]):
