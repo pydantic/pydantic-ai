@@ -224,6 +224,14 @@ TEST_CASES = [
         GitHubCopilotModel,
     ),
     pytest.param(
+        {'META_API_KEY': 'meta-api-key'},
+        'meta:muse-spark-1.3',
+        'muse-spark-1.3',
+        'meta',
+        'openai',
+        OpenAIResponsesModel,
+    ),
+    pytest.param(
         {'MOONSHOTAI_API_KEY': 'moonshotai-api-key'},
         'moonshotai:kimi-k2-0711-preview',
         'kimi-k2-0711-preview',
