@@ -615,7 +615,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         outcome='denied',
                                     )
                                 )
-                    elif isinstance(part, DataUIPart):
+                    elif isinstance(part, DataUIPart):  # pragma: no cover
                         # Contains custom data that shouldn't be sent to the model
                         pass
                     elif isinstance(part, SourceUrlUIPart):  # pragma: no cover
