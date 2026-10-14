@@ -34,20 +34,20 @@ class _RunBackend(RenderSandboxBackend):
         on_sandbox_event: Callable[[RenderSandboxEvent], None] | None,
         run_id: str | None,
         owner: object,
-        auto_cleanup: bool,
+        cleanup_preparation: bool,
     ) -> None:
         super().__init__(client, config=config, ref=ref, on_sandbox_event=on_sandbox_event)
         self.run_id = run_id
         self.owner = owner
-        self.auto_cleanup = auto_cleanup
+        self._cleanup_preparation = cleanup_preparation
 
     async def working_dir(self) -> str:
         try:
-            return await super().working_dir()
+            directory = await super().working_dir()
         except BaseException as error:
             # Workflows prepares the workspace before entering the run cleanup hook.
             # This worker still knows the new ID if readiness fails or is cancelled.
-            if self.owned and self.auto_cleanup:
+            if self.owned and self._cleanup_preparation:
                 try:
                     await self.destroy()
                 except asyncio.CancelledError:
@@ -61,6 +61,10 @@ class _RunBackend(RenderSandboxBackend):
                         [error, cleanup_error],
                     ) from None
             raise
+        # Once preparation succeeds, the normal run hook owns cleanup. Cancelling
+        # an individual tool operation must leave the running workspace usable.
+        self._cleanup_preparation = False
+        return directory
 
 
 @dataclass(kw_only=True)
@@ -132,7 +136,7 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
             on_sandbox_event=self.on_sandbox_event,
             run_id=ctx.run_id,
             owner=self,
-            auto_cleanup=self.auto_cleanup,
+            cleanup_preparation=ctx.in_durable_context and self.auto_cleanup,
         )
 
     def _check_durability(self, ctx: RunContext[AgentDepsT]) -> None:

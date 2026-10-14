@@ -312,6 +312,32 @@ async def test_agent_cancellation_interrupts_detached_tool_and_cleans(
     assert workspace_harness.terminated == ['sb-1']
 
 
+@pytest.mark.parametrize('already_ready', [False, True])
+async def test_handled_tool_cancellation_keeps_workspace(
+    workspace_harness: WorkspaceHarness, already_ready: bool
+) -> None:
+    # A tool may abandon one operation and continue the run. Its local cancellation
+    # must not acquire ownership of run cleanup, either before or after preparation.
+    agent = Agent(tool_model('check_workspace', {}), deps_type=type(None), capabilities=[capability(workspace_harness)])
+
+    @agent.tool
+    async def check_workspace(ctx: RunContext[None]) -> str:
+        if already_ready:
+            await ctx.workspace.working_dir()
+        with anyio.CancelScope() as scope:
+            scope.cancel()
+            await ctx.workspace.working_dir()
+        assert workspace_harness.terminated == []
+        command = await ctx.workspace.run(['printf', 'still usable'])
+        return command.stdout
+
+    result = await agent.run('check workspace')
+    assert result.output == 'done'
+    assert parts(result.all_messages())[0].content == 'still usable'
+    # The enclosing run still owns termination once the tool has finished.
+    assert workspace_harness.created == workspace_harness.terminated == ['sb-1']
+
+
 async def test_terminal_tool_failure_is_not_a_model_retry(
     workspace_harness: WorkspaceHarness,
 ) -> None:
