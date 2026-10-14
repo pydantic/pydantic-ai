@@ -2126,10 +2126,10 @@ The sandbox keeps its variables, functions, and imports from one prompt to the
 next. CLAI saves them with the session when each turn ends, so `/resume` and
 `--resume` bring them back with the history, and `--fork-session`, `/fork`, and
 resuming a busy session give the copy its own state. When the model passes
-`restart: true`, the saved state is cleared. Deleting a session in the `/resume`
-browser deletes its state. Sub-agents start each task with an empty sandbox.
-A state Monty cannot load starts a fresh sandbox, and a state over 32 MiB is not
-saved, so the next session starts fresh.
+`restart: true`, the turn saves the restarted sandbox instead. Deleting a session
+in the `/resume` browser deletes its state. Sub-agents start each task with an
+empty sandbox. A state Monty cannot load starts a fresh sandbox, and a state over
+32 MiB is not saved, so the next prompt starts with an empty sandbox.
 
 The sandbox's `pathlib` only reaches what the file tools may reach. `pathlib`
 calls on a mount skip the `FileSystem` checks, so CLAI mounts the workspace's

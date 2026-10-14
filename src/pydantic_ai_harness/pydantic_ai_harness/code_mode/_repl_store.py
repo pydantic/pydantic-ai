@@ -16,6 +16,13 @@ from pydantic_ai_harness._monty_exec import MontyRunState, call_monty
 
 _logger = logging.getLogger(__name__)
 
+SAVE_TIMEOUT_SECONDS = 10.0
+"""How long the end of a run waits for the REPL dump and `CodeModeReplStore.save`.
+
+The save is shielded so a cancelled run still keeps its REPL, and this bounds how long that
+shield can hold up the cancellation, for a remote worker or a store that stops responding.
+"""
+
 
 class CodeModeReplStore(Protocol[AgentDepsT]):
     """Where `CodeMode` keeps the `run_code` REPL between agent runs.
@@ -27,6 +34,10 @@ class CodeModeReplStore(Protocol[AgentDepsT]):
 
     The state is Monty's opaque dump of the REPL. Its size grows with the values the REPL holds;
     a store that limits it can drop an oversized state and forget the old one.
+
+    A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save`, or
+    one still running after `SAVE_TIMEOUT_SECONDS`, leaves what the store held before. Both are
+    logged as warnings.
     """
 
     async def load(self, ctx: RunContext[AgentDepsT]) -> bytes | None:
@@ -51,9 +62,13 @@ class PersistentRepl(Generic[AgentDepsT]):
 
     async def begin(self, ctx: RunContext[AgentDepsT]) -> None:
         """Load the saved state on the run's first `run_code` call."""
-        if self.ctx is None:
-            self.ctx = ctx
+        if self.ctx is not None:
+            return
+        self.ctx = ctx
+        try:
             self.pending = await self.store.load(ctx)
+        except Exception as error:
+            _logger.warning('CodeMode could not load the saved REPL state, so this run starts fresh: %s', error)
 
     async def restore(
         self,
@@ -86,25 +101,35 @@ class PersistentRepl(Generic[AgentDepsT]):
         self.pending = None
         self.restarted = True
 
+    def skip_save(self) -> None:
+        """Leave the stored state as it is, for a run whose REPL may still be mid-snippet at exit."""
+        self.ctx = None
+
     async def save(self, run_state: MontyRunState) -> None:
         """Save the REPL as the run leaves it, before the run state closes.
 
-        Shielded, so a cancelled run still saves. A REPL another failure reset (a timeout, a
-        crash, a cancelled snippet) keeps the state saved before this run.
+        Shielded, so a cancelled run still saves, and bounded by `SAVE_TIMEOUT_SECONDS`. A REPL a
+        failure reset (a timeout, a crash, a cancelled snippet) and no later snippet rebuilt keeps
+        the state saved before this run.
         """
         ctx = self.ctx
         if ctx is None:
             return
-        with anyio.CancelScope(shield=True):
-            session = run_state.session
-            if session is None:
-                if self.restarted:
-                    await self.store.save(ctx, None)
-                return
+        with anyio.move_on_after(SAVE_TIMEOUT_SECONDS, shield=True) as scope:
             try:
-                state = await call_monty(run_state.portal, session.dump)
-            # Monty dumps idle and suspended sessions alike; this guards a worker lost after the last snippet.
-            except MontyError as error:  # pragma: no cover
-                _logger.warning('CodeMode could not save the REPL state, so the next run keeps the last one: %s', error)
-                return
-            await self.store.save(ctx, state)
+                await self._save(ctx, run_state)
+            except Exception as error:
+                _logger.warning('CodeMode could not save the REPL state, so the store keeps the last one: %s', error)
+        if scope.cancelled_caught:
+            _logger.warning(
+                'CodeMode stopped saving the REPL state after %s seconds, so the store keeps the last one',
+                SAVE_TIMEOUT_SECONDS,
+            )
+
+    async def _save(self, ctx: RunContext[AgentDepsT], run_state: MontyRunState) -> None:
+        session = run_state.session
+        if session is None:
+            if self.restarted:
+                await self.store.save(ctx, None)
+            return
+        await self.store.save(ctx, await call_monty(run_state.portal, session.dump))

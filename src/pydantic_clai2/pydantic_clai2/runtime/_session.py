@@ -423,6 +423,9 @@ class Session(Generic[DepsT, OutputT]):
         """
         if conversation_id is not None:
             await self._ensure_unused(conversation_id)
+            if self.repl_states is not None:
+                # A REPL left by a session deleted outside CLAI must not reach the new conversation.
+                self.repl_states.delete(conversation_id)
         cleared = len(self._messages)
         self.replace_messages(())
         telemetry.record('conversation cleared', messages=cleared)

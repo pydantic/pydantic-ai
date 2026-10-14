@@ -26,8 +26,9 @@ from pydantic_ai import RunContext
 MAX_STATE_BYTES = 32 * 1024 * 1024
 """A larger REPL is not saved: the dump holds every live value, and a runaway one should not fill the disk."""
 
-_ID = re.compile(r'[0-9A-Za-z_-]+')
-"""Conversation IDs that are safe as file names; any other ID keeps its REPL to the run."""
+_ID = re.compile(r'[0-9a-z_-]+')
+"""Conversation IDs that are safe as file names, lowercase so a case-insensitive file system cannot
+merge two of them. CLAI's own IDs are lowercase UUIDs; any other ID keeps its REPL to the run."""
 
 _logger = logging.getLogger(__name__)
 

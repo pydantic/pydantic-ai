@@ -248,12 +248,27 @@ class TestReplStates:
         assert await states.load(child) is None
         assert list(tmp_path.iterdir()) == []
 
-        # An ID that is not a plain file name never reaches the file system.
-        unsafe = ReplStates(directory=tmp_path, session_id=lambda: '../escape')
-        assert not unsafe.keeps(run_context('../escape'))
-        unsafe.copy(source='../escape', target=SESSION_ID)
-        unsafe.delete('../escape')
+        # An ID that is not a plain lowercase file name never reaches the file system.
+        for unsafe_id in ('../escape', SESSION_ID.upper()):
+            unsafe = ReplStates(directory=tmp_path, session_id=lambda unsafe_id=unsafe_id: unsafe_id)
+            assert not unsafe.keeps(run_context(unsafe_id))
+            unsafe.copy(source=unsafe_id, target=SESSION_ID)
+            unsafe.delete(unsafe_id)
         assert list(tmp_path.iterdir()) == []
+
+    async def test_a_new_conversation_never_inherits_a_stale_state(self, tmp_path: Path) -> None:
+        """A REPL left under an ID, by a session deleted outside CLAI, does not reach a new session reusing it."""
+        session = Session(
+            Agent(TestModel()),
+            deps=None,
+            conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'),
+            workspace=tmp_path,
+        )
+        stale = dump(tmp_path, SESSION_ID)
+        stale.parent.mkdir()
+        stale.write_bytes(b'state')
+        await session.clear(SESSION_ID)
+        assert not stale.exists()
 
     async def test_file_errors_are_logged_not_raised(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture

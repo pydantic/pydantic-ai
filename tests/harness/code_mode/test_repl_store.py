@@ -11,11 +11,12 @@ from dataclasses import dataclass, field
 import anyio
 import pytest
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartStartEvent,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
@@ -23,7 +24,11 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai_harness.code_mode import CodeMode, CodeModeReplStore
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness.code_mode import CodeMode, CodeModeReplStore, CodeModeToolset
 
 from .._recording_durability import RecordingDurability
 
@@ -207,3 +212,74 @@ class TestCodeModeReplStore:
         await agent.run('set', conversation_id='c1')
 
         assert (store.loads, store.saves) == ([], [])
+
+    async def test_store_errors_do_not_fail_the_run(self, caplog: pytest.LogCaptureFixture) -> None:
+        @dataclass
+        class BrokenStore:
+            async def load(self, ctx: RunContext[None]) -> bytes | None:
+                raise OSError('disk unavailable')
+
+            async def save(self, ctx: RunContext[None], state: bytes | None) -> None:
+                raise OSError('disk full')
+
+        agent = agent_with(BrokenStore(), {'fresh': {'code': 'x = 1\nx'}})
+
+        with caplog.at_level(logging.WARNING):
+            assert (await agent.run('fresh', conversation_id='c1')).output == '1'
+
+        assert 'could not load the saved REPL state' in caplog.text and 'disk unavailable' in caplog.text
+        assert 'could not save the REPL state' in caplog.text and 'disk full' in caplog.text
+
+    async def test_a_save_that_hangs_is_abandoned(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setattr('pydantic_ai_harness.code_mode._repl_store.SAVE_TIMEOUT_SECONDS', 0)
+
+        @dataclass
+        class HangingStore(MemoryReplStore):
+            async def save(self, ctx: RunContext[None], state: bytes | None) -> None:
+                await anyio.sleep_forever()
+
+        store = HangingStore()
+        agent = agent_with(store)
+
+        with caplog.at_level(logging.WARNING):
+            await agent.run('set', conversation_id='c1')
+
+        assert store.states == {}
+        assert 'stopped saving the REPL state' in caplog.text
+
+    async def test_a_repl_still_feeding_at_exit_is_not_saved(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A nested tool that ignores cancellation keeps its eager statement running past teardown."""
+        monkeypatch.setattr('pydantic_ai_harness.code_mode._eager.CANCEL_TIMEOUT_SECONDS', 0.05)
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def stubborn() -> str:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await release.wait()
+            return 'late'
+
+        store = MemoryReplStore()
+        capability = CodeMode[None](eager=True, repl_store=store)
+        root = capability.get_wrapper_toolset(FunctionToolset[None](tools=[Tool(stubborn)]))
+        assert isinstance(root, CodeModeToolset)
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), conversation_id='c1')
+        async with root:
+            ctx.tool_manager = await ToolManager(toolset=root).for_run_step(ctx)
+            code = 'x = await stubborn()\nx\n'
+            start = PartStartEvent(index=0, part=ToolCallPart('run_code', {'code': code}, tool_call_id='c1'))
+
+            async def events() -> AsyncIterator[PartStartEvent]:
+                yield start
+
+            async for _ in capability.wrap_run_event_stream(ctx, stream=events()):
+                pass
+            await asyncio.wait_for(started.wait(), timeout=5)
+            # Let the stubborn tool go only after teardown has given up on its pump.
+            asyncio.get_running_loop().call_later(0.1, release.set)
+
+        assert store.loads == ['c1']
+        assert store.saves == []

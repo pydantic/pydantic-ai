@@ -240,7 +240,7 @@ State persists between `run_code` calls within the same agent run -- variables, 
 
 ### Keep the REPL across runs
 
-Each agent run starts its own REPL, so a conversation made of several runs loses its sandbox state between them. Pass a `repl_store` to keep it: a run that calls `run_code` loads the state the store returns before its first snippet, and saves the REPL to the store when the run ends. The store is any object with async `load` and `save` methods (`CodeModeReplStore`), and the state is Monty's opaque dump of the REPL. Key it by `ctx.conversation_id`, which stays the same across runs when you pass `conversation_id` or the previous run's `message_history`:
+Each agent run starts its own REPL, so a conversation made of several runs loses its sandbox state between them. Pass a `repl_store` to keep it: a run that calls `run_code` loads the state the store returns before its first snippet, and saves the REPL to the store when the run ends. The store is any object with async `load` and `save` methods (`pydantic_ai_harness.code_mode.CodeModeReplStore`), and the state is Monty's opaque dump of the REPL. Key it by `ctx.conversation_id`, which stays the same across runs when you pass `conversation_id` or the previous run's `message_history`:
 
 ```python
 from pydantic_ai import Agent, RunContext
@@ -268,7 +268,8 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(repl_store=I
 - A run that never calls `run_code` neither loads nor saves.
 - `restart: true` skips the saved state. The run then saves its new REPL, or calls `save(ctx, None)` when the restarted snippet failed before creating one.
 - A state Monty cannot load, such as a truncated dump or one from an incompatible Monty version, is dropped with a logged warning, and the run starts a fresh REPL.
-- A timeout, worker crash, or cancelled snippet that resets the REPL keeps the state saved before the run. A cancelled run still saves an idle REPL.
+- A timeout, worker crash, or cancelled snippet that resets the REPL keeps the state saved before the run, unless a later snippet in the run builds a new REPL, which is then saved. A cancelled run still saves an idle REPL.
+- A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save`, or one still running after 10 seconds, leaves the stored state as it was. Both are logged as warnings.
 - Restored state skips the type check a fresh REPL's first snippet gets, since the checker does not know the restored names.
 - The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one.
 - The store is not used under durable execution, where its I/O would run in replayed workflow code.
@@ -749,3 +750,5 @@ capabilities:
 ## API reference
 
 ::: pydantic_ai_harness.CodeMode
+
+::: pydantic_ai_harness.code_mode.CodeModeReplStore
