@@ -23,7 +23,8 @@ export interface Call {
   argument: string
 }
 
-const CALL = /\b(read_file|list_files|grep|glob|shell|write_file|edit_file)\(\s*(?:\w+\s*=\s*)?(?:[rbf]?(["'])((?:\\.|(?!\2).)*)\2)?/g
+// The two alternatives inside the string never match the same text, so a run of backslashes cannot backtrack exponentially.
+const CALL = /\b(read_file|list_files|grep|glob|shell|write_file|edit_file)\(\s*(?:\w+\s*=\s*)?(?:[rbf]?(["'])((?:\\.|(?!\2|\\).)*)\2)?/g
 
 /** The tool calls inside a `run_code` script, with their first literal argument, as code mode makes them. */
 export function codeCalls(code: string): Call[] {
