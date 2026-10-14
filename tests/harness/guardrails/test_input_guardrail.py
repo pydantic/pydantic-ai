@@ -110,6 +110,26 @@ class TestInputGuardrail:
         assert result.output == 'ok'
         assert calls == ['hello']
 
+    @pytest.mark.parametrize('metadata', [None, 'tag', [], {'origin': 'caller'}])
+    async def test_singleton_textcontent_user_prompt_keeps_legacy_guardrail_behavior(self, metadata: object):
+        prompt: list[TextContent] = [TextContent('ordinary user content', metadata=metadata)]
+        seen: list[str] = []
+
+        agent = Agent(
+            TestModel(custom_output_text='ok'),
+            capabilities=[InputGuardrail(guard=lambda text: seen.append(text) or True)],
+        )
+        await agent.run(prompt)
+
+        assert seen == [str(prompt)]
+
+        replacing_agent = Agent(
+            TestModel(custom_output_text='ok'),
+            capabilities=[InputGuardrail(guard=lambda _: GuardrailResult.replace('[redacted]'))],
+        )
+        with pytest.raises(UserError, match='multimodal prompt'):
+            await replacing_agent.run(prompt)
+
     async def test_extracts_singleton_textcontent_from_resumed_prompt(self):
         guard_calls: list[str] = []
         model_prompts: list[list[object]] = []
