@@ -62,7 +62,7 @@ app = agent.to_web(
 
 # Or with custom display labels
 app = agent.to_web(
-    models={'GPT 5.2': '{{ openai:medium }}', 'Claude': anthropic_model},
+    models={'OpenAI': '{{ openai:medium }}', 'Claude': anthropic_model},
 )
 ```
 

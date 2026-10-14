@@ -83,7 +83,7 @@ Pydantic AI uses a few key terms to describe how it interacts with different LLM
   constructed to get the best results, independent of the model and provider classes used.
   For example, different models have different restrictions on the JSON schemas that can be used for tools,
   and the same schema transformer needs to be used for Gemini models whether you're using `GoogleModel`
-  with model name `{{ google:large.name }}`, or `OpenAIChatModel` with `OpenRouterProvider` and model name `google/{{ google:large.name }}`.
+  or `OpenAIChatModel` with `OpenRouterProvider`.
 
 When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted as `<provider>:<model>`, e.g. `{{ openai:medium }}` or `openrouter:google/gemini-3-pro-preview`,
 Pydantic AI will automatically select the appropriate model class, provider, and profile.
@@ -402,11 +402,11 @@ from pydantic_ai.models.openai import OpenAIChatModel
 # Configure each model with provider-specific optimal settings
 openai_model = OpenAIChatModel(
     '{{ openai:medium.name }}',
-    settings=ModelSettings(temperature=0.7, max_tokens=1000)  # Higher creativity for OpenAI
+    settings=ModelSettings(thinking='high', max_tokens=2000)  # More reasoning for OpenAI
 )
 anthropic_model = AnthropicModel(
     '{{ anthropic:medium.name }}',
-    settings=ModelSettings(temperature=0.2, max_tokens=1000)  # Lower temperature for consistency
+    settings=ModelSettings(thinking='low', max_tokens=1000)  # A quicker fallback
 )
 
 fallback_model = FallbackModel(openai_model, anthropic_model)

@@ -121,7 +121,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.heroku import HerokuProvider
 
 model = OpenAIChatModel(
-    '{{ anthropic:medium.name }}',
+    'claude-sonnet-4-5',
     provider=HerokuProvider(api_key='your-heroku-inference-key'),
 )
 agent = Agent(model)

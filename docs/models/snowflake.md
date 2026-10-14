@@ -46,7 +46,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.snowflake import SnowflakeModel
 
-model = SnowflakeModel('{{ anthropic:medium.name }}')
+model = SnowflakeModel('claude-sonnet-4-6')
 agent = Agent(model)
 ...
 ```
@@ -61,7 +61,7 @@ from pydantic_ai.models.snowflake import SnowflakeModel
 from pydantic_ai.providers.snowflake import SnowflakeProvider
 
 model = SnowflakeModel(
-    '{{ anthropic:medium.name }}',
+    'claude-sonnet-4-6',
     provider=SnowflakeProvider(account='myorg-myaccount', token='your-token'),
 )
 agent = Agent(model)
@@ -78,7 +78,7 @@ from pydantic_ai.models.snowflake import SnowflakeModel
 from pydantic_ai.providers.snowflake import SnowflakeProvider
 
 model = SnowflakeModel(
-    '{{ anthropic:medium.name }}',
+    'claude-sonnet-4-6',
     provider=SnowflakeProvider(
         base_url='https://myorg-myaccount.privatelink.snowflakecomputing.com/api/v2/cortex/v1',
         token='your-token',
@@ -102,7 +102,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.snowflake import SnowflakeModel, SnowflakeModelSettings
 
 agent = Agent(
-    SnowflakeModel('{{ anthropic:medium.name }}'),
+    SnowflakeModel('claude-sonnet-4-6'),
     model_settings=SnowflakeModelSettings(snowflake_reasoning={'max_tokens': 4096}),
 )
 ...
