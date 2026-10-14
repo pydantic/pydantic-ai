@@ -76,6 +76,7 @@ try:
         FunctionCall,
         Message,
         RunAgentInput,
+        RunErrorEvent,
         RunFinishedEvent,
         RunStartedEvent,
         SystemMessage,
@@ -290,15 +291,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     mcp_app_toolsets: Sequence[MCPToolset[Any]] = ()
     """MCP toolsets whose [MCP Apps](../mcp/client.md#mcp-apps) pages may send requests to their server through this endpoint.
 
-    The AG-UI MCP Apps middleware, and renderers built for it such as CopilotKit's, send a page's
-    `tools/call` and `resources/read` requests as a run whose `forwardedProps.__proxiedMCPRequest`
-    names the server (`serverId`, or `serverHash`), the method, and its params. When it names the
-    [`id`][pydantic_ai.mcp.MCPToolset.id] of one of these toolsets, the adapter answers without
-    running the agent: `RUN_STARTED`, then `RUN_FINISHED` whose `result` is the MCP result, or
-    `{"error": ...}`. Tools are called with
-    [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app], so only tools visible to
-    apps can be called, and resources are read with
-    [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app].
+    Renderers built for the AG-UI MCP Apps middleware, such as CopilotKit's, send a page's `tools/call` and
+    `resources/read` requests as runs. When such a run names the [`id`][pydantic_ai.mcp.MCPToolset.id] of
+    one of these toolsets, the adapter answers it from that toolset with
+    [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] or
+    [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] instead of running the agent.
 
     Defaults to no toolsets, which runs the agent for every request.
     """
@@ -377,7 +374,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         """Answer a page's MCP request the way the AG-UI MCP Apps middleware does."""
         thread_id, run_id = self.run_input.thread_id, self.run_input.run_id
         yield RunStartedEvent(thread_id=thread_id, run_id=run_id)
-        yield RunFinishedEvent(thread_id=thread_id, run_id=run_id, result=await self._mcp_app_request_result(request))
+        try:
+            result = await self._mcp_app_request_result(request)
+        except Exception as e:
+            yield RunErrorEvent(message=str(e))
+            return
+        yield RunFinishedEvent(thread_id=thread_id, run_id=run_id, result=result)
 
     async def _mcp_app_request_result(self, request: dict[str, Any]) -> dict[str, Any]:
         from ...mcp import MCPError

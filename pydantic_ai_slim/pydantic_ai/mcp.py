@@ -1763,13 +1763,13 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
         Raises:
             MCPError: If the tool isn't available to apps (code `INVALID_PARAMS`), or the server returns a protocol
-                error. Send its `code`, `message` and `data` to the page as the JSON-RPC error.
+                error.
         """
         async with self:
-            tool = next((t for t in await self.list_tools() if t.name == name), None)
-            if tool is None or not _visible_to(tool, 'app'):
-                raise MCPError(message=f'Tool {name!r} is not available to apps', code=mcp_types.INVALID_PARAMS)
             try:
+                tool = next((t for t in await self.list_tools() if t.name == name), None)
+                if tool is None or not _visible_to(tool, 'app'):
+                    raise MCPError(message=f'Tool {name!r} is not available to apps', code=mcp_types.INVALID_PARAMS)
                 result = await self.client.call_tool(name=name, arguments=arguments or {}, raise_on_error=False)
             except McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
@@ -1788,8 +1788,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             The MCP `ReadResourceResult` in wire format (camelCase keys), with its `contents`.
 
         Raises:
-            MCPError: If the server returns an error. Send its `code`, `message` and `data` to the page as the
-                JSON-RPC error.
+            MCPError: If the server returns an error.
         """
         async with self:
             try:

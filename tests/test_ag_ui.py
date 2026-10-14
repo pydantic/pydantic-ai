@@ -9017,48 +9017,6 @@ async def test_tool_availability_delta_stream_matches_dumped_activity_message() 
     assert activity.activity_type == 'pydantic_ai_tool_availability_delta'
 
 
-_MCP_APP_TOOL_RESULT = {
-    'resource_uri': 'ui://weather/forecast',
-    'tool_input': {'city': 'Den Haag'},
-    'result': {
-        'content': [{'type': 'text', 'text': 'Den Haag: 14C'}],
-        'structuredContent': {'city': 'Den Haag', 'temp_c': 14},
-        '_meta': {'selectedDay': 'tuesday'},
-        'isError': False,
-    },
-    'toolset_id': 'weather',
-}
-"""What `MCPToolset` attaches to an MCP Apps tool call under `ToolReturnPart.metadata['mcp_app']`."""
-
-
-def _mcp_app_agent() -> Agent[None, str]:
-    async def stream_function(
-        messages: list[ModelMessage], _agent_info: AgentInfo
-    ) -> AsyncIterator[DeltaToolCalls | str]:
-        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
-            yield {0: DeltaToolCall(name='get_forecast', json_args='{"city": "Den Haag"}', tool_call_id='call-1')}
-        else:
-            yield 'done'
-
-    agent = Agent(FunctionModel(stream_function=stream_function))
-
-    @agent.tool_plain
-    def get_forecast(city: str) -> ToolReturn[str]:
-        return ToolReturn(return_value=f'{city}: 14C', metadata={'mcp_app': _MCP_APP_TOOL_RESULT})
-
-    return agent
-
-
-async def test_mcp_app_tool_result_skipped_for_legacy_ag_ui() -> None:
-    """The `mcp-apps` activity is omitted when the negotiated AG-UI version predates activity events."""
-    events = await _collect_adapter_events(
-        _mcp_app_agent(), create_input(UserMessage(id='user-1', content='Forecast?')), ag_ui_version='0.1.10'
-    )
-    assert [event['type'] for event in events if event['type'] in ('TOOL_CALL_RESULT', 'ACTIVITY_SNAPSHOT')] == [
-        'TOOL_CALL_RESULT'
-    ]
-
-
 async def test_dispatch_request_rejects_cross_origin_forgeable_content_type() -> None:
     """A `text/plain` body — postable cross-origin with no preflight — never reaches the agent.
 

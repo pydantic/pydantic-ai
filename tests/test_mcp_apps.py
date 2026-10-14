@@ -1,29 +1,32 @@
 """MCP Apps from a real MCP server through an agent run to the messages a frontend receives.
 
-Each test runs the whole chain with no hand-built app data: an in-process FastMCP server, `MCPToolset`,
-an agent whose model calls the tools, and a UI adapter's encoded stream and dumped history.
+The tests use an in-process FastMCP server and `MCPToolset` with no hand-built app data, and the frontend tests
+check the UI adapters' encoded stream and dumped history.
 """
 
 from __future__ import annotations
 
+import importlib
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelRequest, ToolReturn, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsInt, IsStr, try_import
+from .conftest import IsInt, IsStr, iter_message_parts, try_import
 
 with try_import() as imports_successful:
     import httpx
-    from ag_ui.core import ActivityMessage, RunAgentInput, UserMessage
-    from fastmcp import FastMCP
+    from ag_ui.core import RunAgentInput, ToolMessage, UserMessage
+    from fastmcp import Client, Context, FastMCP
     from fastmcp.exceptions import ToolError
     from fastmcp.tools import ToolResult as FastMCPToolResult
     from mcp.types import TextContent
@@ -33,7 +36,7 @@ with try_import() as imports_successful:
     from starlette.routing import Route
 
     from pydantic_ai._mcp_compat import is_mcp_sdk_v2
-    from pydantic_ai.mcp import MCPToolset
+    from pydantic_ai.mcp import CallToolFunc, MCPError, MCPToolset, ResourceContents, ToolResult
     from pydantic_ai.ui.ag_ui import AGUIAdapter
     from pydantic_ai.ui.ag_ui._utils import ACTIVITY_EVENTS_VERSION, detect_ag_ui_version, parse_ag_ui_version
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter
@@ -54,10 +57,16 @@ READ_FIELDS: dict[str, Any] = (
 
 
 def weather_server() -> FastMCP[None]:
-    """A tool with an MCP Apps UI, a tool without one, and the UI resource."""
+    """Tools with an MCP Apps UI (under the current and the deprecated `_meta` key), a tool without one, tools only
+    the app or only the model may call, and the UI resource.
+    """
     server: FastMCP[None] = FastMCP('weather_server')
 
-    @server.resource('ui://weather/forecast', mime_type='text/html;profile=mcp-app')
+    @server.resource(
+        'ui://weather/forecast',
+        mime_type='text/html;profile=mcp-app',
+        meta={'ui': {'csp': {'connectDomains': ['https://api.weather.example']}}},
+    )
     def forecast_view() -> str:
         return '<!doctype html><html><body>forecast</body></html>'
 
@@ -69,6 +78,10 @@ def weather_server() -> FastMCP[None]:
             structured_content={'city': city, 'temp_c': 14},
             meta={'selectedDay': 'tuesday'},
         )
+
+    @server.tool(meta={'ui/resourceUri': 'ui://weather/forecast'})
+    def legacy_forecast(city: str) -> FastMCPToolResult:
+        return FastMCPToolResult(content=[TextContent(type='text', text=f'{city}: 14C')])
 
     @server.tool
     def get_time(city: str) -> str:
@@ -87,15 +100,23 @@ def weather_server() -> FastMCP[None]:
         """Only the model may call this."""
         return 'model only'  # pragma: no cover
 
+    @server.tool
+    def supports_mcp_apps(ctx: Context) -> bool:
+        """Whether the client told the server it supports MCP Apps."""
+        return ctx.client_supports_extension('io.modelcontextprotocol/ui')
+
     return server
 
 
 @pytest.fixture
-def agent() -> Agent[None, str]:
-    """An agent whose model calls both server tools in one step, then answers.
+def weather() -> MCPToolset[Any]:
+    """The toolset for `weather_server`, built in a sync fixture so FastMCP 4's task-extension import runs outside the event loop."""
+    return MCPToolset(weather_server(), id='weather')
 
-    A sync fixture, because the first `MCPToolset` on FastMCP 4 imports its task extension from disk.
-    """
+
+@pytest.fixture
+def agent(weather: MCPToolset[Any]) -> Agent[None, str]:
+    """An agent whose model calls the UI tool and the plain tool in one step, then answers."""
 
     async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) == 1:
@@ -106,16 +127,17 @@ def agent() -> Agent[None, str]:
         else:
             yield 'Sunny-ish.'
 
-    return Agent(FunctionModel(stream_function=stream_function), toolsets=[MCPToolset(weather_server(), id='weather')])
+    return Agent(FunctionModel(stream_function=stream_function), toolsets=[weather])
 
 
-FORECAST_RESULT = {
-    'content': [{'type': 'text', 'text': 'Den Haag: 14C'}],
-    'structuredContent': {'city': 'Den Haag', 'temp_c': 14},
-    '_meta': {'selectedDay': 'tuesday', **SERVER_INFO},
-    'isError': False,
-}
-"""The `CallToolResult` the server returned for `get_forecast`, as the app expects to receive it."""
+def forecast_result(city: str) -> dict[str, Any]:
+    """The `CallToolResult` the server returns for `get_forecast`, as the app expects to receive it."""
+    return {
+        'content': [{'type': 'text', 'text': f'{city}: 14C'}],
+        'structuredContent': {'city': city, 'temp_c': 14},
+        '_meta': {'selectedDay': 'tuesday', **SERVER_INFO},
+        'isError': False,
+    }
 
 
 def model_view(messages: list[ModelMessage]) -> Any:
@@ -129,6 +151,128 @@ def model_view(messages: list[ModelMessage]) -> Any:
         return value
 
     return drop_timestamps(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
+
+
+async def test_server_declares_mcp_apps_extension(weather: MCPToolset[Any]):
+    async with weather:
+        assert weather.capabilities.extensions == snapshot({'io.modelcontextprotocol/ui': {}})
+
+
+async def test_app_tool_returns_carry_app_data(weather: MCPToolset[Any]):
+    """Calls to UI tools keep the full result for the app, without changing what the model sees."""
+    agent = Agent(TestModel(call_tools=['get_forecast', 'legacy_forecast', 'get_time']), toolsets=[weather])
+    result = await agent.run('Forecast?')
+    returns = {
+        part.tool_name: (part.content, part.metadata)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    }
+    assert returns == {
+        'get_forecast': (
+            {'city': 'a', 'temp_c': 14},
+            {
+                'mcp_app': {
+                    'resource_uri': 'ui://weather/forecast',
+                    'tool_input': {'city': 'a'},
+                    'result': forecast_result('a'),
+                    'toolset_id': 'weather',
+                }
+            },
+        ),
+        'legacy_forecast': (
+            'a: 14C',
+            {
+                'mcp_app': {
+                    'resource_uri': 'ui://weather/forecast',
+                    'tool_input': {'city': 'a'},
+                    'result': {
+                        'content': [{'type': 'text', 'text': 'a: 14C'}],
+                        **({'_meta': SERVER_INFO} if SERVER_INFO else {}),
+                        'isError': False,
+                    },
+                    'toolset_id': 'weather',
+                }
+            },
+        ),
+        'get_time': ('a: 09:00', None),
+    }
+
+
+HookKind = Literal['passthrough', 'rewrite', 'rewrite-in-place', 'other-tool']
+
+
+@pytest.fixture
+def hooked_weather(request: pytest.FixtureRequest) -> MCPToolset[Any]:
+    """The toolset for `weather_server` with a `process_tool_call` hook of the kind in `request.param`."""
+    hook_kind: HookKind = request.param
+
+    async def hook(ctx: RunContext[Any], call_tool: CallToolFunc, name: str, args: dict[str, Any]) -> ToolResult:
+        if hook_kind == 'other-tool':
+            return await call_tool('get_time', args)
+        result = await call_tool(name, args)
+        if hook_kind == 'rewrite':
+            assert isinstance(result, dict)
+            return {'temp_c': result['temp_c']}
+        if hook_kind == 'rewrite-in-place':
+            assert isinstance(result, dict)
+            del result['city']
+        return result
+
+    return MCPToolset(weather_server(), process_tool_call=hook)
+
+
+@pytest.mark.parametrize(
+    ('hooked_weather', 'expected'),
+    [
+        pytest.param(
+            'passthrough',
+            ToolReturn(
+                return_value={'city': 'a', 'temp_c': 14},
+                metadata={
+                    'mcp_app': {
+                        'resource_uri': 'ui://weather/forecast',
+                        'tool_input': {'city': 'a'},
+                        'result': forecast_result('a'),
+                        'toolset_id': None,
+                    }
+                },
+            ),
+            id='passthrough',
+        ),
+        pytest.param('rewrite', {'temp_c': 14}, id='rewritten-result'),
+        pytest.param('rewrite-in-place', {'temp_c': 14}, id='result-rewritten-in-place'),
+        pytest.param('other-tool', 'a: 09:00', id='other-tool'),
+    ],
+    indirect=['hooked_weather'],
+)
+async def test_app_data_with_process_tool_call(hooked_weather: MCPToolset[Any], expected: Any):
+    """App data is kept only when a `process_tool_call` hook returns the UI tool's own result unchanged.
+
+    A hook that rewrites the result, including by editing the returned value in place, decides what leaves
+    the toolset, so the raw result is not forwarded.
+    """
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    async with hooked_weather:
+        tools = await hooked_weather.get_tools(run_context)
+        returned = await hooked_weather.call_tool('get_forecast', {'city': 'a'}, run_context, tools['get_forecast'])
+    assert returned == expected
+
+
+async def test_read_resource_contents_keeps_mime_type_and_meta(weather: MCPToolset[Any]):
+    """`read_resource_contents` keeps what `read_resource` drops: the UI resource's MIME type and `_meta.ui`."""
+    async with weather:
+        contents = await weather.read_resource_contents('ui://weather/forecast')
+        text = await weather.read_resource('ui://weather/forecast')
+    assert contents == snapshot(
+        [
+            ResourceContents(
+                uri='ui://weather/forecast',
+                content='<!doctype html><html><body>forecast</body></html>',
+                mime_type='text/html;profile=mcp-app',
+                metadata={'ui': {'csp': {'connectDomains': ['https://api.weather.example']}}},
+            )
+        ]
+    )
+    assert text == contents[0].content
 
 
 async def test_vercel_ai_frontend_receives_app_after_tool_result(agent: Agent[None, str]):
@@ -150,7 +294,7 @@ async def test_vercel_ai_frontend_receives_app_after_tool_result(agent: Agent[No
                 'data': {
                     'resourceUri': 'ui://weather/forecast',
                     'toolInput': {'city': 'Den Haag'},
-                    'result': FORECAST_RESULT,
+                    'result': forecast_result('Den Haag'),
                     'serverId': 'weather',
                     'serverHash': 'weather',
                 },
@@ -183,6 +327,18 @@ async def test_vercel_ai_frontend_receives_app_after_tool_result(agent: Agent[No
     assert model_view(VercelAIAdapter.load_messages(dumped)) == model_view(VercelAIAdapter.load_messages(without_app))
 
 
+def ag_ui_run_input() -> RunAgentInput:
+    return RunAgentInput(
+        thread_id='thread',
+        run_id='run',
+        messages=[UserMessage(id='u1', content='Weather?')],
+        state={},
+        context=[],
+        tools=[],
+        forwarded_props=None,
+    )
+
+
 @pytest.mark.skipif(
     not imports_successful() or parse_ag_ui_version(detect_ag_ui_version()) < ACTIVITY_EVENTS_VERSION,
     reason='requires ag-ui-protocol with activity events',
@@ -192,18 +348,10 @@ async def test_ag_ui_frontend_receives_app_activity_after_tool_result(agent: Age
 
     The middleware is the reference producer that frontends such as CopilotKit validate against: its activity content
     has `result`, `resourceUri`, `serverHash`, `serverId` and `toolInput`, and CopilotKit requires `serverHash`.
-    See `middlewares/mcp-apps-middleware/src/index.ts` in https://github.com/ag-ui-protocol/ag-ui.
     """
-    run_input = RunAgentInput(
-        thread_id='thread',
-        run_id='run',
-        messages=[UserMessage(id='u1', content='Weather?')],
-        state={},
-        context=[],
-        tools=[],
-        forwarded_props=None,
-    )
-    adapter = AGUIAdapter(agent=agent, run_input=run_input, ag_ui_version='0.1.19')
+    from ag_ui.core import ActivityMessage
+
+    adapter = AGUIAdapter(agent=agent, run_input=ag_ui_run_input(), ag_ui_version='0.1.19')
     events = [
         json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
     ]
@@ -219,7 +367,7 @@ async def test_ag_ui_frontend_receives_app_activity_after_tool_result(agent: Age
                 'content': {
                     'resourceUri': 'ui://weather/forecast',
                     'toolInput': {'city': 'Den Haag'},
-                    'result': FORECAST_RESULT,
+                    'result': forecast_result('Den Haag'),
                     'serverId': 'weather',
                     'serverHash': 'weather',
                 },
@@ -232,24 +380,112 @@ async def test_ag_ui_frontend_receives_app_activity_after_tool_result(agent: Age
     )
     assert events.index(activities[0]) > tool_result
 
-    # Dumped history carries the same activity, and loading it back adds nothing the model sees.
+    # Dumped history carries the same activity after the tool result, and loading it back adds nothing the model sees.
     async with agent.run_stream('Weather?') as result:
         await result.get_output()
     dumped = AGUIAdapter.dump_messages(result.all_messages())
-    [dumped_activity] = [message for message in dumped if isinstance(message, ActivityMessage)]
-    assert dumped_activity.content == activities[0]['content']
+    [activity_index] = [i for i, message in enumerate(dumped) if isinstance(message, ActivityMessage)]
+    [tool_message_index] = [
+        i for i, m in enumerate(dumped) if isinstance(m, ToolMessage) and m.tool_call_id == 'forecast-1'
+    ]
+    assert activity_index > tool_message_index
+    assert dumped[activity_index].content == activities[0]['content']
     without_activity = [message for message in dumped if not isinstance(message, ActivityMessage)]
     assert model_view(AGUIAdapter.load_messages(dumped)) == model_view(AGUIAdapter.load_messages(without_activity))
 
 
-@pytest.fixture
-def weather() -> MCPToolset[None]:
-    """The toolset the page's requests are relayed to, built outside the event loop like `agent`."""
-    return MCPToolset(weather_server(), id='weather')
+async def test_ag_ui_frontend_without_activity_events_receives_no_app(agent: Agent[None, str]):
+    """Frontends on an AG-UI version from before activity events get the tool result and no activity."""
+    adapter = AGUIAdapter(agent=agent, run_input=ag_ui_run_input(), ag_ui_version='0.1.10')
+    event_types = [
+        json.loads(encoded.removeprefix('data: '))['type']
+        async for encoded in adapter.encode_stream(adapter.run_stream())
+    ]
+    assert 'TOOL_CALL_RESULT' in event_types
+    assert 'ACTIVITY_SNAPSHOT' not in event_types
+
+
+def wrapped_text_result(text: str, *, is_error: bool = False) -> dict[str, Any]:
+    """The `CallToolResult` FastMCP returns for a tool that returns `text`, or raises `ToolError(text)`."""
+    if is_error:
+        return {
+            'content': [{'type': 'text', 'text': text}],
+            **({'_meta': SERVER_INFO} if SERVER_INFO else {}),
+            'isError': True,
+        }
+    return {
+        'content': [{'type': 'text', 'text': text}],
+        'structuredContent': {'result': text},
+        '_meta': {'fastmcp': {'wrap_result': True}, **SERVER_INFO},
+        'isError': False,
+    }
+
+
+UI_RESOURCE_READ = {
+    'contents': [
+        {
+            'uri': 'ui://weather/forecast',
+            'mimeType': 'text/html;profile=mcp-app',
+            '_meta': {'ui': {'csp': {'connectDomains': ['https://api.weather.example']}}},
+            'text': '<!doctype html><html><body>forecast</body></html>',
+        }
+    ],
+    **READ_FIELDS,
+}
+"""The `ReadResourceResult` the server returns for the UI resource, as the page expects to receive it."""
+
+
+@pytest.mark.parametrize(
+    ('name', 'arguments', 'expected'),
+    [
+        pytest.param('select_day', {'day': 'friday'}, wrapped_text_result('Selected friday'), id='app-only-tool'),
+        pytest.param(
+            'select_day',
+            {'day': 'sunday'},
+            wrapped_text_result('No forecast for sunday', is_error=True),
+            id='error-result',
+        ),
+        pytest.param('get_time', {'city': 'a'}, wrapped_text_result('a: 09:00'), id='tool-without-visibility'),
+    ],
+)
+async def test_call_tool_for_app(
+    weather: MCPToolset[Any], name: str, arguments: dict[str, Any], expected: dict[str, Any]
+):
+    """A page's tool calls get the server's full result in wire form, `isError` results included."""
+    assert await weather.call_tool_for_app(name, arguments) == expected
+
+
+@pytest.mark.parametrize('name', ['model_only', 'missing'])
+async def test_call_tool_for_app_refuses_tools_hidden_from_apps(weather: MCPToolset[Any], name: str):
+    """A page can't call tools hidden from apps or missing from this server; both get the same error."""
+    with pytest.raises(MCPError) as exc_info:
+        await weather.call_tool_for_app(name)
+    assert str(exc_info.value) == f'Tool {name!r} is not available to apps (code: -32602)'
+
+
+async def test_read_resource_for_app(weather: MCPToolset[Any]):
+    """A page's resource reads get the server's full result in wire form."""
+    assert await weather.read_resource_for_app('ui://weather/forecast') == UI_RESOURCE_READ
+    with pytest.raises(MCPError, match='ui://missing'):
+        await weather.read_resource_for_app('ui://missing')
+
+
+@pytest.mark.skipif(
+    not imports_successful() or not is_mcp_sdk_v2(), reason='FastMCP 3 clients have no client extensions'
+)
+async def test_client_extension_announces_mcp_apps_support(weather: MCPToolset[Any]):
+    """The documented FastMCP 4 client extension tells servers the client supports MCP Apps; a plain one doesn't."""
+    # Only the MCP SDK v2 that FastMCP 4 uses has `advertise`, and CI type-checks against FastMCP 3.
+    mcp_client: Any = importlib.import_module('mcp.client')
+    ui = mcp_client.advertise('io.modelcontextprotocol/ui', {'mimeTypes': ['text/html;profile=mcp-app']})
+    announced = MCPToolset(Client(weather_server(), extensions=[ui]))
+    async with weather, announced:
+        assert await weather.direct_call_tool('supports_mcp_apps', {}) is False
+        assert await announced.direct_call_tool('supports_mcp_apps', {}) is True
 
 
 async def post_run(
-    app: Starlette, forwarded_props: dict[str, Any], messages: list[dict[str, Any]] | None = None
+    app: Starlette, forwarded_props: dict[str, Any] | None, messages: list[dict[str, Any]] | None = None
 ) -> list[dict[str, Any]]:
     """POST an AG-UI run to `app` the way `@ag-ui/client` does, and return the decoded events."""
     body = {
@@ -266,8 +502,12 @@ async def post_run(
     return [json.loads(line.removeprefix('data: ')) for line in response.text.splitlines() if line.startswith('data: ')]
 
 
-def agui_app(agent: Agent[None, str], mcp_app_toolsets: list[MCPToolset[None]]) -> Starlette:
+def agui_app(agent: Agent[None, str], mcp_app_toolsets: Sequence[MCPToolset[Any]] | None = None) -> Starlette:
+    """An app with one AG-UI endpoint, which leaves `mcp_app_toolsets` at its default when it's `None`."""
+
     async def agui(request: Request) -> Response:
+        if mcp_app_toolsets is None:
+            return await AGUIAdapter.dispatch_request(request, agent=agent)
         return await AGUIAdapter.dispatch_request(request, agent=agent, mcp_app_toolsets=mcp_app_toolsets)
 
     return Starlette(routes=[Route('/agui', agui, methods=['POST'])])
@@ -289,59 +529,16 @@ PROXIED_REQUEST_CASES = [
             'method': 'resources/read',
             'params': {'uri': 'ui://weather/forecast'},
         },
-        result={
-            'contents': [
-                {
-                    'uri': 'ui://weather/forecast',
-                    'mimeType': 'text/html;profile=mcp-app',
-                    'text': '<!doctype html><html><body>forecast</body></html>',
-                }
-            ],
-            **READ_FIELDS,
-        },
+        result=UI_RESOURCE_READ,
     ),
     ProxiedRequestCase(
-        id='call-app-only-tool',
-        request={
-            'serverHash': 'weather',
-            'serverId': 'weather',
-            'method': 'tools/call',
-            'params': {'name': 'select_day', 'arguments': {'day': 'friday'}},
-        },
-        result={
-            'content': [{'type': 'text', 'text': 'Selected friday'}],
-            'structuredContent': {'result': 'Selected friday'},
-            '_meta': {'fastmcp': {'wrap_result': True}, **SERVER_INFO},
-            'isError': False,
-        },
-    ),
-    ProxiedRequestCase(
-        id='tool-error-is-a-result',
-        request={
-            'serverHash': 'weather',
-            'serverId': 'weather',
-            'method': 'tools/call',
-            'params': {'name': 'select_day', 'arguments': {'day': 'sunday'}},
-        },
-        result={
-            'content': [{'type': 'text', 'text': 'No forecast for sunday'}],
-            **({'_meta': SERVER_INFO} if SERVER_INFO else {}),
-            'isError': True,
-        },
-    ),
-    ProxiedRequestCase(
-        id='server-hash-only',
+        id='call-tool-by-server-hash',
         request={
             'serverHash': 'weather',
             'method': 'tools/call',
             'params': {'name': 'select_day', 'arguments': {'day': 'monday'}},
         },
-        result={
-            'content': [{'type': 'text', 'text': 'Selected monday'}],
-            'structuredContent': {'result': 'Selected monday'},
-            '_meta': {'fastmcp': {'wrap_result': True}, **SERVER_INFO},
-            'isError': False,
-        },
+        result=wrapped_text_result('Selected monday'),
     ),
     ProxiedRequestCase(
         id='model-only-tool-refused',
@@ -352,11 +549,6 @@ PROXIED_REQUEST_CASES = [
             'params': {'name': 'model_only'},
         },
         result=snapshot({'error': "Tool 'model_only' is not available to apps"}),
-    ),
-    ProxiedRequestCase(
-        id='unknown-tool-refused',
-        request={'serverHash': 'weather', 'serverId': 'weather', 'method': 'tools/call', 'params': {'name': 'nope'}},
-        result=snapshot({'error': "Tool 'nope' is not available to apps"}),
     ),
     ProxiedRequestCase(
         id='unknown-server',
@@ -381,32 +573,57 @@ PROXIED_REQUEST_CASES = [
 ]
 
 
+async def no_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:  # pragma: no cover
+    raise AssertionError('the model must not run for a proxied MCP request')
+    yield
+
+
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in PROXIED_REQUEST_CASES])
-async def test_ag_ui_answers_proxied_mcp_app_requests(case: ProxiedRequestCase, weather: MCPToolset[None]):
+async def test_ag_ui_answers_proxied_mcp_app_requests(case: ProxiedRequestCase, weather: MCPToolset[Any]):
     """A page's MCP request sent the way CopilotKit sends it is answered from the server, without running the model.
 
     CopilotKit's renderer fetches the app's HTML and relays the app's tool calls by starting an agent run with
     `forwardedProps.__proxiedMCPRequest`, and reads the answer from `RUN_FINISHED.result`.
     """
-
-    async def no_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:  # pragma: no cover
-        raise AssertionError('the model must not run for a proxied MCP request')
-        yield
-
     agent = Agent(FunctionModel(stream_function=no_model))
     events = await post_run(agui_app(agent, [weather]), {'__proxiedMCPRequest': case.request})
     assert [event['type'] for event in events] == ['RUN_STARTED', 'RUN_FINISHED']
     assert events[1]['result'] == case.result
 
 
-async def test_ag_ui_runs_the_agent_for_proxied_requests_without_mcp_app_toolsets(agent: Agent[None, str]):
-    """Without `mcp_app_toolsets`, a run carrying a proxied MCP request runs the agent as before."""
+async def test_ag_ui_ends_proxied_request_with_run_error_when_server_is_unreachable():
+    """A failure other than an MCP error, such as a server that can't be reached, ends the run with `RUN_ERROR`."""
+    unreachable = MCPToolset('http://127.0.0.1:9/mcp', id='weather')
     request = {'serverId': 'weather', 'method': 'resources/read', 'params': {'uri': 'ui://weather/forecast'}}
     events = await post_run(
-        agui_app(agent, []),
-        {'__proxiedMCPRequest': request},
-        messages=[{'id': 'u1', 'role': 'user', 'content': 'Weather?'}],
+        agui_app(Agent(FunctionModel(stream_function=no_model)), [unreachable]), {'__proxiedMCPRequest': request}
     )
+    assert [event['type'] for event in events] == ['RUN_STARTED', 'RUN_ERROR']
+
+
+@pytest.mark.parametrize(
+    ('with_toolsets', 'forwarded_props'),
+    [
+        pytest.param(
+            False,
+            {
+                '__proxiedMCPRequest': {
+                    'serverId': 'weather',
+                    'method': 'resources/read',
+                    'params': {'uri': 'ui://weather/forecast'},
+                }
+            },
+            id='proxied-request-without-mcp-app-toolsets',
+        ),
+        pytest.param(True, None, id='chat-run-with-mcp-app-toolsets'),
+    ],
+)
+async def test_ag_ui_runs_the_agent(
+    agent: Agent[None, str], weather: MCPToolset[Any], with_toolsets: bool, forwarded_props: dict[str, Any] | None
+):
+    """The agent runs for a proxied request when no `mcp_app_toolsets` are given, and for chat runs when they are."""
+    app = agui_app(agent, [weather] if with_toolsets else None)
+    events = await post_run(app, forwarded_props, messages=[{'id': 'u1', 'role': 'user', 'content': 'Weather?'}])
     finished = events[-1]
     assert finished['type'] == 'RUN_FINISHED'
     assert 'result' not in finished
