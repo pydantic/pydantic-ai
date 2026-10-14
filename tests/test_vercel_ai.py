@@ -5734,20 +5734,12 @@ async def test_adapter_tool_return_multimodal_always_serialized(tiny_image: Bina
     )
 
 
-async def test_mcp_app_tool_result_streams_and_dumps_as_data_chunk():
-    """MCP Apps data on a tool return reaches the frontend as one `data-mcp-apps` chunk keyed by the tool call ID.
-
-    The same chunk is part of dumped history, and a malformed record is not forwarded.
-    """
-    app = {
+async def test_mcp_app_data_chunk_without_toolset_id_or_with_malformed_record():
+    """A record from a toolset without an `id` is sent without `serverId`/`serverHash`; a malformed one is not sent."""
+    app: dict[str, Any] = {
         'resource_uri': 'ui://weather/forecast',
-        'tool_input': {'city': 'Den Haag'},
-        'result': {
-            'content': [{'type': 'text', 'text': 'Den Haag: 14C'}],
-            'structuredContent': {'city': 'Den Haag', 'temp_c': 14},
-            '_meta': {'selectedDay': 'tuesday'},
-            'isError': False,
-        },
+        'tool_input': {},
+        'result': {'content': [], 'isError': False},
         'toolset_id': None,
     }
 
@@ -5756,7 +5748,7 @@ async def test_mcp_app_tool_result_streams_and_dumps_as_data_chunk():
     ) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) == 1:
             yield {
-                0: DeltaToolCall(name='get_forecast', json_args='{"city": "Den Haag"}', tool_call_id='call_1'),
+                0: DeltaToolCall(name='no_toolset_id', json_args='{}', tool_call_id='call_1'),
                 1: DeltaToolCall(name='malformed', json_args='{}', tool_call_id='call_2'),
             }
         else:
@@ -5765,49 +5757,33 @@ async def test_mcp_app_tool_result_streams_and_dumps_as_data_chunk():
     agent = Agent(model=FunctionModel(stream_function=stream_function))
 
     @agent.tool_plain
-    async def get_forecast(city: str) -> ToolReturn:
-        return ToolReturn(return_value=f'{city}: 14C', metadata={'mcp_app': app})
+    async def no_toolset_id() -> ToolReturn:
+        return ToolReturn(return_value='app', metadata={'mcp_app': app})
 
     @agent.tool_plain
     async def malformed() -> ToolReturn:
         return ToolReturn(return_value='no app', metadata={'mcp_app': {'resource_uri': 1}})
 
-    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Forecast?')])])
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hi')])])
     adapter = VercelAIAdapter(agent, request)
-    events = [
+    chunks = [
         json.loads(event.removeprefix('data: '))
         async for event in adapter.encode_stream(adapter.run_stream())
         if '[DONE]' not in event
     ]
-    app_chunks = [event for event in events if event['type'].startswith('data-')]
-    assert app_chunks == snapshot(
+    assert [chunk for chunk in chunks if chunk['type'].startswith('data-')] == snapshot(
         [
             {
                 'type': 'data-mcp-apps',
                 'id': 'call_1',
                 'data': {
                     'resourceUri': 'ui://weather/forecast',
-                    'toolInput': {'city': 'Den Haag'},
-                    'result': {
-                        'content': [{'type': 'text', 'text': 'Den Haag: 14C'}],
-                        'structuredContent': {'city': 'Den Haag', 'temp_c': 14},
-                        '_meta': {'selectedDay': 'tuesday'},
-                        'isError': False,
-                    },
+                    'toolInput': {},
+                    'result': {'content': [], 'isError': False},
                 },
             }
         ]
     )
-
-    async with agent.run_stream('Forecast?') as result:
-        await result.get_output()
-    dumped_parts = [
-        part.model_dump(by_alias=True, exclude_none=True)
-        for message in VercelAIAdapter.dump_messages(result.all_messages())
-        for part in message.parts
-        if part.type.startswith('data-')
-    ]
-    assert dumped_parts == app_chunks
 
 
 async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
