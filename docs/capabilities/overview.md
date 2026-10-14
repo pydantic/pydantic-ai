@@ -189,7 +189,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import Thinking, WebSearch
 
 agent = Agent(
-    '{{ anthropic:large }}',
+    '{{ anthropic:xlarge }}',
     instructions='You are a research assistant. Be thorough and cite sources.',
     capabilities=[
         Thinking(effort='high'),
@@ -430,7 +430,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP, ImageGeneration, WebFetch, WebSearch, XSearch
 
 agent = Agent(
-    '{{ anthropic:large }}',
+    '{{ anthropic:xlarge }}',
     capabilities=[
         # Native when supported; DuckDuckGo fallback on unsupported models
         WebSearch(local='duckduckgo'),
@@ -439,7 +439,7 @@ agent = Agent(
         # Native when supported; direct image-model fallback otherwise
         ImageGeneration(fallback_image_model='openai:gpt-image-1.5'),
         # Native on xAI; on other models, explicitly delegate to an xAI model
-        XSearch(fallback_subagent_model='{{ xai:medium }}'),
+        XSearch(fallback_subagent_model='{{ xai:large }}'),
         # Runs the MCP server locally by default; pass `native=True` to also advertise native MCP
         MCP('https://mcp.example.com/api'),
     ],

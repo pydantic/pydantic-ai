@@ -176,7 +176,7 @@ advertised and quietly degraded by a capability carve-out instead.
 
 Make only the changes the enumeration step surfaced. Resist scope creep. If you suspect a pre-existing bug in a sibling model's profile, reproduce it live first. Fold a reproduced bug on the same profile gate into this PR, with a test and one PR-body line. Flag an unreproduced or larger one in the PR description instead.
 
-Docs examples name models through the tiered aliases in `docs/model_aliases.py`, not model ids. When the new model becomes its provider's latest `small`, `medium`, or `large` model, repoint that alias there instead of editing doc pages, then update the README mirrors that `tests/test_docs_parity.py` and `tests/harness/test_docs_parity.py` flag.
+Docs examples name models through the tiered aliases in `docs/model_aliases.py`, not model ids. When the new model becomes its provider's latest model in one of those tiers, repoint that alias there instead of editing doc pages, then update the README mirrors that `tests/test_docs_parity.py` and `tests/harness/test_docs_parity.py` flag.
 
 After edits:
 

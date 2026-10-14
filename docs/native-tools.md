@@ -221,7 +221,7 @@ The [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] allows your agent to s
 from pydantic_ai import Agent, XSearchTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('{{ xai:medium }}', capabilities=[NativeTool(XSearchTool())])
+agent = Agent('{{ xai:large }}', capabilities=[NativeTool(XSearchTool())])
 
 result = agent.run_sync('What are people saying about AI on X today?')
 print(result.output)
@@ -241,7 +241,7 @@ from pydantic_ai import Agent, XSearchTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    '{{ xai:medium }}',
+    '{{ xai:large }}',
     capabilities=[
         NativeTool(
             XSearchTool(
@@ -1110,7 +1110,7 @@ from pydantic_ai.capabilities import NativeTool
 
 async def main():
     agent = Agent(
-        '{{ xai:medium }}',
+        '{{ xai:large }}',
         capabilities=[NativeTool(FileSearchTool(file_store_ids=['collection_abc123']))]
     )
 
@@ -1132,7 +1132,7 @@ from pydantic_ai.capabilities import NativeTool
 
 async def main():
     agent = Agent(
-        '{{ xai:medium }}',
+        '{{ xai:large }}',
         capabilities=[
             NativeTool(
                 FileSearchTool(

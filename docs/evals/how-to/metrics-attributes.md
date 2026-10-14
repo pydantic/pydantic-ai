@@ -497,7 +497,7 @@ async def main():
     print(report.render())
     """
     ╭─ Evaluation Summary: task ─╮
-    │ model: {{ openai:medium.name }}           │
+    │ model: {{ openai:medium.name }}         │
     │ version: v1.0              │
     ╰────────────────────────────╯
     ┏━━━━━━━━━━┳━━━━━━━━━━┓

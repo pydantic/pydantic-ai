@@ -44,7 +44,7 @@ reviewer = ApprovalReviewer(
     question='Could this command delete or overwrite data, reach the network, or expose secrets?',
 )
 agent = Agent(
-    '{{ anthropic:large }}',
+    '{{ anthropic:xlarge }}',
     capabilities=[reviewer],
     output_type=[str, DeferredToolRequests],
 )
@@ -112,7 +112,7 @@ def ask_in_terminal(ctx: RunContext[None], requests: DeferredToolRequests) -> De
 
 
 agent = Agent(
-    '{{ anthropic:large }}',
+    '{{ anthropic:xlarge }}',
     capabilities=[
         ApprovalReviewer('{{ anthropic:small }}', question='Could this destroy data or leak secrets?'),
         HandleDeferredToolCalls(handler=ask_in_terminal),
@@ -152,7 +152,7 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
 
 agent = Agent(
-    '{{ anthropic:large }}',
+    '{{ anthropic:xlarge }}',
     output_type=[str, DeferredToolRequests],
     capabilities=[
         ApprovalReviewer(

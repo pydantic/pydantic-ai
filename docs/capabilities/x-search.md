@@ -14,7 +14,7 @@ from pydantic_ai.capabilities import XSearch
 
 agent = Agent(
     '{{ anthropic:medium }}',
-    capabilities=[XSearch(fallback_subagent_model='{{ xai:medium }}')],
+    capabilities=[XSearch(fallback_subagent_model='{{ xai:large }}')],
 )
 ```
 

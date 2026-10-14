@@ -43,7 +43,7 @@ judge = ToolCallJudge(
     tools=['delete_file'],
     question='Would running this destroy data, spend money, or leak secrets?',
 )
-agent = Agent('{{ anthropic:large }}', capabilities=[judge])
+agent = Agent('{{ anthropic:xlarge }}', capabilities=[judge])
 
 
 @agent.tool_plain
@@ -99,7 +99,7 @@ judge = ToolCallJudge(
     on_uncertain='ask',
 )
 agent = Agent(
-    '{{ anthropic:large }}',
+    '{{ anthropic:xlarge }}',
     capabilities=[judge],
     output_type=[str, DeferredToolRequests],
 )
@@ -161,7 +161,7 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 agent = Agent(
-    '{{ anthropic:large }}',
+    '{{ anthropic:xlarge }}',
     output_type=[str, DeferredToolRequests],
     capabilities=[
         ToolCallJudge(

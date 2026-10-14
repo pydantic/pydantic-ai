@@ -45,7 +45,10 @@ CHECKED_PAGES = {'models/overview.md'}
 _KNOWN_MODELS = frozenset(known_model_names())
 _KNOWN_PREFIXES = {model.partition(':')[0] for model in _KNOWN_MODELS}
 _PROVIDERS = {alias.partition(':')[0] for alias in MODEL_ALIASES}
-_TIERS = ('small', 'medium', 'large')
+# Not every provider has every tier.
+_TIERS = ('small', 'medium', 'large', 'xlarge')
+# Models the providers serve that `KnownModelName` doesn't list yet; drop each once it does.
+_NOT_YET_KNOWN = {'xai:grok-4.7'}
 # Models the tiers don't cover, such as image, audio and research models, may be named directly.
 _UNTIERED = re.compile(r'image|audio|tts|whisper|guard|moderation|computer-use|research|codex|multi-agent|^o\d')
 
@@ -93,7 +96,7 @@ def _alias_problems(text: str) -> list[tuple[int, str]]:
             continue
         prefix = match.group('prefix')
         model = prefix + resolve_model_aliases(match.group()[len(prefix) :])
-        if model.partition(':')[0] in _KNOWN_PREFIXES and model not in _KNOWN_MODELS:
+        if model.partition(':')[0] in _KNOWN_PREFIXES and model not in _KNOWN_MODELS | _NOT_YET_KNOWN:
             problems.append((match.start(), f'{match.group()} resolves to unknown {model!r}'))
     return problems
 
@@ -122,9 +125,8 @@ def test_aliases_name_known_models():
         provider, _, tier = alias.partition(':')
         assert tier in _TIERS, f'{alias!r} should use one of the tiers {_TIERS}'
         assert model.startswith(f'{provider}:'), f'{alias!r} should name a `{provider}:` model'
-        assert model in _KNOWN_MODELS, f'{alias!r} names {model!r}, which is not a `KnownModelName`'
-    for provider in _PROVIDERS:
-        assert {f'{provider}:{tier}' for tier in _TIERS} <= MODEL_ALIASES.keys(), f'{provider!r} lacks a tier'
+        assert model in _KNOWN_MODELS | _NOT_YET_KNOWN, f'{alias!r} names {model!r}, which is not a `KnownModelName`'
+    assert not _NOT_YET_KNOWN & _KNOWN_MODELS, 'Drop the models `KnownModelName` now lists from `_NOT_YET_KNOWN`'
 
 
 def test_docs_aliases_resolve_to_known_models():

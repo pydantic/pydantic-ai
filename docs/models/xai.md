@@ -31,7 +31,7 @@ You can then use [`XaiModel`][pydantic_ai.models.xai.XaiModel] by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('{{ xai:medium }}')
+agent = Agent('{{ xai:large }}')
 ...
 ```
 
@@ -45,7 +45,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModel
 
 # Uses XAI_API_KEY environment variable
-model = XaiModel('{{ xai:medium.name }}')
+model = XaiModel('{{ xai:large.name }}')
 agent = Agent(model)
 ...
 ```
@@ -59,7 +59,7 @@ from pydantic_ai.providers.xai import XaiProvider
 
 # Custom API key
 provider = XaiProvider(api_key='your-api-key')
-model = XaiModel('{{ xai:medium.name }}', provider=provider)
+model = XaiModel('{{ xai:large.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -76,7 +76,7 @@ provider = XaiProvider(
     api_host='gateway.example.com',
     timeout=30,
 )
-model = XaiModel('{{ xai:medium.name }}', provider=provider)
+model = XaiModel('{{ xai:large.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -95,7 +95,7 @@ from pydantic_ai.providers.xai import XaiProvider
 
 async def main():
     async with AsyncClient(api_key='your-api-key') as xai_client:
-        model = XaiModel('{{ xai:medium.name }}', provider=XaiProvider(xai_client=xai_client))
+        model = XaiModel('{{ xai:large.name }}', provider=XaiProvider(xai_client=xai_client))
         agent = Agent(model)
         result = await agent.run('What is the capital of France?')
         print(result.output)
@@ -117,7 +117,7 @@ provider = XaiProvider(
     api_key='your-api-key',
     metadata=(('x-grok-conv-id', 'my-conversation-id'),),
 )
-model = XaiModel('{{ xai:medium.name }}', provider=provider)
+model = XaiModel('{{ xai:large.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -138,7 +138,7 @@ from pydantic_ai.providers.xai import XaiProvider
 
 async def main():
     async with AsyncClient(api_key='your-api-key', channel_options=[('grpc.enable_retries', 0)]) as xai_client:
-        model = XaiModel('{{ xai:medium.name }}', provider=XaiProvider(xai_client=xai_client))
+        model = XaiModel('{{ xai:large.name }}', provider=XaiProvider(xai_client=xai_client))
         agent = Agent(model)
         result = await agent.run('What is the capital of France?')
         print(result.output)
@@ -188,7 +188,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import XSearch
 
 agent = Agent(
-    '{{ xai:medium }}',
+    '{{ xai:large }}',
     capabilities=[
         XSearch(
             allowed_x_handles=['OpenAI', 'AnthropicAI', 'dasfacc'],
@@ -255,7 +255,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModelSettings
 
 agent = Agent(
-    '{{ xai:medium }}',
+    '{{ xai:large }}',
     model_settings=XaiModelSettings(xai_max_turns=5),
 )
 ```
