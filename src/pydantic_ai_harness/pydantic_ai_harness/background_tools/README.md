@@ -114,6 +114,32 @@ A normal run waits for its background tools to finish. A pending call counts tow
 results are not delivered. Async tools must allow cancellation; ignoring it can prevent the run from
 stopping.
 
+### Matching results to tool calls
+
+Applications can match a result to its tool call through metadata. This metadata is not sent to the
+model:
+
+- The "started" [`ToolReturnPart`](https://ai.pydantic.dev/api/messages/#pydantic_ai.messages.ToolReturnPart) has
+  `metadata={'background': {'status': 'pending'}}`.
+- The [`ModelRequest`](https://ai.pydantic.dev/api/messages/#pydantic_ai.messages.ModelRequest) that delivers the result has
+  `metadata={'background': {...}}` with `tool_call_id`, `tool_name`, and `status` (`'completed'` or
+  `'failed'`). When the tool returns a [`ToolReturn`](https://ai.pydantic.dev/api/messages/#pydantic_ai.messages.ToolReturn) with
+  `metadata`, it is included as `metadata`.
+
+```python
+from pydantic_ai.messages import ModelMessage, ModelRequest
+
+
+def background_results(messages: list[ModelMessage]) -> dict[str, str]:
+    """Map each finished background tool call ID to its status."""
+    results: dict[str, str] = {}
+    for message in messages:
+        if isinstance(message, ModelRequest) and message.metadata and 'background' in message.metadata:
+            background = message.metadata['background']
+            results[background['tool_call_id']] = background['status']
+    return results
+```
+
 > [!WARNING]
 > Python cannot stop a synchronous tool before it returns. Cancelling the run will still wait for
 > that tool.
@@ -129,6 +155,8 @@ stopping.
 - A sequential tool can overlap background work that started earlier. Tools that must not overlap
   should protect their shared data or should not run in the background.
 - Realtime sessions already run tools concurrently, so `BackgroundTools` leaves them unchanged.
+- The Vercel AI and AG-UI adapters do not stream the result message, so a frontend shows only the
+  "started" result until history is reloaded.
 - The later result message does not pass through tool-result or tool-error hooks. Validate or limit
   the result inside the tool when this matters.
 
