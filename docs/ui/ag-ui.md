@@ -524,6 +524,31 @@ AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`]
 
 When an [`MCPToolset`][pydantic_ai.mcp.MCPToolset] tool has an [MCP Apps](../mcp/client.md#mcp-apps) UI, its result is followed by an `ACTIVITY_SNAPSHOT` event with `activityType: "mcp-apps"` (from `ag-ui-protocol` `0.1.19`). Its content has `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`) and, when the toolset has an `id`, `serverId` and `serverHash` (both set to that `id`) — the same shape the AG-UI MCP Apps middleware emits, which renderers such as CopilotKit's expect. Dumped history carries it as an `ActivityMessage`, which is ignored when loaded back.
 
+Renderers built for that middleware, such as CopilotKit's, fetch the app's page and relay the app's own tool calls by starting a run whose `forwardedProps.__proxiedMCPRequest` names the server, and read the MCP result from `RUN_FINISHED.result`. To answer those runs from the server instead of running the agent, pass the toolsets with `mcp_app_toolsets`:
+
+```python {title="ag_ui_mcp_apps.py"}
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+weather = MCPToolset('http://localhost:8000/mcp', id='weather')
+agent = Agent('openai:gpt-5.2', toolsets=[weather])
+
+
+async def run_agent(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(request, agent=agent, mcp_app_toolsets=[weather])
+
+
+app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
+```
+
+Only toolsets with an `id` can be named. Tools are called with [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app], so only tools visible to apps can be called, and failures come back as `{"error": ...}`, as they do from the middleware.
+
 ### Assistant message identity
 
 Every streamed tool call carries a `parentMessageId` naming the assistant message that owns it, and that message is always announced by a [`TEXT_MESSAGE_START`](https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/docs/sdk/python/core/events.mdx#L170-L187) first — including when the model's response is nothing but tool calls, in which case the message carries no content and is closed immediately. A frontend that rebuilds the conversation from the event stream alone therefore never has to infer that a message exists.
