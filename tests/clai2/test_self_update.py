@@ -229,6 +229,26 @@ def test_archive_overrides_preserve_declared_extras() -> None:
     assert declared_extras == {name: extras for name, extras in overrides.items() if name != 'pydantic-clai2'}
 
 
+def test_skills_dependency_survives_overrides_from_older_builds() -> None:
+    """An older build's `/update` overrides the harness without its `skills` extra, so CLAI requires PyYAML itself."""
+
+    def pyyaml(name: str) -> list[Requirement]:
+        return [
+            requirement
+            for requirement in map(Requirement, metadata.requires(name) or [])
+            if requirement.name == 'pyyaml'
+        ]
+
+    [direct] = pyyaml('pydantic-clai2')
+    assert direct.marker is None
+    skills = [
+        requirement.specifier
+        for requirement in pyyaml('pydantic-ai-harness')
+        if requirement.marker and requirement.marker.evaluate({'extra': 'skills'})
+    ]
+    assert skills == [direct.specifier]
+
+
 def _updates(
     channel: list[UpdateChannel],
     *,
