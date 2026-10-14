@@ -16,12 +16,19 @@ Follow the general [documentation guidance](../agent_docs/documentation.md). The
 
 - Keep code examples executable unless they require external services, credentials, or non-deterministic behavior. Use mocks or fixtures when they keep the example representative.
 - Put example-level exclusions on the fence, such as `{test="skip" lint="skip"}`, rather than adding tooling suppressions to pedagogical code. Examples that are linted are also type-checked with pyright; opt one out with `typecheck="skip - <reason>"` only when no natural fix exists, such as a deliberate type error or an uninstalled dependency.
+- Use `{gateway_toggle="skip"}` to suppress rendered Gateway variants for a provider-only example. Mark provider-only examples even when an explicit model constructor currently prevents automatic Gateway toggles.
+- Check Google examples against Google Cloud support before allowing Gateway variants. Mark Gemini API-only examples with `{gateway_toggle="skip"}`. Link to [Google model guidance](models/google.md) when documenting Gateway support.
+- Keep `gateway_toggle` separate from `test` and `lint` metadata. The flag controls rendered Gateway variants and does not suppress example checks.
 - Combine parameter variations when one example plus notes preserves every meaningful difference. Split examples when use cases, prerequisites, or constraints differ.
 - Use examples that demonstrate a credible user task or decision without introducing complexity unrelated to the feature.
 
 ## Review
 
-- Render documentation in a unified-docs preview before merging.
+- Use `trigger:docs` on a Pydantic AI pull request to dispatch navigation validation to unified-docs. This workflow does not render an HTML preview.
+- Read the unified-docs result comment and verify its reported SHA matches the current pull request head.
+- The workflow removes `trigger:docs` after dispatch. Re-add the label to request validation for the current pull request head.
+- Render documentation in a unified-docs preview before merging. Treat navigation success and rendered-preview success as separate gates.
+- Unified-docs renderer pull requests use the same `trigger:docs` label. Docs Self-Preview builds the site and posts its rendered URL.
 
 <!-- /braindump -->
 

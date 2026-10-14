@@ -1062,7 +1062,7 @@ asyncio.run(main())
 
 With Gemini, you need to first [create a file search store via the Files API](https://ai.google.dev/gemini-api/docs/files), then reference the file search store names.
 
-```py {title="file_search_google_upload.py" test="skip"}
+```py {title="file_search_google_upload.py" test="skip" gateway_toggle="skip"}
 import asyncio
 
 from pydantic_ai import Agent, FileSearchTool
