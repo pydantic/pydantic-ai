@@ -3709,6 +3709,20 @@ async def test_resolve_model_id_alias_unusable_outside_run() -> None:
             assert result.response.model_name == 'aliased'
 
 
+def test_resolve_model_id_string_override_sets_mcp_sampling_model() -> None:
+    """MCP sampling setup infers a string override directly; only `connect()` rejects one a capability resolves.
+
+    Sync because `set_mcp_sampling_model()` imports the MCP module on first use.
+    """
+
+    def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
+        return None  # pragma: no cover
+
+    agent = Agent('test', capabilities=[ResolveModelId(resolver)])
+    with agent.override(model='test'):
+        agent.set_mcp_sampling_model()
+
+
 # --- ResolveModelId capability tests ---
 
 
