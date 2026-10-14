@@ -1567,10 +1567,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             return await self.direct_call_tool(name, tool_args, use_task=use_task)
 
         # Tools without a UI keep calling `direct_call_tool`, which subclasses and tests may replace. App tools
-        # take the same steps, but keep the raw result of the last call to this tool: mapping it for the model
-        # drops `structuredContent` (when text mirrors it) and `_meta`, which the app needs.
+        # take the same steps, but keep the arguments and raw result of the last call to this tool: mapping it
+        # for the model drops `structuredContent` (when text mirrors it) and `_meta`, which the app needs.
         tool_name = name
-        last_call: tuple[CallToolResult, ToolResult] | None = None
+        last_call: tuple[dict[str, Any], CallToolResult, ToolResult] | None = None
 
         async def call_tool_func(
             name: str, args: dict[str, Any], *, metadata: dict[str, Any] | None = None
@@ -1580,7 +1580,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             mapped = _map_mcp_call_tool_result(result)
             if name == tool_name:
                 # A copy, so a hook that edits the returned value in place still reads as a rewrite.
-                last_call = result, copy.deepcopy(mapped)
+                last_call = args, result, copy.deepcopy(mapped)
             return mapped
 
         if self.process_tool_call is not None:
@@ -1588,11 +1588,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         else:
             return_value = await call_tool_func(name, tool_args)
 
-        # The app gets the result only when the model got it unchanged: a `process_tool_call` hook that
-        # rewrites the result decides what leaves the toolset, so the raw result is not forwarded.
-        if last_call is None or return_value != last_call[1]:
+        # The app gets the result only when the model's call produced it and the model got it unchanged: a
+        # `process_tool_call` hook that changes the arguments or the result decides what leaves the toolset.
+        if last_call is None or last_call[0] != tool_args or return_value != last_call[2]:
             return return_value
-        result, _ = last_call
+        _, result, _ = last_call
         app = MCPAppToolResult(
             resource_uri=resource_uri,
             tool_input=tool_args,
