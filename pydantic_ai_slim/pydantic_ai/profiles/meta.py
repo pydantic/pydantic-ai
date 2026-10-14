@@ -29,6 +29,7 @@ def muse_model_profile(model_name: str) -> OpenAIModelProfile | None:
         openai_supports_phase=True,
         supports_json_schema_output=True,
         supports_json_object_output=True,
+        openai_chat_supports_web_search=True,
         supported_native_tools=frozenset({WebSearchTool}),
         context_window=1_048_576,
     )
