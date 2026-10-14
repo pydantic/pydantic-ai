@@ -457,14 +457,14 @@ Whether a deferred tool can be forced by name depends on how its definition reac
 
 - A tool *declared* with its schema deferred, such as a [tool search](#tool-search) corpus member
   on a model with native tool search, is not ignored: Pydantic AI sends a `tool_choice` naming it as
-  is. Anthropic accepts the force. On OpenAI Responses, the API rejects it with a 400 while nothing
-  has revealed the tool, and after the model's own server-executed tool search reveals it. After a
-  `ToolReturn.tools` reveal, GPT-5.6 and later accept the force and earlier models return the same
-  400.
-- A tool withheld until revealed, such as an on-demand capability's tool or a tool search corpus
-  member on an OpenAI model without native tool search, travels in the `additional_tools` item
-  alone once `load_capability` or another `ToolReturn.tools` reveals it, and can be named in
-  `tool_choice` on every OpenAI model. GPT-5.6 and later accept the name as is. On
+  is. Anthropic accepts the force where it supports forcing (see [Provider Support](#provider-support)).
+  On OpenAI Responses, the API rejects it with a 400 while nothing has revealed the tool, and after
+  the model's own server-executed tool search reveals it. After a `ToolReturn.tools` reveal, GPT-5.6
+  and later accept the force and earlier models return the same 400.
+- On OpenAI Responses, a tool withheld until revealed, such as an on-demand capability's tool or a
+  tool search corpus member on a model without native tool search, travels in the
+  `additional_tools` item alone once `load_capability` or another tool's `ToolReturn.tools` reveals
+  it, and can be named in `tool_choice` on every model. GPT-5.6 and later accept the name as is. On
   earlier models, Pydantic AI declares the tool in `tools` for the request whose `tool_choice` names
   it, so that one request misses the prompt cache.
 
@@ -569,7 +569,7 @@ Restricting the available tool set via `tool_choice` can invalidate provider pro
 - **API-level filtering** (cache-preserving): the full tools array is sent and the provider is told to only allow a subset. Used by OpenAI Responses (`allowed_tools`), Google (`allowed_function_names`), and Bedrock when forcing a single tool.
 - **Client-side filtering** (breaks cache): the tools array is trimmed before the request. Used when the provider API has no native filter for the given case.
 
-The table below covers the cases where Pydantic AI must filter client-side and therefore breaks cache:
+The table below covers the cases where Pydantic AI must change the tools array client-side and therefore breaks cache:
 
 | Provider | Cache-breaking case |
 |----------|---------------------|
