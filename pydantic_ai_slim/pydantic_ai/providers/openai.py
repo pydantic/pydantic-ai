@@ -5,13 +5,12 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
-from pydantic_ai._json_schema import JsonSchema
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import (
-    _TOP_LEVEL_DEFINITION_REF,  # pyright: ignore[reportPrivateUsage]
     OpenAIJsonSchemaTransformer,
     OpenAIModelProfile,
+    # Keep the provider-specific specialization private; the provider only selects it.
+    _OpenAIJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     openai_model_profile,
     openai_realtime_model_profile,
 )
@@ -32,73 +31,6 @@ from ._openai_compatible import (
     AsyncHTTPClient as _OpenAIHTTPClient,
     OpenAICompatibleProvider as _OpenAICompatibleProvider,
 )
-
-
-class _OpenAIGuardedJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
-    def transform(self, schema: JsonSchema) -> JsonSchema:
-        schema = super().transform(schema)
-        if schema.get('type') == 'array' and schema.get('prefixItems'):
-            # `prefixItems` alone does not satisfy OpenAI's typed-items requirement; keep unnormalized tuple schemas
-            # conservative.
-            if self.strict is True:
-                raise UserError(
-                    'Pydantic AI cannot use this tuple schema with `prefixItems` in OpenAI strict mode. '
-                    'Use a homogeneous list type, or set `strict=False`.'
-                )
-            elif self.strict is None:
-                self.is_strict_compatible = False
-        return schema
-
-
-class _OpenAIJsonSchemaTransformer(_OpenAIGuardedJsonSchemaTransformer):
-    _strict_supports_length_constraints = True
-
-    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
-        super().__init__(schema, strict=strict)
-        self._has_non_definition_ref = False
-        self._normalized_single_item_tuple = False
-
-    def walk(self) -> JsonSchema:
-        self._has_non_definition_ref = False
-        self._normalized_single_item_tuple = False
-        result = super().walk()
-        if self._normalized_single_item_tuple and self._has_non_definition_ref:
-            # This walk has no path context, so a non-definition ref might target a changed `items` or removed
-            # `prefixItems` node. Wait until the full walk to catch refs before or after the array, then rerun the
-            # guarded transformer on the original schema to preserve its reference behavior.
-            transformer = _OpenAIGuardedJsonSchemaTransformer(self.schema, strict=self.strict)
-            result = transformer.walk()
-            self.is_strict_compatible = transformer.is_strict_compatible
-        return result
-
-    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
-        prefix_items: list[JsonSchema | bool] | None = schema.get('prefixItems')
-        if (
-            self.strict is not False
-            and schema.get('type') == 'array'
-            and isinstance(prefix_items, list)
-            and len(prefix_items) == 1
-            and type(max_items := schema.get('maxItems')) is int
-            and max_items == 1
-        ):
-            schema['items'] = prefix_items[0]
-            del schema['prefixItems']
-            self._normalized_single_item_tuple = True
-        return super()._handle_array(schema)
-
-    def transform(self, schema: JsonSchema) -> JsonSchema:
-        if '$dynamicRef' in schema:
-            self._has_non_definition_ref = True
-
-        schema_ref = schema.get('$ref')
-        if (
-            isinstance(schema_ref, str)
-            and schema_ref not in ('#', self.root_ref)
-            and not _TOP_LEVEL_DEFINITION_REF.fullmatch(schema_ref)
-        ):
-            self._has_non_definition_ref = True
-
-        return super().transform(schema)
 
 
 class OpenAIProvider(_OpenAICompatibleProvider):

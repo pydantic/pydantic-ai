@@ -75,6 +75,9 @@ with try_import() as xai_imports:
     from pydantic_ai.providers.xai import XaiProvider
 
 with try_import() as openai_imports:
+    from pydantic_ai.profiles.openai import (
+        _OpenAIJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.alibaba import AlibabaProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
@@ -89,10 +92,7 @@ with try_import() as openai_imports:
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
     from pydantic_ai.providers.nebius import NebiusProvider
     from pydantic_ai.providers.ollama import OllamaProvider
-    from pydantic_ai.providers.openai import (
-        OpenAIProvider,
-        _OpenAIJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
-    )
+    from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
     from pydantic_ai.providers.openrouter import (
         OpenRouterProvider,

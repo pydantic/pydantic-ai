@@ -411,9 +411,14 @@ async def test_openai_strict_tuple_guard_runs_before_request(
     )
     output = ToolOutput(MixedOutput, strict=True) if output_mode == 'tool' else NativeOutput(MixedOutput, strict=True)
 
-    with pytest.raises(UserError, match='cannot use this tuple schema with `prefixItems` in OpenAI strict mode'):
+    with pytest.raises(UserError) as exc_info:
         await Agent(model, output_type=output).run('Return a tuple.')
 
+    assert str(exc_info.value) == (
+        'Pydantic AI cannot use this tuple schema with `prefixItems` in OpenAI strict mode. '
+        'Use a bounded list such as `Annotated[list[int], Field(min_length=4, max_length=4)]`, '
+        'or set `strict=False`.'
+    )
     assert request_capture.paths == []
 
 
