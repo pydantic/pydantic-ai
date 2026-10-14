@@ -36,7 +36,7 @@ The [`Thinking.effort`][pydantic_ai.capabilities.Thinking.effort] value accepts:
 - `'minimal'` / `'low'` / `'medium'` / `'high'` / `'xhigh'` — enable thinking at a specific effort level (unsupported levels map to the closest available value)
 
 These are the same values accepted by the underlying `thinking` model setting.
-When omitted, the model uses its default behavior. Provider-specific settings (documented in the sections below) take precedence when both are set. When `thinking` is set in the agent's or the run's `model_settings` and the provider-specific setting comes from a broader scope (the model's `settings`, or the agent's `model_settings` for a run's `thinking`), the provider-specific setting still takes precedence and a `UserWarning` names both.
+When omitted, the model uses its default behavior. Provider-specific settings (documented in the sections below) take precedence when both are set, except that `thinking=False` still disables reasoning on Cerebras and on Groq's qwen3 models. If the provider-specific setting comes from a broader scope than `thinking` (for example, the model's `settings` while `thinking` is passed to `agent.run()` or a direct request), a `UserWarning` names both.
 
 ### Provider translation
 

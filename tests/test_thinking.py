@@ -8,7 +8,6 @@ the Thinking capability, and end-to-end integration via FunctionModel.
 from __future__ import annotations
 
 import json
-import re
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -2304,55 +2303,56 @@ class TestCrossScopeThinkingOverrideWarning:
     async def test_agent_thinking_overridden_by_model_setting(self, allow_model_requests: None):
         model, client = _mock_openai_chat('gpt-5', OpenAIChatModelSettings(openai_reasoning_effort='low'))
         agent = Agent(model, model_settings=ModelSettings(thinking='high'))
-        with pytest.warns(
-            UserWarning,
-            match=re.escape(
-                "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` "
-                "from the agent's `model_settings`. Set `openai_reasoning_effort` in the agent's `model_settings` "
-                "instead of `thinking`, or remove it from the model's `settings`."
-            ),
-        ):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
             await agent.run('What is 2+2?')
+        assert [str(w.message) for w in caught] == [
+            "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` "
+            "from the agent's `model_settings`. Set `openai_reasoning_effort` in the agent's `model_settings` "
+            "instead of `thinking`, or remove it from the model's `settings`."
+        ]
         assert get_mock_chat_completion_kwargs(client)[0]['reasoning_effort'] == 'low'
 
     async def test_wrapped_model_setting_overriding_run_thinking(self, allow_model_requests: None):
         model, _ = _mock_openai_chat('gpt-5', OpenAIChatModelSettings(openai_reasoning_effort='low'))
         agent = Agent(WrapperModel(model))
-        with pytest.warns(
-            UserWarning,
-            match=re.escape(
-                "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` "
-                "from the run's `model_settings`."
-            ),
-        ):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
             await agent.run('What is 2+2?', model_settings=ModelSettings(thinking='high'))
+        assert [str(w.message) for w in caught] == [
+            "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` "
+            "from the run's `model_settings`. Set `openai_reasoning_effort` in the run's `model_settings` "
+            "instead of `thinking`, or remove it from the model's `settings`."
+        ]
 
     async def test_fallback_child_setting_overriding_run_thinking(self, allow_model_requests: None):
         """A `FallbackModel` has no settings of its own, so its child checks its own as for a direct request."""
         model, client = _mock_openai_chat('gpt-5', OpenAIChatModelSettings(openai_reasoning_effort='low'))
         agent = Agent(FallbackModel(model))
-        with pytest.warns(
-            UserWarning,
-            match=re.escape(
-                "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` "
-                "from the request's `model_settings`."
-            ),
-        ):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
             await agent.run('What is 2+2?', model_settings=ModelSettings(thinking='high'))
+        message = (
+            "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` "
+            "from the request's `model_settings`. Set `openai_reasoning_effort` in the request's `model_settings` "
+            "instead of `thinking`, or remove it from the model's `settings`."
+        )
+        # `FallbackModel` prepares the child once for its span attributes and again in the child's `request`.
+        assert [str(w.message) for w in caught] == [message, message]
         assert get_mock_chat_completion_kwargs(client)[0]['reasoning_effort'] == 'low'
 
     async def test_fallback_agent_setting_overriding_run_thinking(self, allow_model_requests: None):
         """The agent's layers reach each model a `FallbackModel` may use."""
         model, client = _mock_openai_chat('gpt-5', ModelSettings())
         agent = Agent(FallbackModel(model), model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low'))
-        with pytest.warns(
-            UserWarning,
-            match=re.escape(
-                "`openai_reasoning_effort` from the agent's `model_settings` takes precedence over `thinking='high'` "
-                "from the run's `model_settings`."
-            ),
-        ):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
             await agent.run('What is 2+2?', model_settings=ModelSettings(thinking='high'))
+        assert [str(w.message) for w in caught] == [
+            "`openai_reasoning_effort` from the agent's `model_settings` takes precedence over `thinking='high'` "
+            "from the run's `model_settings`. Set `openai_reasoning_effort` in the run's `model_settings` "
+            "instead of `thinking`, or remove it from the agent's `model_settings`."
+        ]
         assert get_mock_chat_completion_kwargs(client)[0]['reasoning_effort'] == 'low'
 
     async def test_override_thinking_overridden_by_model_setting(self, allow_model_requests: None):
@@ -2360,9 +2360,15 @@ class TestCrossScopeThinkingOverrideWarning:
         agent = Agent(model)
         with (
             agent.override(model_settings=ModelSettings(thinking='high')),
-            pytest.warns(UserWarning, match=re.escape('from `override(model_settings=...)`.')),
+            warnings.catch_warnings(record=True) as caught,
         ):
+            warnings.simplefilter('always')
             await agent.run('What is 2+2?')
+        assert [str(w.message) for w in caught] == [
+            "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` "
+            'from `override(model_settings=...)`. Set `openai_reasoning_effort` in `override(model_settings=...)` '
+            "instead of `thinking`, or remove it from the model's `settings`."
+        ]
 
     async def test_narrower_setting_over_broader_thinking_is_silent(self, allow_model_requests: None):
         """A provider-specific setting narrower than `thinking` is the caller's explicit choice, so nothing warns."""

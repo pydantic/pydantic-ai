@@ -1921,6 +1921,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # (Hoisted to a local first so pyright narrows cleanly after `RunContext.model` widened to
             # `AbstractModel`; member access on the narrowed attribute directly trips a false positive.)
             step_model = run_context.model
+            # The model's own settings as the base also keep `Model.prepare_request` from repeating the
+            # thinking-override warning `iter` already gave.
             return _layer_model_settings(
                 run_context,
                 (agent_model_settings, cap_model_settings, run_model_settings),
