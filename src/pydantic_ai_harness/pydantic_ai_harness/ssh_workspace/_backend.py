@@ -35,7 +35,9 @@ _GONE = '\n__pydantic_ai_ssh_gone__\n'
 _JOB_TAG = '__pydantic_ai_ssh_job_'
 """Starts every remote script, followed by a random suffix, so a later connection can find the command's processes."""
 
-_STOP = r"""me=$(ps -o pgid= -p $$ | tr -d ' ')
+_STOP = r"""PATH=/usr/bin:/bin
+export PATH
+me=$(ps -o pgid= -p $$ | tr -d ' ')
 groups=$(ps -A -o pgid=,args= | grep -F -e "$1" | awk -v me="$me" '$1 != me { print $1 }' | sort -u)
 [ -n "$groups" ] || exit 0
 for group in $groups; do kill -s TERM -- "-$group" 2> /dev/null; done
@@ -48,6 +50,10 @@ that started a session of its own (the harness `Shell`'s jobs) is in another gro
 `kill -s SIG --` is the form every POSIX shell's `kill` accepts; dash rejects `kill -TERM -- -<group>`.
 The `SIGKILL` for groups that outlast `SIGTERM` comes a second later in the background, with its output
 closed so `sshd` doesn't wait for it, so a stop costs one round trip.
+
+It runs on the host, outside any sandbox wrapping this backend, so `ps`, `grep` and the rest come from the
+system directories only: the login `PATH` can hold a directory the stopped command could write to, such as
+`~/.local/bin` under a working directory that contains the home directory.
 """
 
 _STOP_TIMEOUT = 2.0

@@ -89,20 +89,27 @@ def sent_betas(mock_client: AsyncAnthropic) -> list[str]:
     return [] if isinstance(betas, Omit) else betas
 
 
-def stale_thinking_block_error() -> APIStatusError:
-    """Anthropic's rejection of a replayed thinking block, verbatim from a live 400."""
+_STALE_THINKING_BLOCK_MESSAGE = (
+    'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a '
+    'different conversation. Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` '
+    'to "drop_block". The `system` prompt differs from the one this block was created with.'
+)
+
+
+def stale_thinking_block_error(*, bedrock: bool = False) -> APIStatusError:
+    """Anthropic's rejection of a replayed thinking block, verbatim from a live 400.
+
+    Bedrock returns the message at the top level of the body rather than in an `error` object.
+    """
+    body: dict[str, object] = (
+        {'message': _STALE_THINKING_BLOCK_MESSAGE}
+        if bedrock
+        else {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': _STALE_THINKING_BLOCK_MESSAGE}}
+    )
     return APIStatusError(
         'stale thinking block',
         response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
-        body={
-            'type': 'error',
-            'error': {
-                'type': 'invalid_request_error',
-                'message': 'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a '
-                'different conversation. Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` '
-                'to "drop_block". The `system` prompt differs from the one this block was created with.',
-            },
-        },
+        body=body,
     )
 
 
@@ -185,22 +192,26 @@ async def test_anthropic_sends_no_block_binding_by_default(
     assert _THINKING_BINDING_BETA not in sent_betas(mock_client)
 
 
-async def test_anthropic_retries_a_stale_thinking_block_with_drop_block(allow_model_requests: None):
+@pytest.mark.parametrize('bedrock', [pytest.param(False, id='anthropic'), pytest.param(True, id='bedrock')])
+@pytest.mark.parametrize('model_name', ['claude-fable-5-1', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
+async def test_anthropic_retries_a_stale_thinking_block_with_drop_block(
+    allow_model_requests: None, model_name: str, bedrock: bool
+):
     """A rejected replay is retried once asking Anthropic to drop the block, and the run continues.
 
-    The retried `thinking` object rides in `extra_body`, typed `adaptive` when the request configured
-    no thinking: Claude Sonnet 5.5 rejects a `thinking` object without a `type`, and every binding model
-    thinks adaptively when none is given.
+    The retried `thinking` object rides in `extra_body`, typed `adaptive` when the request had no `thinking` setting.
+    Claude Sonnet 5.5 and Haiku 5.5 reject a `thinking` object without a `type`; Haiku 5.5's adaptive default was
+    verified live with effort `high` and no `thinking` parameter, and the response included thinking tokens.
     """
     mock_client = MockAnthropic.create_mock(
         [
-            stale_thinking_block_error(),
+            stale_thinking_block_error(bedrock=bedrock),
             completion_message(
                 [BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1)
             ),
         ]
     )
-    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
 
     with pytest.warns(AnthropicStaleThinkingBlockWarning, match='rejected a replayed thinking block'):
         result = await Agent(m).run('What is 2+2?')

@@ -66,7 +66,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and run its tests.')
 ```
 
-The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B and Sprites. A
+The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B and Sprites, and a local smolvm microVM. A
 sandbox is created the first time the run uses it (a tool call, or `Coder` loading repo
 instructions at run start; durable runs create it when they start), and keeps running after the run until you or its
 provider stop it; see [Cleaning up](#cleaning-up). If the run never used it, calling a method on `result.workspace` after a run with `ref=None` may create a new sandbox that no message records. Check the ref before using the workspace after a run, and arrange to clean up any new sandbox you create.
@@ -369,7 +369,7 @@ activities.
   tool uses it; retries, replays and recovery reattach to that same environment. Plain runs stay
   lazy. If a worker dies after creating the environment but before that is recorded, the retry can
   create a second one.
-- Without an explicit `run_id`, a run of an agent with a workspace capability inside a workflow or flow gets an ID derived from the Temporal
+- Without an explicit `run_id`, a run inside a workflow or flow gets an ID derived from the Temporal
   execution run ID, the DBOS workflow ID or the Prefect flow run ID, so its workspace state stays
   addressable after a worker restart or flow retry.
 - On DBOS, a run with a workspace runs its tool calls one at a time: DBOS numbers steps as they
@@ -497,7 +497,8 @@ Backends answer it in one of three ways:
 
 - `LocalWorkspaceBackend` uses `os.path.realpath`.
 - A backend with commands but without [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath]
-  gets a shell fallback that follows links with `readlink`, in one command.
+  gets a shell fallback that follows links with `readlink`, in one command. A link it cannot read,
+  as in an image without `readlink`, raises `WorkspaceError` rather than being left unresolved.
 - A backend with neither only gets the path normalized as text. That is exact for storage that
   cannot hold symlinks, such as an object store. Where symlinks can exist, a path check such as the
   harness `FileSystem`'s `root_dir` then sees only the text, and the example above leads outside.

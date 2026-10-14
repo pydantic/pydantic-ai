@@ -1,8 +1,8 @@
 # `pydantic_ai.realtime.openai_live`
 
 The OpenAI GPT-Live API provider. Requires the `openai-realtime` optional group
-(`pip install "pydantic-ai-slim[openai-realtime]"`), which floors `openai` at 3.12, the release that
-added Live's event types.
+(`pip install "pydantic-ai-slim[openai-realtime]"`), which currently requires `openai>=3.26.0`.
+`openai` 3.12 added Live's event types.
 
 GPT-Live is a different protocol from the [OpenAI Realtime API](openai.md), not a model served by it,
 so [`OpenAILiveModel`][pydantic_ai.realtime.openai_live.OpenAILiveModel] shares no event mapping with

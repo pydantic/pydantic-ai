@@ -31,6 +31,7 @@ import logfire
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, PartEndEvent, SpeechPart
+from pydantic_ai.capabilities import Caching
 from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
@@ -58,6 +59,7 @@ triage_agent = Agent(
     'openai:gpt-5.2',
     output_type=SupportTicket,
     instructions='Summarize the support call as a structured ticket.',
+    capabilities=[Caching()],
 )
 
 # What the caller "says" — each line is one spoken turn, driven as text so the example runs without
