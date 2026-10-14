@@ -1,7 +1,7 @@
 """`PluginHost.send_input`, `interrupt`, `complete`, `sessions`, and the `on_command_end` moment."""
 
 import io
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 from typing import ClassVar
 
@@ -20,6 +20,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, conversation_text
 from pydantic_clai2 import chat
 from pydantic_clai2._app import create_shell
+from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -35,12 +36,32 @@ class Recorder(Plugin):
     hosts: ClassVar[list[PluginHost[None]]] = []
     commands: ClassVar[list[CommandEnd]] = []
     turns: ClassVar[list[TurnEnd]] = []
+    interrupted: ClassVar[list[bool]] = []
+
+    def get_commands(self) -> Sequence[Command]:
+        return (
+            Command(name='ask', description='Queue a prompt', handler=self.ask, complete=self.many),
+            Command(name='broken', description='A completer that fails', handler=self.ask, complete=self.fail),
+        )
+
+    async def ask(self, args: list[str]) -> str:
+        self.host.submit_prompt('queued by /ask')
+        return 'Asked.'
+
+    def many(self, args: list[str]) -> list[str]:
+        return [f'option{index}' for index in range(150)]
+
+    def fail(self, args: list[str]) -> list[str]:
+        raise OSError('completer broke')
 
     async def on_session_start(self, event: SessionStart) -> None:
         self.hosts.append(self.host)
 
     async def on_command_end(self, event: CommandEnd) -> None:
         self.commands.append(event)
+        if event.text == '/ask':
+            # As Esc pressed while a slow handler runs: the command has finished, so nothing is cancelled.
+            self.interrupted.append(self.host.interrupt())
 
     async def on_turn_end(self, event: TurnEnd) -> None:
         self.turns.append(event)
@@ -54,6 +75,7 @@ def fresh_recorder() -> None:
     Recorder.hosts.clear()
     Recorder.commands.clear()
     Recorder.turns.clear()
+    Recorder.interrupted.clear()
 
 
 def remote_shell(tmp_path: Path, agent: Agent[None, str], *, output: io.StringIO, headless: bool = True):
@@ -100,7 +122,10 @@ async def test_silent_command_reports_no_output(tmp_path: Path) -> None:
     host.send_input('/new')
     host.send_input('/exit')
     await shell.run()
-    assert [(event.text, event.output, event.error) for event in Recorder.commands[:1]] == [('/new', '', None)]
+    assert [(event.text, event.output, event.error) for event in Recorder.commands] == [
+        ('/new', '', None),
+        ('/exit', 'Goodbye.', None),
+    ]
     await shell.loader.close('exit')
 
 
@@ -206,7 +231,7 @@ async def test_line_mode_prompt_refuses_other_input(tmp_path: Path) -> None:
     shell = remote_shell(tmp_path, Agent(TestModel()), output=io.StringIO(), headless=False)
     await shell.loader.load_all()
     [host] = Recorder.hosts
-    with pytest.raises(RuntimeError, match='reads its prompts from standard input'):
+    with pytest.raises(RuntimeError, match='reads its prompts line by line'):
         host.send_input('hello')
     await shell.loader.close('exit')
 
@@ -222,6 +247,23 @@ async def test_complete_offers_what_tab_does(tmp_path: Path) -> None:
         -3,
     )
     assert await host.complete('plain prompt') == []
+    assert [completion.text for completion in await host.complete('/ask ')] == [
+        f'option{index}' for index in range(100)
+    ]
+    assert await host.complete('/broken ') == [], 'a failing completer offers nothing, as in the editor'
+    await shell.loader.close('exit')
+
+
+async def test_a_slow_command_end_handler_cannot_cancel_the_command(tmp_path: Path) -> None:
+    """Plugins hear of a command after Esc stops reaching it, so the prompts it queued still run."""
+    shell = remote_shell(tmp_path, Agent(TestModel()), output=io.StringIO())
+    await shell.loader.load_all()
+    [host] = Recorder.hosts
+    host.send_input('/ask')
+    host.send_input('/exit')
+    await shell.run()
+    assert Recorder.interrupted == [False]
+    assert [(turn.text, turn.outcome) for turn in Recorder.turns] == [('queued by /ask', 'completed')]
     await shell.loader.close('exit')
 
 

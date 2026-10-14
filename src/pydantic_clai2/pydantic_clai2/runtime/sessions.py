@@ -163,7 +163,7 @@ class Sessions(Generic[DepsT, OutputT]):
         return await save_import(self.store, imported)
 
     async def listing(self, *, query: str = '', limit: int = 200) -> list[ConversationSummary]:
-        """Saved conversations from every directory, newest first, as `/resume` lists them."""
+        """Saved conversations from every directory, newest first, as `/resume` lists them, queueing untitled ones for naming."""
         entries = await self.store.listing(query=query, limit=limit)
         self.namer.backfill(entries)
         return entries
@@ -177,12 +177,15 @@ class Sessions(Generic[DepsT, OutputT]):
         title = ' '.join(title.split())
         if not title:
             raise ValueError('A session title cannot be empty.')
-        source = (await self.store.get(conversation_id=conversation_id)).summary
+        await self._rename_saved((await self.store.get(conversation_id=conversation_id)).summary, title)
+        await self.session.renamed(conversation_id=conversation_id, title=title)
+
+    async def _rename_saved(self, source: ConversationSummary, title: str) -> None:
+        """Save `title` as a manual title, keeping one a naming model would otherwise replace."""
         if not await self.store.name(
             source=source, title=title, subtitle=source.subtitle, tags=source.tags, manual=True
         ):
             raise ValueError('Session changed. Refresh and rename again.')
-        await self.session.renamed(conversation_id=conversation_id, title=title)
 
     async def delete(self, conversation_id: str) -> None:
         """Delete a saved conversation other than the current one; one running elsewhere is refused."""
@@ -233,10 +236,7 @@ class Sessions(Generic[DepsT, OutputT]):
         retitled: dict[str, str] = {}
 
         async def rename(source: ConversationSummary, title: str) -> None:
-            if not await self.store.name(
-                source=source, title=title, subtitle=source.subtitle, tags=source.tags, manual=True
-            ):
-                raise ValueError('Session changed. Refresh and rename again.')
+            await self._rename_saved(source, title)
             retitled[source.id] = title
 
         def browse() -> str:
