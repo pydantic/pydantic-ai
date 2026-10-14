@@ -194,10 +194,10 @@ class DiffAdded:
 
 @dataclass(kw_only=True)
 class TurnStarted:
-    """A prompt started a turn; `item` is the prompt."""
+    """A turn started; `item` is its prompt, or `None` for a turn a finished task woke."""
 
     type: Literal['turn_start'] = 'turn_start'
-    item: Item
+    item: Item | None = None
 
 
 @dataclass(kw_only=True)

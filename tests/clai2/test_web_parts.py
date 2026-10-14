@@ -10,7 +10,14 @@ import anyio
 import pytest
 from rich.console import Console
 
-from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent, RunContext
+from pydantic_ai import (
+    AgentRunResult,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    RunContext,
+)
 from pydantic_ai.messages import (
     BinaryContent,
     ModelRequest,
@@ -49,6 +56,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TextDelta,
     ToolDone,
     ToolOutput,
+    TurnEnded,
+    TurnStarted,
     history_items,
 )
 from pydantic_clai2.builtin_plugins.web.remote import Observer
@@ -59,6 +68,7 @@ from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, Transcript
+from tests.clai2.test_web import WIRE
 
 REQUEST = AskUserRequest(
     questions=(
@@ -291,6 +301,29 @@ async def test_only_the_held_conversation_reaches_the_browser(monkeypatch: pytes
         assert '"text":"mine"' in queue.get_nowait()
         assert '"type":"status"' in queue.get_nowait()
     assert isinstance(StatusChanged(status=plugin.remote.status()), StatusChanged)
+
+
+async def test_runs_of_the_held_conversation_are_turns() -> None:
+    """A run woken by a finished task has no prompt; a failure without a message is named by its type."""
+    host = PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript())
+    plugin = WebPlugin.from_host(host)
+    observer = Observer(plugin.remote)
+
+    async def fail() -> AgentRunResult[object]:
+        raise RuntimeError()
+
+    with plugin.hub.subscribe() as queue:
+        with pytest.raises(RuntimeError):
+            await observer.wrap_run(context('another'), handler=fail)
+        assert queue.empty(), 'a background run is not a turn'
+        with pytest.raises(RuntimeError):
+            await observer.wrap_run(context(host.conversation.conversation_id), handler=fail)
+        messages = [WIRE.validate_json(queue.get_nowait()) for _ in range(queue.qsize())]
+    assert [message for message in messages if isinstance(message, TurnStarted | TurnEnded)] == [
+        TurnStarted(item=None),
+        TurnEnded(outcome='failed', error='RuntimeError'),
+    ]
+    assert not plugin.remote.running
 
 
 async def test_a_taken_port_is_reported() -> None:
