@@ -1944,7 +1944,8 @@ def _native_tool_call_part_dict(
     if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
         # Live full-history replays returned HTTP 400 on the Developer API and Vertex, so later requests omit these
         # processing steps and may process the video again.
-        # TODO: Check https://ai.google.dev/gemini-api/docs/generate-content/video-understanding#response-structure,
+        # TODO: Recheck https://github.com/pydantic/pydantic-ai/issues/10226 for future removal of this workaround.
+        # Check https://ai.google.dev/gemini-api/docs/generate-content/video-understanding#response-structure,
         # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/video-understanding and
         # https://ai.google.dev/gemini-api/docs/changelog for updated replay guidance. Re-record
         # test_agentic_video_context_replay on both APIs (see tests/AGENTS.md); remove omission only when the full
