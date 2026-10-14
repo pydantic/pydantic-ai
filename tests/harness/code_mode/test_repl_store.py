@@ -273,23 +273,18 @@ class TestCodeModeReplStore:
         assert 'could not load the saved REPL state' in caplog.text and 'disk unavailable' in caplog.text
         assert 'could not save the REPL state' in caplog.text and 'disk full' in caplog.text
 
-    async def test_a_save_that_hangs_is_abandoned(
+    async def test_a_save_past_the_timeout_is_abandoned(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
+        """A timeout already spent stops the save before it reaches the store, as a hung dump or store would be."""
         monkeypatch.setattr('pydantic_ai_harness.code_mode._repl_store.SAVE_TIMEOUT_SECONDS', 0)
-
-        @dataclass
-        class HangingStore(MemoryReplStore):
-            async def save(self, ctx: RunContext[None], state: bytes | None) -> None:
-                await anyio.sleep_forever()
-
-        store = HangingStore()
+        store = MemoryReplStore()
         agent = agent_with(store)
 
         with caplog.at_level(logging.WARNING):
             await agent.run('set', conversation_id='c1')
 
-        assert store.states == {}
+        assert (store.saves, store.states) == ([], {})
         assert 'stopped saving the REPL state' in caplog.text
 
     async def test_a_repl_still_feeding_at_exit_is_not_saved(self, monkeypatch: pytest.MonkeyPatch) -> None:
