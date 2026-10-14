@@ -1454,8 +1454,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         """Call a tool on the server directly.
 
-        The agent's calls to tools with an [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) UI don't go through this
-        method, because they need the raw result, so an override doesn't see them.
+        The agent's calls to tools with an [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview)
+        UI don't go through this method, because they need the raw result, so an override doesn't see them.
 
         Args:
             name: The name of the tool to call.
