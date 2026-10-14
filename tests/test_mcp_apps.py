@@ -1,7 +1,7 @@
 """MCP Apps from a real MCP server through an agent run to the messages a frontend receives.
 
-The tests use an in-process FastMCP server and `MCPToolset` with no hand-built app data, and the frontend tests
-check the UI adapters' encoded stream and dumped history.
+The tests use an in-process FastMCP server and `MCPToolset`, and the frontend tests check the UI adapters' encoded
+stream and dumped history. Only the malformed-record test builds app data by hand.
 """
 
 from __future__ import annotations
@@ -300,6 +300,55 @@ async def test_vercel_ai_frontend_receives_app_after_tool_result(agent: Agent[No
         for message in dumped
     ]
     assert model_view(VercelAIAdapter.load_messages(dumped)) == model_view(VercelAIAdapter.load_messages(without_app))
+
+
+async def test_vercel_ai_app_chunk_without_toolset_id_or_with_malformed_record():
+    """A record from a toolset without an `id` is sent without `serverId`/`serverHash`; a malformed one is not sent.
+
+    The records are built by hand: a malformed one can't come from `MCPToolset`.
+    """
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {
+                0: DeltaToolCall(name='no_toolset_id', json_args='{}', tool_call_id='call_1'),
+                1: DeltaToolCall(name='malformed', json_args='{}', tool_call_id='call_2'),
+            }
+        else:
+            yield 'Done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    async def no_toolset_id() -> ToolReturn:
+        app: dict[str, Any] = {
+            'resource_uri': 'ui://weather/forecast',
+            'tool_input': {},
+            'result': {},
+            'toolset_id': None,
+        }
+        return ToolReturn(return_value='app', metadata={'mcp_app': app})
+
+    @agent.tool_plain
+    async def malformed() -> ToolReturn:
+        return ToolReturn(return_value='no app', metadata={'mcp_app': {'resource_uri': 1}})
+
+    request = SubmitMessage(id='chat', messages=[UIMessage(id='u1', role='user', parts=[TextUIPart(text='Hi')])])
+    adapter = VercelAIAdapter(agent, request)
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in encoded
+    ]
+    assert [chunk for chunk in chunks if chunk['type'] == 'data-mcp-apps'] == snapshot(
+        [
+            {
+                'type': 'data-mcp-apps',
+                'id': 'call_1',
+                'data': {'resourceUri': 'ui://weather/forecast', 'toolInput': {}, 'result': {}},
+            }
+        ]
+    )
 
 
 def ag_ui_run_input() -> RunAgentInput:
