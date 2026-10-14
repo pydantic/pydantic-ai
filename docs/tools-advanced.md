@@ -451,12 +451,19 @@ selected function tools plus all output tools available and also allows text or 
 Tools hidden by [deferred loading](#tool-search) interact with `tool_choice`: a tool that is still
 hidden is ignored when forcing by name, and an explicit choice raises only when every requested
 tool is hidden. `'required'` raises when every function
-tool is hidden. A tool *declared* with its schema deferred can be forced on Anthropic. On OpenAI
-Responses, forcing one fails until something has revealed it, and on models before GPT-5.6 it fails
-after a reveal too. A revealed tool that travels in the `additional_tools` item alone can be named in
-`tool_choice` on every OpenAI model: GPT-5.6 and later accept the name as is, and on earlier models
-the request whose `tool_choice` names it declares the tool in `tools` instead and misses the prompt
-cache.
+tool is hidden.
+
+Whether a deferred tool can be forced by name depends on how its definition reaches the model:
+
+- A tool *declared* with its schema deferred, such as a [tool search](#tool-search) corpus member,
+  can be forced on Anthropic. On OpenAI Responses, the API rejects a request forcing one with a 400
+  until something has revealed it, and on models before GPT-5.6 it rejects the request after a
+  reveal too.
+- A tool withheld until revealed, such as an on-demand capability's tool, travels in the
+  `additional_tools` item alone once `load_capability` or another `ToolReturn.tools` reveals it, and
+  can be named in `tool_choice` on every OpenAI model. GPT-5.6 and later accept the name as is. On
+  earlier models, Pydantic AI declares the tool in `tools` for the request whose `tool_choice` names
+  it, so that one request misses the prompt cache.
 
 ### Example
 
@@ -570,7 +577,7 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 | Mistral | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
 | Cohere | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
 | xAI | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
-| OpenAI Responses | Only a `tool_choice` naming a tool that the `additional_tools` item alone declares, as a list or through `ToolOrOutput`, on models before GPT-5.6, which get the tool declared in `tools` for that request; `allowed_tools` handles every other case natively |
+| OpenAI Responses | On models before GPT-5.6, a `tool_choice` (list or `ToolOrOutput`) naming a tool that only the `additional_tools` item declares, such as one `load_capability` revealed: that request declares it in `tools`. `allowed_tools` handles every other case natively |
 | Google | Never — `allowed_function_names` handles all cases natively |
 
 If preserving cache hits matters, prefer providers/cases marked "Never", or use `ToolOrOutput` (which keeps the full set) instead of a restrictive list.
@@ -903,7 +910,7 @@ Tools gated as a bundle are covered by [on-demand capabilities](capabilities/on-
 
 Each recorded reveal also surfaces as a [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] in the agent event stream and as the corresponding persistent Vercel AI data chunk or AG-UI activity snapshot.
 
-Provider adapters project each availability delta onto their supported history-based reveal mechanism. Anthropic declares each revealed definition in `tools` with `defer_loading=True` — up front in capability-only runs (no search surface can expose them), appended at reveal in mixed runs, which withhold capability-owned definitions until then — and references it from a native `tool_addition` block in the same request. OpenAI Responses carries a revealed definition in an appended `additional_tools` input item: a tool that was never declared travels in the item alone, while a tool already declared as a deferred `tools` entry keeps that entry and the item reveals it. Other models announce the newly available tools when their schemas are already visible, or receive a synthesized tool-search exchange when its result must reveal a withheld schema.
+Provider adapters project each availability delta onto their supported history-based reveal mechanism. Anthropic declares each revealed definition in `tools` with `defer_loading=True` — up front in capability-only runs (no search surface can expose them), appended at reveal in mixed runs, which withhold capability-owned definitions until then — and references it from a native `tool_addition` block in the same request. OpenAI Responses carries a revealed definition in an appended `additional_tools` input item: a tool that was never declared travels in the item alone (on models before GPT-5.6, a request whose `tool_choice` names it declares it in `tools` instead and misses the cache; see [Prompt caching implications](#tool-choice-caching)), while a tool already declared as a deferred `tools` entry keeps that entry and the item reveals it. Other models announce the newly available tools when their schemas are already visible, or receive a synthesized tool-search exchange when its result must reveal a withheld schema.
 
 For the model to find tools well, give them descriptive names with consistent prefixes (`github_*`, `slack_*`, `mortgage_*`) and put the keywords a user might search for in the tool's description. A search returns a handful of matches at a time, so the model may iterate (search → discover → call → search again) — instructions can nudge it: "Search by topic when you don't see a tool you need."
 
