@@ -411,7 +411,7 @@ with their exception and traceback, also without `ui_events`:
   `on_plugin_load_failed`), with the plugin's name.
 
 The exception message and traceback get Logfire's normal scrubbing. They can quote a prompt
-or a pasted secret, so with `include_content: false` these records, and startup load
+or a pasted secret, so with `include_content: false`, the default, these records, and startup load
 failures, keep only the exception's type in their `exception` event, as agent spans do.
 
 Credentials are read from `LOGFIRE_TOKEN` or the SDK's `logfire_credentials.json`
@@ -450,17 +450,27 @@ run uses it. Without a chosen project, that row notes whether `LOGFIRE_TOKEN` or
 credentials file was found. Scripts can replace the declaration instead:
 
 ```text
-/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": true, "include_binary_content": true}'
 ```
 
 Options are `service_name` (default `pydantic-clai2`), `include_content` and
-`include_binary_content` (both default `true`), `httpx` (default `false`), and `send_to_logfire` (default
+`include_binary_content` (both default `false`, so credentials alone never export
+prompts, results, or files; settings saved before that default that never set them
+also leave content out), `httpx` (default `false`), and `send_to_logfire` (default
 `"if-token-present"`, or `false`). The explicit plugin option takes precedence
 over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings;
 `token` takes only the name of a `/keys` entry (`{"name": "CLAI2_LOGFIRE_TOKEN"}`),
 whose write token then replaces `LOGFIRE_TOKEN` and the credential file, so its
 project receives the telemetry. If that key is missing, the plugin warns and
 exports nothing rather than falling back to another project.
+`variables_key` likewise takes the name of a `/keys` entry, holding a Logfire API
+key with the `project:read_variables` scope, which the plugin passes to
+`logfire.configure(api_key=...)` instead of `LOGFIRE_API_KEY`. A capability that
+reads Logfire managed variables through the plugin's instance then reads them
+from that key's project; write tokens cannot read variables. The key is used only
+when something reads a variable. If it is missing, the plugin warns and the SDK
+reads `LOGFIRE_API_KEY` as if no key were chosen. The **Variables API key** row
+sets it. The stock agent is named `clai2`, the name its run spans carry.
 Content flags do not suppress all metadata: tool names and definitions may still
 be recorded. Logfire's usual scrubbing is enabled. Set `httpx` to `true` to
 instrument `httpx` and `httpx2` requests process-wide while this plugin is loaded.
@@ -920,7 +930,7 @@ settings using the former import paths are redirected to the new modules.
 
 | Id | Backed by | Settings | Does |
 |---|---|---|---|
-| `coder` | `pydantic_clai2.builtin_plugins.coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": true, "agent_folders": ["agents"]}` | the file and shell tools, plus task delegation and disk agents |
+| `coder` | `pydantic_clai2.builtin_plugins.coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": true, "agent_folders": ["agents"]}` | the file and shell tools, task delegation and disk agents, and Agent Skills with a `/command` each |
 | `ask_user` | `pydantic_clai2.builtin_plugins.ask_user_menu` | `{}` | the `ask_user_question` tool: multiple-choice questions answered from the terminal |
 | `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
 | `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
@@ -1010,6 +1020,20 @@ upgrade never loads new definitions without your say. Old
 not rewritten. `/plugins configure coder` edits this list; see
 [Agent folders](README.md#agent-folders).
 
+`skill_folders` is a JSON list of [Agent Skills](README.md#agent-skills) folders,
+in precedence order. It defaults to `[".agents/skills", ".claude/skills",
+"~/.agents/skills", "~/.claude/skills"]`, including for saved `coder`
+declarations that omit it; `~/` means your home directory, a relative path is in
+the project, and `[]` turns skills off. `coder` binds harness `Skills` with
+`missing_directories='skip'` and `duplicate_names='keep_first'`, so a missing
+folder is skipped and the earlier of two skills with one name wins. It reads the
+folders once when it loads, in `prepare`, for the `/skill-name` commands and the
+startup notices, and harness reads them again at the start of every turn for the
+model's catalog. A folder setting that fails, such as a path to one skill
+instead of its parent folder, prints `Skills are off: ...` and leaves skills
+out. The setting is tagged `coder-skill-folders`, so a CLAI build without it
+ignores a saved value instead of failing to load `coder`.
+
 Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
 host hooks. The shell keeps plugin resources alive until children settle; `/plugins`
 changes are refused while managed children run. Exit/reload drains them before
@@ -1059,7 +1083,7 @@ so two compaction chains never run together.
 
 `compaction` directly registers harness `FallbackCompaction` with
 `max_fraction=threshold`; harness owns the automatic trigger. `/compact` runs the
-same chain unconditionally, with the protected tail capped at half the
+same chain unconditionally, with the protected-token target capped at half the
 conversation, and keeps the history unless the result is smaller, counted as the provider reported
 the tokens. Its optional
 focus is free text, not shell arguments:
@@ -1866,6 +1890,7 @@ contributes nothing:
 
 | Method | Contributes |
 |---|---|
+| `prepare()` | reading what the `get_*` methods need, such as files, once per load |
 | `get_capabilities()` | capabilities (or per-run capability functions) added to every agent run |
 | `get_commands()` | `/commands` |
 | `render(event)` | a drawing for a stream event, or `None` for the default |
@@ -2039,8 +2064,38 @@ Set `available=` to a zero-argument callable returning a boolean to gate dispatc
 help, and completion on live session state. It defaults to always available.
 Unavailable commands retain their registered names and ownership, so they still
 participate in duplicate checks and are removed on plugin unload.
-Names must be unique;
-clashing with a built-in is an error at startup, not a silent override.
+Names are letters, digits, underscores, and hyphens, and must be unique;
+clashing with a built-in is an error at startup, not a silent override. A command
+named after something the user names, such as a skill, sets `overridable=True`:
+it gives way to any other command with its name, registered before or after it,
+and CLAI prints one line saying which command is hidden.
+
+A command can start a turn with `self.host.submit_prompt(text)`: the text runs
+as the next prompt once the command returns, ahead of anything queued in the
+editor, and goes through `on_turn_start` like typed input, without being echoed.
+Cancelling the command, with Ctrl-C or Esc, discards the prompt. Call it only from a command handler, and not from a `during_turn` command opened
+over a running turn: anywhere else it raises `RuntimeError`.
+It is always a prompt, even when it starts with `/` or `!`. The built-in skill
+commands use it to send a skill's instructions:
+
+```python
+from collections.abc import Sequence
+
+from pydantic_clai2.commands import Command
+from pydantic_clai2.plugins import Plugin
+
+
+class Standup(Plugin):
+    def get_commands(self) -> Sequence[Command]:
+        def standup(args: list[str]) -> str:
+            self.host.submit_prompt('Summarise what changed in this repository since yesterday.')
+            return ''
+
+        return (Command(name='standup', description='Ask for a standup summary', handler=standup),)
+```
+
+`submit_prompt` raises `RuntimeError` on a host built without a shell, such as
+in a test, unless you pass `submit_prompt=` to `PluginHost`.
 
 Path-like input is not dispatched to commands. A slash, dot, or backslash in the
 first token after the leading `/` makes it a prompt instead, so screenshot paths
@@ -2466,8 +2521,9 @@ then receives `on_conversation_changed`; when the ID changed, the status row sta
 Resuming the conversation already held changes nothing. An in-memory `Transcript` has nothing
 saved, so its `resume` raises `LookupError`.
 Local `!command` executions append a user message with the command, stdout, stderr, and
-completion status. They do not start an agent turn or fire turn hooks; the context reaches the
-model on the next prompt.
+completion status. A command that gets the terminal (a full-screen program such as `!vim`, or
+`!!command`) appends only the command and its completion status. They do not start an agent turn or fire turn hooks;
+the context reaches the model on the next prompt.
 
 `host.session_id` is the current saved conversation ID, following `/clear` and
 `/resume`. During a run it identifies that run's conversation, including a
@@ -2511,12 +2567,13 @@ class Where(Plugin):
         return (os.getcwd,)
 ```
 
-The row is repainted about ten times a second, so `fn` runs that often: keep it
-cheap, synchronous, and free of blocking IO. Return `''` to contribute nothing
-for a frame. Fragments are truncated from the right on a narrow terminal and are
-readable text only; the colours in the row belong to CLAI. A fragment that raises
-shows its error name in the row instead, so one broken plugin cannot take the
-footer down.
+The row is repainted about ten times a second while CLAI works and once a second
+while the editor sits idle, so `fn` runs that often: keep it cheap, synchronous,
+and free of blocking IO. Return `''` to contribute nothing for a frame.
+Fragments are truncated from the right on a narrow terminal and are readable
+text only; the colours in the row belong to CLAI. A fragment that raises shows
+its error name in the row instead, so one broken plugin cannot take the footer
+down.
 
 ### Offer a spinner: `get_spinners()`
 
@@ -2700,9 +2757,11 @@ panel shows a bar and reset time for each.
 
 - Handlers are `async`. There is no sync variant of anything.
 - `get_*` methods are called once, when the plugin loads. Return what the plugin
-  offers; do not do slow or blocking work there. Use `on_session_start` for
-  that, but keep it asynchronous: it runs on the event loop, so offload blocking
-  work with `anyio.to_thread.run_sync` or a worker.
+  offers; do not do slow or blocking work there. Read what they depend on, such
+  as files that decide which commands exist, in `async def prepare(self)`, which
+  runs just before them; a failure there fails the load. Other setup goes in
+  `on_session_start`. Keep both asynchronous: they run on the event loop, so
+  offload blocking work with `anyio.to_thread.run_sync` or a worker.
 - CLAI's `on_*` handlers return `None`. Core hooks keep their exact core return
   contracts: for example `before_model_request` must return its `ModelRequestContext`.
   For cancelable host events, edit the event or call `event.cancel()`.
@@ -2740,6 +2799,17 @@ assert plugin.capabilities == ()
 `plugin.commands`, `plugin.status_segments`, and the rest hold what the plugin
 declared. A plugin that reads the history gets a `Transcript` by default; pass
 `conversation=Transcript(messages=[...], model=TestModel())` to seed it.
+
+`load_plugin` cannot await `prepare`, so it raises `TypeError` for a plugin that
+has one. Load that plugin in three steps instead:
+
+```python
+from pydantic_clai2.plugins import collect
+
+plugin = PluginClass.from_host(host)
+await plugin.prepare()
+loaded = collect(plugin)
+```
 
 ## vllm connection
 
