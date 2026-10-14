@@ -2297,7 +2297,9 @@ class TestCrossScopeThinkingOverrideWarning:
     """Which agent layers the warning names. The per-adapter precedence is pinned against the wire above.
 
     A mocked client stands in for recordings: the warning is decided before any request goes out, and the recorded
-    runs in `tests/test_thinking_wire_contract.py` already pin the model, agent and direct-request scopes.
+    runs in `tests/test_thinking_wire_contract.py` already pin the model, agent and direct-request scopes. Assertions
+    keep only `UserWarning`s, since `simplefilter('always')` also records a `ResourceWarning` for any socket another
+    test left for the garbage collector.
     """
 
     async def test_agent_thinking_overridden_by_model_setting(self, allow_model_requests: None):
@@ -2306,7 +2308,7 @@ class TestCrossScopeThinkingOverrideWarning:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter('always')
             await agent.run('What is 2+2?')
-        assert [str(w.message) for w in caught] == [
+        assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == [
             "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` "
             "from the agent's `model_settings`. Set `openai_reasoning_effort` in the agent's `model_settings` "
             "instead of `thinking`, or remove it from the model's `settings`."
@@ -2319,7 +2321,7 @@ class TestCrossScopeThinkingOverrideWarning:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter('always')
             await agent.run('What is 2+2?', model_settings=ModelSettings(thinking='high'))
-        assert [str(w.message) for w in caught] == [
+        assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == [
             "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` "
             "from the run's `model_settings`. Set `openai_reasoning_effort` in the run's `model_settings` "
             "instead of `thinking`, or remove it from the model's `settings`."
@@ -2338,7 +2340,7 @@ class TestCrossScopeThinkingOverrideWarning:
             "instead of `thinking`, or remove it from the model's `settings`."
         )
         # `FallbackModel` prepares the child once for its span attributes and again in the child's `request`.
-        assert [str(w.message) for w in caught] == [message, message]
+        assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == [message, message]
         assert get_mock_chat_completion_kwargs(client)[0]['reasoning_effort'] == 'low'
 
     async def test_fallback_agent_setting_overriding_run_thinking(self, allow_model_requests: None):
@@ -2348,7 +2350,7 @@ class TestCrossScopeThinkingOverrideWarning:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter('always')
             await agent.run('What is 2+2?', model_settings=ModelSettings(thinking='high'))
-        assert [str(w.message) for w in caught] == [
+        assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == [
             "`openai_reasoning_effort` from the agent's `model_settings` takes precedence over `thinking='high'` "
             "from the run's `model_settings`. Set `openai_reasoning_effort` in the run's `model_settings` "
             "instead of `thinking`, or remove it from the agent's `model_settings`."
@@ -2364,7 +2366,7 @@ class TestCrossScopeThinkingOverrideWarning:
         ):
             warnings.simplefilter('always')
             await agent.run('What is 2+2?')
-        assert [str(w.message) for w in caught] == [
+        assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == [
             "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` "
             'from `override(model_settings=...)`. Set `openai_reasoning_effort` in `override(model_settings=...)` '
             "instead of `thinking`, or remove it from the model's `settings`."
@@ -2378,7 +2380,7 @@ class TestCrossScopeThinkingOverrideWarning:
             await Agent(model).run(
                 'What is 2+2?', model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low')
             )
-        assert [str(w.message) for w in caught] == []
+        assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == []
         assert get_mock_chat_completion_kwargs(client)[0]['reasoning_effort'] == 'low'
 
     async def test_thinking_the_model_ignores_is_silent(self, allow_model_requests: None):
@@ -2387,7 +2389,7 @@ class TestCrossScopeThinkingOverrideWarning:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter('always')
             await Agent(model).run('What is 2+2?', model_settings=ModelSettings(thinking='high'))
-        assert [str(w.message) for w in caught] == []
+        assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == []
 
     async def test_disabling_thinking_on_an_always_on_model_is_silent(self, allow_model_requests: None):
         """`gpt-5` always reasons and drops `thinking=False`, so no setting took precedence over it."""
@@ -2395,4 +2397,4 @@ class TestCrossScopeThinkingOverrideWarning:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter('always')
             await Agent(model).run('What is 2+2?', model_settings=ModelSettings(thinking=False))
-        assert [str(w.message) for w in caught] == []
+        assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == []
