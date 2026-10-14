@@ -74,7 +74,7 @@ class GrokModelProfile(ModelProfile, total=False):
     """Native `reasoning_effort` values supported by the Grok model. Default: empty (`frozenset()`)."""
 
     grok_default_effort_omitted: bool
-    """Whether a default thinking request omits `reasoning_effort` so xAI applies its model default."""
+    """Whether a default thinking request omits `reasoning_effort` so xAI applies its model default. Default: `False`."""
 
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:
