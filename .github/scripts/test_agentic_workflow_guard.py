@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -41,6 +42,17 @@ from agentic_workflow_guard import (
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 WORKFLOWS_DIR = REPO_ROOT / '.github' / 'workflows'
+
+
+def test_ci_review_compiled_membership_admits_installed_app_without_widening_roles():
+    lock = yaml.safe_load((WORKFLOWS_DIR / 'pydantic-ai-pr-review.lock.yml').read_text(encoding='utf-8'))
+    steps = lock['jobs']['pre_activation']['steps']
+    check_membership = next(step for step in steps if step.get('id') == 'check_membership')
+
+    assert check_membership['env'] == {
+        'GH_AW_REQUIRED_ROLES': 'admin,maintainer,write',
+        'GH_AW_ALLOWED_BOTS': 'pydantic-docs',
+    }
 
 
 def _write(path: Path, text: str) -> Path:

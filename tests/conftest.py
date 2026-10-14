@@ -1232,6 +1232,11 @@ def crusoe_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def meta_api_key() -> str:
+    return os.getenv('META_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def github_copilot_api_key() -> str:
     return os.getenv('GITHUB_COPILOT_API_KEY', 'mock-api-key')
 
