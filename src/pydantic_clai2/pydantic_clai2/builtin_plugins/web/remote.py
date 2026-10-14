@@ -4,6 +4,7 @@ import math
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from anyio import get_cancelled_exc_class, to_thread
 
@@ -43,6 +44,11 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.plugins import CommandEnd, ConversationChanged, PluginHost, SessionCatalog, TurnOutcome
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
+
+CODE_MODE = 'run.code_mode'
+SPECULATION = 'run.speculative_code_mode'
+Switch = Literal['run.code_mode', 'run.speculative_code_mode']
+"""The settings the browser's toggles change; nothing else is set from it but through the prompt."""
 
 STATUS_INTERVAL = 0.2
 """Seconds between status updates sent while a turn streams, so token counts tick; turn and command ends always send one."""
@@ -99,7 +105,19 @@ class Remote:
             streamed_tokens=math.ceil(status.streamed_chars / 4),
             output_tokens=status.output_tokens,
             run=None if self._usage is None else _usage(self._usage),
+            code_mode=self._switch(CODE_MODE),
+            speculation=self._switch(SPECULATION),
         )
+
+    def _switch(self, key: str) -> bool | None:
+        try:
+            return self.host.setting(key) is True
+        except KeyError:
+            return None
+
+    def switch(self, key: Switch, on: bool) -> None:
+        """Flip a run switch as `/set` typed at the prompt does; a running turn keeps the tools it started with."""
+        self.host.send_input(f'/set {key} {"true" if on else "false"}')
 
     def publish_status(self) -> None:
         self._status_sent = time.monotonic()

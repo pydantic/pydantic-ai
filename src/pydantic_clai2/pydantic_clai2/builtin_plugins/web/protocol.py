@@ -130,6 +130,10 @@ class StatusInfo:
     """The last turn's reported output tokens, once it ends."""
     run: Usage | None = None
     """What the running turn's model requests have reported so far; it grows as each request completes."""
+    code_mode: bool | None = None
+    """The `run.code_mode` setting; `None` without CLAI's settings."""
+    speculation: bool | None = None
+    """The `run.speculative_code_mode` setting, which turns code mode on for its runs too."""
 
 
 @dataclass(kw_only=True)

@@ -818,6 +818,7 @@ def create_shell(
         send_input=lambda text: shell.send_input(text),
         interrupt=lambda: shell.interrupts.cancel(exit_on_repeat=False),
         sessions=sessions,
+        setting=context.setting,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     models.plugins = loader.model_providers

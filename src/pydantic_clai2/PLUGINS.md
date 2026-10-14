@@ -1184,6 +1184,12 @@ read-only. Shell lines (`!`) run only in the terminal. A bare command that opens
 menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
 `/model NAME` instead.
 
+The composer's **Code** and **Speculative** toggles flip `run.code_mode` and
+`run.speculative_code_mode` by sending `/set` through the prompt, so they save the setting as
+typing it would; a running turn keeps the tools it started with. While speculation is on, code
+mode is on too, so its toggle stays lit. A change made with Ctrl+X Ctrl+S in the terminal shows in
+the browser with its next status update.
+
 While `web` is loaded it answers `ask_user_question` itself, in the browser and in the
 terminal picker at once, whichever answers first; the `ask_user` plugin stays off meanwhile,
 as `/plugins` shows. Settings, as `/plugins add web pydantic_clai2.builtin_plugins.web '{...}'`:
@@ -2172,6 +2178,9 @@ prompt the keyboard does:
   run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
   prompt to type at: one built without `send_input=`, or a CLAI whose output is not a terminal,
   which reads its prompts line by line.
+- `self.host.setting(KEY)` reads the effective value of a CLAI setting, such as
+  `run.code_mode`, as `/set KEY` shows it; change one as the user would, with
+  `send_input('/set KEY VALUE')`. It raises `KeyError` for an unknown key.
 - `self.host.interrupt()` cancels the running turn or command as Esc does, and returns
   `False` when nothing was running. A menu stays open, and a headless `-p` run is not cancelled.
 - `await self.host.complete(text)` returns what Tab offers for `text`: termflow `Completion`s

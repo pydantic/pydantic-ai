@@ -1522,3 +1522,40 @@ pre {
   font: 11.5px/1 ui-monospace, 'SF Mono', Menlo, monospace;
   font-variant-numeric: tabular-nums;
 }
+
+/* Run switches */
+
+.switches {
+  display: flex;
+  gap: 4px;
+}
+
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.switch:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text-soft);
+}
+
+.switch.on {
+  border-color: color-mix(in srgb, var(--lithium) 35%, transparent);
+  background: color-mix(in srgb, var(--lithium) 12%, transparent);
+  color: var(--text);
+}
+
+.switch.on svg {
+  color: var(--lithium);
+}
+
+.switch:disabled {
+  opacity: 0.7;
+}

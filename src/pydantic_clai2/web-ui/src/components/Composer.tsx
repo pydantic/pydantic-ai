@@ -9,6 +9,8 @@ export interface ComposerHandle {
 
 interface Props {
   running: boolean
+  /** Controls after the model picker, such as the run switches. */
+  controls?: React.ReactNode
   /** Shown in the bar while a turn runs. */
   meter?: React.ReactNode
   model: string
@@ -19,7 +21,7 @@ interface Props {
 
 /** The prompt box: Enter sends, Shift+Enter adds a line, `/` completes commands from CLAI's own registry. */
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { running, meter, model, disabled, placeholder, onError },
+  { running, meter, controls, model, disabled, placeholder, onError },
   ref,
 ) {
   const [text, setText] = useState('')
@@ -207,6 +209,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               </div>
             )}
           </div>
+          {controls}
           {running ? meter : <span className="hint">/ for commands</span>}
           {running && !text.trim() ? (
             <button className="send stop" onClick={() => void api.interrupt()} title="Interrupt (Esc)" aria-label="Interrupt">

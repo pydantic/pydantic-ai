@@ -419,6 +419,7 @@ class PluginHost(Generic[DepsT]):
         interrupt: Callable[[], bool] = lambda: False,
         commands: Commands | None = None,
         sessions: SessionCatalog | None = None,
+        setting: Callable[[str], JsonValue] | None = None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
@@ -426,7 +427,7 @@ class PluginHost(Generic[DepsT]):
         last until the plugin unloads. `submit_prompt` runs a prompt as the next turn, and
         `send_input` and `interrupt` drive the prompt as the keyboard does; see the methods of the
         same names. `commands` is the shell's registry, which `complete` reads; `sessions` its saved
-        conversations.
+        conversations; `setting` reads its settings, as the method of the same name does.
 
         The shell passes its own `conversation` and `status`; a host built elsewhere gets a
         `Transcript` and a detached status row, so a plugin needs no special case for either.
@@ -452,6 +453,7 @@ class PluginHost(Generic[DepsT]):
         self._commands = commands
         self.sessions = sessions
         """The saved conversations `/resume` lists; `None` on a host without session persistence."""
+        self._setting = setting
 
     def submit_prompt(self, text: str, /) -> None:
         """Run `text` as the next turn, as if typed at the prompt but without echoing it.
@@ -484,6 +486,17 @@ class PluginHost(Generic[DepsT]):
         if self._send_input is None:
             raise RuntimeError(f'Plugin {self.name!r} has no prompt to enter input at.')
         self._send_input(text)
+
+    def setting(self, key: str, /) -> JsonValue:
+        """The effective value of a CLAI setting, such as `run.code_mode`, read now, as `/set KEY` shows it.
+
+        Read-only: change one as the user would, with `send_input('/set KEY VALUE')`. Raises `KeyError`
+        for an unknown key, and on a host without CLAI's settings, such as in a test, unless the host
+        was built with `setting=`.
+        """
+        if self._setting is None:
+            raise KeyError(key)
+        return self._setting(key)
 
     def interrupt(self) -> bool:
         """Cancel the running turn or command, as Esc does; `False` when nothing was running.

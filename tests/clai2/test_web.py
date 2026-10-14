@@ -253,6 +253,24 @@ def test_a_background_fork_is_not_a_turn(make_web: 'MakeWeb') -> None:
         running.result(timeout=10)
 
 
+def test_switches(make_web: 'MakeWeb') -> None:
+    """The browser's toggles flip code mode and speculation through `/set`, and its status follows the settings."""
+    web_ = make_web(Agent(TestModel()))
+    status = web_.get('/api/state').json()['status']
+    assert (status['code_mode'], status['speculation']) == (False, False), 'the tests turn code mode off'
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        assert web_.post('/api/switch', {'key': 'run.speculative_code_mode', 'on': True}).status_code == 204
+        assert receive_until(socket, Notice)[1].command == '/set run.speculative_code_mode true'
+        assert receive_until(socket, StatusChanged)[1].status.speculation is True
+        web_.post('/api/switch', {'key': 'run.code_mode', 'on': True})
+        assert receive_until(socket, StatusChanged)[1].status.code_mode is True
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+    assert web_.post('/api/switch', {'key': 'display.theme', 'on': True}).status_code == 422, 'only the run switches'
+
+
 def test_a_failed_turn(make_web: 'MakeWeb') -> None:
     async def fail(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         raise RuntimeError('model unavailable')
@@ -502,6 +520,8 @@ def test_a_build_without_assets(tmp_path: Path) -> None:
         assert client.post('/api/input', json={'text': 'hi'}, headers={HEADER: TOKEN}).json() == {
             'detail': "Plugin 'web' has no prompt to enter input at."
         }
+        status = client.get('/api/state', headers={HEADER: TOKEN}).json()['status']
+        assert (status['code_mode'], status['speculation']) == (None, None), 'no settings to read'
 
 
 async def test_lifespan_passes_through() -> None:

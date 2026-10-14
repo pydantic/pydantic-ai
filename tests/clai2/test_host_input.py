@@ -267,8 +267,28 @@ async def test_a_slow_command_end_handler_cannot_cancel_the_command(tmp_path: Pa
     await shell.loader.close('exit')
 
 
+async def test_settings_are_readable(tmp_path: Path) -> None:
+    """`host.setting` reads the effective value, so a change through `/set` shows at once."""
+    shell = remote_shell(tmp_path, Agent(TestModel()), output=io.StringIO())
+    await shell.loader.load_all()
+    [host] = Recorder.hosts
+    assert host.setting('run.code_mode') is False, 'the tests turn code mode off'
+    assert host.setting('display.theme') == 'default'
+    host.send_input('/set run.code_mode true')
+    host.send_input('/exit')
+    await shell.run()
+    assert host.setting('run.code_mode') is True
+    with pytest.raises(KeyError):
+        host.setting('no.such.setting')
+    await shell.loader.close('exit')
+
+
 async def test_a_host_without_a_shell() -> None:
     host = PluginHost[None](name='alone', console=Console(file=io.StringIO()), settings={})
+    with pytest.raises(KeyError):
+        host.setting('run.code_mode')
+    with pytest.raises(KeyError):
+        host.setting('run.code_mode')
     with pytest.raises(RuntimeError, match='has no prompt to enter input at'):
         host.send_input('hello')
     assert not host.interrupt()
