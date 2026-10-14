@@ -186,25 +186,6 @@ def _serialize_config(config: dict[str, str]) -> str:
     return serialized.replace('&', r'\u0026').replace('<', r'\u003c').replace('>', r'\u003e')
 
 
-def _inject_path_config(content: bytes, derived: dict[str, str], explicit: dict[str, str]) -> bytes:
-    """Append a bootstrap that seeds the UI config with `derived` and overrides it with `explicit`.
-
-    Position within the document is free: the UI only reads the config from a deferred
-    `type="module"` script, so this parser-blocking classic script runs first wherever it sits.
-    Appending also leaves the document preamble untouched, where anything inserted ahead of the
-    doctype would put the page in quirks mode.
-
-    `Object.assign` gives a custom `html_source` that carries its own configuration precedence over
-    the derived paths, while explicit `base_path`/`api_path` arguments still win over both.
-    """
-    bootstrap = (
-        f'<script>window.PYDANTIC_AI_CHAT_CONFIG=Object.assign('
-        f'{_serialize_config(derived)},window.PYDANTIC_AI_CHAT_CONFIG,{_serialize_config(explicit)}'
-        f');</script>'
-    ).encode()
-    return content + bootstrap
-
-
 def create_web_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
@@ -312,7 +293,15 @@ def create_web_app(
             source = 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.3.0/dist/index.html'
         content = await _get_ui_html(source)
         if derived or explicit:
-            content = _inject_path_config(content, derived, explicit)
+            # This parser-blocking classic script runs before the UI's deferred module script.
+            # Appending preserves the doctype and avoids putting the page in quirks mode.
+            # Custom HTML config overrides derived paths; explicit arguments override both.
+            bootstrap = (
+                f'<script>window.PYDANTIC_AI_CHAT_CONFIG=Object.assign('
+                f'{_serialize_config(derived)},window.PYDANTIC_AI_CHAT_CONFIG,{_serialize_config(explicit)}'
+                f');</script>'
+            ).encode()
+            content += bootstrap
 
         return HTMLResponse(
             content=content,
