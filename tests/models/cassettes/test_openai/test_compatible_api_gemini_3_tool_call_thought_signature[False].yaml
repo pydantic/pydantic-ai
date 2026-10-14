@@ -51,11 +51,11 @@ interactions:
       content-type:
       - application/json
       expires:
-      - Wed, 14 Oct 2026 00:52:20 GMT
+      - Wed, 14 Oct 2026 01:07:40 GMT
       p3p:
       - CP="This is not a P3P policy! See g.co/p3phelp for more info."
       server-timing:
-      - gfet4t7; dur=632
+      - gfet4t7; dur=984
       transfer-encoding:
       - chunked
       vary:
@@ -74,26 +74,26 @@ interactions:
             - extra_content:
                 google:
                   thought_signature: >-
-                    EnMKcQFpFH0T3Eo155GvdFL7f7EUL5LzyduwZxFFb9dUv0BLrRce4XCBDU5BC5amS3wt+2XuP9U8uoB7WYhhU/6CfHkYqXOmz7xjlbH+e16HA1vD7YLa7Sabu6gcW7/MNs8FMM8lGl5kDteCGIjI3pD9PL+x
+                    EnMKcQFpFH0T2xhbu87FEGfDtWC/Z4HAeqm5FM+76vnT/PS/OUls8eE5jVvnmzyImIuD4FSew2iZY3DMxigAJ7X9KCFOrctT0ZA//+9JG2RqeBl3ik7S6VvdpbCpoBvsSnE52/Jx5i1JM64vRRdpRBMkm8nF
               function:
                 arguments: "{\"city\":\"Taipei\"}"
                 name: get_weather
-              id: call_339766
+              id: call_437438
               type: function
             - function:
                 arguments: "{\"city\":\"Kaohsiung\"}"
                 name: get_weather
-              id: call_339767
+              id: call_437439
               type: function
-        created: 1791939140
-        id: RNLOau3xCMCtqtsPp6f7oA4
+        created: 1791940060
+        id: 3NXOarb-CoDcqtsP8tWwqQ4
         model: gemini-3.1-flash-lite
         object: chat.completion
         usage:
           completion_tokens: 36
           prompt_tokens: 74
           total_tokens: 110
-  recorded_at: 2026-10-14T00:52:20.641651+00:00
+  recorded_at: 2026-10-14T01:07:40.977703+00:00
 - request:
     method: POST
     uri: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
@@ -123,7 +123,7 @@ interactions:
         - role: assistant
           content: null
           tool_calls:
-          - id: call_339766
+          - id: call_437438
             type: function
             function:
               name: get_weather
@@ -131,17 +131,17 @@ interactions:
             extra_content:
               google:
                 thought_signature: >-
-                  EnMKcQFpFH0T3Eo155GvdFL7f7EUL5LzyduwZxFFb9dUv0BLrRce4XCBDU5BC5amS3wt+2XuP9U8uoB7WYhhU/6CfHkYqXOmz7xjlbH+e16HA1vD7YLa7Sabu6gcW7/MNs8FMM8lGl5kDteCGIjI3pD9PL+x
-          - id: call_339767
+                  EnMKcQFpFH0T2xhbu87FEGfDtWC/Z4HAeqm5FM+76vnT/PS/OUls8eE5jVvnmzyImIuD4FSew2iZY3DMxigAJ7X9KCFOrctT0ZA//+9JG2RqeBl3ik7S6VvdpbCpoBvsSnE52/Jx5i1JM64vRRdpRBMkm8nF
+          - id: call_437439
             type: function
             function:
               name: get_weather
               arguments: "{\"city\":\"Kaohsiung\"}"
         - role: tool
-          tool_call_id: call_339766
+          tool_call_id: call_437438
           content: sunny, 28°C
         - role: tool
-          tool_call_id: call_339767
+          tool_call_id: call_437439
           content: sunny, 28°C
         tool_choice: auto
         tools:
@@ -168,11 +168,11 @@ interactions:
       content-type:
       - application/json
       expires:
-      - Wed, 14 Oct 2026 00:52:21 GMT
+      - Wed, 14 Oct 2026 01:07:41 GMT
       p3p:
       - CP="This is not a P3P policy! See g.co/p3phelp for more info."
       server-timing:
-      - gfet4t7; dur=820
+      - gfet4t7; dur=768
       transfer-encoding:
       - chunked
       vary:
@@ -186,18 +186,20 @@ interactions:
         - finish_reason: stop
           index: 0
           message:
-            content: The weather is currently sunny and 28°C in both Taipei and Kaohsiung.
+            content: >-
+              The weather is currently sunny in both Taipei and Kaohsiung, with a temperature
+              of 28°C in both cities.
             extra_content:
               google:
                 thought_signature: >-
-                  EnMKcQFpFH0T0zfj98gFJFC06FGsr5ZnG7NkymUFbAZ50VHiZiqYdLQ1LARB1UjPWZ7fF0m6szwvyywyE6CHVMrPZUH5ZhB8RocYGt3zq5KMOqYrYyx/p0VuQ84GnHs+IAK9GBZ7fb33uGNeqfgIWyCX84s2
+                  EnMKcQFpFH0TNBOdc4qofsrx78maG2UPPeoD0xz7y2ye0IzxiZk4IMotxqJ0CpxZjP443aF/pP4V/JsRbHkaNEyP9M+UudDXDJOOG5a/N9NO3Q0BzeEErx2ykS7G6rgTAxtxJnzjD0wpGukgz5zLktBRhCkr
             role: assistant
-        created: 1791939141
-        id: RNLOatPzMvmIqtsP3rudkA4
+        created: 1791940061
+        id: 3dXOaq7nDYuGqtsPgcTfqQ4
         model: gemini-3.1-flash-lite
         object: chat.completion
         usage:
-          completion_tokens: 20
+          completion_tokens: 27
           prompt_tokens: 149
-          total_tokens: 169
-  recorded_at: 2026-10-14T00:52:21.569318+00:00
+          total_tokens: 176
+  recorded_at: 2026-10-14T01:07:41.844280+00:00

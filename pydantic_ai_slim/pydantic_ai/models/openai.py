@@ -22,7 +22,7 @@ from functools import cached_property
 from typing import Any, Literal, Never, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
 
@@ -367,7 +367,7 @@ class _OpenAIResponsesContinuationDetails(TypedDict, total=False):
 class _ChatCompletionMessageFunctionToolCallParam(ChatCompletionMessageFunctionToolCallParam, total=False):
     """A Chat Completions tool call carrying the `extra_content` vendor extension, see `_map_tool_call_provider_details`."""
 
-    extra_content: dict[str, Any]
+    extra_content: JsonValue
 
 
 _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x1536', '1536x1024']] = {

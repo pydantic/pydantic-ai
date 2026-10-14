@@ -75,7 +75,7 @@ from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, RequestCapture, TestEnv, message, try_import
+from ..conftest import IsDatetime, IsNow, IsSameStr, IsStr, RequestCapture, TestEnv, message, try_import
 from .conftest import json_objects
 from .mock_openai import (
     MockOpenAI,
@@ -4365,12 +4365,13 @@ async def test_compatible_api_with_tool_calls_without_id(allow_model_requests: N
     assert response.output == snapshot('The current time is Noon.')
 
 
+@pytest.mark.parametrize('stream', [False, True])
 async def test_compatible_api_gemini_3_tool_call_thought_signature(
-    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture, stream: bool
 ):
     """Gemini 3 rejects the request after a tool call unless each call's `extra_content` thought signature comes back.
 
-    Of parallel calls, only the first carries one.
+    Of parallel calls, only the first carries one, so the second goes back without.
     """
     provider = OpenAIProvider(
         base_url='https://generativelanguage.googleapis.com/v1beta/openai/',
@@ -4384,26 +4385,35 @@ async def test_compatible_api_gemini_3_tool_call_thought_signature(
         """Get today's weather for a city."""
         return 'sunny, 28°C'
 
-    result = await agent.run(
+    prompt = (
         "What's the weather in Taipei and Kaohsiung? Call get_weather once for each city in parallel, then summarize."
     )
-    assert result.output == snapshot('The weather is currently sunny and 28°C in both Taipei and Kaohsiung.')
-    assert result.all_messages()[1].parts == snapshot(
+    if stream:
+        async with agent.run_stream(prompt) as streamed_result:
+            output = await streamed_result.get_output()
+        messages = streamed_result.all_messages()
+    else:
+        result = await agent.run(prompt)
+        output, messages = result.output, result.all_messages()
+
+    expected_output = {
+        False: snapshot(
+            'The weather is currently sunny in both Taipei and Kaohsiung, with a temperature of 28°C in both cities.'
+        ),
+        True: snapshot('The weather is currently sunny and 28°C in both Taipei and Kaohsiung.'),
+    }
+    assert output == expected_output[stream]
+    taipei_call_id, kaohsiung_call_id, signature = IsSameStr(), IsSameStr(), IsSameStr()
+    assert messages[1].parts == snapshot(
         [
             ToolCallPart(
                 tool_name='get_weather',
                 args='{"city":"Taipei"}',
-                tool_call_id='call_339766',
+                tool_call_id=taipei_call_id,
                 provider_name='openai',
-                provider_details={
-                    'extra_content': {
-                        'google': {
-                            'thought_signature': 'EnMKcQFpFH0T3Eo155GvdFL7f7EUL5LzyduwZxFFb9dUv0BLrRce4XCBDU5BC5amS3wt+2XuP9U8uoB7WYhhU/6CfHkYqXOmz7xjlbH+e16HA1vD7YLa7Sabu6gcW7/MNs8FMM8lGl5kDteCGIjI3pD9PL+x'
-                        }
-                    }
-                },
+                provider_details={'extra_content': {'google': {'thought_signature': signature}}},
             ),
-            ToolCallPart(tool_name='get_weather', args='{"city":"Kaohsiung"}', tool_call_id='call_339767'),
+            ToolCallPart(tool_name='get_weather', args='{"city":"Kaohsiung"}', tool_call_id=kaohsiung_call_id),
         ]
     )
     assert [
@@ -4414,111 +4424,17 @@ async def test_compatible_api_gemini_3_tool_call_thought_signature(
         [
             [
                 {
-                    'id': 'call_339766',
+                    'id': taipei_call_id,
                     'type': 'function',
                     'function': {'name': 'get_weather', 'arguments': '{"city":"Taipei"}'},
-                    'extra_content': {
-                        'google': {
-                            'thought_signature': 'EnMKcQFpFH0T3Eo155GvdFL7f7EUL5LzyduwZxFFb9dUv0BLrRce4XCBDU5BC5amS3wt+2XuP9U8uoB7WYhhU/6CfHkYqXOmz7xjlbH+e16HA1vD7YLa7Sabu6gcW7/MNs8FMM8lGl5kDteCGIjI3pD9PL+x'
-                        }
-                    },
+                    'extra_content': {'google': {'thought_signature': signature}},
                 },
                 {
-                    'id': 'call_339767',
+                    'id': kaohsiung_call_id,
                     'type': 'function',
                     'function': {'name': 'get_weather', 'arguments': '{"city":"Kaohsiung"}'},
                 },
             ]
-        ]
-    )
-
-
-_GEMINI_EXTRA_CONTENT = {'google': {'thought_signature': 'c2lnbmF0dXJl'}}
-
-
-@pytest.mark.parametrize('stream', [False, True])
-async def test_tool_call_extra_content_sent_back(allow_model_requests: None, stream: bool):
-    """Each tool call's `extra_content` is kept and sent back unchanged with it, and a call without one goes back without.
-
-    Pins both response paths offline; the recorded run is `test_compatible_api_gemini_3_tool_call_thought_signature`.
-    """
-    tool_calls: list[dict[str, Any]] = [
-        {
-            'id': 'call_1',
-            'type': 'function',
-            'function': {'name': 'get_weather', 'arguments': '{"city": "Taipei"}'},
-            'extra_content': _GEMINI_EXTRA_CONTENT,
-        },
-        {'id': 'call_2', 'type': 'function', 'function': {'name': 'get_weather', 'arguments': '{"city": "Kaohsiung"}'}},
-    ]
-    if stream:
-        mock_client = MockOpenAI.create_mock_stream(
-            [
-                [
-                    chunk(
-                        [
-                            ChoiceDelta(
-                                tool_calls=[
-                                    ChoiceDeltaToolCall.model_validate({'index': index, **tool_call})
-                                    for index, tool_call in enumerate(tool_calls)
-                                ]
-                            )
-                        ]
-                    )
-                ],
-                [text_chunk('Sunny in both.', finish_reason='stop')],
-            ]
-        )
-    else:
-        mock_client = MockOpenAI.create_mock(
-            [
-                completion_message(
-                    ChatCompletionMessage(
-                        role='assistant',
-                        tool_calls=[ChatCompletionMessageFunctionToolCall.model_validate(c) for c in tool_calls],
-                    )
-                ),
-                completion_message(ChatCompletionMessage(content='Sunny in both.', role='assistant')),
-            ]
-        )
-    agent = Agent(OpenAIChatModel('gemini-3.1-flash-lite', provider=OpenAIProvider(openai_client=mock_client)))
-
-    @agent.tool_plain
-    def get_weather(city: str) -> str:
-        return 'sunny'
-
-    if stream:
-        async with agent.run_stream('Weather in Taipei and Kaohsiung?') as streamed_result:
-            await streamed_result.get_output()
-        messages = streamed_result.all_messages()
-    else:
-        messages = (await agent.run('Weather in Taipei and Kaohsiung?')).all_messages()
-
-    assert messages[1].parts == snapshot(
-        [
-            ToolCallPart(
-                tool_name='get_weather',
-                args='{"city": "Taipei"}',
-                tool_call_id='call_1',
-                provider_name='openai',
-                provider_details={'extra_content': {'google': {'thought_signature': 'c2lnbmF0dXJl'}}},
-            ),
-            ToolCallPart(tool_name='get_weather', args='{"city": "Kaohsiung"}', tool_call_id='call_2'),
-        ]
-    )
-    assert get_mock_chat_completion_kwargs(mock_client)[1]['messages'][1]['tool_calls'] == snapshot(
-        [
-            {
-                'id': 'call_1',
-                'type': 'function',
-                'function': {'name': 'get_weather', 'arguments': '{"city": "Taipei"}'},
-                'extra_content': {'google': {'thought_signature': 'c2lnbmF0dXJl'}},
-            },
-            {
-                'id': 'call_2',
-                'type': 'function',
-                'function': {'name': 'get_weather', 'arguments': '{"city": "Kaohsiung"}'},
-            },
         ]
     )
 
@@ -4536,7 +4452,7 @@ async def test_tool_call_extra_content_not_sent_to_other_provider(allow_model_re
                     '{"city": "Taipei"}',
                     tool_call_id='call_1',
                     provider_name='litellm',
-                    provider_details={'extra_content': _GEMINI_EXTRA_CONTENT},
+                    provider_details={'extra_content': {'google': {'thought_signature': 'c2lnbmF0dXJl'}}},
                 )
             ],
             provider_name='litellm',
