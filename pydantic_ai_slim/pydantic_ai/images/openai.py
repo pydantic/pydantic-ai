@@ -106,8 +106,8 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
 class OpenAIImageGenerationModel(ImageGenerationModel):
     """OpenAI image generation model implementation.
 
-    This model works with OpenAI's Images API and the GPT Image model family, such as `gpt-image-2`,
-    `gpt-image-1.5`, `gpt-image-1`, and `gpt-image-1-mini`.
+    This model works with OpenAI's Images API and the GPT Image model family, such as `gpt-image-2.5-flare`,
+    `gpt-image-2.5-sunburst`, `gpt-image-2`, `gpt-image-1.5`, `gpt-image-1`, and `gpt-image-1-mini`.
 
     The `dall-e-2` and `dall-e-3` models are not supported and raise a
     [`UserError`][pydantic_ai.exceptions.UserError] on construction, even though they are part of the
