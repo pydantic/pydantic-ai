@@ -390,7 +390,7 @@ async def test_openai_live_delta_preserves_the_warmed_cache_prefix(
         'gpt-5.6',
     ],
 )
-async def test_force_a_tool_a_deferred_capability_revealed(
+async def test_force_a_tool_revealed_by_a_deferred_capability(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture, model_name: str
 ) -> None:
     """A loaded capability's model settings force its tool, which only an `additional_tools` item declares.

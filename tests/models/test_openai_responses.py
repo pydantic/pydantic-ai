@@ -328,7 +328,7 @@ async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
 
     A mocked client rather than a recording per case: this pins every `tool_choice` form on both sides of the
     `openai_responses_tool_choice_accepts_additional_tools` profile flag, and
-    `test_force_a_tool_a_deferred_capability_revealed` covers the live API on both sides.
+    `test_force_a_tool_revealed_by_a_deferred_capability` covers the live API on both sides.
     """
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
@@ -367,6 +367,73 @@ async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
             if item.get('type') == 'additional_tools'
         ],
     } == expected
+
+
+@pytest.mark.parametrize(
+    ('tool_choice', 'expected_tool_choice'),
+    [
+        pytest.param(['lookup_refund_policy'], _FORCE_REFUND, id='by-name'),
+        pytest.param(ToolOrOutput(function_tools=['lookup_refund_policy']), _ALLOW_REFUND, id='allowed-tools'),
+    ],
+)
+async def test_tool_choice_naming_a_reveal_held_by_a_stored_response_is_not_redeclared(
+    allow_model_requests: None,
+    tool_choice: list[str] | ToolOrOutput,
+    expected_tool_choice: dict[str, object],
+) -> None:
+    """A request continuing a stored response that holds the reveal leaves the tool out of `tools`.
+
+    Redeclaring the tool next to the stored `additional_tools` item gets a 500 from models before GPT-5.6 for a
+    forced name, so the request goes out item-free with the name as is. A mocked client, because the API rejects the
+    request this test pins with a 400; the chained shapes were measured live with raw requests.
+    """
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(openai_client=mock_client))
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy for an order.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+    )
+    always_ready = ToolDefinition(
+        name='always_ready',
+        description='An always-available tool.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+
+    _, parameters = model.prepare_request(
+        None,
+        ModelRequestParameters(
+            function_tools=[tool, always_ready],
+            revealed_tool_names={tool.name},
+        ),
+    )
+    await model.request(
+        [
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
+            ModelResponse(parts=[TextPart(content='Ready.')], provider_name='openai', provider_response_id='resp_1'),
+            ModelRequest(parts=[UserPromptPart(content='Look up the refund policy.')]),
+        ],
+        OpenAIResponsesModelSettings(tool_choice=tool_choice, openai_previous_response_id='auto'),
+        parameters,
+    )
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert {
+        'previous_response_id': request_kwargs['previous_response_id'],
+        'tool_choice': request_kwargs['tool_choice'],
+        'tools': [entry['name'] for entry in request_kwargs['tools']],
+        'additional_tools': [
+            [entry['name'] for entry in item['tools']]
+            for item in request_kwargs['input']
+            if item.get('type') == 'additional_tools'
+        ],
+    } == {
+        'previous_response_id': 'resp_1',
+        'tool_choice': expected_tool_choice,
+        'tools': ['always_ready'],
+        'additional_tools': [],
+    }
 
 
 async def test_openai_responses_image_detail_vendor_metadata(allow_model_requests: None):

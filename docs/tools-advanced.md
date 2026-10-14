@@ -464,9 +464,11 @@ Whether a deferred tool can be forced by name depends on how its definition reac
 - On OpenAI Responses, a tool withheld until revealed, such as an on-demand capability's tool or a
   tool search corpus member on a model without native tool search, travels in the
   `additional_tools` item alone once `load_capability` or another tool's `ToolReturn.tools` reveals
-  it, and can be named in `tool_choice` on every model. GPT-5.6 and later accept the name as is. On
-  earlier models, Pydantic AI declares the tool in `tools` for the request whose `tool_choice` names
-  it, so that one request misses the prompt cache.
+  it. While that item is in the request's own input, the tool can be named in `tool_choice` on every
+  model. GPT-5.6 and later accept the name as is. On earlier models, Pydantic AI declares the tool in
+  `tools` for the request whose `tool_choice` names it, so that one request misses the prompt cache.
+  Once an earlier stored response holds the item instead, as with `openai_previous_response_id`, the
+  API rejects the name with the same 400, GPT-5.6 included.
 
 ### Example
 
