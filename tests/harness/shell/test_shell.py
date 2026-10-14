@@ -100,7 +100,7 @@ async def test_command_tools_declare_temporal_budget(tmp_path: Path) -> None:
         allow_interactive=False,
         tools=['shell'],
     )
-    for name, owner in (('run_command', toolset), ('shell', persistent)):
+    for name, owner in (('run_command', toolset), ('check_command', toolset), ('shell', persistent)):
         tools = await owner.get_tools(_ctx(tmp_path))
         metadata = tools[name].tool_def.metadata
         assert metadata is not None
