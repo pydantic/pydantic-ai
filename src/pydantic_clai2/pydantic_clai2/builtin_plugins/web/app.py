@@ -247,9 +247,9 @@ def _events(app: FastAPI, remote: Remote) -> None:
     @app.websocket('/ws')
     async def events(socket: WebSocket) -> None:
         await socket.accept()
-        snapshot = dump(remote.snapshot())
+        # Subscribe first, so nothing published between the snapshot and the subscription is lost.
         with remote.hub.subscribe() as queue:
-            await socket.send_text(snapshot)
+            await socket.send_text(dump(remote.snapshot()))
             async with anyio.create_task_group() as connection:
 
                 async def forward() -> None:

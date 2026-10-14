@@ -1174,9 +1174,10 @@ shows its address and how many browsers are connected.
 
 Everything the browser does goes through the prompt, as typing there would
 (`host.send_input`): prompts and `/commands` run in the same session, in order with what the
-terminal enters, and both show them. The browser receives the run's stream events (text,
-thinking, tool calls and results, shell output, diffs) from a capability the plugin binds, the
-turn and command results from CLAI's moments, and history from `host.conversation`. The
+terminal enters, and both show them. A capability the plugin binds gives the browser the held
+conversation's runs as turns, with their stream events (text, thinking, tool calls and results,
+shell output, diffs), but not a background `/fork`'s, though it fires the turn moments too.
+Command results come from `on_command_end` and history from `host.conversation`. The
 sidebar lists `host.sessions`, the store `/resume` uses: clicking a session sends
 `/resume ID`, so a session saved in another directory, which `/resume ID` refuses, opens
 read-only. Shell lines (`!`) run only in the terminal. A bare command that opens a terminal

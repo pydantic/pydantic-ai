@@ -4,10 +4,12 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from anyio import to_thread
+from anyio import get_cancelled_exc_class, to_thread
 
-from pydantic_ai import AgentStreamEvent, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
+from pydantic_ai.messages import UserContent, UserPromptPart
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserResponse, check_response
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
@@ -36,8 +38,9 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnStarted,
     Usage,
     history_items,
+    user_text,
 )
-from pydantic_clai2.plugins import CommandEnd, ConversationChanged, PluginHost, SessionCatalog, TurnEnd
+from pydantic_clai2.plugins import CommandEnd, ConversationChanged, PluginHost, SessionCatalog, TurnOutcome
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
 
 STATUS_INTERVAL = 0.5
@@ -109,21 +112,30 @@ class Remote:
         if time.monotonic() - self._status_sent >= STATUS_INTERVAL:
             self.publish_status()
 
-    def turn_started(self, text: str) -> None:
+    def run_started(self, prompt: str | Sequence[UserContent] | None) -> None:
+        """A run of the held conversation started; a run woken by a finished task has no prompt to show."""
         self.running = True
         self._turn.clear()
-        self.hub.publish(TurnStarted(item=Item(id=f'prompt{time.monotonic_ns()}', kind='user', text=text)))
+        item = None
+        if prompt is not None:
+            item = Item(id=f'prompt{time.monotonic_ns()}', kind='user', text=user_text(UserPromptPart(prompt)))
+        self.hub.publish(TurnStarted(item=item))
         self.publish_status()
 
-    def turn_ended(self, event: TurnEnd) -> None:
+    def run_ended(
+        self, outcome: TurnOutcome, *, error: BaseException | None = None, usage: RunUsage | None = None
+    ) -> None:
         self.running = False
         self._turn.clear()
-        usage = None
-        if event.result is not None:
-            run = event.result.usage
-            usage = Usage(input_tokens=run.input_tokens, output_tokens=run.output_tokens, requests=run.requests)
-        error = None if event.error is None else str(event.error) or type(event.error).__name__
-        self.hub.publish(TurnEnded(outcome=event.outcome, error=error, usage=usage))
+        self.hub.publish(
+            TurnEnded(
+                outcome=outcome,
+                error=None if error is None else str(error) or type(error).__name__,
+                usage=None
+                if usage is None
+                else Usage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens, requests=usage.requests),
+            )
+        )
         self.publish_status()
         self.hub.publish(SessionsChanged())
 
@@ -267,9 +279,27 @@ def _busy(summary: ConversationSummary) -> bool:
 
 @dataclass
 class Observer(AbstractCapability[None]):
-    """Hands the foreground conversation's run events to the browser."""
+    """Hands the held conversation's runs and their events to the browser.
+
+    Turns follow these runs rather than the turn moments, which a background `/fork` fires too.
+    """
 
     remote: Remote
+
+    async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+        if not self.remote.foreground(ctx):
+            return await handler()
+        self.remote.run_started(ctx.prompt)
+        try:
+            result = await handler()
+        except get_cancelled_exc_class():
+            self.remote.run_ended('cancelled')
+            raise
+        except Exception as error:
+            self.remote.run_ended('failed', error=error)
+            raise
+        self.remote.run_ended('completed', usage=result.usage)
+        return result
 
     async def on_event(self, ctx: RunContext[None], *, event: AgentStreamEvent) -> None:
         if self.remote.foreground(ctx):
