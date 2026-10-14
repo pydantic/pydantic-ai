@@ -764,6 +764,18 @@ class BedrockConverseModel(Model[BaseClient]):
         profile = cast(BedrockModelProfile, self.profile)
         return _effective_thinking_type(model_settings, model_request_parameters, profile) is not None
 
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_build_additional_model_request_fields` leaves the variant's thinking field alone when the user set it.
+        fields = model_settings.get('bedrock_additional_model_requests_fields')
+        variant = self.profile.get('bedrock_thinking_variant', None)
+        if isinstance(fields, Mapping) and (
+            (variant == 'anthropic' and 'thinking' in fields)
+            or (variant == 'openai' and 'reasoning_effort' in fields)
+            or (variant == 'qwen' and 'reasoning_config' in fields)
+        ):
+            return ('bedrock_additional_model_requests_fields',)
+        return ()
+
     def _default_structured_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> StructuredOutputMode:

@@ -1698,6 +1698,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         run_model_settings = model_settings if model_settings_override is None else None
 
+        # Warn when a provider-specific thinking setting from a broader static layer replaces a narrower `thinking`.
+        # Callable and capability-supplied layers are not checked, as for `tool_choice` below.
+        model_used._warn_if_thinking_overridden(  # pyright: ignore[reportPrivateUsage]
+            [
+                ("the model's `settings`", model_used.settings),
+                (
+                    '`override(model_settings=...)`'
+                    if model_settings_override is not None
+                    else "the agent's `model_settings`",
+                    None if callable(agent_model_settings) else agent_model_settings,
+                ),
+                ("the run's `model_settings`", None if callable(run_model_settings) else run_model_settings),
+            ]
+        )
+
         # Validate `tool_choice` on the static baseline. Callable layers (agent-level callable,
         # run-level callable, capability-supplied) may inject `'required'` or `list[str]` per-step
         # and are trusted to adapt across steps. A static forcing choice must leave at least one
