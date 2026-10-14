@@ -239,7 +239,7 @@ def local_workspace(
     return LocalWorkspace[DepsT](directory, env=_command_env())
 
 
-def _interrupted(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+def interrupted_history(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
     """`messages` with the last one marked interrupted, so core closes unanswered calls without replaying them."""
     marked = list(messages)
     if marked:
@@ -249,15 +249,15 @@ def _interrupted(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
     return marked
 
 
-def _fork_summary(busy: ConversationSummary) -> ConversationSummary:
-    """A new saved session continuing `busy`, which another process is still running."""
+def fork_summary(source: ConversationSummary) -> ConversationSummary:
+    """A new saved session continuing `source`, such as one another process is still running."""
     return ConversationSummary(
-        workspace=busy.workspace,
-        title=f'{busy.title} (fork)',
-        subtitle=busy.subtitle,
-        tags=busy.tags,
-        title_source=busy.title_source,
-        model=busy.model,
+        workspace=source.workspace,
+        title=f'{source.title} (fork)',
+        subtitle=source.subtitle,
+        tags=source.tags,
+        title_source=source.title_source,
+        model=source.model,
     )
 
 
@@ -528,11 +528,11 @@ class Session(Generic[DepsT, OutputT]):
                 if snapshot is not None:
                     messages = snapshot.messages
             if interrupted:
-                messages = _interrupted(messages)
+                messages = interrupted_history(messages)
             summary = saved.summary
             notice = f'Resumed {summary.title} ({summary.id}).{warning}'
             if busy is not None:
-                summary = await self.conversations.save(summary=_fork_summary(saved.summary), messages=messages)
+                summary = await self.conversations.save(summary=fork_summary(saved.summary), messages=messages)
                 notice = (
                     f'{busy} Resumed a fork of it instead: {summary.title} ({summary.id}). '
                     'The original keeps running there and may still change files. No tools were replayed.'
@@ -560,7 +560,7 @@ class Session(Generic[DepsT, OutputT]):
             raise ValueError(f'Session belongs to {workspace}. Select it in /resume to confirm.')
 
     def _mark_interrupted(self) -> None:
-        self._messages = _interrupted(self._messages)
+        self._messages = interrupted_history(self._messages)
 
     async def _save_turn(self, *, outcome: Literal['running', 'completed', 'failed', 'cancelled']) -> None:
         if self.conversations is None:

@@ -53,6 +53,7 @@ from pydantic_clai2.models import login_names
 from pydantic_clai2.models.chains import settings_model as chain_settings_model
 from pydantic_clai2.models.profiles import ALL, DEFAULT, ModelRef, base_model, parse_model, provider_of
 from pydantic_clai2.plugins import (
+    CommandEnd,
     ConversationChanged,
     ModelProvider,
     PluginLogin,
@@ -120,6 +121,7 @@ DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 _PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload', 'configure')
 _PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unchanged.'
+_PLUGINS_WAIT = 'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.'
 
 
 DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
@@ -812,6 +814,9 @@ def create_shell(
         status=status,
         enabled=load_plugins,
         submit_prompt=lambda text: shell.submit_prompt(text),
+        send_input=lambda text: shell.send_input(text),
+        interrupt=lambda: shell.interrupts.cancel(exit_on_repeat=False),
+        sessions=sessions,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     models.plugins = loader.model_providers
@@ -966,6 +971,8 @@ class _Shell(Generic[DepsT, OutputT]):
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
+    _inbox: asyncio.Queue[str] = field(default_factory=asyncio.Queue[str], init=False, repr=False)
+    """Input `send_input` entered while no editor reads keys, as in a shell driven only by a plugin."""
 
     @property
     def session_id(self) -> str | None:
@@ -1070,6 +1077,23 @@ class _Shell(Generic[DepsT, OutputT]):
             raise RuntimeError('`submit_prompt` works only in a /command handler run between turns.')
         self.submitted.append(text)
 
+    def send_input(self, text: str) -> None:
+        """Enter `text` as Enter at the prompt does: trimmed, bare `clear` as `/clear`, blank ignored.
+
+        A `during_turn` command opens over a running turn; other input queues in the editor, or, while no
+        editor reads keys yet or at all, in the inbox the read loop takes it from. A line-mode prompt
+        (input that is not a terminal) reads only its own input, so it takes none.
+        """
+        if self.prompt is not None and self.editor is None:
+            raise RuntimeError('This CLAI reads its prompts from standard input, so it cannot take other input.')
+        text = expand_bare_command(text.strip())
+        if not text or self.run_now(text):
+            return
+        if self.editor is not None:
+            self.editor.submit(text)
+        else:
+            self._inbox.put_nowait(text)
+
     def request_reload(self, args: list[str]) -> str:
         if args:
             raise ValueError('Usage: /reload')
@@ -1106,6 +1130,9 @@ class _Shell(Generic[DepsT, OutputT]):
             self.screen.editor = self.editor.suspended
             try:
                 async with self.editor.opened():
+                    # Input a plugin entered while plugins loaded, before the editor existed.
+                    while not self._inbox.empty():
+                        self.editor.submit(self._inbox.get_nowait())
                     self.tasks.wake = self.editor.wake
                     if self.tasks.owner.reports(conversation_id=self.session.summary.id):
                         self.editor.wake()
@@ -1160,18 +1187,23 @@ class _Shell(Generic[DepsT, OutputT]):
             return False
         if not any(record.status == 'running' for record in self.tasks.owner.records.values()):
             return False
-        self.console.print(
-            'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.', markup=False
-        )
+        self.console.print(_PLUGINS_WAIT, markup=False)
+        return True
+
+    async def _refused(self, text: str) -> bool:
+        """`plugins_busy`, telling plugins the command was refused, as `send_input` callers wait for its end."""
+        if not self.plugins_busy(text):
+            return False
+        await self.loader.fire(CommandEnd(text=text, error=RuntimeError(_PLUGINS_WAIT)))
         return True
 
     async def _run_mid_turn(self, text: str) -> None:
         async with self.screen.overlay():
             self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()
-            if self.plugins_busy(text):
+            if await self._refused(text):
                 return
-            await _execute_command(self.commands, text, console=self.console)
+            await _execute_command(self.commands, text, console=self.console, fire=self.loader.fire)
             self._show_status_segments()
 
     def _show_status_segments(self) -> None:
@@ -1203,9 +1235,10 @@ class _Shell(Generic[DepsT, OutputT]):
                 self._show_status_segments()
                 if self.editor is not None:
                     text = await self.editor.read()
-                else:
-                    assert self.prompt is not None
+                elif self.prompt is not None:
                     text = expand_bare_command((await self.prompt.prompt_async('> ')).strip())
+                else:
+                    text = (await self._inbox.get()).strip()
             except PromptRewind:
                 await self._rewind()
                 continue
@@ -1228,7 +1261,8 @@ class _Shell(Generic[DepsT, OutputT]):
             self.images.notice = ''
             if not text:
                 continue
-            if self.editor is not None:
+            # A line-mode prompt shows the line as it was typed; other input is echoed like the editor's.
+            if self.prompt is None:
                 self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()
             if await self._dispatch_input(text):
@@ -1259,7 +1293,7 @@ class _Shell(Generic[DepsT, OutputT]):
                 await self.editor.output.drain()
 
     async def _command(self, text: str) -> bool:
-        if self.plugins_busy(text):
+        if await self._refused(text):
             return False
         self.submitted = submitted = list[str]()
         try:
@@ -1268,7 +1302,9 @@ class _Shell(Generic[DepsT, OutputT]):
                 exiting = self.interrupts.exit_requested
             else:
                 async with self.forks.busy(), self._released():
-                    completed = await self.interrupts.run(_execute_command(self.commands, text, console=self.console))
+                    completed = await self.interrupts.run(
+                        _execute_command(self.commands, text, console=self.console, fire=self.loader.fire)
+                    )
                 exiting = (
                     text == '/exit'
                     or self.interrupts.exit_requested
@@ -1293,7 +1329,9 @@ class _Shell(Generic[DepsT, OutputT]):
         async with self.forks.busy():
             self.status.activity = 'working'
             try:
-                completed = await self.interrupts.run(_execute_command(self.commands, text, console=self.console))
+                completed = await self.interrupts.run(
+                    _execute_command(self.commands, text, console=self.console, fire=self.loader.fire)
+                )
             finally:
                 self.status.activity = 'ready'
                 await editor.output.drain()
@@ -1451,16 +1489,23 @@ def _report_interrupt(completed: bool, console: Console) -> None:
         console.print()
 
 
-async def _execute_command(commands: Commands, text: str, *, console: Console) -> None:
+async def _execute_command(
+    commands: Commands, text: str, *, console: Console, fire: Callable[[CommandEnd], Awaitable[None]]
+) -> None:
+    """Run a command and show its result, then tell plugins what was shown; a cancelled command tells none."""
+    ended = CommandEnd(text=text)
     try:
         result = await commands.execute_async(text)
         # The echoed command already ends in a blank line; a menu closed without changes adds nothing.
         if not is_silent(result):
+            ended.output = result
             console.print(result, markup=False)
             console.print()
     except Exception as exc:  # noqa: BLE001 -- command failures must not exit the interactive shell.
+        ended.error = exc
         console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
         console.print()
+    await fire(ended)
 
 
 def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:

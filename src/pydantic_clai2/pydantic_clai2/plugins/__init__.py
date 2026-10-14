@@ -8,8 +8,10 @@ from datetime import datetime
 from typing import ClassVar, Generic, Literal, Never, Protocol, Self, TypeVar, cast, get_args, get_origin
 from uuid import uuid4
 
+from anyio import to_thread
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 from rich.console import Console, RenderableType
+from termflow.tui.completion import CompleteEvent, Completion, Document
 from typing_extensions import TypeVar as DefaultTypeVar, get_original_bases
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent
@@ -19,6 +21,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai.providers import infer_provider_class
 from pydantic_ai_harness.step_persistence import StepStore
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SavedConversation
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.plugin_requirements import Requirements, declared_requirements
@@ -79,6 +82,33 @@ class Conversation(Protocol):
         process is not taken over: a fork of it is resumed, and the notice says so.
         `on_conversation_changed` follows when the conversation or its title changed.
         """
+        ...
+
+
+class SessionCatalog(Protocol):
+    """The saved conversations `/resume` lists, for a plugin that shows or manages them; the shell's `Sessions` is one.
+
+    Switching to one goes through the prompt, as `/resume ID` typed there does, with `PluginHost.send_input`.
+    """
+
+    async def listing(self, *, query: str = '', limit: int = 200) -> list[ConversationSummary]:
+        """Saved conversations from every directory, newest first, matching `query` when it is not empty."""
+        ...
+
+    async def saved(self, conversation_id: str) -> SavedConversation:
+        """A saved conversation and its history, without switching to it; raises `LookupError` for an unknown ID."""
+        ...
+
+    async def rename(self, conversation_id: str, title: str) -> None:
+        """Retitle a saved conversation, as a rename in `/resume` does; raises `ValueError` if it changed meanwhile."""
+        ...
+
+    async def delete(self, conversation_id: str) -> None:
+        """Delete a saved conversation; raises `ValueError` for the current one or one running elsewhere."""
+        ...
+
+    async def fork(self, conversation_id: str) -> ConversationSummary:
+        """Save a copy of a conversation under a new ID, leaving the original as it was, and return the copy."""
         ...
 
 
@@ -143,7 +173,7 @@ class ConversationChanged:
     """The shell switched to another conversation, or the current one got a new title.
 
     Fires after `/new`, `/clear`, and `/resume`, when the first prompt titles a new conversation,
-    and when background naming or a rename in `/resume` retitles the current one. A startup
+    and when background naming, a rename in `/resume`, or `host.sessions.rename` retitles the current one. A startup
     `--resume SESSION-ID`, `--session-id`, or `--fork-session` is already in place when
     `on_session_start` runs, so it fires nothing.
     """
@@ -151,6 +181,18 @@ class ConversationChanged:
     conversation_id: str
     title: str | None
     """`None` until the conversation's first prompt is saved."""
+
+
+@dataclass(kw_only=True)
+class CommandEnd:
+    """A `/command` finished, typed at the prompt or entered with `PluginHost.send_input`.
+
+    `output` is the text the shell showed for it, empty when it showed nothing; `error` is why it failed.
+    """
+
+    text: str
+    output: str = ''
+    error: BaseException | None = None
 
 
 @dataclass(kw_only=True)
@@ -327,7 +369,7 @@ def _runs_already(prefix: str) -> bool:
     return True
 
 
-HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd | ConversationChanged | PluginLoadFailed
+HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd | ConversationChanged | CommandEnd | PluginLoadFailed
 Renderer = Callable[[AgentStreamEvent], RenderableType | None]
 """Draws an event, or returns `None` to fall back to the default display; see `Plugin.render`."""
 FullScreen = Callable[[], AbstractAsyncContextManager[None]]
@@ -359,12 +401,18 @@ class PluginHost(Generic[DepsT]):
         save_settings: Callable[[dict[str, JsonValue]], None] = lambda _settings: None,
         requirements: Requirements | None = None,
         submit_prompt: Callable[[str], None] | None = None,
+        send_input: Callable[[str], None] | None = None,
+        interrupt: Callable[[], bool] = lambda: False,
+        commands: Commands | None = None,
+        sessions: SessionCatalog | None = None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
         `save_settings` writes changed settings back to the plugin's declaration; without it they
-        last until the plugin unloads. `submit_prompt` runs a prompt as the next turn; see the method
-        of the same name.
+        last until the plugin unloads. `submit_prompt` runs a prompt as the next turn, and
+        `send_input` and `interrupt` drive the prompt as the keyboard does; see the methods of the
+        same names. `commands` is the shell's registry, which `complete` reads; `sessions` its saved
+        conversations.
 
         The shell passes its own `conversation` and `status`; a host built elsewhere gets a
         `Transcript` and a detached status row, so a plugin needs no special case for either.
@@ -385,6 +433,11 @@ class PluginHost(Generic[DepsT]):
         self._persist = save_settings
         self._requirements: Requirements = dict(requirements or {})
         self._submit_prompt = submit_prompt
+        self._send_input = send_input
+        self._interrupt = interrupt
+        self._commands = commands
+        self.sessions = sessions
+        """The saved conversations `/resume` lists; `None` on a host without session persistence."""
 
     def submit_prompt(self, text: str, /) -> None:
         """Run `text` as the next turn, as if typed at the prompt but without echoing it.
@@ -399,6 +452,38 @@ class PluginHost(Generic[DepsT]):
         if self._submit_prompt is None:
             raise RuntimeError(f'Plugin {self.name!r} has no shell to run a prompt in.')
         self._submit_prompt(text)
+
+    def send_input(self, text: str, /) -> None:
+        """Enter `text` at the prompt as Enter does, as if it was typed there, at any time from the shell's event loop.
+
+        For a plugin that is another way to type, such as a remote UI. The text is trimmed, a bare
+        `clear` runs `/clear`, and blank text does nothing. A prompt runs as a turn and a `/command` as a
+        command, each echoed in the transcript like typed input; while a turn runs it queues behind it,
+        as a follow-up typed then would, and a `during_turn` command opens over it at once. Input
+        entered before the prompt opens, such as from `on_session_start`, waits for it. Unlike
+        `submit_prompt`, it is not tied to a command handler. A headless `-p` run reads no prompts, so
+        what it is sent is never run. Raises `RuntimeError` on a host whose shell reads no such input:
+        one built without `send_input=`, or a CLAI reading its prompts line by line from standard input.
+        """
+        if self._send_input is None:
+            raise RuntimeError(f'Plugin {self.name!r} has no prompt to enter input at.')
+        self._send_input(text)
+
+    def interrupt(self) -> bool:
+        """Cancel the running turn or command, as Esc does; `False` when nothing was running."""
+        return self._interrupt()
+
+    async def complete(self, text: str, /) -> list[Completion]:
+        """What Tab offers at the prompt for `text`: command names with descriptions, their arguments, `@` paths.
+
+        Each `Completion` replaces the `-start_position` characters before the end of `text`. Computed in
+        a worker thread, as the editor's completions are, since `@` paths read the disk. A host without
+        a shell offers nothing.
+        """
+        commands = self._commands
+        if commands is None:
+            return []
+        return await to_thread.run_sync(lambda: list(commands.get_completions(Document(text), CompleteEvent())))
 
     @property
     def session_id(self) -> str | None:
@@ -597,6 +682,9 @@ class Plugin(Generic[SettingsT, DepsT]):
     async def on_conversation_changed(self, event: ConversationChanged) -> None:
         """The shell switched conversations, or the current one got a new title."""
 
+    async def on_command_end(self, event: CommandEnd) -> None:
+        """A `/command` finished, with the text the shell showed for it."""
+
     @property
     def has_configure(self) -> bool:
         """Whether this plugin overrides `configure`, offering a settings menu."""
@@ -619,6 +707,7 @@ _HANDLERS: dict[type[HostEvent], str] = {
     TurnStart: 'on_turn_start',
     TurnEnd: 'on_turn_end',
     ConversationChanged: 'on_conversation_changed',
+    CommandEnd: 'on_command_end',
     PluginLoadFailed: 'on_plugin_load_failed',
 }
 

@@ -24,7 +24,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import Plugin
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime._session import Session, fork_summary, interrupted_history
 from pydantic_clai2.runtime.imported_sessions import (
     IMPORT_SOURCES,
     ImportCatalog,
@@ -161,6 +161,46 @@ class Sessions(Generic[DepsT, OutputT]):
         imported = await run_sync(find_import, source, native_id)
         self.session.check_workspace(imported.summary.workspace)
         return await save_import(self.store, imported)
+
+    async def listing(self, *, query: str = '', limit: int = 200) -> list[ConversationSummary]:
+        """Saved conversations from every directory, newest first, as `/resume` lists them."""
+        entries = await self.store.listing(query=query, limit=limit)
+        self.namer.backfill(entries)
+        return entries
+
+    async def saved(self, conversation_id: str) -> SavedConversation:
+        """A saved conversation and its history, without switching to it."""
+        return await self.store.get(conversation_id=conversation_id)
+
+    async def rename(self, conversation_id: str, title: str) -> None:
+        """Retitle a saved conversation as a rename in `/resume` does, telling plugins when it is the current one."""
+        title = ' '.join(title.split())
+        if not title:
+            raise ValueError('A session title cannot be empty.')
+        source = (await self.store.get(conversation_id=conversation_id)).summary
+        if not await self.store.name(
+            source=source, title=title, subtitle=source.subtitle, tags=source.tags, manual=True
+        ):
+            raise ValueError('Session changed. Refresh and rename again.')
+        await self.session.renamed(conversation_id=conversation_id, title=title)
+
+    async def delete(self, conversation_id: str) -> None:
+        """Delete a saved conversation other than the current one; one running elsewhere is refused."""
+        if conversation_id == self.session.conversation_id:
+            raise ValueError('The current session cannot be deleted. Switch to another one first.')
+        source = (await self.store.get(conversation_id=conversation_id)).summary
+        await self.store.delete(source=source)
+
+    async def fork(self, conversation_id: str) -> ConversationSummary:
+        """Save a copy of a conversation under a new ID, as `--fork-session` does, without switching to it.
+
+        A copy of an interrupted conversation keeps its unanswered tool calls closed, so none is replayed.
+        """
+        saved = await self.store.get(conversation_id=conversation_id)
+        messages = saved.messages
+        if saved.summary.outcome in ('running', 'failed', 'cancelled'):
+            messages = interrupted_history(messages)
+        return await self.store.save(summary=fork_summary(saved.summary), messages=messages)
 
     async def command(self, args: list[str]) -> str:
         """Shared command/startup resolver; loading history never executes pending tools.
