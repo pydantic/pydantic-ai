@@ -138,6 +138,7 @@ except ImportError as _import_error:
 
 _FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1)[^\\])*)\1\)')
 
+_MEDIA_PROCESSING_TOOL_NAME = 'media_processing'
 _TOOL_TYPE_TO_NATIVE_TOOL_NAME: dict[ToolType, str] = {
     ToolType.GOOGLE_SEARCH_WEB: WebSearchTool.kind,
     ToolType.URL_CONTEXT: WebFetchTool.kind,
@@ -1445,6 +1446,9 @@ class GoogleModel(Model[Client]):
             vendor_metadata = dict(file.vendor_metadata)  # copy to avoid mutating user dict
             if 'media_resolution' in vendor_metadata:
                 part_dict['media_resolution'] = vendor_metadata.pop('media_resolution')
+            if 'media_processing' in vendor_metadata:
+                # Processing mode is independent of the source, including YouTube's native URI route.
+                part_dict['media_processing'] = vendor_metadata.pop('media_processing')
             # The remaining keys map to `video_metadata`, which only applies to video parts.
             if vendor_metadata and isinstance(file, (BinaryContent, VideoUrl, UploadedFile)):
                 part_dict['video_metadata'] = VideoMetadataDict(**vendor_metadata)
@@ -1512,6 +1516,8 @@ class GeminiStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _file_search_tool_call_ids: list[str] = field(default_factory=list[str], init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
+    _media_processing_tool_call_id: str | None = field(default=None, init=False)
+    _media_processing_tool_call_vendor_id: UUID | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
     _has_tool_invocations: bool = field(default=False, init=False)
     # Returns to fill from the grounding metadata that arrives on the final chunk: empty file_search returns (see
@@ -1713,11 +1719,31 @@ class GeminiStreamedResponse(StreamedResponse):
                     elif part.tool_call:
                         tool_call_part = _map_tool_call(part.tool_call, self.provider_name)
                         tool_call_part.provider_details = provider_details
-                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_call_part)
+                        tool_call_vendor_id = uuid4()
+                        if tool_call_part.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+                            self._media_processing_tool_call_id = tool_call_part.tool_call_id
+                            self._media_processing_tool_call_vendor_id = (
+                                tool_call_vendor_id if part.tool_call.id is None else None
+                            )
+                        yield self._parts_manager.handle_part(vendor_part_id=tool_call_vendor_id, part=tool_call_part)
                     elif part.tool_response:
                         tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
                         tool_response_part.provider_details = provider_details
-                        if tool_response_part.tool_name == WebSearchTool.kind:
+                        if tool_response_part.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+                            if part.tool_response.id is None and self._media_processing_tool_call_id is not None:
+                                tool_response_part.tool_call_id = self._media_processing_tool_call_id
+                            elif self._media_processing_tool_call_vendor_id is not None:
+                                # The response can supply an ID omitted by the call; notify stream consumers too.
+                                event = self._parts_manager.handle_tool_call_delta(
+                                    vendor_part_id=self._media_processing_tool_call_vendor_id,
+                                    tool_call_id=tool_response_part.tool_call_id,
+                                )
+                                assert event is not None
+                                yield event
+                            self._media_processing_tool_call_id = None
+                            self._media_processing_tool_call_vendor_id = None
+                            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
+                        elif tool_response_part.tool_name == WebSearchTool.kind:
                             # Only the response's last web_search return gets the sources, so an earlier one is
                             # complete once another arrives.
                             if (previous := self._pending_web_search_return) is not None:
@@ -1739,8 +1765,11 @@ class GeminiStreamedResponse(StreamedResponse):
                         part = self._map_code_execution_result(part.code_execution_result)
                         part.provider_details = provider_details
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
+                    elif _is_signature_only_part(part):
+                        # See the signature-only media-processing comment in `_process_part`.
+                        continue
                     else:
-                        assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
+                        assert part.function_response is not None, f'Unexpected part: {part}'
 
             # Gemini sends the grounding metadata once, on the final chunk, after the text it grounds.
             for pending in self._pending_file_search_returns:
@@ -1913,6 +1942,10 @@ def _native_tool_call_part_dict(
         return None
     if item.tool_name == CodeExecutionTool.kind:
         return _attach_signature({'executable_code': cast(ExecutableCodeDict, item.args_as_dict())}, signature)
+    if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+        # Gemini rejects replayed media-processing steps with HTTP 400; follow-ups with the original video reprocess it.
+        # TODO: Remove after full-replay rechecks succeed: https://github.com/pydantic/pydantic-ai/issues/10226
+        return None
     tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unknown native tool name: {item.tool_name!r}')
@@ -1938,6 +1971,9 @@ def _native_tool_return_part_dict(
             {'code_execution_result': cast(CodeExecutionResultDict, item.content)},  # pyright: ignore[reportUnknownMemberType]
             signature,
         )
+    if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+        # See the media-processing call-side comment above.
+        return None
     tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unknown native tool name: {item.tool_name!r}')
@@ -2018,7 +2054,11 @@ def _process_part(
         assert data and mime_type, 'Inline data must have data and mime type'
         content = BinaryContent(data=data, media_type=mime_type)
         item = FilePart(content=BinaryContent.narrow_type(content))
-    else:  # pragma: no cover
+    elif _is_signature_only_part(part):
+        # Vertex AI reports agentic media-processing steps as signature-only parts. There is nothing to
+        # show, and both backends reject them when replayed ("Invalid thought signature").
+        return None, code_execution_tool_call_id
+    else:
         raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
 
     if provider_details:
@@ -2026,6 +2066,11 @@ def _process_part(
         item.provider_name = provider_name
 
     return item, code_execution_tool_call_id
+
+
+def _is_signature_only_part(part: Part) -> bool:
+    """Whether a part carries a thought signature and no other provider content."""
+    return bool(part.thought_signature) and part.model_dump(exclude_none=True).keys() == {'thought_signature'}
 
 
 def _process_response_from_parts(
@@ -2051,6 +2096,8 @@ def _process_response_from_parts(
             items.append(web_fetch_return)
 
     code_execution_tool_call_id: str | None = None
+    media_processing_tool_call_id: str | None = None
+    media_processing_tool_call_without_id: NativeToolCallPart | None = None
     file_search_tool_call_ids: list[str] = []
     last_web_search_return: NativeToolReturnPart | None = None
     for part in parts:
@@ -2060,12 +2107,27 @@ def _process_response_from_parts(
         if item is None:
             continue
         if isinstance(item, NativeToolReturnPart):
-            if item.tool_name == WebSearchTool.kind:
+            if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+                if (
+                    part.tool_response is not None
+                    and part.tool_response.id is None
+                    and media_processing_tool_call_id is not None
+                ):
+                    item.tool_call_id = media_processing_tool_call_id
+                elif media_processing_tool_call_without_id is not None:
+                    media_processing_tool_call_without_id.tool_call_id = item.tool_call_id
+                media_processing_tool_call_id = None
+                media_processing_tool_call_without_id = None
+            elif item.tool_name == WebSearchTool.kind:
                 last_web_search_return = item
             else:
                 _fill_empty_file_search_return_content(item, grounding_metadata)
         elif isinstance(item, NativeToolCallPart) and item.tool_name == FileSearchTool.kind:
             file_search_tool_call_ids.append(item.tool_call_id)
+        elif isinstance(item, NativeToolCallPart) and item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+            assert part.tool_call is not None
+            media_processing_tool_call_id = item.tool_call_id
+            media_processing_tool_call_without_id = item if part.tool_call.id is None else None
         items.append(item)
 
     if last_web_search_return is not None:
@@ -2092,9 +2154,20 @@ def _has_native_tool_invocations(parts: list[Part]) -> bool:
     metadata-based reconstruction (`_map_grounding_metadata`, `_map_url_context_metadata`,
     `_map_file_search_grounding_metadata`) must be skipped — otherwise we emit duplicate
     `NativeToolCallPart`/`NativeToolReturnPart` pairs for the same tool invocation.
-    See https://ai.google.dev/api/caching#ToolConfig.
+    Agentic media-processing steps don't count: they arrive alongside the metadata for other tools, not
+    instead of it. See https://ai.google.dev/api/caching#ToolConfig.
     """
-    return any(p.tool_call or p.tool_response for p in parts)
+    return any((tool := p.tool_call or p.tool_response) and not _is_media_processing_step(tool) for p in parts)
+
+
+def _is_media_processing_step(tool: ToolCall | ToolResponse) -> bool:
+    """Whether a `tool_call`/`tool_response` is an agentic media-processing step.
+
+    Gemini omits `tool_type` on these steps and sends only an id; every other server-side tool sets
+    `tool_type`. The SDK also defines `ToolType.MEDIA_PROCESSING` for them, so accept both shapes.
+    """
+    payload = tool.args if isinstance(tool, ToolCall) else tool.response
+    return tool.tool_type == ToolType.MEDIA_PROCESSING or (tool.tool_type is None and not payload)
 
 
 def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclarationDict:
@@ -2323,8 +2396,11 @@ def _map_code_execution_result(
     )
 
 
-def _resolve_native_tool_name(tool_type: ToolType | None) -> str:
-    if tool_type is None:  # pragma: no cover
+def _resolve_native_tool_name(tool: ToolCall | ToolResponse) -> str:
+    if _is_media_processing_step(tool):
+        return _MEDIA_PROCESSING_TOOL_NAME
+    tool_type = tool.tool_type
+    if tool_type is None:
         raise UnexpectedModelBehavior('Missing tool_type on native tool part')
     tool_name = _TOOL_TYPE_TO_NATIVE_TOOL_NAME.get(tool_type)
     if tool_name is None:  # pragma: no cover
@@ -2335,7 +2411,7 @@ def _resolve_native_tool_name(tool_type: ToolType | None) -> str:
 def _map_tool_call(tool_call: ToolCall, provider_name: str) -> NativeToolCallPart:
     return NativeToolCallPart(
         provider_name=provider_name,
-        tool_name=_resolve_native_tool_name(tool_call.tool_type),
+        tool_name=_resolve_native_tool_name(tool_call),
         tool_call_id=tool_call.id or _utils.generate_tool_call_id(),
         args=tool_call.args,
     )
@@ -2344,7 +2420,7 @@ def _map_tool_call(tool_call: ToolCall, provider_name: str) -> NativeToolCallPar
 def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> NativeToolReturnPart:
     return NativeToolReturnPart(
         provider_name=provider_name,
-        tool_name=_resolve_native_tool_name(tool_response.tool_type),
+        tool_name=_resolve_native_tool_name(tool_response),
         tool_call_id=tool_response.id or _utils.generate_tool_call_id(),
         content=tool_response.response,
     )
