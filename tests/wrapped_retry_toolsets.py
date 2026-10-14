@@ -69,6 +69,13 @@ def snapshot_probe_toolset(
     return factory
 
 
+def call_while_listed(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """A model function that calls the first listed tool, and answers `'No tools left.'` once none is."""
+    if info.function_tools:
+        return ModelResponse(parts=[ToolCallPart(info.function_tools[0].name, {})])
+    return ModelResponse(parts=[TextPart('No tools left.')])
+
+
 def call_probe_once(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """A model function that calls `demo_probe` once, then answers `'Done.'`."""
     if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):

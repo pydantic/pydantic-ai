@@ -2504,7 +2504,9 @@ def test_cache_key_run_context_projection_is_exhaustive():
     }
     projected_via_derived_key = {
         'workspace',  # projected as `workspace_id`, known without connecting a deferred workspace
-        '_tool_name_path',  # projected only when set, so keys of toolsets listed outside a name-changing wrapper don't change
+    }
+    projected_only_when_set = {
+        '_tool_name_path',  # so keys of toolsets listed outside a name-changing wrapper don't change
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
@@ -2513,7 +2515,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
     overlap = projected & cache_irrelevant
     assert not overlap, f'Fields both projected and marked irrelevant: {overlap}'
 
-    uncategorized = all_fields - (projected | cache_irrelevant | projected_via_derived_key)
+    uncategorized = all_fields - (projected | cache_irrelevant | projected_via_derived_key | projected_only_when_set)
     assert not uncategorized, (
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to the `_replace_run_context` '
         'projection (if it should fork the cache key) or to `cache_irrelevant` (with a reason).'

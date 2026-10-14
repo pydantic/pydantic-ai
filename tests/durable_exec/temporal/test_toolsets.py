@@ -63,7 +63,7 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
 from ..._inline_snapshot import snapshot
-from ...wrapped_retry_toolsets import call_probe_once, failing_toolset, snapshot_probe_toolset
+from ...wrapped_retry_toolsets import call_probe_once, call_while_listed, failing_toolset, snapshot_probe_toolset
 
 try:
     from temporalio import activity, workflow
@@ -1985,15 +1985,9 @@ async def test_tool_outliving_configured_heartbeat_timeout_survives(client: Clie
 # have to read the count of the name the wrappers give the tool.
 
 
-def _call_while_listed(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    if info.function_tools:
-        return ModelResponse(parts=[ToolCallPart(info.function_tools[0].name, {})])
-    return ModelResponse(parts=[TextPart('No tools left.')])
-
-
 _wrapped_retries_agents: dict[str, Agent[None, str]] = {
     name: Agent(
-        FunctionModel(_call_while_listed),
+        FunctionModel(call_while_listed),
         name=name,
         deps_type=type(None),
         toolsets=toolsets,

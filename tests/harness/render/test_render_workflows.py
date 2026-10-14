@@ -34,7 +34,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import DynamicToolset
 from pydantic_ai_harness import RenderWorkflows, ToolOutputLimits
 from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill
-from tests.wrapped_retry_toolsets import call_probe_once, failing_toolset, snapshot_probe_toolset
+from tests.wrapped_retry_toolsets import call_probe_once, call_while_listed, failing_toolset, snapshot_probe_toolset
 
 from .conftest import RecordingTaskContext, RecordingWorkflows, ToolTaskConcurrency, mcp_toolset, run_agent_in_task
 
@@ -226,12 +226,6 @@ async def test_prefixed_dynamic_tool_child_tasks_see_its_retry_count() -> None:
 
     See https://github.com/pydantic/pydantic-ai/issues/9741.
     """
-
-    def call_while_listed(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if info.function_tools:
-            return ModelResponse(parts=[ToolCallPart(info.function_tools[0].name, {})])
-        return ModelResponse(parts=[TextPart('No tools left.')])
-
     runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
     agent = Agent[None, str](
         FunctionModel(call_while_listed),
