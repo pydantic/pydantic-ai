@@ -120,6 +120,7 @@ def test_grok_4_7_profile_reasoning_efforts() -> None:
     profile = grok_model_profile('grok-4.7')
     assert profile is not None
     assert profile.get('grok_reasoning_efforts') == frozenset({'low', 'medium', 'high'})
+    assert profile.get('grok_default_effort_omitted') is True
 
 
 async def test_grok_4_reasoning_model_forwards_reasoning_effort(allow_model_requests: None) -> None:

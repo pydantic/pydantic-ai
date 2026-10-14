@@ -17,6 +17,7 @@ _GROK_43_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('none', 
 # reason. Grok 4.7 also supports `xhigh`; its mapping is tracked separately in issue #9744, so this
 # profile keeps the existing high fallback. https://docs.x.ai/developers/model-capabilities/text/reasoning
 _GROK_45_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('low', 'medium', 'high'))
+_GROK_47_REASONING_MODELS = frozenset(('grok-4.7',))
 _GROK_43_REASONING_MODELS = frozenset(
     (
         'grok-4.3',
@@ -37,19 +38,20 @@ _GROK_43_REASONING_MODELS = frozenset(
         'grok-3',
     )
 )
-_GROK_45_REASONING_MODELS = frozenset(
-    (
-        'grok-4.5',
-        'grok-4.5-latest',
-        # Grok 4.6 takes the same `reasoning_effort` values as 4.5, so it shares the set rather than
-        # getting a branch of its own. `grok-4.6-latest` is deliberately absent: xAI doesn't serve one.
-        'grok-4.6',
-        # Grok 4.7 uses the in-scope Grok 4.5+ profile; xhigh is tracked separately in issue #9744.
-        'grok-4.7',
-        # `grok-build-latest` is xAI's floating alias for the newest Grok build model, currently Grok 4.5,
-        # so it accepts the same `reasoning_effort` values. https://docs.x.ai/developers/models
-        'grok-build-latest',
+_GROK_45_REASONING_MODELS = (
+    frozenset(
+        (
+            'grok-4.5',
+            'grok-4.5-latest',
+            # Grok 4.6 takes the same `reasoning_effort` values as 4.5, so it shares the set rather than
+            # getting a branch of its own. `grok-4.6-latest` is deliberately absent: xAI doesn't serve one.
+            'grok-4.6',
+            # `grok-build-latest` is xAI's floating alias for the newest Grok build model, currently Grok 4.5,
+            # so it accepts the same `reasoning_effort` values. https://docs.x.ai/developers/models
+            'grok-build-latest',
+        )
     )
+    | _GROK_47_REASONING_MODELS
 )
 
 
@@ -70,6 +72,9 @@ class GrokModelProfile(ModelProfile, total=False):
 
     grok_reasoning_efforts: frozenset[GrokReasoningEffort]
     """Native `reasoning_effort` values supported by the Grok model. Default: empty (`frozenset()`)."""
+
+    grok_default_effort_omitted: bool
+    """Whether a default thinking request omits `reasoning_effort` so xAI applies its model default."""
 
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:
@@ -109,6 +114,7 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         thinking_always_enabled=bool(grok_reasoning_efforts) and 'none' not in grok_reasoning_efforts,
         grok_supports_builtin_tools=grok_supports_builtin_tools,
         grok_reasoning_efforts=grok_reasoning_efforts,
+        grok_default_effort_omitted=model_name in _GROK_47_REASONING_MODELS,
         supported_native_tools=supported_native_tools,
     )
 

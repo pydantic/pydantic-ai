@@ -34,7 +34,6 @@ from pydantic_ai.tools import ToolDefinition
 
 from ._inline_snapshot import snapshot
 from .conftest import try_import
-from .models.mock_xai import MockXai, create_response, get_mock_chat_create_kwargs
 
 with try_import() as anthropic_imports:
     from anthropic import omit as anthropic_omit
@@ -1356,38 +1355,6 @@ class TestXaiThinkingTranslation:
         )
         _, resolved = non_always_on.prepare_request(XaiModelSettings(thinking=False), ModelRequestParameters())
         assert resolved.thinking is False
-
-
-@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
-@pytest.mark.parametrize(
-    'thinking, expected_effort',
-    [
-        ('low', 'low'),
-        (True, None),
-        (None, None),
-        ('xhigh', 'high'),
-    ],
-)
-async def test_xai_thinking_effort_for_grok_4_7(
-    allow_model_requests: None,
-    thinking: ThinkingLevel | None,
-    expected_effort: str | None,
-) -> None:
-    """`grok-4.7` maps explicit efforts and leaves its documented default to xAI."""
-    response = create_response(content='ok')
-    mock_client = MockXai.create_mock([response])
-    m = XaiModel('grok-4.7', provider=XaiProvider(xai_client=mock_client))
-    settings: XaiModelSettings | None = {'thinking': thinking} if thinking is not None else None
-    agent = Agent(m, model_settings=settings)
-
-    await agent.run('hi')
-
-    kwargs = get_mock_chat_create_kwargs(mock_client)
-    assert len(kwargs) == 1
-    if expected_effort is None:
-        assert 'reasoning_effort' not in kwargs[0]
-    else:
-        assert kwargs[0]['reasoning_effort'] == expected_effort
 
 
 # ---------------------------------------------------------------------------

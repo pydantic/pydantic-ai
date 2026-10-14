@@ -134,6 +134,37 @@ async def test_xai_grok_45_unified_thinking_reasoning_effort(
         assert kwargs['reasoning_effort'] == expected_reasoning_effort
 
 
+@pytest.mark.parametrize(
+    ('thinking', 'expected_reasoning_effort'),
+    [
+        (False, None),
+        # `True` uses Grok 4.7's documented high default by omitting `reasoning_effort`.
+        (True, None),
+        ('minimal', 'low'),
+        ('low', 'low'),
+        ('medium', 'medium'),
+        ('high', 'high'),
+        ('xhigh', 'high'),
+    ],
+)
+async def test_xai_grok_47_unified_thinking_reasoning_effort(
+    allow_model_requests: None, thinking: ThinkingLevel, expected_reasoning_effort: str | None
+) -> None:
+    response = create_response(content='ok')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel('grok-4.7', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(thinking=thinking))
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'ok'
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    if expected_reasoning_effort is None:
+        assert 'reasoning_effort' not in kwargs
+    else:
+        assert kwargs['reasoning_effort'] == expected_reasoning_effort
+
+
 async def test_xai_grok_43_streaming_thinking_false_emits_reasoning_effort_none(allow_model_requests: None) -> None:
     """`thinking=False` disables reasoning on the streaming path, not just non-streaming.
 

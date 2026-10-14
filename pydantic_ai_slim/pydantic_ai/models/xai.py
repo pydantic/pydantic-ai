@@ -132,9 +132,7 @@ _XAI_PROVIDER_NAMES = frozenset({'xai', 'grok'})
 _ATTACHMENT_SEARCH_TOOL_NAME = 'attachment_search'
 
 
-def _map_reasoning_effort(
-    thinking: ThinkingLevel, profile: GrokModelProfile, model_name: str
-) -> GrokReasoningEffort | None:
+def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) -> GrokReasoningEffort | None:
     """Map unified thinking values to the xAI `reasoning_effort` values a model accepts."""
     supported_efforts = profile.get('grok_reasoning_efforts', frozenset())
     if not supported_efforts:
@@ -144,10 +142,10 @@ def _map_reasoning_effort(
         return 'none' if 'none' in supported_efforts else None
     if thinking is True:
         # `True` requests reasoning at the model's default level rather than a specific effort.
-        # Grok 4.3 accepts `'none'`, and Grok 4.7 documents `high` as its default, so both apply their
-        # own default when `reasoning_effort` is omitted. Other always-on models fall back to `'medium'`
+        # Grok 4.3 accepts `'none'`; Grok 4.7's profile also records that its documented `high` default
+        # applies when `reasoning_effort` is omitted. Other always-on models fall back to `'medium'`
         # (consistent with OpenAI), normalized to the nearest supported value below.
-        if 'none' in supported_efforts or model_name == 'grok-4.7':
+        if 'none' in supported_efforts or profile.get('grok_default_effort_omitted', False):
             return None
         thinking = 'medium'
 
@@ -836,7 +834,7 @@ class XaiModel(Model[AsyncClient]):
 
         # Fall back to unified thinking when xai_reasoning_effort is not set.
         if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
-            reasoning_effort = _map_reasoning_effort(model_request_parameters.thinking, profile, self.model_name)
+            reasoning_effort = _map_reasoning_effort(model_request_parameters.thinking, profile)
             if reasoning_effort is not None:
                 xai_settings['reasoning_effort'] = reasoning_effort
 
