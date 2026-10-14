@@ -15,9 +15,8 @@ on:
     workflows: ["CI"]
     types: [completed]
   workflow_dispatch:
-  # Restricts this reviewer to collaborators: `roles:` compiles to a
-  # `check_membership` step on `github.actor`, which under `workflow_run` is
-  # whoever's push started the triggering CI run.
+  # The installed `pydantic-docs` GitHub App has no repository permission.
+  # `bots:` admits that exact app; `roles:` continues to gate human actors.
   #
   # It gates the actor, not the code — a collaborator can still open a PR from a
   # fork, which `eligibility` rejects separately. gh-aw's own `workflow_run` guard
@@ -25,6 +24,7 @@ on:
   # true of a fork PR, whose CI run the base repo owns. Forks are reviewed on
   # demand via the `douwebot` label path in bots.yml.
   roles: [admin, maintainer, write]
+  bots: [pydantic-docs]
 permissions:
   contents: read
   # safe-outputs perform the actual writes in a separate conclusion job; the
