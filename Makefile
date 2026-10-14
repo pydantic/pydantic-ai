@@ -6,7 +6,7 @@
 
 .PHONY: install
 install: .uv ## Install the package, dependencies, and pre-commit for local development
-	uv sync --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
+	uv sync --frozen --all-extras --all-packages --group lint
 	@if command -v pre-commit >/dev/null 2>&1; then \
 		pre-commit install --install-hooks; \
 	else \
@@ -15,15 +15,15 @@ install: .uv ## Install the package, dependencies, and pre-commit for local deve
 
 .PHONY: install-all-python
 install-all-python: ## Install and synchronize an interpreter for every python version
-	UV_PROJECT_ENVIRONMENT=.venv311 uv sync --python 3.11 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
-	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
-	UV_PROJECT_ENVIRONMENT=.venv313 uv sync --python 3.13 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
-	UV_PROJECT_ENVIRONMENT=.venv314 uv sync --python 3.14 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
-	UV_PROJECT_ENVIRONMENT=.venv315 uv sync --python 3.15 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
+	UV_PROJECT_ENVIRONMENT=.venv311 uv sync --python 3.11 --frozen --all-extras --all-packages --group lint
+	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --all-packages --group lint
+	UV_PROJECT_ENVIRONMENT=.venv313 uv sync --python 3.13 --frozen --all-extras --all-packages --group lint
+	UV_PROJECT_ENVIRONMENT=.venv314 uv sync --python 3.14 --frozen --all-extras --all-packages --group lint
+	UV_PROJECT_ENVIRONMENT=.venv315 uv sync --python 3.15 --frozen --all-extras --all-packages --group lint
 
 .PHONY: sync
 sync: .uv ## Update local packages and uv.lock
-	uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
+	uv sync --all-extras --all-packages --group lint
 
 .PHONY: format
 format: ## Format the code
@@ -75,11 +75,11 @@ test: ## Run tests without coverage (fast, for local dev)
 
 .PHONY: test-all-python
 test-all-python: ## Run tests on Python 3.11 to 3.15
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv314 uv run --python 3.14 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv315 uv run --python 3.15 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv314 uv run --python 3.14 --all-extras --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv315 uv run --python 3.15 --all-extras --all-packages coverage run -p -m pytest
 	@uv run coverage combine
 	@uv run coverage report
 
@@ -94,19 +94,19 @@ testcov: ## Run tests with coverage and generate an HTML report
 
 .PHONY: integration-localstack
 integration-localstack: ## Run the harness LocalStack tests (needs Docker and LOCALSTACK_AUTH_TOKEN)
-	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/localstack
+	uv run --all-packages --all-extras pytest src/pydantic_ai_harness/integration_tests/localstack
 
 .PHONY: integration-mongodb
 integration-mongodb: ## Run the harness MongoDB tests (`docker run -d -p 27017:27017 mongo:8`, or set MONGODB_TEST_URL)
-	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/mongodb
+	uv run --all-packages --all-extras pytest src/pydantic_ai_harness/integration_tests/mongodb
 
 .PHONY: integration-postgres
 integration-postgres: ## Run the harness Postgres tests (`docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:17`, or set POSTGRES_TEST_URL)
-	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/postgres
+	uv run --all-packages --all-extras pytest src/pydantic_ai_harness/integration_tests/postgres
 
 .PHONY: integration-redis
 integration-redis: ## Run the harness Redis tests (`docker run -d -p 6379:6379 redis:8`, or set REDIS_TEST_URL)
-	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/redis
+	uv run --all-packages --all-extras pytest src/pydantic_ai_harness/integration_tests/redis
 
 .PHONY: update-examples
 update-examples: ## Update documentation examples

@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from string import Template
 from typing import Annotated, Literal
 
-import httpx
+import httpx2
 from mcp.shared._httpx_utils import create_mcp_http_client
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, HttpUrl, TypeAdapter, model_validator
 
@@ -103,15 +103,15 @@ class MCPSettings(BaseModel):
 
 def http_client(
     headers: dict[str, str] | None = None,
-    timeout: httpx.Timeout | None = None,
-    auth: httpx.Auth | None = None,
+    timeout: httpx2.Timeout | None = None,
+    auth: httpx2.Auth | None = None,
     follow_redirects: bool = False,
-) -> httpx.AsyncClient:
+) -> httpx2.AsyncClient:
     """Do not let a configured endpoint redirect MCP requests to another server.
 
     The MCP SDK builds the client, so it is the HTTPX the installed FastMCP drives: legacy `httpx` under
     FastMCP 3, `httpx2` under FastMCP 4, where a browser sign-in (`SignIn`) is an `httpx2.Auth` that a legacy
-    client rejects. The annotations name legacy `httpx`, the generation this workspace locks.
+    client rejects. The annotations name `httpx2`, the generation this workspace locks.
     FastMCP passes `follow_redirects=True` to every client factory; it is accepted and overridden.
     """
     del follow_redirects

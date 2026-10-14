@@ -132,14 +132,20 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                 elif isinstance(part, messages.ToolReturnPart):
                     if part.files:
                         raise NotImplementedError('Multimodal tool results in MCP sampling are not yet supported')
+                    # Built from the camelCase wire keys, which both SDK generations validate: SDK v2 renamed
+                    # the fields to snake_case but still accepts their wire aliases.
                     tool_results.append(
-                        mcp_types.ToolResultContent(
-                            type='tool_result',
-                            toolUseId=part.tool_call_id,
-                            content=[
-                                mcp_types.TextContent(type='text', text=part.model_response_str(wrap_if_error=False))
-                            ],
-                            isError=part.outcome == 'failed',
+                        mcp_types.ToolResultContent.model_validate(
+                            {
+                                'type': 'tool_result',
+                                'toolUseId': part.tool_call_id,
+                                'content': [
+                                    mcp_types.TextContent(
+                                        type='text', text=part.model_response_str(wrap_if_error=False)
+                                    )
+                                ],
+                                'isError': part.outcome == 'failed',
+                            }
                         )
                     )
                 elif isinstance(part, messages.RetryPromptPart):
@@ -148,8 +154,13 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                         add_msg('user', content)
                     else:
                         tool_results.append(
-                            mcp_types.ToolResultContent(
-                                type='tool_result', toolUseId=part.tool_call_id, content=[content], isError=True
+                            mcp_types.ToolResultContent.model_validate(
+                                {
+                                    'type': 'tool_result',
+                                    'toolUseId': part.tool_call_id,
+                                    'content': [content],
+                                    'isError': True,
+                                }
                             )
                         )
                 elif isinstance(part, (messages.SpeechPart, messages.ToolAvailabilityDeltaPart)):
@@ -171,7 +182,9 @@ def _map_user_prompt(part: messages.UserPromptPart) -> Iterator[mcp_types.TextCo
         if isinstance(chunk, str):
             yield mcp_types.TextContent(type='text', text=chunk)
         elif isinstance(chunk, messages.BinaryContent) and chunk.is_image:
-            yield mcp_types.ImageContent(type='image', data=chunk.base64, mimeType=chunk.media_type)
+            yield mcp_types.ImageContent.model_validate(
+                {'type': 'image', 'data': chunk.base64, 'mimeType': chunk.media_type}
+            )
         # TODO(Marcelo): Add support for audio content.
         else:
             raise NotImplementedError(f'Unsupported content type: {type(chunk)}')

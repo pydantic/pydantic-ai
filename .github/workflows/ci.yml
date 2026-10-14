@@ -237,12 +237,9 @@ jobs:
           enable-cache: true
           cache-suffix: lint
 
-      # `--no-extra mcp-tasks` everywhere `--all-extras` appears: the extra lives in the
-      # FastMCP 4 / MCP SDK v2 lock fork, which `tool.uv.conflicts` bars from co-installing
-      # with the FastMCP 3 dev environment (the `test-fastmcp-4` job covers that universe).
       - name: Install dependencies
         id: install
-        run: uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
+        run: uv sync --all-extras --all-packages --group lint
 
       - name: Test GitHub agentic workflow policy
         env:
@@ -492,7 +489,7 @@ jobs:
           cache-suffix: docs-only
 
       - name: Install documentation test dependencies
-        run: uv sync --all-extras --no-extra mcp-tasks --all-packages
+        run: uv sync --all-extras --all-packages
 
       - name: Check Markdown files
         uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
@@ -837,7 +834,7 @@ jobs:
         continue-on-error: true
         run: |
           for i in 1 2 3; do
-            if uv run --all-extras --no-extra mcp-tasks python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
+            if uv run --all-extras python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
               exit 0
             fi
             echo "HF model download attempt $i failed; retrying in 15s..."
@@ -888,7 +885,7 @@ jobs:
           mapfile -t shard_args < "$RUNNER_TEMP/shard-args.txt"
           read -ra test_paths <<< "$TEST_PATHS"
           # `--store-durations` (from `pytest-split`) records this shard's durations for the next run.
-          uv run --all-packages --all-extras --no-extra mcp-tasks "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+          uv run --all-packages --all-extras "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec -m "not temporal" "${shard_args[@]}" "${test_paths[@]}" \
             --store-durations --clean-durations --durations-path "$RUNNER_TEMP/test-durations.json"
         env:
@@ -917,7 +914,7 @@ jobs:
         if: matrix.python-version == '3.14' && matrix.shard == 1
         run: >-
           env -u ABSURD_TEST_DATABASE_URL -u PGTASK_TEST_DATABASE_URL
-          uv run --all-packages --all-extras --no-extra mcp-tasks
+          uv run --all-packages --all-extras
           coverage run -m pytest
           tests/harness/absurd/test_absurd.py::TestDurability::test_replay_serves_cached_model_response
           tests/harness/pgtask/test_pgtask.py::TestReplay::test_model_response_served_from_checkpoint
@@ -927,7 +924,7 @@ jobs:
       # See the matching step in the `test` job.
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
-        run: uv run --all-packages --all-extras --no-extra mcp-tasks coverage combine
+        run: uv run --all-packages --all-extras coverage combine
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
 
@@ -1016,7 +1013,7 @@ jobs:
 
       - name: install lowest resolution
         if: matrix.resolution == 'lowest'
-        run: uv sync --all-packages --all-extras --no-extra mcp-tasks --resolution lowest-direct
+        run: uv sync --all-packages --all-extras --resolution lowest-direct
         env:
           UV_FROZEN: "0"
 
@@ -1036,10 +1033,10 @@ jobs:
           fi
           # A `pydantic-ai-harness`-only change runs only the harness `temporal` tests.
           if [[ "$HARNESS_ONLY" != "true" ]]; then
-            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras' }} \
               "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
           fi
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras' }} \
             "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
         env:
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
@@ -1059,7 +1056,7 @@ jobs:
           mv "$RUNNER_TEMP/render-cli/cli_v${RENDER_CLI_VERSION}" "$RUNNER_TEMP/render-cli/render"
           chmod +x "$RUNNER_TEMP/render-cli/render"
           export PATH="$RUNNER_TEMP/render-cli:$PATH"
-          uv run --all-packages --all-extras --no-extra mcp-tasks \
+          uv run --all-packages --all-extras \
             pytest --durations=5 tests/harness/render/test_local_runtime_live.py
         env:
           RENDER_CLI_VERSION: 2.28.0
@@ -1070,7 +1067,7 @@ jobs:
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
         run: >-
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }}
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras' }}
           coverage combine
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
@@ -1136,7 +1133,7 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: hf-${{ runner.os }}-stsb-bert-tiny-safetensors-f3cb857cba53019a20df283396bcca179cf051a4
 
-      - run: uv sync --all-packages --all-extras --no-extra mcp-tasks --resolution lowest-direct
+      - run: uv sync --all-packages --all-extras --resolution lowest-direct
         env:
           UV_FROZEN: "0"
 
@@ -1280,7 +1277,7 @@ jobs:
           enable-cache: true
           cache-suffix: examples
 
-      - run: uv run --all-extras --no-extra mcp-tasks python tests/import_examples.py
+      - run: uv run --all-extras python tests/import_examples.py
 
   # `browser-use` pins every one of its dependencies exactly, so the workspace lock excludes it
   # (`exclude-dependencies` in pyproject.toml) and no other job installs it. This one installs it on
@@ -1312,7 +1309,7 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: uv sync --all-packages --all-extras --no-extra mcp-tasks --group lint
+      - run: uv sync --all-packages --all-extras --group lint
       # `--no-config`: the project's `exclude-dependencies` would otherwise drop the package too.
       - run: uv pip install --no-config "browser-use>=0.13.6,<0.14"
       - run: uv run --no-sync coverage run -m pytest tests/harness/browser_use
@@ -1383,8 +1380,10 @@ jobs:
             uv run --package pydantic-clai2 pytest "${tests[@]}"
           fi
 
-  test-fastmcp-4:
-    name: test FastMCP 4 compatibility
+  # The workspace locks FastMCP 4 / MCP SDK v2; `[mcp]` still allows FastMCP 3 (MCP SDK v1), so the
+  # tests whose behavior depends on the generation run here on its floor and on its newest release.
+  test-fastmcp-3:
+    name: test FastMCP 3 compatibility (${{ matrix.fastmcp.name }})
     needs: classify
     if: >-
       needs.classify.outputs.content_only != 'true'
@@ -1392,6 +1391,15 @@ jobs:
       && needs.classify.outputs.harness_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        fastmcp:
+          # The `[mcp]` extra's floor.
+          - name: "3.3.0"
+            spec: "==3.3.0"
+          - name: latest
+            spec: ">=3,<4"
     env:
       CI: true
       COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
@@ -1404,47 +1412,60 @@ jobs:
         with:
           python-version: "3.13"
           enable-cache: true
-          cache-suffix: fastmcp-4
+          cache-suffix: fastmcp-3
 
       - run: mkdir .coverage
 
-      # Keep the normal matrix locked to FastMCP 3 while `--with` gives these tests an isolated
-      # FastMCP 4 environment without mutating the project environment.
-      # TODO: Drop these package-specific cutoffs after 2026-08-14, when the pinned artifacts clear
-      # the workspace's seven-day cooldown. Unrelated dependencies remain subject to the cooldown.
-      # uv only opts direct requirements into prereleases, so the two beta distributions that
-      # FastMCP pins transitively must also be named as direct requirements.
-      - run: >-
-          uv run
-          --all-extras
-          --no-extra mcp-tasks
-          --all-packages
-          --with "fastmcp[tasks]==4.0.0b2"
-          --with "fastmcp-slim==4.0.0b2"
-          --with "fastmcp-tasks==4.0.0b2"
-          --exclude-newer-package "fastmcp=2026-08-08T00:00:00Z"
-          --exclude-newer-package "fastmcp-slim=2026-08-08T00:00:00Z"
-          --exclude-newer-package "fastmcp-tasks=2026-08-08T00:00:00Z"
-          --exclude-newer-package "mcp=2026-08-08T00:00:00Z"
-          --exclude-newer-package "mcp-types=2026-08-08T00:00:00Z"
-          coverage run -m pytest
-          tests/test_mcp.py
-          tests/models/test_mcp_sampling.py
-          tests/test_conftest.py
+      # `--with` layers FastMCP 3 and the MCP SDK v1 it pins over the locked environment without
+      # mutating it. `--no-extra mcp-tasks`: that extra is FastMCP 4's tasks extension, which FastMCP 3
+      # doesn't use (it serves task-augmented tools itself).
+      # The durable-exec modules run in a second pass with `BLOCKBUSTER_ENABLED=false`, as in
+      # `test-durable-exec`: Prefect writes its result cache from inside the event loop.
+      - name: run tests
+        shell: bash
+        run: |
+          run=(
+            uv run --all-extras --no-extra mcp-tasks --all-packages
+            --with "fastmcp${{ matrix.fastmcp.spec }}"
+            --with "fastmcp-slim${{ matrix.fastmcp.spec }}"
+            coverage run -m pytest -n logical --dist=loadgroup
+          )
+          "${run[@]}" \
+            tests/test_mcp.py \
+            tests/models/test_mcp_sampling.py \
+            tests/test_conftest.py \
+            tests/harness/day_ai \
+            tests/harness/github \
+            tests/harness/google_workspace \
+            tests/harness/grain \
+            tests/harness/linear \
+            tests/harness/logfire_mcp \
+            tests/harness/notion \
+            tests/harness/ordinal \
+            tests/harness/posthog \
+            tests/harness/pylon \
+            tests/harness/slack \
+            tests/harness/stackone \
+            tests/clai2/test_mcp.py \
+            tests/clai2/test_mcp_command.py
+          BLOCKBUSTER_ENABLED=false "${run[@]}" \
+            tests/durable_exec/test_dbos.py \
+            tests/durable_exec/test_prefect.py \
+            tests/durable_exec/test_durable_operation.py
         env:
-          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-4
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-3-${{ matrix.fastmcp.name }}
 
       # See the matching step in the `test` job. Plain `uv run`: combining is
-      # environment-independent, so the FastMCP 4 `--with` overlay isn't needed.
+      # environment-independent, so the FastMCP 3 `--with` overlay isn't needed.
       - name: combine coverage files
-        run: uv run --all-extras --no-extra mcp-tasks --all-packages coverage combine
+        run: uv run --all-extras --all-packages coverage combine
         env:
-          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-4
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-3-${{ matrix.fastmcp.name }}
 
       - name: store coverage files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: coverage-fastmcp-4
+          name: coverage-fastmcp-3-${{ matrix.fastmcp.name }}
           path: .coverage
           include-hidden-files: true
 
@@ -1612,9 +1633,9 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
-    needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4, test-harness-browser-use]
+    needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-3, test-harness-browser-use]
     # A `pydantic-clai2`-only change skips every test job but `test`, a `pydantic-ai-harness`-only
-    # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too.
+    # change skips `test-fastmcp-3`, and a skipped need would otherwise skip this job too.
     if: ${{ !failure() && !cancelled() && needs.classify.outputs.content_only != 'true' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -1672,7 +1693,7 @@ jobs:
       - test-lowest-versions
       - test-temporal-latest
       - test-examples
-      - test-fastmcp-4
+      - test-fastmcp-3
       - test-harness-browser-use
       - test-clai2-clipboard
       - harness-integration-changes
@@ -1701,17 +1722,17 @@ jobs:
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-3,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-3,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
               || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'

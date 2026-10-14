@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import httpx
+import httpx2
 import pytest
 from fastmcp.client.transports import StreamableHttpTransport
 
@@ -15,13 +15,6 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.google_workspace import GoogleWorkspace
-
-# MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
-pytestmark = [
-    pytest.mark.filterwarnings(
-        "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
-    ),
-]
 
 
 async def connections_for(capability: GoogleWorkspace[str | None], deps: str | None) -> list[MCPToolset[str | None]]:
@@ -50,7 +43,7 @@ def user_token(ctx: RunContext[str]) -> str:
 def bearer(connection: MCPToolset[str | None]) -> str:
     transport = connection.client.transport
     assert isinstance(transport, StreamableHttpTransport) and transport.auth is not None
-    request = next(transport.auth.auth_flow(httpx.Request('POST', 'https://example.com/mcp')))
+    request = next(transport.auth.auth_flow(httpx2.Request('POST', 'https://example.com/mcp')))
     return request.headers['Authorization']
 
 

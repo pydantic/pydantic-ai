@@ -6,7 +6,6 @@ durable operation. This test starts a local Temporal dev server via `WorkflowEnv
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import AsyncIterator
 from datetime import timedelta
 
@@ -25,8 +24,6 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
-from mcp.server.fastmcp import FastMCP
-
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -35,6 +32,8 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from tests.harness._temporal import ignore_source_reads_left_open
 from tests.temporal_utils import temporal_dev_server_cache_dir
+
+from .._mcp_server import MCPServer
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
@@ -65,11 +64,7 @@ def _echo_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelRe
     return ModelResponse(parts=[TextPart(content=info.instructions or '')])
 
 
-# MCP's test server leaves its lifespan annotation unresolved with some pydantic-settings versions. The
-# server is built at import, where the suite's `pytestmark` filters do not apply yet.
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', "Field 'lifespan' has an incomplete definition")
-    server = FastMCP('provider')
+server = MCPServer('provider')
 
 # Module level, as Temporal requires.
 agent = Agent(

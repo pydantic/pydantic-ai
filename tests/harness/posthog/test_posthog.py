@@ -5,12 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar
 
-import httpx
+import httpx2
 import pytest
 from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
-from mcp.server.fastmcp.server import FastMCP, Settings
-from mcp.types import ToolAnnotations
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -22,9 +20,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.posthog import PostHog
 
-# The MCP SDK leaves a settings annotation unresolved in some supported dependency
-# combinations. Rebuild it before warnings are escalated by the test suite.
-Settings.model_rebuild()
+from .._mcp_server import NOT_READ_ONLY, READ_ONLY, MCPServer
 
 DepsT = TypeVar('DepsT')
 
@@ -39,7 +35,7 @@ def _http_transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
 def bearer(toolset: AbstractToolset[DepsT]) -> str:
     auth = _http_transport(toolset).auth
     assert auth is not None
-    request = next(auth.auth_flow(httpx.Request('POST', 'https://example.com/mcp')))
+    request = next(auth.auth_flow(httpx2.Request('POST', 'https://example.com/mcp')))
     return request.headers['Authorization']
 
 
@@ -64,7 +60,7 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
 
 class TestPostHog:
     async def test_agent_runs_with_posthog_tools(self) -> None:
-        server = FastMCP('posthog-fake')
+        server = MCPServer('posthog-fake')
 
         @server.tool()
         def insight_query() -> dict[str, str]:
@@ -77,7 +73,7 @@ class TestPostHog:
 
     @pytest.mark.parametrize('include', [True, False])
     async def test_server_instructions(self, include: bool) -> None:
-        server = FastMCP('posthog-fake', instructions='PostHog instructions.')
+        server = MCPServer('posthog-fake', instructions='PostHog instructions.')
         agent = Agent(TestModel(call_tools=[]), capabilities=[PostHog(client=server, include_instructions=include)])
         request = (await agent.run('Hello')).all_messages()[0]
         assert isinstance(request, ModelRequest)
@@ -177,13 +173,13 @@ class TestServerSettings:
         assert _http_transport(PostHog(auth='posthog-key', read_only=read_only).get_toolset()).headers == headers
 
     async def test_read_only_with_a_client_keeps_only_read_only_tools(self) -> None:
-        server = FastMCP('posthog-fake')
+        server = MCPServer('posthog-fake')
 
-        @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+        @server.tool(annotations=READ_ONLY)
         def insight_query() -> str:
             return 'queried'
 
-        @server.tool(annotations=ToolAnnotations(readOnlyHint=False))
+        @server.tool(annotations=NOT_READ_ONLY)
         def feature_flag_create() -> str:
             return 'created'  # pragma: no cover
 
