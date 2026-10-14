@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import replace
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -23,7 +24,7 @@ from genai_prices.types import ClauseEquals, ModelInfo, ModelPrice, Provider
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, CostCalculationFailedWarning
-from pydantic_ai._genai_prices import best_effort_price, lookup_context_window, response_price_context
+from pydantic_ai._genai_prices import best_effort_price, lookup_context_window
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -230,21 +231,25 @@ async def test_cost_service_tier_without_tier_rates_is_standard(allow_model_requ
     assert result.usage.cost == snapshot(Decimal('0.0007'))
 
 
-@pytest.mark.parametrize(
-    ('provider_name', 'provider_details', 'expected'),
-    [
-        ('openai', {'service_tier': 'flex'}, {'service_tier': 'flex'}),
-        ('openai', {'service_tier': 'default'}, None),
-        ('openai', None, None),
-        ('openrouter', {'service_tier': 'flex'}, None),
-    ],
-)
-def test_response_price_context(
-    provider_name: str, provider_details: dict[str, str] | None, expected: dict[str, str] | None
-):
-    """Only OpenAI's own non-standard tiers become a genai-prices `price_context`."""
-    response = ModelResponse(parts=[], provider_name=provider_name, provider_details=provider_details)
-    assert response_price_context(response) == expected
+def test_service_tier_only_changes_openai_prices():
+    """Every provider's tier is passed along; genai-prices ignores it, silently, where it has no tier rates."""
+    usage = RequestUsage(input_tokens=100_000)
+    timestamp = datetime(2026, 10, 13, tzinfo=UTC)
+    prices: dict[str, Decimal] = {}
+    for provider_name, model_name in [('openai', 'gpt-6.1-sol'), ('anthropic', 'claude-sonnet-4-5')]:
+        response = ModelResponse(
+            parts=[],
+            usage=usage,
+            model_name=model_name,
+            provider_name=provider_name,
+            provider_details={'service_tier': 'priority'},
+            timestamp=timestamp,
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            prices[provider_name] = response.cost().total_price
+    # OpenAI at its $4/MTok priority rate (standard is $2); Anthropic at its standard $3/MTok.
+    assert prices == snapshot({'openai': Decimal('0.4'), 'anthropic': Decimal('0.30')})
 
 
 async def test_cost_is_silent_for_unpriceable_model(allow_model_requests: None):

@@ -97,42 +97,38 @@ def calculate_price_for_usage(
     Normally tries matching on `provider_api_url` first as it's more specific, then falls back to `provider_name`.
     `openai-decisions` uses its provider name first because it shares OpenAI's URL with another endpoint. Only
     `ModelResponse.cost()` wants this behaviour; everything internal goes through `best_effort_price`.
-    """
-    if provider_api_url and provider_name != 'openai-decisions':
-        try:
-            return calc_price(
-                usage,
-                model_name,
-                provider_api_url=provider_api_url,
-                genai_request_timestamp=genai_request_timestamp,
-                price_context=price_context,
-            )
-        except LookupError:
-            # genai-prices doesn't know this URL, but the provider name may still resolve.
-            pass
 
-    return calc_price(
-        usage,
-        model_name,
-        provider_id=provider_name,
-        genai_request_timestamp=genai_request_timestamp,
-        price_context=price_context,
-    )
+    A `price_context` that matches no rates for the model (e.g. a service tier only OpenAI prices) means standard
+    prices; genai-prices warns about that, which is silenced here since every provider's tier is passed along.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message='No price variant matched', category=UserWarning)
+        if provider_api_url and provider_name != 'openai-decisions':
+            try:
+                return calc_price(
+                    usage,
+                    model_name,
+                    provider_api_url=provider_api_url,
+                    genai_request_timestamp=genai_request_timestamp,
+                    price_context=price_context,
+                )
+            except LookupError:
+                # genai-prices doesn't know this URL, but the provider name may still resolve.
+                pass
+
+        return calc_price(
+            usage,
+            model_name,
+            provider_id=provider_name,
+            genai_request_timestamp=genai_request_timestamp,
+            price_context=price_context,
+        )
 
 
 def response_price_context(response: ModelResponse) -> PriceContext | None:
-    """The genai-prices `price_context` for a response: the service tier OpenAI reports it was served at.
-
-    genai-prices has flex and priority rates for OpenAI only, so other providers (including OpenAI-compatible ones,
-    which report their own tier names) get no context. `default` is left out too: it means standard prices, and
-    passing it for a model without tier rates would only make genai-prices warn.
-    """
-    if response.provider_name != 'openai' or not response.provider_details:
-        return None
-    service_tier = response.provider_details.get('service_tier')
-    if not isinstance(service_tier, str) or service_tier == 'default':
-        return None
-    return {'service_tier': service_tier}
+    """The genai-prices `price_context` for a response: the service tier the provider reports it was served at."""
+    service_tier = (response.provider_details or {}).get('service_tier')
+    return {'service_tier': service_tier} if isinstance(service_tier, str) else None
 
 
 def best_effort_price(
@@ -151,23 +147,18 @@ def best_effort_price(
     `function` models) and `ValueError` for usage it can't price (e.g. cache token counts that imply a
     negative uncached remainder); both are expected. Anything else is unexpected and surfaces as a
     `CostCalculationFailedWarning` rather than being raised.
-
-    A `price_context` that matches no tier rates (e.g. a model or date genai-prices has no tier data for) falls
-    back to standard prices, and genai-prices' warning about it is silenced like the errors above.
     """
     if not model_name:
         return None
     try:
-        with warnings.catch_warnings():
-            warnings.filterwarnings('ignore', message='No price variant matched', category=UserWarning)
-            return calculate_price_for_usage(
-                usage,
-                model_name=model_name,
-                provider_api_url=provider_api_url,
-                provider_name=provider_name,
-                genai_request_timestamp=genai_request_timestamp,
-                price_context=price_context,
-            )
+        return calculate_price_for_usage(
+            usage,
+            model_name=model_name,
+            provider_api_url=provider_api_url,
+            provider_name=provider_name,
+            genai_request_timestamp=genai_request_timestamp,
+            price_context=price_context,
+        )
     except (LookupError, ValueError):
         # NOTE(Marcelo): We can allow some kind of hook on the provider level, which we could retrieve via
         # `ctx.deps.model.provider.calculate_cost`, but I'm not sure how would the API look like. Maybe a new parameter
