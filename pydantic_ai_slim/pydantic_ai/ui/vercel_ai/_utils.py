@@ -52,6 +52,7 @@ COMPACTION_DATA_TYPE = 'data-compaction'
 """Data chunk type for compaction parts."""
 
 MCP_APPS_DATA_TYPE = f'data-{MCP_APPS_UI_TYPE}'
+MCP_APP_MIME_TYPE = 'text/html;profile=mcp-app'
 """Data chunk type for the MCP Apps data of a tool call, keyed by its tool call ID."""
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'
@@ -185,11 +186,19 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 DATA_CHUNK_TYPES = (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)
 
 
-def mcp_app_tool_metadata(tool_result: ToolReturnPart) -> dict[str, Any] | None:
-    """The `toolMetadata` that AI SDK UI's `experimental_MCPAppRenderer` reads to show an MCP Apps page."""
+def mcp_app_tool_output(tool_result: ToolReturnPart) -> dict[str, Any] | None:
+    """The tool output fields that let AI SDK UI v7's `experimental_MCPAppRenderer` show an MCP Apps page as is.
+
+    The renderer reads the page from `toolMetadata.app` and hands the page `output`, so `output` is the server's
+    full result. What the model saw moves to the provider metadata, where `load_messages` reads it back.
+    """
     if (app := get_mcp_app_tool_result(tool_result.metadata)) is None:
         return None
-    return {'app': {'resourceUri': app['resource_uri'], 'mimeType': 'text/html;profile=mcp-app'}}
+    return {
+        'output': app['result'],
+        'tool_metadata': {'app': {'resourceUri': app['resource_uri'], 'mimeType': MCP_APP_MIME_TYPE}},
+        'provider_metadata': {PROVIDER_METADATA_KEY: {'model_output': tool_return_output(tool_result)}},
+    }
 
 
 def iter_metadata_chunks(

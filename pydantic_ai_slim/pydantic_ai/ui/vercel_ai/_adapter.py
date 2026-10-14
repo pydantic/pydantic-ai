@@ -69,6 +69,7 @@ from ._utils import (
     iter_metadata_chunks,
     iter_tool_approval_responses,
     load_provider_metadata,
+    mcp_app_tool_output,
     tool_return_output,
 )
 from .request_types import (
@@ -585,11 +586,19 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 # error/denied returns it carries no `tool_kind` (typed return subclasses
                                 # signal shape-valid success to their readers).
                                 interrupted = provider_meta.get('outcome') == 'interrupted'
+                                # An MCP Apps tool output from AI SDK v7 holds the server's full result for the
+                                # page; what the model saw is kept in the provider metadata.
+                                result_meta = load_provider_metadata(
+                                    part.result_provider_metadata
+                                    if isinstance(part, ToolOutputAvailablePart | DynamicToolOutputAvailablePart)
+                                    else None
+                                )
+                                output = result_meta['model_output'] if 'model_output' in result_meta else part.output
                                 builder.add(
                                     ToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
-                                        content=_validate_tool_output(part.output),
+                                        content=_validate_tool_output(output),
                                         outcome='interrupted' if interrupted else 'success',
                                         tool_kind=None if interrupted else tool_kind,
                                     )
@@ -930,14 +939,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 # `'success'` and `'interrupted'` both render as neutral tool output; only `'failed'`
                 # is an error, so a synthesized `'interrupted'` return (from message-history repair)
                 # shows its interruption message as the output rather than an error.
+                app_output = mcp_app_tool_output(tool_result) if sdk_version >= 7 else None
                 ui_parts.append(
                     ToolOutputAvailablePart(
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
                         input=part.args_as_dict(),
-                        output=tool_return_output(tool_result),
+                        output=app_output['output'] if app_output else tool_return_output(tool_result),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
+                        tool_metadata=app_output['tool_metadata'] if app_output else None,
+                        result_provider_metadata=app_output['provider_metadata'] if app_output else None,
                     )
                 )
             # Check for Vercel AI chunks returned by tool calls via metadata.

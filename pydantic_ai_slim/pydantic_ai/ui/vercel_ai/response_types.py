@@ -118,12 +118,10 @@ class ToolOutputAvailableChunk(BaseChunk):
     provider_executed: bool | None = None
     dynamic: bool | None = None
     preliminary: bool | None = None
+    provider_metadata: ProviderMetadata | None = None
+    """Requires AI SDK UI v7."""
     tool_metadata: dict[str, Any] | None = None
-    """Requires AI SDK UI v7; older versions reject the chunk, so it's left out for them."""
-
-    def encode(self, sdk_version: int) -> str:
-        exclude = {'tool_metadata'} if sdk_version < 7 else None
-        return self.model_dump_json(by_alias=True, exclude_none=True, exclude=exclude)
+    """Requires AI SDK UI v7."""
 
 
 class ToolInputAvailableChunk(BaseChunk):

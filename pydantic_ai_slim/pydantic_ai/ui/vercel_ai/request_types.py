@@ -161,6 +161,7 @@ class ToolInputStreamingPart(BaseUIPart):
     input: Any | None = None
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    tool_metadata: dict[str, JSONValue] | None = None
     approval: ToolApproval | None = None
 
 
@@ -174,6 +175,7 @@ class ToolInputAvailablePart(BaseUIPart):
     input: Any | None = None
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    tool_metadata: dict[str, JSONValue] | None = None
     approval: ToolApproval | None = None
 
 
@@ -188,6 +190,8 @@ class ToolOutputAvailablePart(BaseUIPart):
     output: Any | None = None
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    tool_metadata: dict[str, JSONValue] | None = None
+    result_provider_metadata: ProviderMetadata | None = None
     preliminary: bool | None = None
     approval: ToolApproval | None = None
 
@@ -204,6 +208,8 @@ class ToolOutputErrorPart(BaseUIPart):
     error_text: str
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    tool_metadata: dict[str, JSONValue] | None = None
+    result_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
 
@@ -217,6 +223,7 @@ class ToolApprovalRequestedPart(BaseUIPart):
     input: Any | None = None
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    tool_metadata: dict[str, JSONValue] | None = None
     approval: ToolApproval | None = None
 
 
@@ -230,6 +237,7 @@ class ToolApprovalRespondedPart(BaseUIPart):
     input: Any | None = None
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    tool_metadata: dict[str, JSONValue] | None = None
     approval: ToolApproval | None = None
 
 
@@ -243,6 +251,7 @@ class ToolOutputDeniedPart(BaseUIPart):
     input: Any | None = None
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    tool_metadata: dict[str, JSONValue] | None = None
     approval: ToolApproval | None = None
 
 
@@ -270,6 +279,7 @@ class DynamicToolInputStreamingPart(BaseUIPart):
     input: Any | None = None
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    tool_metadata: dict[str, JSONValue] | None = None
     approval: ToolApproval | None = None
 
 
@@ -284,6 +294,7 @@ class DynamicToolInputAvailablePart(BaseUIPart):
     input: Any
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    tool_metadata: dict[str, JSONValue] | None = None
     approval: ToolApproval | None = None
 
 
@@ -299,6 +310,8 @@ class DynamicToolOutputAvailablePart(BaseUIPart):
     output: Any
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    tool_metadata: dict[str, JSONValue] | None = None
+    result_provider_metadata: ProviderMetadata | None = None
     preliminary: bool | None = None
     approval: ToolApproval | None = None
 
@@ -315,6 +328,8 @@ class DynamicToolOutputErrorPart(BaseUIPart):
     error_text: str
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    tool_metadata: dict[str, JSONValue] | None = None
+    result_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
 
@@ -329,6 +344,7 @@ class DynamicToolApprovalRequestedPart(BaseUIPart):
     input: Any
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    tool_metadata: dict[str, JSONValue] | None = None
     approval: ToolApproval | None = None
 
 
@@ -343,6 +359,7 @@ class DynamicToolApprovalRespondedPart(BaseUIPart):
     input: Any
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    tool_metadata: dict[str, JSONValue] | None = None
     approval: ToolApproval | None = None
 
 
@@ -357,6 +374,7 @@ class DynamicToolOutputDeniedPart(BaseUIPart):
     input: Any
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    tool_metadata: dict[str, JSONValue] | None = None
     approval: ToolApproval | None = None
 
 

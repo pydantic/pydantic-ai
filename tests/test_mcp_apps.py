@@ -334,26 +334,43 @@ async def test_vercel_ai_frontend_receives_app_after_tool_result(agent: Agent[No
     assert model_view(VercelAIAdapter.load_messages(dumped)) == model_view(VercelAIAdapter.load_messages(without_app))
 
 
-@pytest.mark.parametrize('sdk_version', [6, 7])
-async def test_vercel_ai_tool_output_names_app_for_renderer(agent: Agent[None, str], sdk_version: Literal[6, 7]):
-    """On AI SDK v7, the UI tool's output chunk carries the `toolMetadata.app` that `experimental_MCPAppRenderer` reads.
+async def test_vercel_ai_v7_tool_output_shows_app_without_glue(agent: Agent[None, str]):
+    """On AI SDK v7, the UI tool's output is what `experimental_MCPAppRenderer` needs to show the app as is.
 
-    Earlier SDK versions reject unknown keys on this chunk, so it is left out for them.
+    `toolMetadata.app` names the page and `output` is the server's full result, which the renderer hands the app.
+    What the model saw rides in the provider metadata, so history the frontend sends back loads as it does on v6.
     """
     request = SubmitMessage(id='chat', messages=[UIMessage(id='u1', role='user', parts=[TextUIPart(text='Weather?')])])
-    adapter = VercelAIAdapter(agent, request, sdk_version=sdk_version)
+    adapter = VercelAIAdapter(agent, request, sdk_version=7)
     chunks = [
         json.loads(encoded.removeprefix('data: '))
         async for encoded in adapter.encode_stream(adapter.run_stream())
         if '[DONE]' not in encoded
     ]
-
     tool_output = next(c for c in chunks if c['type'] == 'tool-output-available' and c['toolCallId'] == 'forecast-1')
-    assert tool_output.get('toolMetadata') == (
-        {'app': {'resourceUri': 'ui://weather/forecast', 'mimeType': 'text/html;profile=mcp-app'}}
-        if sdk_version == 7
-        else None
+    assert tool_output == snapshot(
+        {
+            'type': 'tool-output-available',
+            'toolCallId': 'forecast-1',
+            'output': {
+                'content': [{'type': 'text', 'text': 'Den Haag: 14C'}],
+                'structuredContent': {'city': 'Den Haag', 'temp_c': 14},
+                '_meta': {'selectedDay': 'tuesday'},
+                'isError': False,
+            },
+            'providerMetadata': {'pydantic_ai': {'model_output': {'city': 'Den Haag', 'temp_c': 14}}},
+            'toolMetadata': {'app': {'resourceUri': 'ui://weather/forecast', 'mimeType': 'text/html;profile=mcp-app'}},
+        }
     )
+
+    async with agent.run_stream('Weather?') as result:
+        await result.get_output()
+    sent_back = [
+        UIMessage.model_validate_json(message.model_dump_json(by_alias=True, exclude_none=True))
+        for message in VercelAIAdapter.dump_messages(result.all_messages(), sdk_version=7)
+    ]
+    v6 = VercelAIAdapter.dump_messages(result.all_messages(), sdk_version=6)
+    assert model_view(VercelAIAdapter.load_messages(sent_back)) == model_view(VercelAIAdapter.load_messages(v6))
 
 
 async def test_vercel_ai_app_chunk_without_toolset_id_or_with_malformed_record():
