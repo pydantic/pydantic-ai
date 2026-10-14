@@ -37,7 +37,7 @@ The docs index and repository README tell the same story on two surfaces. Keep t
 
 # Model names
 
-- Name models with an alias from [`model_aliases.py`](model_aliases.py), never a model ID. An alias is `<provider>:<tier>`, with the tiers `small`, `medium`, `large`, and `xlarge`; not every provider has every tier.
+- Name models with an alias from [`model_aliases.py`](model_aliases.py), never a model ID. Chat models use `<provider>:<tier>`, with the tiers `small`, `medium`, `large`, and `xlarge`; not every provider has every tier. Realtime, image generation, and embedding models use `<provider>:realtime`, `<provider>:image`, and `<provider>:embedding`.
 - `{{ openai:medium }}` resolves to the full model string, as in `Agent('{{ openai:medium }}')` or `gateway/{{ openai:medium }}`. `{{ openai:medium.name }}` resolves to the bare model name, as in `OpenAIResponsesModel('{{ openai:medium.name }}')`, `openai-chat:{{ openai:medium.name }}`, or `model_name='{{ openai:medium.name }}'` in example output.
 - Aliases stand only for models served under their provider's own IDs. Third-party catalogs, such as OpenRouter, Snowflake, or Heroku, keep their own model IDs.
 - Don't name or describe the aliased model in prose, labels, or comments, since the alias can move. Write "an OpenAI model", not the model's name.

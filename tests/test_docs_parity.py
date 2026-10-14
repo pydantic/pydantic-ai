@@ -19,8 +19,8 @@ MIRRORED_EXAMPLE_MARKERS = [
     'ClearToolResults(), ToolOutputLimits(), RepairToolArguments()',
     'class Sentiment(BaseModel):',
     'class ResearchWorkflow(PydanticAIWorkflow):',
-    "ImageGenerator('openai:gpt-image-2')",
-    "agent.realtime('openai:gpt-realtime-2.1')",
+    'ImageGenerator(',
+    'agent.realtime(',
     'class SupportDependencies:',
 ]
 

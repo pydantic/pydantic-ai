@@ -6,6 +6,7 @@ To move the docs to a newer model, change it here. See `docs/AGENTS.md`.
 """
 
 MODEL_ALIASES = {
+    # Chat models, by tier. Not every provider has every tier.
     'anthropic:small': 'anthropic:claude-haiku-5-5',
     'anthropic:medium': 'anthropic:claude-sonnet-5-5',
     'anthropic:large': 'anthropic:claude-opus-5-5',
@@ -20,4 +21,11 @@ MODEL_ALIASES = {
     'bedrock:small': 'bedrock:global.anthropic.claude-haiku-5-5',
     'bedrock:medium': 'bedrock:global.anthropic.claude-sonnet-5-5',
     'bedrock:large': 'bedrock:global.anthropic.claude-opus-5-5',
+    # Realtime, image generation and embedding models.
+    'openai:realtime': 'openai:gpt-realtime-2.1',
+    'google:realtime': 'google:gemini-3.8-live',
+    'openai:image': 'openai:gpt-image-2',
+    'google:image': 'google:gemini-3.1-flash-image',
+    'xai:image': 'xai:grok-imagine-image-2.0',
+    'openai:embedding': 'openai:text-embedding-3-large',
 }

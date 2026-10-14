@@ -6,12 +6,16 @@ See the "Model names" section of `docs/AGENTS.md`.
 from __future__ import annotations as _annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 
 import pytest
+from typing_inspection.introspection import get_literal_values
 
+from pydantic_ai.embeddings import KnownEmbeddingModelName
+from pydantic_ai.images import KnownImageGenerationModelName
 from pydantic_ai.models import known_model_names
+from pydantic_ai.realtime import KnownRealtimeModelName
 
 from .docs_model_aliases import (
     ALIAS_RE,
@@ -34,6 +38,10 @@ EXEMPT_PAGES = {
     'realtime/azure.md': 'Azure Voice Live serves specific models',
     'realtime/overview.md': 'Azure Voice Live serves specific models',
     'realtime/troubleshooting.md': 'Azure Voice Live serves specific models',
+    'realtime/openai.md': 'documents GPT-Live and gpt-realtime model behavior',
+    'realtime/gemini.md': 'documents the behavior of each Gemini Live model',
+    'realtime/xai.md': 'documents Grok Voice model names',
+    'image-generation.md': 'the size tables differ per image model',
 }
 EXEMPT_DIRS = {
     'examples/': 'example pages describe apps whose code names its models',
@@ -45,30 +53,60 @@ CHECKED_PAGES = {'models/overview.md'}
 _KNOWN_MODELS = frozenset(known_model_names())
 _KNOWN_PREFIXES = {model.partition(':')[0] for model in _KNOWN_MODELS}
 _PROVIDERS = {alias.partition(':')[0] for alias in MODEL_ALIASES}
-# Not every provider has every tier.
+# Chat models are aliased by tier; not every provider has every tier.
 _TIERS = ('small', 'medium', 'large', 'xlarge')
+# Other kinds of model have one alias per provider, checked against their own known names.
+_KINDS = {
+    kind: frozenset(get_literal_values(names.__value__, unpack_type_aliases='eager'))
+    for kind, names in (
+        ('realtime', KnownRealtimeModelName),
+        ('image', KnownImageGenerationModelName),
+        ('embedding', KnownEmbeddingModelName),
+    )
+}
 # Models the providers serve that `KnownModelName` doesn't list yet; drop each once it does.
 _NOT_YET_KNOWN = {'xai:grok-4.7'}
-# Models the tiers don't cover, such as image, audio and research models, may be named directly.
+# Chat models the tiers don't cover, such as audio and research models, may be named directly.
 _UNTIERED = re.compile(r'image|audio|tts|whisper|guard|moderation|computer-use|research|codex|multi-agent|^o\d')
 
 
-def _tiered_model_names() -> list[str]:
+def _providers_with(kinds: Collection[str]) -> set[str]:
+    return {provider for provider, _, kind in (alias.partition(':') for alias in MODEL_ALIASES) if kind in kinds}
+
+
+def _chat_model_names() -> set[str]:
     names: set[str] = set()
+    providers = _providers_with(_TIERS)
     for model in _KNOWN_MODELS:
         provider, _, name = model.partition(':')
-        if provider in _PROVIDERS and not _UNTIERED.search(name):
+        if provider in providers and not _UNTIERED.search(name):
             # Bedrock's aliases stand for its Claude models only.
             if provider != 'bedrock' or 'anthropic.claude' in name:
                 names.add(name)
-    return sorted(names, key=len, reverse=True)
+    return names
 
 
-_HARDCODED_RE = re.compile(
-    r'(?<![\w./-])(?:(?P<prefix>[a-z][a-z0-9-]*):)?(?P<name>'
-    + '|'.join(map(re.escape, _tiered_model_names()))
-    + r')(?![\w.-])'
+def _kind_model_names() -> set[str]:
+    names: set[str] = set()
+    for kind, models in _KINDS.items():
+        providers = _providers_with([kind])
+        names |= {
+            name for provider, _, name in map(lambda m: m.partition(':'), models) if provider.split('-')[0] in providers
+        }
+    return names
+
+
+def _names_pattern(names: set[str]) -> str:
+    return '(?P<name>' + '|'.join(map(re.escape, sorted(names, key=len, reverse=True))) + r')(?![\w.-])'
+
+
+# A chat model named anywhere. Realtime, image and embedding names also name model families in prose
+# (`gpt-realtime`), so for those only code is checked: a quoted name, or one behind a provider prefix.
+_HARDCODED_RES = (
+    re.compile(r'(?<![\w./-])(?:(?P<prefix>[a-z][a-z0-9-]*):)?' + _names_pattern(_chat_model_names())),
+    re.compile(r'(?:(?<![\w./-])(?P<prefix>[a-z][a-z0-9-]*):|(?<=[\'"]))' + _names_pattern(_kind_model_names())),
 )
+
 # Anything meant as an alias, so a misspelled one can't reach the docs site unresolved.
 _ALIAS_LIKE_RE = re.compile(r'\{\{[^{}\n]*:[^{}\n]*\}\}')
 # An alias with a provider prefix, like `gateway/{{ openai:small }}` or `google-cloud:{{ google:small.name }}`.
@@ -92,7 +130,8 @@ def _alias_problems(text: str) -> list[tuple[int, str]]:
         if alias is None or alias.group(1) not in MODEL_ALIASES:
             problems.append((match.start(), f'{match.group()} is not a known alias'))
     for match in _PREFIXED_ALIAS_RE.finditer(text):
-        if match.group(2) not in MODEL_ALIASES:
+        # Only chat models have provider routes like `gateway/` or `google-cloud:` to check.
+        if match.group(2) not in MODEL_ALIASES or match.group(2).partition(':')[2] not in _TIERS:
             continue
         prefix = match.group('prefix')
         model = prefix + resolve_model_aliases(match.group()[len(prefix) :])
@@ -102,10 +141,11 @@ def _alias_problems(text: str) -> list[tuple[int, str]]:
 
 
 def _hardcoded_models(text: str) -> list[tuple[int, str]]:
-    """Each tiered model in `text` that is named directly instead of by alias, with its position."""
+    """Each aliased model in `text` that is named directly instead of by alias, with its position."""
     return [
         (match.start(), match.group())
-        for match in _HARDCODED_RE.finditer(text)
+        for pattern in _HARDCODED_RES
+        for match in pattern.finditer(text)
         # Other providers, like `snowflake:` or `heroku:`, serve some of these models under the same names.
         if (prefix := match.group('prefix')) is None or prefix.split('-')[0] in _PROVIDERS
     ]
@@ -123,9 +163,10 @@ def _report(pages: list[Path], find: Callable[[str], list[tuple[int, str]]]) -> 
 def test_aliases_name_known_models():
     for alias, model in MODEL_ALIASES.items():
         provider, _, tier = alias.partition(':')
-        assert tier in _TIERS, f'{alias!r} should use one of the tiers {_TIERS}'
         assert model.startswith(f'{provider}:'), f'{alias!r} should name a `{provider}:` model'
-        assert model in _KNOWN_MODELS | _NOT_YET_KNOWN, f'{alias!r} names {model!r}, which is not a `KnownModelName`'
+        known = _KNOWN_MODELS | _NOT_YET_KNOWN if tier in _TIERS else _KINDS.get(tier)
+        assert known is not None, f'{alias!r} should use a tier from {_TIERS} or a kind from {tuple(_KINDS)}'
+        assert model in known, f'{alias!r} names {model!r}, which Pydantic AI does not list as a known model'
     assert not _NOT_YET_KNOWN & _KNOWN_MODELS, 'Drop the models `KnownModelName` now lists from `_NOT_YET_KNOWN`'
 
 
@@ -145,16 +186,19 @@ def test_docs_name_models_by_alias():
 
 def test_checks_flag_misspelled_aliases_and_model_ids():
     model = MODEL_ALIASES['openai:medium']
+    image = MODEL_ALIASES['openai:image']
+    embedding = MODEL_ALIASES['openai:embedding'].partition(':')[2]
     text = (
         "Agent('{{openai:medium}}'), Agent('{{ openai:huge }}'), Agent('azure:{{ openai:medium.name }}'),\n"
-        f"Agent('google-cloud:{{{{ openai:medium.name }}}}'), Agent('{model}'), Agent('heroku:{model.partition(':')[2]}')"
+        f"Agent('google-cloud:{{{{ openai:medium.name }}}}'), Agent('{model}'), Agent('heroku:{model.partition(':')[2]}')\n"
+        f"ImageGenerator('{image}'), Embedder('azure:{embedding}'), the `{image.partition(':')[2]}` model"
     )
     assert [problem for _, problem in _alias_problems(text)] == [
         '{{openai:medium}} is not a known alias',
         '{{ openai:huge }} is not a known alias',
         f"google-cloud:{{{{ openai:medium.name }}}} resolves to unknown 'google-cloud:{model.partition(':')[2]}'",
     ]
-    assert [name for _, name in _hardcoded_models(text)] == [model]
+    assert [name for _, name in _hardcoded_models(text)] == [model, image]
     assert _report([DOCS / 'index.md'], lambda text: [(0, 'problem')]) == ['docs/index.md:1: problem']
 
 

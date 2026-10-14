@@ -37,7 +37,7 @@ voice = Agent(instructions='You are a helpful voice assistant.')
 
 async def main(prior_history=()):
     async with voice.realtime(
-        'openai:gpt-realtime',
+        '{{ openai:realtime }}',
         message_history=prior_history,
     ).session() as session:
         await session.send('Continue where we left off.')
@@ -87,7 +87,7 @@ notetaker = Agent('{{ openai:medium }}', instructions='Summarize the conversatio
 
 
 async def main():
-    async with voice.realtime('openai:gpt-realtime').session() as session:
+    async with voice.realtime('{{ openai:realtime }}').session() as session:
         await session.send('Please remind me to book a train tomorrow.')
         async for event in session:
             if isinstance(event, RealtimeTurnCompleteEvent):
@@ -186,7 +186,7 @@ agent = Agent()
 
 
 async def main():
-    async with agent.realtime('openai:gpt-realtime').session(
+    async with agent.realtime('{{ openai:realtime }}').session(
         retain_images_every_n=10, retain_images_max=25
     ):
         ...

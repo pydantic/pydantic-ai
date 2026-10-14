@@ -437,7 +437,7 @@ agent = Agent(
         # Native when supported; markdownify-based fallback on unsupported models
         WebFetch(local=True),
         # Native when supported; direct image-model fallback otherwise
-        ImageGeneration(fallback_image_model='openai:gpt-image-1.5'),
+        ImageGeneration(fallback_image_model='{{ openai:image }}'),
         # Native on xAI; on other models, explicitly delegate to an xAI model
         XSearch(fallback_subagent_model='{{ xai:large }}'),
         # Runs the MCP server locally by default; pass `native=True` to also advertise native MCP

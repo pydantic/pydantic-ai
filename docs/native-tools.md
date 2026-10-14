@@ -445,7 +445,7 @@ The [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] enable
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. Only supported by models newer than GPT-5.2. Metadata about the generated image, like the [`revised_prompt`](https://platform.openai.com/docs/guides/tools-image-generation#revised-prompt) sent to the underlying image model, is available on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls]. |
-| Google | ✅ | Limited parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `gemini-3-pro-image` and `gemini-3.1-flash-image`. These models do not support [function tools](tools.md) and will always have the option of generating images, even if this native tool is not explicitly specified. |
+| Google | ✅ | Limited parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `{{ google:image.name }}`. These models do not support [function tools](tools.md) and will always have the option of generating images, even if this native tool is not explicitly specified. |
 | Anthropic | ❌ | |
 | xAI | ❌ | |
 | Groq | ❌ | |
@@ -480,7 +480,7 @@ Image generation with Google [image generation models](https://ai.google.dev/gem
 ```py {title="image_generation_google.py"}
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('google:gemini-3-pro-image')
+agent = Agent('{{ google:image }}')
 
 result = agent.run_sync('Tell me a two-sentence story about an axolotl with an illustration.')
 print(result.output)
@@ -522,7 +522,7 @@ agent = Agent(
                 action='generate',
                 background='transparent',
                 input_fidelity='high',
-                model='gpt-image-2',
+                model='{{ openai:image.name }}',
                 moderation='low',
                 output_compression=100,
                 output_format='png',
@@ -547,7 +547,7 @@ results in an error, and if you also set `size` it must match the computed value
 
 The OpenAI Responses image generation tool defaults to `action='auto'`, where the model decides whether to generate a new
 image or edit one already in context. Use `action='generate'` or `action='edit'` to force either behavior. You can also set
-`model` to select the underlying image generation model used by the tool, for example `model='gpt-image-2'`; this does not
+`model` to select the underlying image generation model used by the tool, for example `model='{{ openai:image.name }}'`; this does not
 change the agent's conversational model.
 
 To control the aspect ratio when using Gemini image models, include the `ImageGenerationTool` explicitly:
@@ -557,7 +557,7 @@ from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'google:gemini-3-pro-image',
+    '{{ google:image }}',
     capabilities=[NativeTool(ImageGenerationTool(aspect_ratio='16:9'))],
     output_type=BinaryImage,
 )
@@ -575,7 +575,7 @@ from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'google:gemini-3-pro-image',
+    '{{ google:image }}',
     capabilities=[NativeTool(ImageGenerationTool(aspect_ratio='16:9', size='4K'))],
     output_type=BinaryImage,
 )
@@ -596,7 +596,7 @@ For more details, check the [API documentation][pydantic_ai.native_tools.ImageGe
 | `background` | ✅ | ❌ |
 | `input_fidelity` | ✅ | ❌ |
 | `moderation` | ✅ | ❌ |
-| `model` | ✅ (gpt-image-2, gpt-image-1.5, gpt-image-1, gpt-image-1-mini, or another OpenAI image model ID) | ❌ |
+| `model` | ✅ (an OpenAI image model ID, such as `{{ openai:image.name }}`) | ❌ |
 | `output_compression` | ✅ (100 (default), jpeg or webp only) | ✅ (75 (default), jpeg only, Google Cloud only) |
 | `output_format` | ✅ | ✅ (Google Cloud only) |
 | `partial_images` | ✅ | ❌ |

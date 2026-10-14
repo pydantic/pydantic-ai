@@ -36,7 +36,7 @@ shared = RunUsage()
 
 async def main():
     async with agent.realtime(
-        'openai:gpt-realtime',
+        '{{ openai:realtime }}',
         usage=shared,
         usage_limits=UsageLimits(total_tokens_limit=100_000),
     ).session() as session:
@@ -131,7 +131,7 @@ See [Debugging and monitoring](../logfire.md) for Logfire setup and privacy cont
 ## Gateway trace propagation
 
 Routing through the [Pydantic AI Gateway](../gateway.md) — e.g.
-`agent.realtime('gateway/openai:gpt-realtime')` — is provider configuration, documented on the
+`agent.realtime('gateway/{{ openai:realtime }}')` — is provider configuration, documented on the
 [OpenAI](openai.md#gateway) and [Gemini](gemini.md#gateway) pages. When a span is active during the
 WebSocket handshake, Pydantic AI propagates
 [W3C trace context](https://www.w3.org/TR/trace-context/) so gateway spans can join the trace.
@@ -149,7 +149,7 @@ agent = Agent()
 
 async def main():
     with logfire.span('voice call'):
-        async with agent.realtime('openai:gpt-realtime').session() as session:
+        async with agent.realtime('{{ openai:realtime }}').session() as session:
             await session.send('Say hello.')
 ```
 
