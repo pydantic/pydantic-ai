@@ -9,7 +9,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Mapping
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pytest
 from cassetter import Cassette
@@ -1109,19 +1109,25 @@ async def test_openrouter_leading_cache_point_attaches_to_previous_user_message(
     assert messages[-1] == {'role': 'user', 'content': [{'type': 'text', 'text': '<reminder>'}]}
 
 
-async def test_openrouter_leading_cache_point_keeps_a_longer_ttl_already_there(allow_model_requests: None) -> None:
-    """A five-minute `CachePoint` moved onto a block that already ends a one-hour breakpoint leaves it one hour.
+@pytest.mark.parametrize(
+    ('existing_ttl', 'leading_ttl'),
+    [pytest.param('1h', '5m', id='keeps-1h-already-there'), pytest.param('5m', '1h', id='raises-5m-to-1h')],
+)
+async def test_openrouter_leading_cache_point_keeps_the_longer_ttl(
+    allow_model_requests: None, existing_ttl: Literal['5m', '1h'], leading_ttl: Literal['5m', '1h']
+) -> None:
+    """A `CachePoint` moved onto a block that already ends a breakpoint leaves the longer of the two TTLs.
 
     A mocked client, like the other placement tests here: no recording of this request exists yet.
     """
     mock_client = _done_mock_client()
     model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
     history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(['Do the task', CachePoint(ttl='1h')])]),
+        ModelRequest(parts=[UserPromptPart(['Do the task', CachePoint(ttl=existing_ttl)])]),
         ModelResponse(parts=[TextPart('Working on it.')]),
     ]
 
-    await Agent(model).run([CachePoint(), '<reminder>'], message_history=history)
+    await Agent(model).run([CachePoint(ttl=leading_ttl), '<reminder>'], message_history=history)
 
     messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
     assert messages[0]['content'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '1h'}
