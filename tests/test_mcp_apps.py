@@ -640,7 +640,7 @@ PROXIED_REQUEST_CASES = [
         result=snapshot({'error': 'MCP method not supported: prompts/list'}),
     ),
     ProxiedRequestCase(
-        id='invalid-params',
+        id='missing-tool-name',
         request={'serverHash': 'weather', 'serverId': 'weather', 'method': 'tools/call', 'params': {'arguments': {}}},
         result=snapshot({'error': 'Invalid MCP params'}),
     ),
