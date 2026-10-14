@@ -884,7 +884,7 @@ class OpenRouterModel(OpenAIChatModel):
         keeping a longer TTL already there. With only tool results and assistant turns before it, the
         breakpoint is dropped. The placeholder is removed.
 
-        Raises `UserError`, as before, when nothing but system messages comes before it, and when the
+        Raises `UserError` when nothing but system messages comes before it, and when the
         `CachePoint` is its message's only content: dropping that message would leave the assistant turn
         last, which Anthropic reads as a prefill.
         """
