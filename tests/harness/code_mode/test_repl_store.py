@@ -7,6 +7,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 import anyio
 import pytest
@@ -290,8 +291,8 @@ class TestCodeModeReplStore:
 
     async def test_a_repl_still_feeding_at_exit_is_not_saved(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A nested tool that ignores cancellation keeps its eager statement running past teardown."""
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._eager.CANCEL_TIMEOUT_SECONDS', 0.05)
-        started, release = asyncio.Event(), asyncio.Event()
+        monkeypatch.setattr('pydantic_ai_harness.code_mode._eager.CANCEL_TIMEOUT_SECONDS', 0)
+        started, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
 
         async def stubborn() -> str:
             started.set()
@@ -299,11 +300,19 @@ class TestCodeModeReplStore:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
                 await release.wait()
+            finished.set()
             return 'late'
+
+        class ReleasingToolset(FunctionToolset[None]):
+            """Lets the stubborn tool go on exit, which teardown reaches only after giving up on its pump."""
+
+            async def __aexit__(self, *args: Any) -> bool | None:
+                release.set()
+                return await super().__aexit__(*args)
 
         store = MemoryReplStore()
         capability = CodeMode[None](eager=True, repl_store=store)
-        root = capability.get_wrapper_toolset(FunctionToolset[None](tools=[Tool(stubborn)]))
+        root = capability.get_wrapper_toolset(ReleasingToolset(tools=[Tool(stubborn)]))
         assert isinstance(root, CodeModeToolset)
         ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), conversation_id='c1')
         async with root:
@@ -317,8 +326,7 @@ class TestCodeModeReplStore:
             async for _ in capability.wrap_run_event_stream(ctx, stream=events()):
                 pass
             await asyncio.wait_for(started.wait(), timeout=5)
-            # Let the stubborn tool go only after teardown has given up on its pump.
-            asyncio.get_running_loop().call_later(0.1, release.set)
 
+        await asyncio.wait_for(finished.wait(), timeout=5)
         assert store.loads == ['c1']
         assert store.saves == []
