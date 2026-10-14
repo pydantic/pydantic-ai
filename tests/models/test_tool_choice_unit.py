@@ -898,13 +898,15 @@ def test_google_allowed_function_names_ignore_unavailable_tools():
 def test_openai_responses_allowed_tools_ignore_unavailable_tools(tool_choice: ToolChoice, expected_names: list[str]):
     """`allowed_tools` drops the names `resolve_tool_choice` warns it will ignore, and keeps declaration order.
 
-    Asserted on the built `tool_choice` rather than via VCR: a cassette replay doesn't re-validate the request,
-    while the live API rejects an `allowed_tools` name that isn't in `tools` with a 400.
+    Pinned on the built `tool_choice`, like the Google test above: the live API rejects an `allowed_tools` name
+    the request doesn't define with a 400. `tool_b` is revealed via history, so it is absent from
+    `declared_tool_defs` but stays forceable.
     """
     m = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=MagicMock()))
     params = ModelRequestParameters(
         function_tools=[make_tool('tool_c'), make_tool('tool_a'), make_tool('tool_b')],
         output_tools=[make_tool('final_result')],
+        tool_visibility={'tool_b': 'via_history'},
         allow_text_output=False,
     )
     settings: OpenAIResponsesModelSettings = {'tool_choice': tool_choice}
