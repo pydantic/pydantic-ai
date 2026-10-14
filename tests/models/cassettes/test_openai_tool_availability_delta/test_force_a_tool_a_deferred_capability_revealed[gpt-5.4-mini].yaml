@@ -63,7 +63,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "738"
+      - "1340"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -73,15 +73,15 @@ interactions:
     body:
       type: json
       content:
-        id: resp_03a053884005be7a006acfe6ef4a7c87d299373a5b367a4873
+        id: resp_01c1b6a7be1bd3b4006acfeca7a4f487d2916cc5c16c1e403e
         object: response
-        created_at: 1792009967
+        created_at: 1792011431
         status: completed
         access_programs: null
         background: false
         billing:
           payer: developer
-        completed_at: 1792009967
+        completed_at: 1792011432
         error: null
         frequency_penalty: 0.0
         incomplete_details: null
@@ -93,11 +93,11 @@ interactions:
         model: gpt-5.4-mini-2026-03-17
         moderation: null
         output:
-        - id: fc_03a053884005be7a006acfe6efbe9087d2b9e2e83950cdcd2e
+        - id: fc_01c1b6a7be1bd3b4006acfeca8513887d2b478849cf5a0265e
           type: function_call
           status: completed
           arguments: "{\"id\":\"refunds\"}"
-          call_id: call_sojMPuzcGGFiLn07lBRFLGTb
+          call_id: call_nXagLN8q44S0ybks1Q00x4uX
           name: load_capability
         parallel_tool_calls: true
         presence_penalty: 0.0
@@ -163,7 +163,7 @@ interactions:
           total_tokens: 162
         user: null
         metadata: {}
-  recorded_at: 2026-10-14T20:32:48.125927+00:00
+  recorded_at: 2026-10-14T20:57:13.080009+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -192,11 +192,11 @@ interactions:
           content: Load the refunds capability, then tell me the refund status for order 123.
         - name: load_capability
           arguments: "{\"id\":\"refunds\"}"
-          call_id: call_sojMPuzcGGFiLn07lBRFLGTb
+          call_id: call_nXagLN8q44S0ybks1Q00x4uX
           type: function_call
-          id: fc_03a053884005be7a006acfe6efbe9087d2b9e2e83950cdcd2e
+          id: fc_01c1b6a7be1bd3b4006acfeca8513887d2b478849cf5a0265e
         - type: function_call_output
-          call_id: call_sojMPuzcGGFiLn07lBRFLGTb
+          call_id: call_nXagLN8q44S0ybks1Q00x4uX
           output: "{}"
         instructions: |-
           The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
@@ -249,7 +249,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "742"
+      - "1462"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -259,15 +259,15 @@ interactions:
     body:
       type: json
       content:
-        id: resp_03a053884005be7a006acfe6f0807087d289b773231b367f97
+        id: resp_01c1b6a7be1bd3b4006acfeca9526487d2b5c59a40fb1e7f14
         object: response
-        created_at: 1792009968
+        created_at: 1792011433
         status: completed
         access_programs: null
         background: false
         billing:
           payer: developer
-        completed_at: 1792009969
+        completed_at: 1792011434
         error: null
         frequency_penalty: 0.0
         incomplete_details: null
@@ -279,11 +279,11 @@ interactions:
         model: gpt-5.4-mini-2026-03-17
         moderation: null
         output:
-        - id: fc_03a053884005be7a006acfe6f0ed9087d2b52d8c5e868d368a
+        - id: fc_01c1b6a7be1bd3b4006acfecaa0a1c87d2a844b7d84ba1020b
           type: function_call
           status: completed
           arguments: "{\"order_id\":\"123\"}"
-          call_id: call_fnNQbzotHuFpfPtHKFNhaSCe
+          call_id: call_OIj5XeUpiyckFqTvQA3yGfTG
           name: refund_status
         parallel_tool_calls: true
         presence_penalty: 0.0
@@ -364,7 +364,7 @@ interactions:
           total_tokens: 219
         user: null
         metadata: {}
-  recorded_at: 2026-10-14T20:32:49.308461+00:00
+  recorded_at: 2026-10-14T20:57:14.868888+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -393,11 +393,11 @@ interactions:
           content: Load the refunds capability, then tell me the refund status for order 123.
         - name: load_capability
           arguments: "{\"id\":\"refunds\"}"
-          call_id: call_sojMPuzcGGFiLn07lBRFLGTb
+          call_id: call_nXagLN8q44S0ybks1Q00x4uX
           type: function_call
-          id: fc_03a053884005be7a006acfe6efbe9087d2b9e2e83950cdcd2e
+          id: fc_01c1b6a7be1bd3b4006acfeca8513887d2b478849cf5a0265e
         - type: function_call_output
-          call_id: call_sojMPuzcGGFiLn07lBRFLGTb
+          call_id: call_nXagLN8q44S0ybks1Q00x4uX
           output: "{}"
         - type: additional_tools
           role: developer
@@ -416,12 +416,12 @@ interactions:
             strict: true
         - name: refund_status
           arguments: "{\"order_id\":\"123\"}"
-          call_id: call_fnNQbzotHuFpfPtHKFNhaSCe
+          call_id: call_OIj5XeUpiyckFqTvQA3yGfTG
           type: function_call
-          id: fc_03a053884005be7a006acfe6f0ed9087d2b52d8c5e868d368a
+          id: fc_01c1b6a7be1bd3b4006acfecaa0a1c87d2a844b7d84ba1020b
           namespace: refund_status
         - type: function_call_output
-          call_id: call_fnNQbzotHuFpfPtHKFNhaSCe
+          call_id: call_OIj5XeUpiyckFqTvQA3yGfTG
           output: "Order 123: refund issued on 2026-05-01."
         instructions: |-
           The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
@@ -460,7 +460,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "643"
+      - "725"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -470,15 +470,15 @@ interactions:
     body:
       type: json
       content:
-        id: resp_03a053884005be7a006acfe6f16c9c87d291f3ed5876d2de45
+        id: resp_01c1b6a7be1bd3b4006acfecaafdf887d2bf6cab9bf73ba66c
         object: response
-        created_at: 1792009969
+        created_at: 1792011435
         status: completed
         access_programs: null
         background: false
         billing:
           payer: developer
-        completed_at: 1792009969
+        completed_at: 1792011435
         error: null
         frequency_penalty: 0.0
         incomplete_details: null
@@ -490,7 +490,7 @@ interactions:
         model: gpt-5.4-mini-2026-03-17
         moderation: null
         output:
-        - id: msg_03a053884005be7a006acfe6f1d47887d2961c7cc36c8b73be
+        - id: msg_01c1b6a7be1bd3b4006acfecab698c87d2a77c4ee2cc37976b
           type: message
           status: completed
           content:
@@ -581,4 +581,4 @@ interactions:
           total_tokens: 364
         user: null
         metadata: {}
-  recorded_at: 2026-10-14T20:32:50.142256+00:00
+  recorded_at: 2026-10-14T20:57:15.793859+00:00

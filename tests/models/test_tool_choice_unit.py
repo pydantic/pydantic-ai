@@ -354,8 +354,9 @@ def test_resolve_tool_choice_filters_hidden_names_when_one_is_available() -> Non
 
 
 def test_resolve_tool_choice_keeps_via_history_names() -> None:
-    """A `'via_history'` definition travels on the tool-addition channel and stays forcible
-    (live-verified against OpenAI Responses), so it must survive the hidden-name filter."""
+    """A `'via_history'` definition travels on the tool-addition channel and stays forcible, so it must survive the
+    hidden-name filter: GPT-5.6 and later accept the item-only name, and `OpenAIResponsesModel` redeclares it in
+    `tools` for earlier models."""
     params = ModelRequestParameters(
         function_tools=[make_tool('visible'), make_tool('revealed')],
         tool_visibility={'visible': 'visible', 'revealed': 'via_history'},

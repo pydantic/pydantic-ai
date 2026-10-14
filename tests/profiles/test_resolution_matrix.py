@@ -2610,6 +2610,7 @@ def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
     """
     profile = openai_model_profile('gpt-5.6')
     assert profile.get('tool_addition_mode') is None
+    assert profile.get('openai_responses_tool_choice_accepts_additional_tools') is None
 
 
 @pytest.mark.skipif(not (anthropic_imports() and openai_imports() and bedrock_imports()), reason='extras not installed')

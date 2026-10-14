@@ -380,16 +380,25 @@ async def test_openai_live_delta_preserves_the_warmed_cache_prefix(
     assert len(cast(Any, vcr).requests) == 2
 
 
-@pytest.mark.moves_cache_prefix(reason='the forcing request declares the revealed tool in `tools`')
-async def test_pre_gpt_5_6_model_forces_a_tool_a_deferred_capability_revealed(
-    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        pytest.param(
+            'gpt-5.4-mini',
+            marks=pytest.mark.moves_cache_prefix(reason='the forcing request declares the revealed tool in `tools`'),
+        ),
+        'gpt-5.6',
+    ],
+)
+async def test_force_a_tool_a_deferred_capability_revealed(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture, model_name: str
 ) -> None:
-    """Before GPT-5.6, a forced tool that only an `additional_tools` item declares goes out in `tools` instead.
+    """A loaded capability's model settings force its tool, which only an `additional_tools` item declares.
 
-    `gpt-5.4-mini` answers a `tool_choice` naming an item-only tool with a 400 ("Tool choice 'refund_status' not
-    found in 'tools' parameter."), and does the same when the tool is declared in both places. So the request
-    that forces the loaded capability's tool declares it in `tools` and leaves it out of the item, and the next
-    request carries the item again.
+    GPT-5.6 accepts the item-only name, so its forcing request keeps the item. `gpt-5.4-mini` answers that request
+    with a 400 ("Tool choice 'refund_status' not found in 'tools' parameter."), and does the same when the tool is
+    declared in both places. So on that model the forcing request declares the tool in `tools` and leaves it out of
+    the item, and the next request carries the item again.
     """
 
     class Refunds(Capability[None]):
@@ -418,7 +427,7 @@ async def test_pre_gpt_5_6_model_forces_a_tool_a_deferred_capability_revealed(
             return settings
 
     model = OpenAIResponsesModel(
-        'gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+        model_name, provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
     )
     agent = Agent(model, deps_type=type(None), capabilities=[Refunds()])
 
@@ -443,13 +452,24 @@ async def test_pre_gpt_5_6_model_forces_a_tool_a_deferred_capability_revealed(
         }
         for body in request_capture.bodies('/responses')
     ] == snapshot(
-        [
-            {'tool_choice': 'auto', 'tools': ['load_capability'], 'additional_tools': []},
-            {
-                'tool_choice': {'type': 'function', 'name': 'refund_status'},
-                'tools': ['load_capability', 'refund_status'],
-                'additional_tools': [],
-            },
-            {'tool_choice': 'auto', 'tools': ['load_capability'], 'additional_tools': [['refund_status']]},
-        ]
-    )
+        {
+            'gpt-5.4-mini': [
+                {'tool_choice': 'auto', 'tools': ['load_capability'], 'additional_tools': []},
+                {
+                    'tool_choice': {'type': 'function', 'name': 'refund_status'},
+                    'tools': ['load_capability', 'refund_status'],
+                    'additional_tools': [],
+                },
+                {'tool_choice': 'auto', 'tools': ['load_capability'], 'additional_tools': [['refund_status']]},
+            ],
+            'gpt-5.6': [
+                {'tool_choice': 'auto', 'tools': ['load_capability'], 'additional_tools': []},
+                {
+                    'tool_choice': {'type': 'function', 'name': 'refund_status'},
+                    'tools': ['load_capability'],
+                    'additional_tools': [['refund_status']],
+                },
+                {'tool_choice': 'auto', 'tools': ['load_capability'], 'additional_tools': [['refund_status']]},
+            ],
+        }
+    )[model_name]

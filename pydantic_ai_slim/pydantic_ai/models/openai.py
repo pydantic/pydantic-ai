@@ -3011,18 +3011,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         # Before GPT-5.6, a `tool_choice` naming a tool that only an `additional_tools` item declares is
         # rejected ("Tool choice '<name>' not found in 'tools' parameter."), by name and in `allowed_tools`
-        # alike, and so is declaring it in both places. A forced `'via_history'` tool is redeclared in `tools`
-        # for this request instead, and the item leaves it out. Only a forcing request pays the cache miss.
-        forced_reveals: set[str] = set()
+        # alike, and so is declaring it in both places. A `'via_history'` tool the choice names is redeclared
+        # in `tools` for this request instead, and the item leaves it out. Only such a request pays the cache miss.
+        chosen_reveals: set[str] = set()
         if isinstance(resolved_tool_choice, tuple) and not profile.get(
             'openai_responses_tool_choice_accepts_additional_tools', False
         ):
-            forced_reveals = {
+            chosen_reveals = {
                 name
                 for name in resolved_tool_choice[1]
                 if model_request_parameters.visibility_of(name) == 'via_history'
             }
-        if redeclared := lost_reveals | forced_reveals:
+        if redeclared := lost_reveals | chosen_reveals:
             tool_visibility: dict[str, ToolVisibility] = {
                 **(model_request_parameters.tool_visibility or {}),
                 **dict.fromkeys(sorted(redeclared), 'visible'),

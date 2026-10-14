@@ -326,9 +326,9 @@ async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
 ) -> None:
     """A tool revealed through `additional_tools` still participates in `tool_choice` resolution.
 
-    Not a VCR test: cassette replay doesn't match on the request body, so only the built payload shows where the
-    forced tool is declared. `test_pre_gpt_5_6_model_forces_a_tool_a_deferred_capability_revealed` covers the
-    live API.
+    A mocked client rather than a recording per case: this pins every `tool_choice` form on both sides of the
+    `openai_responses_tool_choice_accepts_additional_tools` profile flag, and
+    `test_force_a_tool_a_deferred_capability_revealed` covers the live API on both sides.
     """
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=mock_client))

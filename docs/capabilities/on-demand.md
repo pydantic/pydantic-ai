@@ -161,6 +161,8 @@ Calling the `load_capability` tool reveals capability behavior between requests.
 | Function tools without provider-native reveal-item support (`tool_addition_mode=None`) | **May break between turns** — function-tool visibility can change as capabilities load. |
 | Native tools | **Always breaks the prefix on load** — native tool definitions are part of the request prefix on every provider. |
 
+On OpenAI Responses models before GPT-5.6, a request whose `tool_choice` names a revealed tool declares it in `tools` and misses the cache; see [Prompt caching implications](../tools-advanced.md#tool-choice-caching).
+
 When preserving the cache prefix matters, prefer instruction-only or function-tool-only on-demand capabilities on a model that can express an availability change natively. The provider-specific mechanics that keep the prefix stable live in [Tool search and prompt caching](../tools-advanced.md#tool-search-caching).
 
 ## The `Capability` convenience class
