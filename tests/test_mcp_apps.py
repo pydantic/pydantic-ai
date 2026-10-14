@@ -68,7 +68,8 @@ TIME_ANNOTATIONS = {
 
 def weather_server() -> FastMCP[None]:
     """Tools with an MCP Apps UI (under the current and the deprecated `_meta` key), a tool without one, tools only
-    the app or only the model may call, and the UI resource.
+    the app or only the model may call, and the UI resource. Titles are explicit because FastMCP 4 generates one
+    from the function name and FastMCP 3 doesn't.
     """
     server: FastMCP[None] = FastMCP('weather_server')
 
@@ -80,7 +81,7 @@ def weather_server() -> FastMCP[None]:
     def forecast_view() -> str:
         return '<!doctype html><html><body>forecast</body></html>'
 
-    @server.tool(meta={'ui': {'resourceUri': 'ui://weather/forecast'}})
+    @server.tool(title='Forecast', meta={'ui': {'resourceUri': 'ui://weather/forecast'}})
     def get_forecast(city: str) -> FastMCPToolResult:
         """Text for the model; structured content and per-call `_meta` for the app."""
         return FastMCPToolResult(
@@ -89,7 +90,7 @@ def weather_server() -> FastMCP[None]:
             meta={'selectedDay': 'tuesday'},
         )
 
-    @server.tool(meta={'ui/resourceUri': 'ui://weather/forecast'})
+    @server.tool(title='Legacy forecast', meta={'ui/resourceUri': 'ui://weather/forecast'})
     def legacy_forecast(city: str) -> FastMCPToolResult:
         return FastMCPToolResult(content=[TextContent(type='text', text=f'{city}: 14C')])
 
@@ -183,7 +184,7 @@ async def test_tool_returns_carry_tool_info_and_app_data(weather: MCPToolset[Any
         'get_forecast': (
             {'city': 'a', 'temp_c': 14},
             {
-                'mcp_tool': {'toolset_id': 'weather', 'title': None, 'annotations': None},
+                'mcp_tool': {'toolset_id': 'weather', 'title': 'Forecast', 'annotations': None},
                 'mcp_app': {
                     'resource_uri': 'ui://weather/forecast',
                     'tool_input': {'city': 'a'},
@@ -195,7 +196,7 @@ async def test_tool_returns_carry_tool_info_and_app_data(weather: MCPToolset[Any
         'legacy_forecast': (
             'a: 14C',
             {
-                'mcp_tool': {'toolset_id': 'weather', 'title': None, 'annotations': None},
+                'mcp_tool': {'toolset_id': 'weather', 'title': 'Legacy forecast', 'annotations': None},
                 'mcp_app': {
                     'resource_uri': 'ui://weather/forecast',
                     'tool_input': {'city': 'a'},
@@ -265,7 +266,7 @@ async def test_app_data_with_process_tool_call(hooked_weather: MCPToolset[Any], 
         tools = await hooked_weather.get_tools(run_context)
         returned = await hooked_weather.call_tool('get_forecast', {'city': 'a'}, run_context, tools['get_forecast'])
     assert returned.return_value == expected
-    metadata: dict[str, Any] = {'mcp_tool': {'toolset_id': None, 'title': None, 'annotations': None}}
+    metadata: dict[str, Any] = {'mcp_tool': {'toolset_id': None, 'title': 'Forecast', 'annotations': None}}
     if app_kept:
         metadata['mcp_app'] = {
             'resource_uri': 'ui://weather/forecast',
@@ -379,16 +380,12 @@ async def test_vercel_ai_v7_tool_outputs_carry_tool_metadata(agent: Agent[None, 
         {
             'type': 'tool-output-available',
             'toolCallId': 'forecast-1',
-            'output': {
-                'content': [{'type': 'text', 'text': 'Den Haag: 14C'}],
-                'structuredContent': {'city': 'Den Haag', 'temp_c': 14},
-                '_meta': {'selectedDay': 'tuesday'},
-                'isError': False,
-            },
+            'output': forecast_result('Den Haag'),
             'providerMetadata': {'pydantic_ai': {'model_output': {'city': 'Den Haag', 'temp_c': 14}}},
             'toolMetadata': {
                 'clientName': 'weather',
                 'toolName': 'get_forecast',
+                'title': 'Forecast',
                 'app': {'resourceUri': 'ui://weather/forecast', 'mimeType': 'text/html;profile=mcp-app'},
             },
         }

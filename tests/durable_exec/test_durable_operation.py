@@ -1668,7 +1668,8 @@ async def test_dynamic_unit_resolves_its_own_toolset_when_the_run_context_cannot
 
     discovered = await get_dynamic_tools(dynamic, ctx)
     tool_def = discovered.tools['echo'].tool_def
-    assert await call_dynamic_tool(dynamic, 'echo', {'text': 'hi'}, ctx, tool_def=tool_def) == snapshot('echo: hi')
+    result = await call_dynamic_tool(dynamic, 'echo', {'text': 'hi'}, ctx, tool_def=tool_def)
+    assert result.return_value == snapshot('echo: hi')
 
     # Each call stands on its own: it built, entered and tore down its own toolset.
     assert resolutions == snapshot(2)
