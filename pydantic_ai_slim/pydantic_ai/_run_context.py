@@ -457,7 +457,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     The name-changing wrappers a tool listing has passed through, outermost first: a
     `PrefixedToolset`'s prefix, or a `RenamedToolset`'s map from inner to exposed names. `retries`
     is keyed by the name the model calls a tool by, while `FunctionToolset` holds the tool under
-    its own name, so it applies this path (see `exposed_tool_name`) to find the count its tool's
+    its own name, so `FunctionToolset.get_tools` applies this path to find the count its tool's
     `prepare` reads as `retry`.
 
     `PrefixedToolset.get_tools` and `RenamedToolset.get_tools` push it, and `DurableDynamicToolset`
@@ -994,17 +994,6 @@ def with_tool_name_layer(ctx: RunContext[AgentDepsT], layer: str | Mapping[str, 
 def without_tool_name_path(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
     """The context to hand user code that runs while tools are listed, without the listing's tool name path."""
     return with_tool_name_path(ctx, ()) if ctx._tool_name_path else ctx  # pyright: ignore[reportPrivateUsage]
-
-
-def exposed_tool_name(ctx: RunContext[AgentDepsT], name: str) -> str:
-    """The name the model calls a tool by, given the name the listing toolset holds it under.
-
-    Applies the context's tool name path innermost layer first, the way `PrefixedToolset` and
-    `RenamedToolset` name the tools they list.
-    """
-    for layer in reversed(ctx._tool_name_path):  # pyright: ignore[reportPrivateUsage]
-        name = f'{layer}_{name}' if isinstance(layer, str) else layer.get(name) or name
-    return name
 
 
 _CURRENT_RUN_CONTEXT: ContextVar[RunContext[Any] | None] = ContextVar(
