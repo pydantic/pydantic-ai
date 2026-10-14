@@ -14,7 +14,7 @@ from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 from render.workflows import TaskContext, TaskDefinition, TaskRunMetadata, Workflows
 
-from pydantic_ai import Agent, FunctionToolset, ModelRetry, RunContext
+from pydantic_ai import Agent, FunctionToolset, RunContext
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -31,10 +31,10 @@ from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import DynamicToolset
 from pydantic_ai_harness import RenderWorkflows, ToolOutputLimits
 from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill
+from tests.wrapped_retry_toolsets import call_probe_once, failing_toolset, snapshot_probe_toolset
 
 from .conftest import RecordingTaskContext, RecordingWorkflows, ToolTaskConcurrency, mcp_toolset, run_agent_in_task
 
@@ -227,18 +227,6 @@ async def test_prefixed_dynamic_tool_child_tasks_see_its_retry_count() -> None:
     See https://github.com/pydantic/pydantic-ai/issues/9741.
     """
 
-    def failing_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
-        toolset = FunctionToolset[None](id='inner')
-
-        async def hide_after_failure(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
-            return None if ctx.retry else tool_def
-
-        @toolset.tool(prepare=hide_after_failure)
-        async def fail(ctx: RunContext[None]) -> str:
-            raise ModelRetry('Choose another approach.')
-
-        return toolset
-
     def call_while_listed(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if info.function_tools:
             return ModelResponse(parts=[ToolCallPart(info.function_tools[0].name, {})])
@@ -249,7 +237,7 @@ async def test_prefixed_dynamic_tool_child_tasks_see_its_retry_count() -> None:
         FunctionModel(call_while_listed),
         name='prefixed-dynamic-retries',
         deps_type=type(None),
-        toolsets=[DynamicToolset(failing_toolset, id='dynamic').prefixed('demo')],
+        toolsets=[DynamicToolset[None](lambda ctx: failing_toolset('inner'), id='dynamic').prefixed('demo')],
         capabilities=[runtime],
     )
 
@@ -267,36 +255,12 @@ async def test_prefixed_dynamic_tool_child_tasks_keep_context_snapshots() -> Non
     def record(site: str, ctx: RunContext[None]) -> None:
         reads.append((site, sorted(ctx.available_tool_names), len(ctx.active_capability_ids)))
 
-    def probe_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
-        record('factory', ctx)
-        toolset = FunctionToolset[None](id='inner')
-
-        @toolset.instructions
-        def instructions(ctx: RunContext[None]) -> str:
-            record('instructions', ctx)
-            return 'Call the probe once.'
-
-        def validate(ctx: RunContext[None]) -> None:
-            record('validator', ctx)
-
-        @toolset.tool(args_validator=validate)
-        async def probe(ctx: RunContext[None]) -> str:
-            record('body', ctx)
-            return 'Probed.'
-
-        return toolset
-
-    def call_probe_once(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-            return ModelResponse(parts=[TextPart('Done.')])
-        return ModelResponse(parts=[ToolCallPart('demo_probe', {})])
-
     runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
     agent = Agent[None, str](
         FunctionModel(call_probe_once),
         name='prefixed-dynamic-snapshots',
         deps_type=type(None),
-        toolsets=[DynamicToolset(probe_toolset, id='dynamic').prefixed('demo')],
+        toolsets=[DynamicToolset(snapshot_probe_toolset(record), id='dynamic').prefixed('demo')],
         capabilities=[runtime],
     )
 

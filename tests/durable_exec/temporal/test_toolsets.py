@@ -63,6 +63,7 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
 from ..._inline_snapshot import snapshot
+from ...wrapped_retry_toolsets import call_probe_once, failing_toolset, snapshot_probe_toolset
 
 try:
     from temporalio import activity, workflow
@@ -1990,25 +1991,7 @@ def _call_while_listed(messages: list[ModelMessage], info: AgentInfo) -> ModelRe
     return ModelResponse(parts=[TextPart('No tools left.')])
 
 
-def _failing_toolset(id: str) -> FunctionToolset[None]:
-    toolset = FunctionToolset[None](id=id)
-
-    async def hide_after_failure(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
-        return None if ctx.retry else tool_def
-
-    @toolset.tool(prepare=hide_after_failure)
-    async def fail(ctx: RunContext[None]) -> str:
-        raise ModelRetry('Choose another approach.')
-
-    return toolset
-
-
-def _offer_until_failed(ctx: RunContext[None]) -> FunctionToolset[None] | None:
-    # Gates on the name the model calls the tool by, which is what the factory always saw.
-    return None if ctx.retries.get('demo_fail') else _failing_toolset('gated_inner')
-
-
-_wrapped_retries_agents = {
+_wrapped_retries_agents: dict[str, Agent[None, str]] = {
     name: Agent(
         FunctionModel(_call_while_listed),
         name=name,
@@ -2017,16 +2000,25 @@ _wrapped_retries_agents = {
         capabilities=[*capabilities, TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
     )
     for name, toolsets, capabilities in [
-        ('prefixed_retries', [_failing_toolset('prefixed').prefixed('demo')], []),
-        ('nested_prefixes_retries', [_failing_toolset('nested').prefixed('a').prefixed('b')], []),
-        ('renamed_retries', [_failing_toolset('renamed').renamed({'x': 'fail'})], []),
-        ('prefix_tools_retries', [], [PrefixTools(wrapped=Toolset(_failing_toolset('capability')), prefix='cap')]),
+        ('prefixed_retries', [failing_toolset('prefixed').prefixed('demo')], []),
+        ('nested_prefixes_retries', [failing_toolset('nested').prefixed('a').prefixed('b')], []),
+        ('renamed_retries', [failing_toolset('renamed').renamed({'x': 'fail'})], []),
+        ('prefix_tools_retries', [], [PrefixTools(wrapped=Toolset(failing_toolset('capability')), prefix='cap')]),
         (
             'dynamic_renamed_retries',
-            [DynamicToolset[None](lambda ctx: _failing_toolset('inner'), id='dynamic_renamed').renamed({'x': 'fail'})],
+            [DynamicToolset[None](lambda ctx: failing_toolset('inner'), id='dynamic_renamed').renamed({'x': 'fail'})],
             [],
         ),
-        ('factory_gate_retries', [DynamicToolset[None](_offer_until_failed, id='gated').prefixed('demo')], []),
+        (
+            'factory_gate_retries',
+            # Gates on the name the model calls the tool by, which is what the factory always saw.
+            [
+                DynamicToolset[None](
+                    lambda ctx: None if ctx.retries.get('demo_fail') else failing_toolset('gated_inner'), id='gated'
+                ).prefixed('demo')
+            ],
+            [],
+        ),
     ]
 }
 
@@ -2165,37 +2157,11 @@ def _record_snapshot_read(site: str, ctx: RunContext[None]) -> None:
     )
 
 
-def _snapshot_reading_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
-    _record_snapshot_read('factory', ctx)
-    toolset = FunctionToolset[None](id='snapshot_inner')
-
-    @toolset.instructions
-    def instructions(ctx: RunContext[None]) -> str:
-        _record_snapshot_read('instructions', ctx)
-        return 'Call the probe once.'
-
-    def validate(ctx: RunContext[None]) -> None:
-        _record_snapshot_read('validator', ctx)
-
-    @toolset.tool(args_validator=validate)
-    async def probe(ctx: RunContext[None]) -> str:
-        _record_snapshot_read('body', ctx)
-        return 'Probed.'
-
-    return toolset
-
-
-def _call_probe_once(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-        return ModelResponse(parts=[TextPart('Done.')])
-    return ModelResponse(parts=[ToolCallPart('demo_probe', {})])
-
-
 _snapshot_reading_agent = Agent(
-    FunctionModel(_call_probe_once),
+    FunctionModel(call_probe_once),
     name='prefixed_dynamic_snapshots',
     deps_type=type(None),
-    toolsets=[DynamicToolset[None](_snapshot_reading_toolset, id='snapshots').prefixed('demo')],
+    toolsets=[DynamicToolset[None](snapshot_probe_toolset(_record_snapshot_read), id='snapshots').prefixed('demo')],
     capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
 )
 

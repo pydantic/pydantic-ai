@@ -1096,6 +1096,9 @@ async def test_temporal_run_context_carries_tool_name_path():
     predates it or a custom `serialize_run_context` that omits it, still loads and lists the tool by the name its
     toolset holds it under, as before the path existed.
 
+    A unit test, not a workflow or recorded test: a workflow run shows only the count the toolset reads, not the
+    payload that crossed the activity boundary or whether an older payload still loads.
+
     See https://github.com/pydantic/pydantic-ai/issues/9741.
     """
     seen: list[int] = []
@@ -1116,7 +1119,7 @@ async def test_temporal_run_context_carries_tool_name_path():
         )
     )
     assert wire['_tool_name_path'] == ['outer', {'fail': 'x'}]
-    older_wire = {key: value for key, value in wire.items() if key != '_tool_name_path'}
+    older_wire: dict[str, object] = {key: value for key, value in wire.items() if key != '_tool_name_path'}
 
     for payload in (wire, older_wire):
         await toolset.get_tools(TemporalRunContext.deserialize_run_context(payload, deps=None))

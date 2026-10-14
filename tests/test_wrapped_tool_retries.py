@@ -22,12 +22,15 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import (
     AbstractToolset,
+    CombinedToolset,
     DynamicToolset,
     FunctionToolset,
     PrefixedToolset,
     ToolsetTool,
     WrapperToolset,
 )
+
+from .wrapped_retry_toolsets import failing_toolset
 
 
 def calling(exposed: str) -> FunctionModel:
@@ -60,19 +63,8 @@ def scripted(calls: list[list[str]]) -> tuple[FunctionModel, list[list[str]]]:
     return FunctionModel(call), visible
 
 
-def failing_toolset(seen: list[int]) -> FunctionToolset[object]:
-    """A toolset whose `fail` tool always fails, with a `prepare` that hides it once it has."""
-    toolset = FunctionToolset[object]()
-
-    async def hide_after_failure(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition | None:
-        seen.append(ctx.retry)
-        return None if ctx.retry else tool_def
-
-    @toolset.tool(prepare=hide_after_failure)
-    async def fail(ctx: RunContext[object]) -> str:
-        raise ModelRetry('Choose another approach.')
-
-    return toolset
+def other() -> str:
+    return 'ok'  # pragma: no cover
 
 
 @dataclass(frozen=True)
@@ -89,6 +81,11 @@ CASES = [
     Case('nested_prefixes', lambda ts: ts.prefixed('a').prefixed('b'), 'b_a_fail'),
     Case('renamed', lambda ts: ts.renamed({'x': 'fail'}), 'x'),
     Case('identity_rename', lambda ts: ts.renamed({'fail': 'fail'}), 'fail'),
+    Case(
+        'unrenamed_beside_renamed',
+        lambda ts: CombinedToolset([ts, FunctionToolset[object]([other])]).renamed({'x': 'other'}),
+        'fail',
+    ),
     # The rename inverts the map, so the last entry names the tool.
     Case('two_names_for_one_tool', lambda ts: ts.renamed({'x': 'fail', 'y': 'fail'}), 'y'),
     Case('renamed_then_prefixed', lambda ts: ts.renamed({'x': 'fail'}).prefixed('demo'), 'demo_x'),
@@ -116,7 +113,7 @@ async def test_prepare_sees_retry_under_wrapper(case: Case):
     https://github.com/pydantic/pydantic-ai/issues/9741.
     """
     seen: list[int] = []
-    wrapped = case.wrap(failing_toolset(seen))
+    wrapped = case.wrap(failing_toolset(seen=seen))
     if isinstance(wrapped, AbstractCapability):
         agent = Agent(calling(case.exposed), capabilities=[wrapped])
     else:
@@ -127,7 +124,14 @@ async def test_prepare_sees_retry_under_wrapper(case: Case):
     assert (seen, result.output) == ([0, 1], 'No tools left.')
 
 
-@pytest.mark.parametrize('wrapper', ['prefixed', 'renamed'])
+# Each exposes a tool held as `name` as `p_{name}`, one by prefixing and one by renaming.
+P_WRAPPERS: dict[str, Callable[[FunctionToolset[object]], AbstractToolset[object]]] = {
+    'prefixed': lambda ts: ts.prefixed('p'),
+    'renamed': lambda ts: ts.renamed({f'p_{name}': name for name in ts.tools}),
+}
+
+
+@pytest.mark.parametrize('wrapper', P_WRAPPERS)
 async def test_wrapped_retry_count_is_per_tool_and_resets_on_success(wrapper: str):
     """Each tool's `prepare` sees only its own count, which resets once the tool succeeds, as unwrapped."""
     seen: dict[str, list[int]] = {'flaky': [], 'ok': []}
@@ -150,18 +154,14 @@ async def test_wrapped_retry_count_is_per_tool_and_resets_on_success(wrapper: st
     async def ok(ctx: RunContext[object]) -> str:
         return 'ok'
 
-    if wrapper == 'prefixed':
-        wrapped, exposed = toolset.prefixed('demo'), ['demo_flaky', 'demo_ok']
-    else:
-        wrapped, exposed = toolset.renamed({'p_flaky': 'flaky', 'p_ok': 'ok'}), ['p_flaky', 'p_ok']
-    model, _ = scripted([exposed, exposed, exposed])
+    model, _ = scripted([['p_flaky', 'p_ok']] * 3)
 
-    await Agent(model, toolsets=[wrapped]).run('Call everything.')
+    await Agent(model, toolsets=[P_WRAPPERS[wrapper](toolset)]).run('Call everything.')
 
     assert seen == {'flaky': [0, 1, 0, 0], 'ok': [0, 0, 0, 0]}
 
 
-@pytest.mark.parametrize('wrapper', ['prefixed', 'renamed'])
+@pytest.mark.parametrize('wrapper', P_WRAPPERS)
 async def test_wrapped_tool_does_not_see_same_named_outside_tool(wrapper: str):
     """A wrapped tool held as `fail` doesn't read the count of an unrelated tool the model calls `fail`."""
     seen: list[int] = []
@@ -181,16 +181,12 @@ async def test_wrapped_tool_does_not_see_same_named_outside_tool(wrapper: str):
     async def outside_fail(ctx: RunContext[object]) -> str:
         raise ModelRetry('Outside failure.')
 
-    if wrapper == 'prefixed':
-        wrapped, inner_exposed = inner.prefixed('demo'), 'demo_fail'
-    else:
-        wrapped, inner_exposed = inner.renamed({'x': 'fail'}), 'x'
     model, visible = scripted([['fail'], ['fail']])
 
-    await Agent(model, toolsets=[outside, wrapped]).run('Call fail.')
+    await Agent(model, toolsets=[outside, P_WRAPPERS[wrapper](inner)]).run('Call fail.')
 
     assert seen == [0, 0, 0]
-    assert all(inner_exposed in names for names in visible)
+    assert all('p_fail' in names for names in visible)
 
 
 async def test_prepare_reading_exposed_name_keeps_working():
@@ -205,7 +201,7 @@ async def test_prepare_reading_exposed_name_keeps_working():
     async def fail(ctx: RunContext[object]) -> str:
         raise ModelRetry('Choose another approach.')
 
-    filtered = failing_toolset([]).filtered(lambda ctx, td: not ctx.retries.get(f'demo_{td.name}', 0))
+    filtered = failing_toolset().filtered(lambda ctx, td: not ctx.retries.get(f'demo_{td.name}', 0))
 
     for wrapped in (toolset.prefixed('demo'), filtered.prefixed('demo')):
         result = await Agent(calling('demo_fail'), toolsets=[wrapped]).run('Try the tool.')
@@ -316,7 +312,7 @@ async def test_tool_body_under_prefix_lists_another_toolset_with_its_own_counts(
     async def status(ctx: RunContext[object]) -> str:
         return f'helpers available: {sorted(await helpers.get_tools(ctx))}'
 
-    script = [['h'], ['meta_status']]
+    script: list[list[str]] = [['h'], ['meta_status']]
 
     def call(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         step = sum(isinstance(m, ModelResponse) for m in messages)
@@ -410,8 +406,46 @@ async def test_self_renaming_wrapped_tool_reads_count_of_tool_named_like_its_ori
     )
 
 
-@pytest.mark.parametrize('case', ['inside_built_in', 'outside_built_in', 'calls_super_inside_built_in'])
-async def test_renaming_wrapper_that_pushes_no_layer_reads_count_of_tool_named_by_built_in_layers(case: str):
+class OwnPrefixed(PrefixedToolset[object]):
+    """A `PrefixedToolset` subclass that lists its wrapped toolset without `super()`, so it pushes no layer."""
+
+    async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
+        return {
+            f'{self.prefix}_{name}': replace(
+                tool, toolset=self, tool_def=replace(tool.tool_def, name=f'{self.prefix}_{name}')
+            )
+            for name, tool in (await self.wrapped.get_tools(ctx)).items()
+        }
+
+
+class Suffixed(WrapperToolset[object]):
+    """A wrapper that calls `super().get_tools()` and then adds a suffix to each name."""
+
+    async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
+        return {
+            f'{name}_v2': replace(tool, toolset=self, tool_def=replace(tool.tool_def, name=f'{name}_v2'))
+            for name, tool in (await super().get_tools(ctx)).items()
+        }
+
+
+@dataclass(frozen=True)
+class RenamerCase:
+    id: str
+    wrap: Callable[[FunctionToolset[object]], AbstractToolset[object]]
+    exposed: str
+    colliding: str
+    """The name the built-in wrappers alone would give the tool, held by an unrelated tool that keeps failing."""
+
+
+RENAMER_CASES = [
+    RenamerCase('inside_built_in', lambda ts: OwnPrefixed(ts, prefix='i').prefixed('o'), 'o_i_fail', 'o_fail'),
+    RenamerCase('outside_built_in', lambda ts: OwnPrefixed(ts.prefixed('i'), prefix='o'), 'o_i_fail', 'i_fail'),
+    RenamerCase('calls_super_inside_built_in', lambda ts: Suffixed(ts).prefixed('o'), 'o_fail_v2', 'o_fail'),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in RENAMER_CASES])
+async def test_renaming_wrapper_that_pushes_no_layer_reads_count_of_tool_named_by_built_in_layers(case: RenamerCase):
     """Documented limit: only the built-in wrappers tell the leaf how they rename its tools.
 
     A wrapper other than `PrefixedToolset` and `RenamedToolset` that renames tools, nested inside
@@ -421,23 +455,6 @@ async def test_renaming_wrapper_that_pushes_no_layer_reads_count_of_tool_named_b
     the tool as `o_i_fail` next to a built-in `.prefixed()` on either side; a `WrapperToolset` that
     calls `super()` and then adds a suffix exposes it as `o_fail_v2`.
     """
-
-    class OwnPrefixed(PrefixedToolset[object]):
-        async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
-            return {
-                f'{self.prefix}_{name}': replace(
-                    tool, toolset=self, tool_def=replace(tool.tool_def, name=f'{self.prefix}_{name}')
-                )
-                for name, tool in (await self.wrapped.get_tools(ctx)).items()
-            }
-
-    class Suffixed(WrapperToolset[object]):
-        async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
-            return {
-                f'{name}_v2': replace(tool, toolset=self, tool_def=replace(tool.tool_def, name=f'{name}_v2'))
-                for name, tool in (await super().get_tools(ctx)).items()
-            }
-
     seen: list[int] = []
     inner = FunctionToolset[object]()
 
@@ -449,21 +466,15 @@ async def test_renaming_wrapper_that_pushes_no_layer_reads_count_of_tool_named_b
     async def fail(ctx: RunContext[object]) -> str:
         return 'inner ok'  # pragma: no cover
 
-    if case == 'inside_built_in':
-        wrapped, exposed, colliding = OwnPrefixed(inner, prefix='i').prefixed('o'), 'o_i_fail', 'o_fail'
-    elif case == 'outside_built_in':
-        wrapped, exposed, colliding = OwnPrefixed(inner.prefixed('i'), prefix='o'), 'o_i_fail', 'i_fail'
-    else:
-        wrapped, exposed, colliding = Suffixed(inner).prefixed('o'), 'o_fail_v2', 'o_fail'
     outside = FunctionToolset[object]()
 
-    @outside.tool(name=colliding, retries=5)
+    @outside.tool(name=case.colliding, retries=5)
     async def outside_fail(ctx: RunContext[object]) -> str:
         raise ModelRetry('Outside failure.')
 
-    model, visible = scripted([[colliding], [colliding]])
+    model, visible = scripted([[case.colliding], [case.colliding]])
 
-    await Agent(model, toolsets=[outside, wrapped]).run('Call the outside tool.')
+    await Agent(model, toolsets=[outside, case.wrap(inner)]).run('Call the outside tool.')
 
     assert seen == [0, 1, 2]
-    assert visible == [sorted([colliding, exposed]), [colliding], [colliding]]
+    assert visible == [sorted([case.colliding, case.exposed]), [case.colliding], [case.colliding]]
