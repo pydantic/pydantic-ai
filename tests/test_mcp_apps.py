@@ -297,10 +297,8 @@ async def test_vercel_ai_frontend_receives_app_after_tool_result(agent: Agent[No
                 'id': 'forecast-1',
                 'data': {
                     'resourceUri': 'ui://weather/forecast',
-                    'toolInput': {'city': 'Den Haag'},
                     'result': forecast_result('Den Haag'),
                     'serverId': 'weather',
-                    'serverHash': 'weather',
                 },
             }
         ]

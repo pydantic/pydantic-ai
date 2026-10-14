@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from pydantic_ai._mcp_apps import MCP_APPS_UI_TYPE, get_mcp_app_tool_result, mcp_app_ui_payload
+from pydantic_ai._mcp_apps import MCP_APPS_UI_TYPE, get_mcp_app_tool_result
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     BaseToolReturnPart,
@@ -195,7 +195,11 @@ def iter_metadata_chunks(
     `MCPToolset` attached becomes a single `data-mcp-apps` chunk.
     """
     if (app := get_mcp_app_tool_result(tool_result.metadata)) is not None:
-        yield DataChunk(type=MCP_APPS_DATA_TYPE, id=tool_result.tool_call_id, data=mcp_app_ui_payload(app))
+        # The tool part already carries the arguments, so the chunk adds only what the page needs on top.
+        data: dict[str, Any] = {'resourceUri': app['resource_uri'], 'result': app['result']}
+        if app['toolset_id'] is not None:
+            data['serverId'] = app['toolset_id']
+        yield DataChunk(type=MCP_APPS_DATA_TYPE, id=tool_result.tool_call_id, data=data)
         return
 
     possible = tool_result.metadata or tool_result.content
