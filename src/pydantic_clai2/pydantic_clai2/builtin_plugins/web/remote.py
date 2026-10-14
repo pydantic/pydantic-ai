@@ -137,6 +137,9 @@ class Remote:
             )
         )
         self.publish_status()
+
+    def turn_ended(self) -> None:
+        """A turn, or a background `/fork`, ended and saved its outcome: the sidebar lists it as it now is."""
         self.hub.publish(SessionsChanged())
 
     def conversation_changed(self, event: ConversationChanged) -> None:

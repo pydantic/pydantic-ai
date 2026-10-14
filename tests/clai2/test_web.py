@@ -358,6 +358,8 @@ def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
         running = web_.run()
         web_.post('/api/input', {'text': 'first'})
         receive_until(socket, TurnEnded)
+        # The turn's outcome is saved after its run ends; the sidebar is told once it is.
+        receive_until(socket, SessionsChanged)
         first = shell.session.conversation_id
         elsewhere = web_.portal.call(
             lambda: shell.sessions.store.save(
