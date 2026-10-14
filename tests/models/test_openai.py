@@ -4440,7 +4440,11 @@ async def test_compatible_api_gemini_3_tool_call_thought_signature(
 
 
 async def test_tool_call_extra_content_not_sent_to_other_provider(allow_model_requests: None):
-    """`extra_content` that another provider returned isn't sent with its tool call, like every replayed signature."""
+    """`extra_content` that another provider returned isn't sent with its tool call, like every replayed signature.
+
+    A unit test rather than a VCR one: no single recording produces another provider's tool call, so the history is
+    hand-built, and the claim is only about the outgoing body.
+    """
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='Sunny.', role='assistant')))
     model = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
     messages: list[ModelMessage] = [
