@@ -67,7 +67,7 @@ export type ServerMessage =
   | { type: 'tool_done'; id: string; text: string; state: ToolState }
   | { type: 'shell_done'; id: string; exit_code: number | null }
   | { type: 'diff'; id: string; diff: Diff }
-  | { type: 'turn_start'; item: Item }
+  | { type: 'turn_start'; item: Item | null }
   | { type: 'turn_end'; outcome: 'completed' | 'failed' | 'cancelled'; error: string | null; usage: Usage | null }
   | { type: 'status'; status: StatusInfo }
   | { type: 'question'; questions: Questions }

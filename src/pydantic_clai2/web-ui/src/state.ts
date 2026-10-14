@@ -85,7 +85,8 @@ export function reduce(state: State, message: ServerMessage): State {
         entries: update(state.entries, message.id, (item) => ({ ...item, diffs: [...item.diffs, message.diff] })),
       }
     case 'turn_start':
-      return { ...state, running: true, entries: [...state.entries, message.item] }
+      // A turn a finished task woke has no prompt of its own.
+      return { ...state, running: true, entries: message.item ? [...state.entries, message.item] : state.entries }
     case 'turn_end': {
       const entries = state.entries.map((entry) =>
         entry.kind === 'tool' && entry.state === 'running' ? { ...entry, state: 'interrupted' as const } : entry,
