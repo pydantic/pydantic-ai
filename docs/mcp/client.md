@@ -483,7 +483,7 @@ _(This example is complete, it can be run "as is")_
 
 An [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) is an HTML page a server attaches to a tool through the tool's `_meta.ui.resourceUri`. Pydantic AI doesn't render it; it gives your frontend what it needs to.
 
-When the agent calls such a tool, the [`ToolReturn`][pydantic_ai.messages.ToolReturn] carries an [`MCPAppToolResult`][pydantic_ai.mcp.MCPAppToolResult] in `metadata['mcp_app']`: the resource URI, the tool input, the full MCP result with `structuredContent` and `_meta`, and the toolset `id`. The model doesn't see it. The [AG-UI](../ui/ag-ui.md#mcp-apps) and [Vercel AI](../ui/vercel-ai.md#mcp-apps) adapters send it to the frontend. If a [`process_tool_call`](#tool-call-customization) hook changes the arguments or the result, it isn't attached.
+When the agent calls such a tool, the [`ToolReturn`][pydantic_ai.messages.ToolReturn] carries an [`MCPAppToolResult`][pydantic_ai.mcp.MCPAppToolResult] in `metadata['mcp_app']`: the resource URI, the tool input, the full MCP result with `structuredContent` and `_meta`, and the toolset `id`. The model doesn't see it. The [AG-UI](../ui/ag-ui.md#mcp-apps) and [Vercel AI](../ui/vercel-ai.md#mcp-apps) adapters send it to the frontend. If a [`process_tool_call`](#tool-call-customization) hook changes the arguments or the result, it isn't attached. A [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] around the toolset that edits results gets this `ToolReturn` for app tools, so it should edit `return_value`, and drop `metadata` if the page mustn't see the original.
 
 Your frontend needs three things from your backend:
 

@@ -207,7 +207,7 @@ class Sessions(Generic[DepsT, OutputT]):
                 active_id=self.session.summary.id,
                 refresh=listing,
                 preview=lambda session_id: apply(self._preview(session_id, imports=imports)),
-                delete=lambda source: apply(self.store.delete(source=source)),
+                delete=lambda source: apply(self._delete(source)),
                 rename=lambda source, title: apply(rename(source, title)),
                 # Saved sessions have a revision; one that is not yet imported has none.
                 importing=lambda entry: not entry.revision,
@@ -225,6 +225,12 @@ class Sessions(Generic[DepsT, OutputT]):
             # The browser opens mid-turn, but a running conversation cannot be swapped out.
             return f'A turn is running. Enter /resume {selected} to restore that session once it ends.'
         return await self.resume(selected, allow_other_workspace=True)
+
+    async def _delete(self, source: ConversationSummary) -> None:
+        """Delete a saved session, then the `run_code` REPL code mode kept for it."""
+        await self.store.delete(source=source)
+        if self.session.repl_states is not None:
+            self.session.repl_states.delete(source.id)
 
     async def _preview(self, conversation_id: str, *, imports: ImportCatalog) -> str:
         try:
