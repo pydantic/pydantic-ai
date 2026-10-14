@@ -900,7 +900,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": {"mcp_tool": {"toolset_id": "mcp", "title": null, "annotations": null}}, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -1244,6 +1244,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                     tool_name='get_product_name',
                     content='Pydantic AI',
                     tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5',
+                    metadata={'mcp_tool': {'toolset_id': 'mcp', 'title': None, 'annotations': None}},
                     timestamp=IsDatetime(),
                 )
             ),
