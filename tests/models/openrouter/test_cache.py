@@ -38,6 +38,7 @@ from ...conftest import IsDatetime, IsStr, try_import
 from ..mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
+    from openai import AsyncOpenAI
     from openai.types.chat import ChatCompletion
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
@@ -1058,6 +1059,80 @@ async def test_openrouter_cache_messages_marks_previous_request_after_wide_turn(
     assert [index for index, message in enumerate(mapped) if 'cache_control' in str(message.get('content'))] == [
         0,
         len(mapped) - 1,
+    ]
+
+
+def _done_mock_client() -> AsyncOpenAI:
+    message = ChatCompletionMessage.model_construct(role='assistant', content='Done.')
+    choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
+    completion = ChatCompletion.model_construct(
+        id='123', choices=[choice], created=1704067200, model='test', object='chat.completion', provider='test'
+    )
+    return MockOpenAI.create_mock(completion)
+
+
+@pytest.mark.parametrize(
+    'tail',
+    [
+        pytest.param([], id='after-user-prompt'),
+        pytest.param(
+            [
+                ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='c1')]),
+                ModelRequest(parts=[ToolReturnPart('lookup', 'result', tool_call_id='c1')]),
+            ],
+            id='after-tool-result',
+        ),
+    ],
+)
+async def test_openrouter_leading_cache_point_attaches_to_previous_user_message(
+    allow_model_requests: None, tail: list[ModelMessage]
+) -> None:
+    """A `CachePoint` opening a later user message caches up to the end of the previous user message.
+
+    This is the shape of a tail reminder appended after the conversation (the harness `Planning` and
+    `SystemReminders` capabilities), which used to raise `UserError` here while Anthropic, Bedrock and OpenAI
+    attach the breakpoint to the previous message. A mocked client: no recording of this request exists yet.
+    """
+    mock_client = _done_mock_client()
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Do the task')]), *tail]
+    if tail:
+        history.append(ModelResponse(parts=[TextPart('Working on it.')]))
+
+    await Agent(model).run([CachePoint(ttl='1h'), '<reminder>'], message_history=history)
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    assert messages[0] == {
+        'role': 'user',
+        'content': [{'type': 'text', 'text': 'Do the task', 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}],
+    }
+    assert messages[-1] == {'role': 'user', 'content': [{'type': 'text', 'text': '<reminder>'}]}
+
+
+async def test_openrouter_lone_leading_cache_point_drops_its_message(allow_model_requests: None) -> None:
+    """A user prompt holding only a `CachePoint` marks the previous user message and sends no empty message.
+
+    A mocked client: the property is the absence of a message, which no recording of a valid request shows.
+    """
+    mock_client = _done_mock_client()
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(['Some context', 'Do the task'])]),
+        ModelResponse(parts=[TextPart('Working on it.')]),
+    ]
+
+    await Agent(model).run([CachePoint()], message_history=history)
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    assert messages == [
+        {
+            'role': 'user',
+            'content': [
+                {'type': 'text', 'text': 'Some context'},
+                {'type': 'text', 'text': 'Do the task', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+            ],
+        },
+        {'role': 'assistant', 'content': 'Working on it.'},
     ]
 
 

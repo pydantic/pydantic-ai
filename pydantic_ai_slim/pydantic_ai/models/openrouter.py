@@ -845,7 +845,10 @@ class OpenRouterModel(OpenAIChatModel):
         """Add `cache_control` to the last content part.
 
         Mirrors the Anthropic model's `_add_cache_control_to_last_param` behavior for
-        OpenRouter's Anthropic and Gemini providers.
+        OpenRouter's Anthropic and Gemini providers. A `CachePoint` that opens a user message has
+        nothing in that message to attach to, so it goes on an empty placeholder part that
+        `_move_leading_cache_controls` moves onto the previous user message once the whole
+        request is mapped.
 
         See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
 
@@ -858,13 +861,54 @@ class OpenRouterModel(OpenAIChatModel):
             return
 
         if not params:
-            raise UserError(
-                'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to. '
-                'To cache system instructions or tool definitions, use the `openrouter_cache_instructions` or `openrouter_cache_tool_definitions` settings instead.'
-            )
+            params.append({'type': 'text', 'text': ''})
 
         last_param = cast(dict[str, Any], params[-1])
         last_param['cache_control'] = self._build_cache_control(ttl)
+
+    @staticmethod
+    def _move_leading_cache_controls(openai_messages: list[chat.ChatCompletionMessageParam]) -> None:
+        """Move the `cache_control` a leading `CachePoint` left on a placeholder onto the previous user message.
+
+        "Cache everything up to here" means the same at the end of the previous user message, which is
+        where Anthropic and Bedrock put a leading `CachePoint` too. The placeholder is removed, and so
+        is a message it leaves empty. Raises `UserError` when no earlier user message has content.
+        """
+        index = 0
+        while index < len(openai_messages):
+            message = cast(dict[str, Any], openai_messages[index])
+            content = message.get('content')
+            first = (
+                cast(dict[str, Any], content[0])
+                if message['role'] == 'user' and isinstance(content, list) and content
+                else {}
+            )
+            if first.get('type') != 'text' or first.get('text') != '' or 'cache_control' not in first:
+                index += 1
+                continue
+            target = next(
+                (
+                    cast(dict[str, Any], previous)
+                    for previous in reversed(openai_messages[:index])
+                    if previous['role'] == 'user' and previous.get('content')
+                ),
+                None,
+            )
+            if target is None:
+                raise UserError(
+                    'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to. '
+                    'To cache system instructions or tool definitions, use the `openrouter_cache_instructions` or `openrouter_cache_tool_definitions` settings instead.'
+                )
+            if isinstance(target_content := target['content'], str):
+                target['content'] = [{'type': 'text', 'text': target_content, 'cache_control': first['cache_control']}]
+            else:
+                target_content[-1]['cache_control'] = first['cache_control']
+            rest = cast(list[Any], content)[1:]
+            if not rest:
+                del openai_messages[index]
+                continue
+            message['content'] = rest
+            index += 1
 
     def _add_cache_control_to_message(
         self, message: chat.ChatCompletionMessageParam, ttl: OpenRouterCacheTTL = '5m'
@@ -1064,6 +1108,7 @@ class OpenRouterModel(OpenAIChatModel):
         model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         openai_messages = await super()._map_messages(messages, model_request_parameters, model_settings=model_settings)
+        self._move_leading_cache_controls(openai_messages)
 
         if (
             openai_messages
