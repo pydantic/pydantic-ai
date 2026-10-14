@@ -496,7 +496,7 @@ Protocol errors raise [`MCPError`][pydantic_ai.mcp.MCPError]; send its `code`, `
 ```python {title="mcp_apps.py"}
 from typing import Any
 
-from mcp.types import METHOD_NOT_FOUND
+from mcp.types import INVALID_PARAMS, METHOD_NOT_FOUND
 
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPError, MCPToolset
@@ -519,6 +519,8 @@ async def app_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
             return await weather.call_tool_for_app(name, rest.get('arguments'))
         case 'resources/read', {'uri': str(uri)}:
             return await weather.read_resource_for_app(uri)
+        case 'tools/call' | 'resources/read', _:
+            raise MCPError(message=f'Invalid params for {method!r}', code=INVALID_PARAMS)
         case _:
             raise MCPError(message=f'Method {method!r} is not supported', code=METHOD_NOT_FOUND)
 ```
