@@ -816,19 +816,9 @@ async def test_dynamic_toolset_instructions_replay_deterministic(allow_model_req
 
 # --- MCP-based DynamicToolset test ---
 # Tests that @agent.toolset returning an MCPToolset works with Temporal workflows.
-# The server is an in-process stand-in for DeepWiki's MCP server, whose tools the recorded model
+# The server is an in-process stand-in for DeepWiki's MCP server, with the one tool the recorded model
 # responses call: a recorded remote handshake can't replay on both MCP SDK v1 and v2.
 deepwiki_stand_in = FastMCP('deepwiki')
-
-
-@deepwiki_stand_in.tool
-def read_wiki_structure(repoName: str) -> str:
-    return f'{repoName}: Overview, Agents, Tools, Models'
-
-
-@deepwiki_stand_in.tool
-def read_wiki_contents(repoName: str) -> str:
-    return f'{repoName} is a Python agent framework built by the Pydantic team.'
 
 
 @deepwiki_stand_in.tool
