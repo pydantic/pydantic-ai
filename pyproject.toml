@@ -235,7 +235,7 @@ dev = [
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
     # `fastmcp` package alongside, tracking the same range as the `[mcp]` extra (#6661).
-    "fastmcp>=3.4.8,<5",
+    "fastmcp>=3.3.0,<5",
     # FastMCP 3 pulls in `beartype` 0.22 (via `py-key-value-aio`), which imports `typing.no_type_check_decorator`
     # (removed in 3.15).
     # Removable once beartype 0.23.0 final is released (tracked in #9455):
