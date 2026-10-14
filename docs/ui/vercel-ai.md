@@ -243,9 +243,9 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 
 ## MCP Apps
 
-When an [`MCPToolset`][pydantic_ai.mcp.MCPToolset] tool has an [MCP Apps](../mcp/client.md#mcp-apps) UI, its result is followed by a `data-mcp-apps` [data chunk](#data-chunks) whose `id` is the tool call ID. Its `data` has `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`) and, when the toolset has an `id`, `serverId` and `serverHash` (both set to that `id`). Dumped history keeps it as a data part, which is ignored when loaded back.
+After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stream carries a `data-mcp-apps` [data chunk](#data-chunks) with `id` set to the tool call ID. Its `data`: `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`), and `serverId` and `serverHash` (both the toolset `id`, when set). Dumped history keeps it as a data part; loading ignores it.
 
-AI SDK UI's `experimental_MCPAppRenderer` shows a page for a tool part whose `toolMetadata.app` names it, and gives the page the part's `output`, which here is what the model saw. Fill both from the chunk, which arrives once the tool part has its output:
+To show the page with AI SDK UI's `experimental_MCPAppRenderer`, give it the resource URI as `toolMetadata.app` and the full result as `output`, both from the chunk:
 
 ```tsx
 type Message = UIMessage<unknown, { 'mcp-apps': { resourceUri: string; result: Record<string, unknown> } }>;
@@ -266,7 +266,7 @@ return app?.type === 'data-mcp-apps' && part.state === 'output-available' ? (
 ) : null;
 ```
 
-`loadResource` returns the page as `{ uri, mimeType, html, meta }`: the HTML and `_meta.ui` that [`read_resource_contents`][pydantic_ai.mcp.MCPToolset.read_resource_contents] returns. `callTool` and `readResource` send the page's requests to your endpoint for [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] and [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app], as in [MCP Apps](../mcp/client.md#mcp-apps). The renderer refuses calls to tools not listed in `allowedTools`.
+`loadResource` returns `{ uri, mimeType, html, meta }` from [`read_resource_contents`][pydantic_ai.mcp.MCPToolset.read_resource_contents]. `callTool` and `readResource` post to your endpoint for [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] and [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]. The renderer refuses tools not in `allowedTools`.
 
 ## Tool Approval
 
