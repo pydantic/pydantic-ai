@@ -679,6 +679,31 @@ def _leading_system_message_count(
     return next((i for i, message in enumerate(messages) if message.get('role') != system_prompt_role), len(messages))
 
 
+def _backfill_current_turn_thinking_field(
+    messages: list[chat.ChatCompletionMessageParam], custom_field: str | None
+) -> None:
+    """Send the request's thinking field empty on tool-calling assistant messages after the last user message that lack it.
+
+    `'auto'` mode learns the field only from the mapped messages, so this applies only when they carry exactly one
+    of the names `OpenAIChatModel._process_thinking` reads: a server that rejects unknown fields has already accepted
+    that one. DeepSeek enforces the field only after the last user message, so earlier turns go out unchanged.
+    """
+    sent_fields = {
+        name
+        for message in messages
+        if message['role'] == 'assistant'
+        for name in (custom_field, 'reasoning', 'reasoning_content')
+        if name and name in message
+    }
+    if len(sent_fields) != 1:
+        return
+    (sent_field,) = sent_fields
+    last_user_index = max((i for i, message in enumerate(messages) if message['role'] == 'user'), default=-1)
+    for message in messages[last_user_index + 1 :]:
+        if message['role'] == 'assistant' and message.get('tool_calls') and sent_field not in message:
+            message[sent_field] = ''
+
+
 def _has_dynamic_system_prompt(messages: Sequence[ModelMessage]) -> bool:
     """Whether any system prompt is dynamic, i.e. its content can change between requests.
 
@@ -1947,7 +1972,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return _CHAT_FINISH_REASON_MAP.get(key)
 
-    async def _map_messages(  # noqa: C901
+    async def _map_messages(
         self,
         messages: Sequence[ModelMessage],
         model_request_parameters: ModelRequestParameters,
@@ -1958,10 +1983,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         profile = self.profile
         # DeepSeek-style APIs 400 on a tool-calling assistant turn that omits their thinking field while
-        # the run is reasoning. A turn another model or provider produced carries no thinking: a
-        # `FallbackModel` step, or a foreign native tool search that `prepare_messages` splits into a
-        # synthesized `search_tools` turn. `'field'` mode sets the configured field empty on every such
-        # turn; `'auto'` mode is handled after mapping, below.
+        # the run is reasoning. A turn another model or provider produced can lack it: a `FallbackModel`
+        # step, or a foreign native tool search that `prepare_messages` splits into a synthesized
+        # `search_tools` turn. `'field'` mode sets the configured field empty on every such turn; `'auto'`
+        # mode is handled after mapping, below.
         send_back_thinking = profile.get('openai_chat_send_back_thinking_parts', 'auto')
         thinking_active = any(
             isinstance(part, ThinkingPart)
@@ -1991,26 +2016,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             else:
                 assert_never(message)
         if send_back_thinking == 'auto':
-            # `'auto'` learns the field only from the mapped turns, so it backfills only when they carry
-            # exactly one of the names `_process_thinking` reads; a server that rejects unknown fields
-            # already accepts that one. DeepSeek enforces the field only after the last user message, so
-            # earlier turns go out unchanged.
-            custom_field = profile.get('openai_chat_thinking_field', None)
-            sent_fields = {
-                name
-                for message in openai_messages
-                if message['role'] == 'assistant'
-                for name in (custom_field, 'reasoning', 'reasoning_content')
-                if name and name in message
-            }
-            if len(sent_fields) == 1:
-                (sent_field,) = sent_fields
-                last_user_index = max(
-                    (i for i, message in enumerate(openai_messages) if message['role'] == 'user'), default=-1
-                )
-                for message in openai_messages[last_user_index + 1 :]:
-                    if message['role'] == 'assistant' and message.get('tool_calls') and sent_field not in message:
-                        message[sent_field] = ''
+            _backfill_current_turn_thinking_field(openai_messages, profile.get('openai_chat_thinking_field', None))
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
         system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []

@@ -5506,8 +5506,8 @@ async def test_field_mode_thinking_backfill_on_synthetic_tool_search_turn(
     omits that field while the run is thinking, so it must be sent empty when thinking is active and
     left off otherwise. Parametrized over the three providers that use this mode — DeepSeek and
     MoonshotAI (`reasoning_content`) and OpenRouter (`reasoning`) — to pin that the backfill is
-    field-name-agnostic (it reads `openai_chat_thinking_field`). The real-API counterpart is
-    `test_deepseek.py::test_deepseek_deferred_capability_with_thinking`.
+    field-name-agnostic (it reads `openai_chat_thinking_field`). DeepSeek accepting the empty field is
+    recorded by `test_deepseek.py::test_deepseek_auto_mode_backfills_current_turn_tool_call`.
 
     A deferred capability load used to be the trigger, because the reveal was rendered as a
     fabricated `search_tools` call/return pair. It's a system instruction now and produces no
@@ -5746,14 +5746,14 @@ AUTO_THINKING_BACKFILL_CASES = [
 @pytest.mark.vcr(ignore_hosts=['gateway.example'])
 @pytest.mark.parametrize('case', AUTO_THINKING_BACKFILL_CASES, ids=lambda case: case.id)
 async def test_auto_mode_thinking_backfill(allow_model_requests: None, case: AutoThinkingBackfillCase):
-    """`'auto'` sends the one thinking field the request carries, empty, on current-turn tool calls without thinking.
+    """`'auto'` sends the one thinking field the request carries, empty, on current-turn tool calls that lack it.
 
     DeepSeek in thinking mode 400s on a tool-calling assistant turn after the last user message that omits
     `reasoning_content`, and a generic OpenAI-compatible provider leaves the mode at `'auto'`. The negative
     cases pin what stays unchanged: earlier user turns, a request carrying no thinking field or two of them,
-    and a key that isn't a Chat thinking field. A mock transport stands in for a cassette so each history
-    shape is pinned on every run; `test_deepseek.py::test_deepseek_auto_mode_backfills_current_turn_tool_call`
-    is the live counterpart.
+    and a key that isn't a Chat thinking field. A mock transport stands in for a cassette because the claim is
+    the request each synthetic history produces, which no provider response affects;
+    `test_deepseek.py::test_deepseek_auto_mode_backfills_current_turn_tool_call` is the live counterpart.
     """
     request_bodies: list[bytes] = []
 

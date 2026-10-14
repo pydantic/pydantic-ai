@@ -60,9 +60,9 @@ async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: 
     """Regression test for #5829: real-API check that deferred capabilities work on a DeepSeek thinking model.
 
     Loading a deferred capability used to inject a framework-synthesized `search_tools` assistant
-    turn with tool calls but no thinking, which DeepSeek rejected with a 400. The reveal is a system
-    message now, so this recording guards the end-to-end deferred-capability run rather than the
-    empty `reasoning_content` backfill; the mapping guard for that is
+    turn with tool calls but no thinking, which DeepSeek rejected with a 400. The reveal now goes out
+    as `<system>`-tagged user text instead, so this recording guards the end-to-end deferred-capability
+    run rather than the empty `reasoning_content` backfill; the mapping guard for that is
     `test_openai.py::test_field_mode_thinking_backfill_on_synthetic_tool_search_turn`.
     """
     model = OpenAIChatModel('deepseek-v4-flash', provider=DeepSeekProvider(api_key=deepseek_api_key))

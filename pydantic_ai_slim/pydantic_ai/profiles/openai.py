@@ -205,8 +205,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     it's sent using tags. Only the `reasoning` and `reasoning_content` fields are checked by
     default when receiving responses. If your provider uses a different field name, you must explicitly set
     `openai_chat_thinking_field` to that field name. When the request sends exactly one of these fields back, it's
-    also sent empty on tool-calling assistant turns after the last user message that carry no thinking, such as a
-    step served by another model, since DeepSeek-style APIs reject those turns without it.
+    also sent empty on tool-calling assistant turns after the last user message that don't already carry it, such as
+    a step served by another model or provider, since DeepSeek-style APIs reject those turns without it.
     * `'tags'`: The thinking content is included in the main `content` field, enclosed within thinking tags as
     specified in `thinking_tags` profile option.
     * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
