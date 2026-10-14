@@ -452,8 +452,8 @@ Tools hidden by [deferred loading](#tool-search) interact with `tool_choice`: a 
 hidden is ignored when forcing by name, and an explicit choice raises only when every requested
 tool is hidden. `'required'` raises when every function
 tool is hidden. A tool *declared* with its schema deferred can be forced on Anthropic. On OpenAI
-Responses, forcing one fails unless the model is GPT-5.6 or later and an `additional_tools` item has
-revealed it. A revealed tool that travels in the `additional_tools` item alone can be named in
+Responses, forcing one fails until something has revealed it, and on models before GPT-5.6 it fails
+after a reveal too. A revealed tool that travels in the `additional_tools` item alone can be named in
 `tool_choice` on every OpenAI model: GPT-5.6 and later accept the name as is, and on earlier models
 the request whose `tool_choice` names it declares the tool in `tools` instead and misses the prompt
 cache.
