@@ -120,7 +120,7 @@ Choose the judge model based on cost/quality tradeoffs:
 ```python
 from pydantic_evals.evaluators import LLMJudge
 
-# Default: {{ openai:medium }}
+# Uses the default judge model
 LLMJudge(rubric='...')
 
 # Anthropic Claude (alternative default)
@@ -138,7 +138,7 @@ LLMJudge(
 # Most capable option for nuanced evaluation
 LLMJudge(
     rubric='Response demonstrates deep understanding of quantum mechanics',
-    model='{{ openai:medium }}',
+    model='{{ openai:large }}',
 )
 ```
 

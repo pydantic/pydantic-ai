@@ -62,7 +62,7 @@ slug as `harness/<page>`. When renaming a page, keep its existing `aliases:`.
 - **Example style**: comments one line max; outputs elided (`#> ...`) rather than long canned
   text. On `docs/harness/` pages, name models with the aliases from `docs/model_aliases.py`
   (`{{ anthropic:large }}`), never model IDs; see the "Model names" section of `docs/AGENTS.md`.
-  READMEs, which GitHub renders without resolving aliases, name the models those aliases resolve to.
+  READMEs, which GitHub renders without resolving aliases, keep concrete model IDs.
 
 ## The Capability Index Spans Core And Harness
 
