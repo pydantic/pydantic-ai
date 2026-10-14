@@ -142,10 +142,7 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
                 while True:
                     next_task = asyncio.create_task(pull_next())
                     if handler_alive:
-                        await asyncio.wait(
-                            (next_task, handler_task),
-                            return_when=asyncio.FIRST_COMPLETED,
-                        )
+                        await _utils.wait_for_any_task((next_task, handler_task))
                         if handler_task.done():
                             if not handler_task.cancelled() and handler_task.exception() is None:
                                 handler_alive = False
