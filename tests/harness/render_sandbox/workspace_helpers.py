@@ -234,10 +234,15 @@ def commands(harness: WorkspaceHarness) -> Callable[..., Awaitable[CommandResult
             if not key.startswith('COVERAGE_') or key == 'COVERAGE_PROCESS_CONFIG'
         }
         values.update(effective_env)
-        argv = ['/bin/sh', '-c', command] if isinstance(command, str) else local_python_command(list(command))
+        original_argv = ['/bin/sh', '-c', command] if isinstance(command, str) else list(command)
+        argv = local_python_command(original_argv)
+        # The shipped helpers receive absolute file paths or an explicit command
+        # directory. Launch their local copies from the repository so CI's relative
+        # coverage include patterns still find them; user commands keep their cwd.
+        helper_cwd = Path(__file__).resolve().parents[3] if argv != original_argv else working_dir
         process = await asyncio.create_subprocess_exec(
             *argv,
-            cwd=working_dir,
+            cwd=helper_cwd,
             env=values,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,

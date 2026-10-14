@@ -103,7 +103,7 @@ def _signal_owned(claim: Path) -> None:
         # The supervisor cannot reap this leader while we hold the lock. Even if
         # it exits between the identity check and killpg, its PID cannot be reused.
         os.killpg(pid, signal.SIGKILL)
-    except ProcessLookupError:
+    except ProcessLookupError:  # pragma: lax no cover - owned process can exit between OS checks and signaling
         return
 
 
