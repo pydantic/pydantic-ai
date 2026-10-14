@@ -100,7 +100,11 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
         markdown = await self._read(ctx, _PAGES[topic])
         # Only pages that use aliases need the alias file, so checkouts from before it existed keep working.
         if _MODEL_ALIAS_RE.search(markdown):
-            aliases = _MODEL_ALIASES_ADAPTER.validate_json(await self._read(ctx, _MODEL_ALIASES_FILE))
+            try:
+                aliases = _MODEL_ALIASES_ADAPTER.validate_json(await self._read(ctx, _MODEL_ALIASES_FILE))
+            except RuntimeError:
+                # The page is still worth returning with its aliases as written.
+                aliases = {}
 
             def resolve(match: re.Match[str]) -> str:
                 alias, bare = match.groups()

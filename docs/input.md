@@ -383,7 +383,7 @@ from pydantic_ai.providers.xai import XaiProvider
 
 async def main():
     provider = XaiProvider()
-    model = XaiModel('{{ xai:large.name }}', provider=provider)
+    model = XaiModel('{{ xai:medium.name }}', provider=provider)
 
     # Upload a file using the provider's client (xAI client)
     with open('document.pdf', 'rb') as f:

@@ -11,7 +11,7 @@
   "google:medium": "google:gemini-3.8-flash",
   "google:large": "google:gemini-4-argon",
   "google:xlarge": "google:gemini-4-argon",
-  "xai:small": "xai:grok-4.7",
+  "xai:small": "xai:grok-4.3",
   "xai:medium": "xai:grok-4.7",
   "xai:large": "xai:grok-4.7",
   "xai:xlarge": "xai:grok-4.7",

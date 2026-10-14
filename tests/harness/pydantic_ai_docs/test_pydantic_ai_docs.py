@@ -256,6 +256,18 @@ class TestPydanticAIDocsToolset:
 
         assert result == '{{ openai:huge }} or ' + _RESOLVED_PAGE
 
+    async def test_returns_aliases_as_written_without_the_alias_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        requested = _install_fake_httpx(monkeypatch, error=httpx.ConnectError('offline'))
+        (tmp_path / 'agent.md').write_text(_ALIASED_PAGE, encoding='utf-8')
+        toolset = PydanticAIDocsToolset[object](local_docs_path=tmp_path, cache=None)
+
+        result = await _call_docs_tool(toolset, workspace, 'read_pyai_docs', topic=PydanticAIDocsTopic.agent)
+
+        assert result == _ALIASED_PAGE
+        assert requested == [f'{_REMOTE_DOCS}/model_aliases/aliases.json']
+
     async def test_page_without_model_aliases_reads_no_alias_file(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, workspace: Workspace
     ) -> None:

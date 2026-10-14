@@ -439,7 +439,7 @@ agent = Agent(
         # Native when supported; direct image-model fallback otherwise
         ImageGeneration(fallback_image_model='{{ openai:image }}'),
         # Native on xAI; on other models, explicitly delegate to an xAI model
-        XSearch(fallback_subagent_model='{{ xai:large }}'),
+        XSearch(fallback_subagent_model='{{ xai:medium }}'),
         # Runs the MCP server locally by default; pass `native=True` to also advertise native MCP
         MCP('https://mcp.example.com/api'),
     ],
