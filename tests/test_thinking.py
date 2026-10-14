@@ -2001,6 +2001,20 @@ _CROSS_SCOPE_CASES = [
         marks=_needs_anthropic,
     ),
     _CrossScopeCase(
+        # Without effort support `thinking` maps to a budget alone, which an explicit effort leaves in place.
+        'anthropic-effort-unsupported',
+        lambda s: http_probe(
+            lambda c: AnthropicModel(
+                'claude-sonnet-4-5', provider=AnthropicProvider(api_key=PROBE_KEY, http_client=c), settings=s
+            )
+        ),
+        AnthropicModelSettings(anthropic_effort='high'),
+        'low',
+        lambda p: p['body'].get('thinking'),
+        overrides=False,
+        marks=_needs_anthropic,
+    ),
+    _CrossScopeCase(
         'google-thinking-config',
         lambda s: http_probe(
             lambda c: GoogleModel(
@@ -2051,6 +2065,30 @@ _CROSS_SCOPE_CASES = [
         marks=_needs_groq,
     ),
     _CrossScopeCase(
+        # qwen3 has no graded effort, but an explicit `'none'` disables the reasoning `thinking` enables.
+        'groq-qwen3-reasoning-effort-none',
+        lambda s: legacy_http_probe(
+            lambda c: GroqModel('qwen/qwen3-32b', provider=GroqProvider(api_key=PROBE_KEY, http_client=c), settings=s)
+        ),
+        GroqModelSettings(groq_reasoning_effort='none'),
+        'high',
+        lambda p: p['body'].get('reasoning_effort'),
+        overrides=True,
+        marks=_needs_groq,
+    ),
+    _CrossScopeCase(
+        # Any other qwen3 effort keeps the reasoning `thinking` enables.
+        'groq-qwen3-reasoning-effort-default',
+        lambda s: legacy_http_probe(
+            lambda c: GroqModel('qwen/qwen3-32b', provider=GroqProvider(api_key=PROBE_KEY, http_client=c), settings=s)
+        ),
+        GroqModelSettings(groq_reasoning_effort='default'),
+        'high',
+        lambda p: p['body'].get('reasoning_effort') == 'none',
+        overrides=False,
+        marks=_needs_groq,
+    ),
+    _CrossScopeCase(
         'bedrock-anthropic-thinking',
         _bedrock_probe('anthropic.claude-sonnet-4-5-20250929-v1:0'),
         BedrockModelSettings(
@@ -2059,6 +2097,26 @@ _CROSS_SCOPE_CASES = [
         'low',
         _bedrock_sent,
         overrides=True,
+        marks=_needs_bedrock,
+    ),
+    _CrossScopeCase(
+        # Adaptive Claude takes the effort an effort-level `thinking` maps to from `output_config`.
+        'bedrock-anthropic-output-config',
+        _bedrock_probe('us.anthropic.claude-sonnet-4-6'),
+        BedrockModelSettings(bedrock_additional_model_requests_fields={'output_config': {'effort': 'low'}}),
+        'high',
+        lambda p: json.loads(p['body'])['additionalModelRequestFields']['output_config'],
+        overrides=True,
+        marks=_needs_bedrock,
+    ),
+    _CrossScopeCase(
+        # Budget-based Claude maps `thinking` to `thinking` alone, which an explicit `output_config` leaves in place.
+        'bedrock-anthropic-output-config-without-effort',
+        _bedrock_probe('anthropic.claude-sonnet-4-5-20250929-v1:0'),
+        BedrockModelSettings(bedrock_additional_model_requests_fields={'output_config': {'effort': 'low'}}),
+        'high',
+        lambda p: json.loads(p['body'])['additionalModelRequestFields']['thinking'],
+        overrides=False,
         marks=_needs_bedrock,
     ),
     _CrossScopeCase(
@@ -2234,7 +2292,11 @@ def _mock_openai_chat(model_name: str, settings: ModelSettings) -> tuple[OpenAIC
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 class TestCrossScopeThinkingOverrideWarning:
-    """Which agent layers the warning names. The per-adapter precedence is pinned against the wire above."""
+    """Which agent layers the warning names. The per-adapter precedence is pinned against the wire above.
+
+    A mocked client stands in for recordings: the warning is decided before any request goes out, and the recorded
+    runs in `tests/test_thinking_wire_contract.py` already pin the model, agent and direct-request scopes.
+    """
 
     async def test_agent_thinking_overridden_by_model_setting(self, allow_model_requests: None):
         model, client = _mock_openai_chat('gpt-5', OpenAIChatModelSettings(openai_reasoning_effort='low'))
@@ -2250,19 +2312,6 @@ class TestCrossScopeThinkingOverrideWarning:
             await agent.run('What is 2+2?')
         assert get_mock_chat_completion_kwargs(client)[0]['reasoning_effort'] == 'low'
 
-    async def test_run_thinking_overridden_by_agent_setting(self, allow_model_requests: None):
-        model, client = _mock_openai_chat('gpt-5', ModelSettings())
-        agent = Agent(model, model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low'))
-        with pytest.warns(
-            UserWarning,
-            match=re.escape(
-                "`openai_reasoning_effort` from the agent's `model_settings` takes precedence over `thinking='high'` "
-                "from the run's `model_settings`."
-            ),
-        ):
-            await agent.run('What is 2+2?', model_settings=ModelSettings(thinking='high'))
-        assert get_mock_chat_completion_kwargs(client)[0]['reasoning_effort'] == 'low'
-
     async def test_wrapped_model_setting_overriding_run_thinking(self, allow_model_requests: None):
         model, _ = _mock_openai_chat('gpt-5', OpenAIChatModelSettings(openai_reasoning_effort='low'))
         agent = Agent(WrapperModel(model))
@@ -2276,7 +2325,7 @@ class TestCrossScopeThinkingOverrideWarning:
             await agent.run('What is 2+2?', model_settings=ModelSettings(thinking='high'))
 
     async def test_fallback_child_setting_overriding_run_thinking(self, allow_model_requests: None):
-        """A `FallbackModel` has no profile or settings of its own, so its child warns as for a direct request."""
+        """A `FallbackModel` has no settings of its own, so its child checks its own as for a direct request."""
         model, client = _mock_openai_chat('gpt-5', OpenAIChatModelSettings(openai_reasoning_effort='low'))
         agent = Agent(FallbackModel(model))
         with pytest.warns(
@@ -2284,6 +2333,20 @@ class TestCrossScopeThinkingOverrideWarning:
             match=re.escape(
                 "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` "
                 "from the request's `model_settings`."
+            ),
+        ):
+            await agent.run('What is 2+2?', model_settings=ModelSettings(thinking='high'))
+        assert get_mock_chat_completion_kwargs(client)[0]['reasoning_effort'] == 'low'
+
+    async def test_fallback_agent_setting_overriding_run_thinking(self, allow_model_requests: None):
+        """The agent's layers reach each model a `FallbackModel` may use."""
+        model, client = _mock_openai_chat('gpt-5', ModelSettings())
+        agent = Agent(FallbackModel(model), model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low'))
+        with pytest.warns(
+            UserWarning,
+            match=re.escape(
+                "`openai_reasoning_effort` from the agent's `model_settings` takes precedence over `thinking='high'` "
+                "from the run's `model_settings`."
             ),
         ):
             await agent.run('What is 2+2?', model_settings=ModelSettings(thinking='high'))
@@ -2301,10 +2364,26 @@ class TestCrossScopeThinkingOverrideWarning:
     async def test_narrower_setting_over_broader_thinking_is_silent(self, allow_model_requests: None):
         """A provider-specific setting narrower than `thinking` is the caller's explicit choice, so nothing warns."""
         model, client = _mock_openai_chat('gpt-5', ModelSettings(thinking='high'))
-        await Agent(model).run('What is 2+2?', model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low'))
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            await Agent(model).run(
+                'What is 2+2?', model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low')
+            )
+        assert [str(w.message) for w in caught] == []
         assert get_mock_chat_completion_kwargs(client)[0]['reasoning_effort'] == 'low'
 
     async def test_thinking_the_model_ignores_is_silent(self, allow_model_requests: None):
         """`gpt-4o` drops `thinking` whatever else is set, so no setting took precedence over it."""
         model, _ = _mock_openai_chat('gpt-4o', OpenAIChatModelSettings(openai_reasoning_effort='low'))
-        await Agent(model).run('What is 2+2?', model_settings=ModelSettings(thinking='high'))
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            await Agent(model).run('What is 2+2?', model_settings=ModelSettings(thinking='high'))
+        assert [str(w.message) for w in caught] == []
+
+    async def test_disabling_thinking_on_an_always_on_model_is_silent(self, allow_model_requests: None):
+        """`gpt-5` always reasons and drops `thinking=False`, so no setting took precedence over it."""
+        model, _ = _mock_openai_chat('gpt-5', OpenAIChatModelSettings(openai_reasoning_effort='low'))
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            await Agent(model).run('What is 2+2?', model_settings=ModelSettings(thinking=False))
+        assert [str(w.message) for w in caught] == []
