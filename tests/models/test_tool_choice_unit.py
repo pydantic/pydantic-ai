@@ -887,6 +887,40 @@ def test_google_allowed_function_names_ignore_unavailable_tools():
     assert config['allowed_function_names'] == ['get_time']  # pyright: ignore[reportTypedDictNotRequiredAccess]
 
 
+@skip_if_no_openai
+@pytest.mark.parametrize(
+    'tool_choice,expected_names',
+    [
+        pytest.param(['tool_b', 'typo', 'tool_c'], ['tool_c', 'tool_b'], id='list'),
+        pytest.param(ToolOrOutput(function_tools=['tool_b', 'typo']), ['tool_b', 'final_result'], id='tool_or_output'),
+    ],
+)
+def test_openai_responses_allowed_tools_ignore_unavailable_tools(tool_choice: ToolChoice, expected_names: list[str]):
+    """`allowed_tools` drops the names `resolve_tool_choice` warns it will ignore, and keeps declaration order.
+
+    A unit test rather than VCR: cassette replay doesn't match on the request body, so only the built payload shows
+    an unknown name or a changed order. The live API returns a 400 for an `allowed_tools` name the request doesn't
+    define. `tool_b` is revealed via history, so it is absent from `declared_tool_defs` but stays forceable.
+    """
+    m = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=MagicMock()))
+    params = ModelRequestParameters(
+        function_tools=[make_tool('tool_c'), make_tool('tool_a'), make_tool('tool_b')],
+        output_tools=[make_tool('final_result')],
+        tool_visibility={'tool_b': 'via_history'},
+        allow_text_output=False,
+    )
+    settings: OpenAIResponsesModelSettings = {'tool_choice': tool_choice}
+
+    with pytest.warns(UserWarning, match=re.escape("will be ignored: ['typo']")):
+        _, responses_tool_choice = m._get_responses_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+
+    assert responses_tool_choice == {
+        'type': 'allowed_tools',
+        'mode': 'required',
+        'tools': [{'type': 'function', 'name': name} for name in expected_names],
+    }
+
+
 NATIVE_TOOL_CONFIG_CASES = [
     dict(
         id='native-only-pre-gemini-3-omits-config',

@@ -102,7 +102,6 @@ def test_coder_members_and_parameters() -> None:
         'RepoContext',
         'SubAgents',
         'ClearToolResults',
-        'WarnNearLimits',
         '_BoundToolOutputs',
         'RepairToolArguments',
         '_DefaultCaching',
