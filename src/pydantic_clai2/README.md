@@ -98,7 +98,8 @@ completion. Copilot requests use your saved login through the lazy provider reso
 
 Run `/web` in a session to open it in your browser: a local web app with a sessions sidebar,
 streaming Markdown answers, collapsible tool calls (shell output, diffs, searches), thinking
-blocks, and a composer with `/` command completion, a model picker, and a stop button. The
+blocks, live token counts while a turn streams, and a composer with `/` command completion, a
+model picker, and a stop button. The
 terminal and the browser drive the same session: a prompt typed in either runs once, and both
 show it. `/web stop` ends the web UI; `/web status` shows its address.
 

@@ -14,6 +14,8 @@ export interface TurnSummary {
   outcome: 'completed' | 'failed' | 'cancelled'
   error: string | null
   usage: Usage | null
+  /** Seconds the turn took, as this page saw it; `null` when it started before the page connected. */
+  seconds: number | null
 }
 
 export type Entry = Item | NoticeEntry | TurnSummary
@@ -25,6 +27,8 @@ export interface State {
   status: StatusInfo | null
   questions: Questions[]
   sessionsVersion: number
+  /** When the running turn started, by this page's clock. */
+  turnStartedAt: number | null
 }
 
 export const initial: State = {
@@ -34,6 +38,7 @@ export const initial: State = {
   status: null,
   questions: [],
   sessionsVersion: 0,
+  turnStartedAt: null,
 }
 
 let counter = 0
@@ -62,6 +67,7 @@ export function reduce(state: State, message: ServerMessage): State {
         running: message.running,
         status: message.status,
         questions: message.questions,
+        turnStartedAt: message.running ? (state.turnStartedAt ?? Date.now()) : null,
       }
     case 'item':
       return { ...state, entries: [...state.entries, message.item] }
@@ -86,7 +92,12 @@ export function reduce(state: State, message: ServerMessage): State {
       }
     case 'turn_start':
       // A turn a finished task woke has no prompt of its own.
-      return { ...state, running: true, entries: message.item ? [...state.entries, message.item] : state.entries }
+      return {
+        ...state,
+        running: true,
+        turnStartedAt: Date.now(),
+        entries: message.item ? [...state.entries, message.item] : state.entries,
+      }
     case 'turn_end': {
       const entries = state.entries.map((entry) =>
         entry.kind === 'tool' && entry.state === 'running' ? { ...entry, state: 'interrupted' as const } : entry,
@@ -97,8 +108,9 @@ export function reduce(state: State, message: ServerMessage): State {
         outcome: message.outcome,
         error: message.error,
         usage: message.usage,
+        seconds: state.turnStartedAt === null ? null : (Date.now() - state.turnStartedAt) / 1000,
       }
-      return { ...state, running: false, entries: [...entries, summary] }
+      return { ...state, running: false, turnStartedAt: null, entries: [...entries, summary] }
     }
     case 'status':
       return { ...state, status: message.status }

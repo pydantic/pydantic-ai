@@ -9,6 +9,8 @@ export interface ComposerHandle {
 
 interface Props {
   running: boolean
+  /** Shown in the bar while a turn runs. */
+  meter?: React.ReactNode
   model: string
   disabled: boolean
   placeholder: string
@@ -17,7 +19,7 @@ interface Props {
 
 /** The prompt box: Enter sends, Shift+Enter adds a line, `/` completes commands from CLAI's own registry. */
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { running, model, disabled, placeholder, onError },
+  { running, meter, model, disabled, placeholder, onError },
   ref,
 ) {
   const [text, setText] = useState('')
@@ -205,9 +207,9 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               </div>
             )}
           </div>
-          <span className="hint">{running ? 'Esc to interrupt' : '/ for commands'}</span>
+          {running ? meter : <span className="hint">/ for commands</span>}
           {running && !text.trim() ? (
-            <button className="send stop" onClick={() => void api.interrupt()} title="Interrupt (Esc)">
+            <button className="send stop" onClick={() => void api.interrupt()} title="Interrupt (Esc)" aria-label="Interrupt">
               <StopIcon size={14} />
             </button>
           ) : (

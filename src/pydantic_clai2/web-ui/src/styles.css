@@ -1489,3 +1489,36 @@ pre {
 .tool-group-body .tool {
   margin: 0;
 }
+
+/* Live token counts */
+
+.turn-meter {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-left: auto;
+  color: var(--muted);
+  font: 12px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.meter-time {
+  color: var(--text-soft);
+}
+
+.meter-arrow {
+  margin-right: 2px;
+  color: var(--lithium);
+}
+
+.meter-rate {
+  color: var(--faint);
+}
+
+.turn-usage {
+  align-self: flex-end;
+  margin-top: -6px;
+  color: var(--faint);
+  font: 11.5px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}

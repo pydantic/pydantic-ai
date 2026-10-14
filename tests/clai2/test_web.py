@@ -33,7 +33,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.builtin_plugins import web
-from pydantic_clai2.builtin_plugins.web import WebPlugin, WebSettings, live
+from pydantic_clai2.builtin_plugins.web import WebPlugin, WebSettings, live, remote as remote_module
 from pydantic_clai2.builtin_plugins.web.app import (
     HEADER,
     UNBUILT,
@@ -53,6 +53,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     ServerMessage,
     SessionsChanged,
     Snapshot,
+    StatusChanged,
     TextDelta,
     TitleChanged,
     ToolDone,
@@ -173,8 +174,9 @@ def receive_until(socket: WebSocketTestSession, kind: type[MessageT]) -> tuple[l
             return received, message
 
 
-def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb') -> None:
+def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch) -> None:
     """A prompt entered over HTTP runs in the shell; the browser sees the turn, its text, its tools, and the end."""
+    monkeypatch.setattr(remote_module, 'STATUS_INTERVAL', 0)
     tools = Capability[None]()
 
     @tools.tool_plain
@@ -203,6 +205,16 @@ def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb') -> None:
         deltas = [message.text for message in messages if isinstance(message, TextDelta) and message.id == answer.id]
         assert answer.text + ''.join(deltas) == 'All **done**.'
         assert end.outcome == 'completed' and end.usage is not None and end.usage.requests == 2
+        # Token counts tick while the turn streams: the estimate grows, and so does each request's usage.
+        statuses = [message.status for message in messages if isinstance(message, StatusChanged)]
+        streamed = [status.streamed_tokens for status in statuses]
+        assert streamed == sorted(streamed) and streamed[-2] > 0
+        live = [status.run for status in statuses if status.run is not None]
+        assert [usage.requests for usage in live][-1] == 1, 'the second request reports only once the run ends'
+        assert live[-1].input_tokens > 0
+        settled, _ = receive_until(socket, SessionsChanged)
+        final = [message.status for message in settled if isinstance(message, StatusChanged)][-1]
+        assert final.run is None and final.output_tokens == end.usage.output_tokens
         # A browser connecting now sees the finished turn as history.
         state = web_.get('/api/state').json()
         assert [item['kind'] for item in state['items']] == ['user', 'tool', 'assistant']

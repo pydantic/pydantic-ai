@@ -107,23 +107,29 @@ class SessionInfo:
 
 
 @dataclass(kw_only=True)
-class StatusInfo:
-    """The status row's figures."""
-
-    model: str
-    activity: str
-    context_tokens: int | None = None
-    context_window: int | None = None
-    cost: str | None = None
-
-
-@dataclass(kw_only=True)
 class Usage:
     """Tokens and requests one turn used."""
 
     input_tokens: int = 0
     output_tokens: int = 0
     requests: int = 0
+
+
+@dataclass(kw_only=True)
+class StatusInfo:
+    """The status row's figures, sent every `STATUS_INTERVAL` while a turn streams."""
+
+    model: str
+    activity: str
+    context_tokens: int | None = None
+    context_window: int | None = None
+    cost: str | None = None
+    streamed_tokens: int = 0
+    """The turn's output so far, estimated from the characters streamed, as the terminal's `~N streamed tokens`."""
+    output_tokens: int | None = None
+    """The last turn's reported output tokens, once it ends."""
+    run: Usage | None = None
+    """What the running turn's model requests have reported so far; it grows as each request completes."""
 
 
 @dataclass(kw_only=True)

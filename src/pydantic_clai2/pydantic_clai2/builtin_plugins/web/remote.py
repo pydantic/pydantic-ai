@@ -1,5 +1,6 @@
 """The session as the browser drives it: what it sees on connect, what each action does, and the sidebar's sessions."""
 
+import math
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -43,8 +44,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 from pydantic_clai2.plugins import CommandEnd, ConversationChanged, PluginHost, SessionCatalog, TurnOutcome
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
 
-STATUS_INTERVAL = 0.5
-"""Seconds between status updates sent while a turn streams; turn and command ends always send one."""
+STATUS_INTERVAL = 0.2
+"""Seconds between status updates sent while a turn streams, so token counts tick; turn and command ends always send one."""
 
 
 class Remote:
@@ -64,6 +65,8 @@ class Remote:
         """One for the whole load, so item IDs stay unique across turns in a browser that keeps them all."""
         self._turn = ItemLog()
         self._status_sent = 0.0
+        self._usage: RunUsage | None = None
+        """The running turn's usage, as its run context reports it; `None` between turns."""
         self._identities: dict[str, ProjectIdentity] = {}
         self._shown = host.conversation.conversation_id
         """The conversation browsers were last sent, so a retitle sends only the title."""
@@ -93,6 +96,9 @@ class Remote:
             context_tokens=status.context_tokens,
             context_window=status.context_window,
             cost=None if status.cost is None else str(status.cost),
+            streamed_tokens=math.ceil(status.streamed_chars / 4),
+            output_tokens=status.output_tokens,
+            run=None if self._usage is None else _usage(self._usage),
         )
 
     def publish_status(self) -> None:
@@ -105,7 +111,8 @@ class Remote:
         """A run of the conversation the shell holds, rather than a background `/fork` or a delegated task."""
         return ctx.conversation_id == self.host.conversation.conversation_id and DelegationTasks.child_id() is None
 
-    def observe(self, event: AgentStreamEvent) -> None:
+    def observe(self, event: AgentStreamEvent, *, usage: RunUsage) -> None:
+        self._usage = usage
         for message in self._translator.translate(event):
             self._turn.apply(message)
             self.hub.publish(message)
@@ -115,6 +122,7 @@ class Remote:
     def run_started(self, prompt: str | Sequence[UserContent] | None) -> None:
         """A run of the held conversation started; a run woken by a finished task has no prompt to show."""
         self.running = True
+        self._usage = None
         self._turn.clear()
         item = None
         if prompt is not None:
@@ -126,20 +134,20 @@ class Remote:
         self, outcome: TurnOutcome, *, error: BaseException | None = None, usage: RunUsage | None = None
     ) -> None:
         self.running = False
+        self._usage = None
         self._turn.clear()
         self.hub.publish(
             TurnEnded(
                 outcome=outcome,
                 error=None if error is None else str(error) or type(error).__name__,
-                usage=None
-                if usage is None
-                else Usage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens, requests=usage.requests),
+                usage=None if usage is None else _usage(usage),
             )
         )
         self.publish_status()
 
     def turn_ended(self) -> None:
-        """A turn, or a background `/fork`, ended and saved its outcome: the sidebar lists it as it now is."""
+        """A turn, or a background `/fork`, ended and saved its outcome and usage: the figures and sidebar show it."""
+        self.publish_status()
         self.hub.publish(SessionsChanged())
 
     def conversation_changed(self, event: ConversationChanged) -> None:
@@ -271,6 +279,10 @@ class Remote:
         self.hub.publish(SessionsChanged())
 
 
+def _usage(usage: RunUsage) -> Usage:
+    return Usage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens, requests=usage.requests)
+
+
 def _busy(summary: ConversationSummary) -> bool:
     """Whether another live CLAI is running this saved session now, rather than having died mid-turn."""
     try:
@@ -306,4 +318,4 @@ class Observer(AbstractCapability[None]):
 
     async def on_event(self, ctx: RunContext[None], *, event: AgentStreamEvent) -> None:
         if self.remote.foreground(ctx):
-            self.remote.observe(event)
+            self.remote.observe(event, usage=ctx.usage)

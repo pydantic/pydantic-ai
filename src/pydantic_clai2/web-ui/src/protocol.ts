@@ -51,6 +51,12 @@ export interface StatusInfo {
   context_tokens: number | null
   context_window: number | null
   cost: string | null
+  /** The turn's output so far, estimated from streamed characters. */
+  streamed_tokens: number
+  /** The last turn's reported output tokens, once it ends. */
+  output_tokens: number | null
+  /** What the running turn's model requests have reported so far. */
+  run: Usage | null
 }
 
 export interface Usage {

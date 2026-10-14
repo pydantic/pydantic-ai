@@ -4,6 +4,8 @@ import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
 import { Sidebar, type SidebarHandle } from './components/Sidebar'
 import { Transcript } from './components/Transcript'
+import { TurnMeter } from './components/TurnMeter'
+import { compact } from './format'
 import { SidebarIcon } from './components/icons'
 import type { ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
 import { MAC, MOD } from './platform'
@@ -15,11 +17,6 @@ function initialTheme(): Theme {
   const saved = localStorage.getItem('clai-theme')
   if (saved === 'dark' || saved === 'light') return saved
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
-}
-
-function compact(tokens: number | null): string {
-  if (tokens === null) return '?'
-  return tokens >= 1000 ? `${(tokens / 1000).toFixed(tokens >= 10000 ? 0 : 1)}k` : String(tokens)
 }
 
 export function App() {
@@ -134,6 +131,7 @@ export function App() {
     <Composer
       ref={composer}
       running={state.running}
+      meter={<TurnMeter status={status} startedAt={state.turnStartedAt} />}
       model={status?.model ?? '…'}
       disabled={connection !== 'open'}
       placeholder={state.running ? 'Queue a follow-up…' : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
