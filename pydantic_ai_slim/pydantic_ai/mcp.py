@@ -1586,6 +1586,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 last_call = args, result, copy.deepcopy(mapped)
             return mapped
 
+        # A copy, so a hook that edits the arguments in place still reads as a rewrite.
+        model_args = copy.deepcopy(tool_args)
         if self.process_tool_call is not None:
             return_value = await self.process_tool_call(ctx, call_tool_func, name, tool_args)
         else:
@@ -1593,12 +1595,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
         # The app gets the result only when the model's call produced it and the model got it unchanged: a
         # `process_tool_call` hook that changes the arguments or the result decides what leaves the toolset.
-        if last_call is None or last_call[0] != tool_args or return_value != last_call[2]:
+        if last_call is None or last_call[0] != model_args or return_value != last_call[2]:
             return return_value
         _, result, _ = last_call
         app = MCPAppToolResult(
             resource_uri=resource_uri,
-            tool_input=tool_args,
+            tool_input=model_args,
             result=_call_tool_result_to_wire(result),
             toolset_id=self.id,
         )
