@@ -15,7 +15,7 @@ import os
 import re
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 
@@ -40,6 +40,8 @@ class ReplStates:
     directory: Path
     session_id: Callable[[], str | None]
     """The saved conversation running now; a run under any other conversation ID is not kept."""
+    _deletions: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False, compare=False)
+    """How often each ID was deleted, so a write already abandoned to its thread cannot bring a deleted REPL back."""
 
     def path(self, conversation_id: str) -> Path | None:
         """Where `conversation_id`'s REPL is kept, or `None` when its ID cannot name a file."""
@@ -83,7 +85,8 @@ class ReplStates:
                 await run_sync(partial(path.unlink, missing_ok=True), abandon_on_cancel=True)
             else:
                 # Abandoned rather than awaited when harness gives up on the save; the write is atomic.
-                await run_sync(_write, path, state, abandon_on_cancel=True)
+                deletions = self._deletions.get(path.stem, 0)
+                await run_sync(self._write_unless_deleted, path, state, deletions, abandon_on_cancel=True)
         except OSError as error:
             _logger.warning('Could not save the REPL state %s: %s', path, error)
 
@@ -106,14 +109,25 @@ class ReplStates:
             _logger.warning('Could not copy the REPL state to %s: %s', target_path, error)
 
     def delete(self, conversation_id: str) -> None:
-        """Remove `conversation_id`'s REPL with the session."""
+        """Remove `conversation_id`'s REPL with the session, including one a write still in flight would leave."""
         path = self.path(conversation_id)
         if path is None:
             return
+        self._deletions[conversation_id] = self._deletions.get(conversation_id, 0) + 1
         try:
             path.unlink(missing_ok=True)
         except OSError as error:
             _logger.warning('Could not delete the REPL state %s: %s', path, error)
+
+    def _write_unless_deleted(self, path: Path, state: bytes, deletions: int) -> None:
+        """Write `state`, then remove it again if `delete` ran meanwhile.
+
+        Either `delete` counted before the check below, which then removes the file, or it unlinks
+        after this replaced the file; both orders leave no REPL behind.
+        """
+        _write(path, state)
+        if self._deletions.get(path.stem, 0) != deletions:
+            path.unlink(missing_ok=True)
 
 
 def _write(path: Path, state: bytes) -> None:

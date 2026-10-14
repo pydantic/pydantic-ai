@@ -331,3 +331,19 @@ class TestReplStates:
         assert 'Could not save the REPL state' in caplog.text
         assert [path.name for path in tmp_path.iterdir()] == [f'{SESSION_ID}.bin']
         assert await states.load(own) == b'saved'
+
+    async def test_a_write_in_flight_does_not_outlive_a_delete(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A save abandoned to its thread may land after the session is deleted; the delete still wins."""
+        states = ReplStates(directory=tmp_path, session_id=lambda: SESSION_ID)
+        replace_file = os.replace
+
+        def deleted_meanwhile(source: str, target: Path) -> None:
+            states.delete(SESSION_ID)
+            replace_file(source, target)
+
+        monkeypatch.setattr(os, 'replace', deleted_meanwhile)
+        await states.save(run_context(SESSION_ID), b'state')
+
+        assert list(tmp_path.iterdir()) == []
