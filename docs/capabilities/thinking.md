@@ -36,7 +36,7 @@ The [`Thinking.effort`][pydantic_ai.capabilities.Thinking.effort] value accepts:
 - `'minimal'` / `'low'` / `'medium'` / `'high'` / `'xhigh'` — enable thinking at a specific effort level (unsupported levels map to the closest available value)
 
 These are the same values accepted by the underlying `thinking` model setting.
-When omitted, the model uses its default behavior. Provider-specific settings (documented in the sections below) take precedence when both are set.
+When omitted, the model uses its default behavior. Provider-specific settings (documented in the sections below) take precedence when both are set. When the provider-specific setting comes from a broader scope than `thinking`, such as the model's `settings` or the agent's `model_settings` with `thinking` passed to the run, it still takes precedence and a `UserWarning` names both settings.
 
 ### Provider translation
 
