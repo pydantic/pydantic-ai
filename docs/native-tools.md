@@ -56,7 +56,7 @@ async def prepared_web_search(ctx: RunContext[dict]) -> WebSearchTool | None:
     )
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[NativeTool(prepared_web_search)],
     deps_type=dict,
 )
@@ -111,7 +111,7 @@ making it ideal for queries that require up-to-date data.
 from pydantic_ai import Agent, WebSearchTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[NativeTool(WebSearchTool())])
+agent = Agent('{{ anthropic:medium }}', capabilities=[NativeTool(WebSearchTool())])
 
 result = agent.run_sync('Give me a sentence with the biggest news in AI this week.')
 print(result.output)
@@ -130,7 +130,7 @@ With OpenAI, you must use their Responses API to access the web search tool. The
 from pydantic_ai import Agent, WebSearchTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('openai-responses:gpt-5.2', capabilities=[NativeTool(WebSearchTool())])
+agent = Agent('openai-responses:{{ openai:medium.name }}', capabilities=[NativeTool(WebSearchTool())])
 
 result = agent.run_sync('Give me a sentence with the biggest news in AI this week.')
 print(result.output)
@@ -148,7 +148,7 @@ from pydantic_ai import Agent, WebSearchTool, WebSearchUserLocation
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         NativeTool(
             WebSearchTool(
@@ -221,7 +221,7 @@ The [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] allows your agent to s
 from pydantic_ai import Agent, XSearchTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('xai:grok-4.3', capabilities=[NativeTool(XSearchTool())])
+agent = Agent('{{ xai:medium }}', capabilities=[NativeTool(XSearchTool())])
 
 result = agent.run_sync('What are people saying about AI on X today?')
 print(result.output)
@@ -241,7 +241,7 @@ from pydantic_ai import Agent, XSearchTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'xai:grok-4.3',
+    '{{ xai:medium }}',
     capabilities=[
         NativeTool(
             XSearchTool(
@@ -296,7 +296,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 from pydantic_ai import Agent, CodeExecutionTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[NativeTool(CodeExecutionTool())])
+agent = Agent('{{ anthropic:medium }}', capabilities=[NativeTool(CodeExecutionTool())])
 
 result = agent.run_sync('Calculate the factorial of 15.')
 print(result.output)
@@ -341,7 +341,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[NativeTool(CodeExecutionTool())],
     output_type=BinaryImage,
     model_settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
@@ -377,7 +377,7 @@ async def main():
 
     # Create an agent with CodeExecutionTool that has access to the uploaded file
     agent = Agent(
-        'anthropic:claude-sonnet-4-6',
+        '{{ anthropic:medium }}',
         capabilities=[NativeTool(CodeExecutionTool(files=[UploadedFile(file_id=file.id, provider_name='anthropic')]))],
     )
 
@@ -410,7 +410,7 @@ async def main():
 
     # Create an agent with CodeExecutionTool that has access to the uploaded file
     agent = Agent(
-        'openai-responses:gpt-5.2',
+        'openai-responses:{{ openai:medium.name }}',
         capabilities=[NativeTool(CodeExecutionTool(files=[UploadedFile(file_id=file.id, provider_name='openai')]))],
     )
 
@@ -444,7 +444,7 @@ The [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] enable
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI Responses | ✅ | Full feature support. Only supported by models newer than `gpt-5.2`. Metadata about the generated image, like the [`revised_prompt`](https://platform.openai.com/docs/guides/tools-image-generation#revised-prompt) sent to the underlying image model, is available on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls]. |
+| OpenAI Responses | ✅ | Full feature support. Only supported by models newer than GPT-5.2. Metadata about the generated image, like the [`revised_prompt`](https://platform.openai.com/docs/guides/tools-image-generation#revised-prompt) sent to the underlying image model, is available on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls]. |
 | Google | ✅ | Limited parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `gemini-3-pro-image` and `gemini-3.1-flash-image`. These models do not support [function tools](tools.md) and will always have the option of generating images, even if this native tool is not explicitly specified. |
 | Anthropic | ❌ | |
 | xAI | ❌ | |
@@ -462,7 +462,7 @@ Generated images are available on [`ModelResponse.images`][pydantic_ai.messages.
 from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('openai-responses:gpt-5.2', capabilities=[NativeTool(ImageGenerationTool())])
+agent = Agent('openai-responses:{{ openai:medium.name }}', capabilities=[NativeTool(ImageGenerationTool())])
 
 result = agent.run_sync('Tell me a two-sentence story about an axolotl with an illustration.')
 print(result.output)
@@ -498,7 +498,7 @@ The `ImageGenerationTool` can be used together with `output_type=BinaryImage` to
 ```py {title="image_generation_output.py"}
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('openai-responses:gpt-5.2', output_type=BinaryImage)
+agent = Agent('openai-responses:{{ openai:medium.name }}', output_type=BinaryImage)
 
 result = agent.run_sync('Generate an image of an axolotl.')
 assert isinstance(result.output, BinaryImage)
@@ -515,7 +515,7 @@ from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         NativeTool(
             ImageGenerationTool(
@@ -636,7 +636,7 @@ allowing it to pull up-to-date information from the web.
 from pydantic_ai import Agent, WebFetchTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('google:gemini-3-flash-preview', capabilities=[NativeTool(WebFetchTool())])
+agent = Agent('{{ google:medium }}', capabilities=[NativeTool(WebFetchTool())])
 
 result = agent.run_sync('What is this? https://ai.pydantic.dev')
 print(result.output)
@@ -654,7 +654,7 @@ from pydantic_ai import Agent, WebFetchTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         NativeTool(
             WebFetchTool(
@@ -773,7 +773,7 @@ class FakeMemoryTool(BetaAbstractMemoryTool):
 
 fake_memory = FakeMemoryTool()
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[NativeTool(MemoryTool())])
+agent = Agent('{{ anthropic:medium }}', capabilities=[NativeTool(MemoryTool())])
 
 
 @agent.tool_plain
@@ -820,8 +820,8 @@ from pydantic_ai import AdvisorTool, Agent
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
-    capabilities=[NativeTool(AdvisorTool(model='claude-opus-4-8'))],
+    '{{ anthropic:medium }}',
+    capabilities=[NativeTool(AdvisorTool(model='{{ anthropic:large.name }}'))],
 )
 
 result = agent.run_sync('Design a caching strategy for our API. Consult your advisor first.')
@@ -873,7 +873,7 @@ from pydantic_ai import Agent, MCPServerTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         NativeTool(
             MCPServerTool(
@@ -902,7 +902,7 @@ from pydantic_ai import Agent, MCPServerTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         NativeTool(
             MCPServerTool(
@@ -935,7 +935,7 @@ from pydantic_ai import Agent, MCPServerTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         NativeTool(
             MCPServerTool(
@@ -970,7 +970,7 @@ from pydantic_ai import Agent, MCPServerTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         NativeTool(
             MCPServerTool(
@@ -1035,7 +1035,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 
 
 async def main():
-    model = OpenAIResponsesModel('gpt-5.2')
+    model = OpenAIResponsesModel('{{ openai:medium.name }}')
 
     with open('my_document.txt', 'rb') as f:
         file = await model.client.files.create(file=f, purpose='assistants')
@@ -1071,7 +1071,7 @@ from pydantic_ai.models.google import GoogleModel
 
 
 async def main():
-    model = GoogleModel('gemini-3-flash-preview')
+    model = GoogleModel('{{ google:medium.name }}')
 
     store = await model.client.aio.file_search_stores.create(
         config={'display_name': 'my-docs'}
@@ -1110,7 +1110,7 @@ from pydantic_ai.capabilities import NativeTool
 
 async def main():
     agent = Agent(
-        'xai:grok-4.3',
+        '{{ xai:medium }}',
         capabilities=[NativeTool(FileSearchTool(file_store_ids=['collection_abc123']))]
     )
 
@@ -1132,7 +1132,7 @@ from pydantic_ai.capabilities import NativeTool
 
 async def main():
     agent = Agent(
-        'xai:grok-4.3',
+        '{{ xai:medium }}',
         capabilities=[
             NativeTool(
                 FileSearchTool(

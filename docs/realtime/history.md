@@ -83,7 +83,7 @@ from pydantic_ai import Agent
 from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 
 voice = Agent(instructions='You are a helpful voice assistant.')
-notetaker = Agent('openai:gpt-5', instructions='Summarize the conversation as bullet points.')
+notetaker = Agent('{{ openai:medium }}', instructions='Summarize the conversation as bullet points.')
 
 
 async def main():

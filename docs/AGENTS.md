@@ -19,6 +19,13 @@ Follow the general [documentation guidance](../agent_docs/documentation.md). The
 - Combine parameter variations when one example plus notes preserves every meaningful difference. Split examples when use cases, prerequisites, or constraints differ.
 - Use examples that demonstrate a credible user task or decision without introducing complexity unrelated to the feature.
 
+## Model names
+
+- Always name models with an alias from [`model_aliases.py`](model_aliases.py), never a concrete model ID. An alias is `<provider>:<tier>`, with the tiers `small`, `medium`, and `large`.
+- `{{ openai:medium }}` resolves to the full model string, as in `Agent('{{ openai:medium }}')` or `gateway/{{ openai:medium }}`. `{{ openai:medium.name }}` resolves to the bare model name, as in `OpenAIChatModel('{{ openai:medium.name }}')`, `openai-chat:{{ openai:medium.name }}`, or `model_name='{{ openai:medium.name }}'` in example output.
+- To move the docs to a new model, edit only `model_aliases.py`. The docs site and `tests/test_examples.py` resolve the aliases. Then run `make update-examples` to refresh example output that depends on the model, such as costs; it keeps the aliases. `tests/test_docs_parity.py` and `tests/harness/test_docs_parity.py` flag the READMEs that mirror a docs page with concrete names, since GitHub can't resolve aliases.
+- Name a model directly only on a page about that model or version, such as a provider page or the changelog. `tests/test_docs_model_aliases.py` fails on concrete names elsewhere; register a deliberate exception in its `EXEMPT_PAGES`, with the reason.
+
 ## Review
 
 - Render documentation in a unified-docs preview before merging.

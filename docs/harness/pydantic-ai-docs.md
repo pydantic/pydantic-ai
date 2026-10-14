@@ -33,7 +33,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import PydanticAIDocs
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
+    '{{ anthropic:medium }}',
     capabilities=[LocalWorkspace('.'), PydanticAIDocs(local_docs_path=Path('docs'))],
 )
 
@@ -72,7 +72,7 @@ Caching is isolated per run so content read from one workspace is not reused in 
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-5
+model: {{ anthropic:medium }}
 capabilities:
   - PydanticAIDocs: {}
 ```

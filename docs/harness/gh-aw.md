@@ -639,7 +639,7 @@ a run log is readable by anyone who can read the repository. It is there so that
 says whether telemetry was on, and roughly where it went:
 
 ```text
-[pydantic-ai] provider=openai model=gpt-5 baseUrl=http://api-proxy:10000/v1 agent=my_agent:agent otlp=https://logfire-us.pydantic.dev
+[pydantic-ai] provider=openai model={{ openai:medium.name }} baseUrl=http://api-proxy:10000/v1 agent=my_agent:agent otlp=https://logfire-us.pydantic.dev
 ```
 
 Pydantic AI's spans are exported straight to the backend and are not mirrored into the

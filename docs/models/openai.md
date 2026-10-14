@@ -32,7 +32,7 @@ The bare `'openai:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.mod
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-6-sol')
+agent = Agent('{{ openai:medium }}')
 ...
 ```
 
@@ -48,7 +48,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 
-model = OpenAIResponsesModel('gpt-6-sol')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model)
 ...
 ```
@@ -65,7 +65,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='your-api-key'))
+model = OpenAIResponsesModel('{{ openai:medium.name }}', provider=OpenAIProvider(api_key='your-api-key'))
 agent = Agent(model)
 ...
 ```
@@ -84,7 +84,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 client = AsyncOpenAI(max_retries=3)
-model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
+model = OpenAIResponsesModel('{{ openai:medium.name }}', provider=OpenAIProvider(openai_client=client))
 agent = Agent(model)
 ...
 ```
@@ -106,7 +106,7 @@ client = AsyncAzureOpenAI(
 )
 
 model = OpenAIChatModel(
-    'gpt-5.2',
+    '{{ openai:medium.name }}',
     provider=OpenAIProvider(openai_client=client),
 )
 agent = Agent(model)
@@ -150,7 +150,7 @@ You can customize model behavior using [`OpenAIResponsesModelSettings`][pydantic
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 settings = OpenAIResponsesModelSettings(
     temperature=0.2,
     service_tier='flex',
@@ -249,7 +249,7 @@ Both the Responses and Chat Completions APIs can run [moderation](https://platfo
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 settings = OpenAIResponsesModelSettings(
     openai_moderation={'model': 'omni-moderation-latest'}
 )
@@ -332,7 +332,7 @@ model_settings = OpenAIResponsesModelSettings(
         )
     ],
 )
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model, model_settings=model_settings)
 
 result = agent.run_sync('Open a new browser tab')
@@ -350,7 +350,7 @@ When the field is set to `'auto'`, Pydantic AI automatically selects the most re
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
 result1 = agent.run_sync('Tell me a joke.')
@@ -373,7 +373,7 @@ As an alternative to passing `message_history`, you can pass a concrete `provide
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
 result = agent.run_sync('The secret is 1234')
@@ -396,7 +396,7 @@ OpenAI's [Conversations API](https://platform.openai.com/docs/guides/conversatio
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
 model_settings = OpenAIResponsesModelSettings(openai_conversation_id='conv_...')
@@ -412,7 +412,7 @@ When message-level [`conversation_id`][pydantic_ai.messages.ModelResponse.conver
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
 model_settings = OpenAIResponsesModelSettings(openai_conversation_id='conv_...')
@@ -440,7 +440,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAICompaction
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[OpenAICompaction()],
 )
 ```
@@ -456,7 +456,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAICompaction
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[OpenAICompaction(token_threshold=100_000)],
 )
 ```
@@ -468,7 +468,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAICompaction
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[OpenAICompaction(message_count_threshold=20)],
 )
 ```
@@ -522,7 +522,7 @@ For long-running requests, such as large reasoning or tool-heavy jobs that may e
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 settings = OpenAIResponsesModelSettings(openai_background=True)
 agent = Agent(model, model_settings=settings)
 ...
@@ -542,7 +542,7 @@ If you need the [Chat Completions API](https://platform.openai.com/docs/api-refe
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai-chat:gpt-5.2')
+agent = Agent('openai-chat:{{ openai:medium.name }}')
 ...
 ```
 
@@ -550,7 +550,7 @@ agent = Agent('openai-chat:gpt-5.2')
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 
-model = OpenAIChatModel('gpt-5.2')
+model = OpenAIChatModel('{{ openai:medium.name }}')
 agent = Agent(model)
 ...
 ```

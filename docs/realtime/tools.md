@@ -332,7 +332,7 @@ class Answer(BaseModel):
     confidence: float
 
 
-supervisor = Agent('openai:gpt-5', output_type=Answer)
+supervisor = Agent('{{ openai:medium }}', output_type=Answer)
 voice = Agent(instructions='Answer using the `consult` tool, then read the summary aloud.')
 
 

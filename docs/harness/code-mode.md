@@ -44,7 +44,7 @@ Construct an `Agent` with `CodeMode()` in its `capabilities`, then register tool
 from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode()])
 
 
 @agent.tool_plain
@@ -117,7 +117,7 @@ def fetch(url: str) -> str:
 search_tools = FunctionToolset(tools=[search, fetch]).with_metadata(code_mode=True)
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     toolsets=[search_tools],
     capabilities=[CodeMode(tools={'code_mode': True})],
 )
@@ -248,7 +248,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     capabilities=[CodeMode(eager=True)],
 )
 ```
@@ -336,7 +336,7 @@ def lookup_year(*, title: str) -> int | None:
 
 code_mode = CodeMode(speculate=['lookup_author', 'lookup_year'])
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     capabilities=[code_mode],
     tools=[lookup_author, lookup_year],
 )
@@ -371,7 +371,7 @@ def search(query: str) -> str:
 
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     capabilities=[CodeMode(speculate='declared')],
     tools=[Tool(search, metadata={'read_only': True})],
 )
@@ -476,7 +476,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[CodeMode(monty_sandbox_url='wss://sandbox.example.com/monty')],
 )
 ```
@@ -511,7 +511,7 @@ from pydantic_ai.durable_exec.temporal import TemporalDurability
 from pydantic_ai_harness import CodeMode
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     name='coding-agent',
     capabilities=[CodeMode(), TemporalDurability()],
 )
@@ -558,7 +558,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai_harness import CodeMode
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode()])
 
 
 @agent.tool_plain
@@ -604,7 +604,7 @@ from pydantic_ai_harness import CodeMode
 
 # The agent can read /work/data.csv and write /work/summary.md back to the host:
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[CodeMode(mount=MountDir(virtual_path='/work', host_path='/tmp/agent-workspace', mode='read-write'))],
 )
 ```
@@ -622,7 +622,7 @@ from pydantic_ai_harness import CodeMode
 
 # Give the agent a fixed set of environment values:
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[CodeMode(os_access=OSAccess(environ={'API_BASE': 'https://api.example.com'}))],
 )
 ```
@@ -646,7 +646,7 @@ def my_os(*, name, args, kwargs, **_):
     return NOT_HANDLED
 
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(os_access=my_os)])
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(os_access=my_os)])
 ```
 
 The callback takes keyword arguments and may be `async`. The older positional form, `my_os(name, args, kwargs)`,
@@ -682,7 +682,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: {{ anthropic:medium }}
 capabilities:
   - CodeMode: {}
 ```

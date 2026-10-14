@@ -38,7 +38,7 @@ def resolve_model(ctx: ModelResolutionContext[Deps], model_id: str) -> Model | N
 
 
 agent = Agent(
-    'user:openai:gpt-5.6-sol',
+    'user:{{ openai:medium }}',
     deps_type=Deps,
     capabilities=[ResolveModelId(resolve_model)],
 )

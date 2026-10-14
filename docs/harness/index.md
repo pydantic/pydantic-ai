@@ -29,7 +29,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness.coder import Coder
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[LocalWorkspace('.'), Coder()],
 )
 result = agent.run_sync('Find out why tests/test_parser.py fails and fix the bug it caught.')
@@ -43,18 +43,18 @@ With [Modal](modal-sandbox.md), for example:
 ```python
 from pydantic_ai_harness.modal_sandbox import ModalSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder()])
 ```
 
 Coder provides six tools: `read_file`, `write_file`, `edit_file`, `list_files`, `grep`, and `shell`, plus `delegate_task` to hand a sub-task to a fresh run of the same agent, repository context, and context controls. Shell commands are unrestricted and can persist beyond individual runs. Default instructions guide autonomous investigation, editing, and verification; pass `instructions=` to add your own guidance.
 
 ```bash
-uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5
+uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:large }}
 ```
 
 The bundled `coder_agent` is the example above without a model.
 
-Every model works: swap the string for [any provider's](../models/overview.md). Need more? Add capabilities to the list; here's the same coder on `gpt-5.6-sol`, with web search and cross-session memory:
+Every model works: swap the string for [any provider's](../models/overview.md). Need more? Add capabilities to the list; here's the same coder on `{{ openai:medium.name }}`, with web search and cross-session memory:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[openai]"
@@ -67,7 +67,7 @@ from pydantic_ai_harness import Coder, Memory
 from pydantic_ai_harness.memory import FileStore
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     capabilities=[
         LocalWorkspace('.'),
         Coder(),

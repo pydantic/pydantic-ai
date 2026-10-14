@@ -63,7 +63,7 @@ You can then use `BedrockConverseModel` by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0')
+agent = Agent('{{ bedrock:medium }}')
 ...
 ```
 
@@ -73,7 +73,7 @@ Or initialize the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
-model = BedrockConverseModel('anthropic.claude-sonnet-4-5-20250929-v1:0')
+model = BedrockConverseModel('{{ bedrock:medium.name }}')
 agent = Agent(model)
 ...
 ```
@@ -188,7 +188,7 @@ from pydantic_ai.models.bedrock import BedrockModelSettings
 handbook = '...'  # a long document, above the model's minimum cacheable length
 
 agent = Agent(
-    'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    '{{ bedrock:medium }}',
     model_settings=BedrockModelSettings(
         bedrock_cache_messages=True,  # Automatically caches the last message
     ),
@@ -213,7 +213,7 @@ Combine multiple cache settings for maximum savings:
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
 
-model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
+model = BedrockConverseModel('{{ bedrock:medium.name }}')
 agent = Agent(
     model,
     instructions='Detailed instructions...',
@@ -243,7 +243,7 @@ Use manual `CachePoint` markers to control cache locations precisely:
 from pydantic_ai import Agent, CachePoint
 
 agent = Agent(
-    'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    '{{ bedrock:medium }}',
     instructions='Instructions...',
 )
 
@@ -263,7 +263,7 @@ Access cache usage statistics via [`RequestUsage`][pydantic_ai.usage.RequestUsag
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
 
-agent = Agent('bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0')
+agent = Agent('{{ bedrock:medium }}')
 
 
 async def main():
@@ -302,7 +302,7 @@ from pydantic_ai import Agent, CachePoint
 from pydantic_ai.models.bedrock import BedrockModelSettings
 
 agent = Agent(
-    'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    '{{ bedrock:medium }}',
     instructions='Instructions...',
     model_settings=BedrockModelSettings(
         bedrock_cache_instructions=True,      # 1 cache point
@@ -345,7 +345,7 @@ from pydantic_ai.providers.bedrock import BedrockProvider
 
 # Using AWS credentials directly
 model = BedrockConverseModel(
-    'anthropic.claude-sonnet-4-5-20250929-v1:0',
+    '{{ bedrock:medium.name }}',
     provider=BedrockProvider(
         region_name='us-east-1',
         aws_access_key_id='your-access-key',
@@ -368,7 +368,7 @@ from pydantic_ai.providers.bedrock import BedrockProvider
 # Using a pre-configured boto3 client
 bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
 model = BedrockConverseModel(
-    'anthropic.claude-sonnet-4-5-20250929-v1:0',
+    '{{ bedrock:medium.name }}',
     provider=BedrockProvider(bedrock_client=bedrock_client),
 )
 agent = Agent(model)
