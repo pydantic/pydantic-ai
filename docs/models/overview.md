@@ -30,6 +30,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Heroku AI](compatible-apis.md#heroku-ai) | Cloud platform | `heroku:` |
 | [Hugging Face](huggingface.md) | Inference platform | `huggingface:` |
 | [LiteLLM](compatible-apis.md#litellm) | Self-hosted gateway | `litellm:` |
+| [Meta](meta.md) | Model developer | `meta:` |
 | [Mistral](mistral.md) | Model developer | `mistral:` |
 | [Moonshot AI / Kimi](moonshotai.md) | Model developer | `moonshotai:` |
 | [Nebius AI Studio](compatible-apis.md#nebius-ai-studio) | Inference platform | `nebius:` |
@@ -138,7 +139,7 @@ Pydantic AI only ever closes an HTTP client it created itself. A client you pass
 
 ### Configuring the HTTP client
 
-The HTTP clients Pydantic AI creates have a 600-second timeout with a 5-second connect timeout, and a connection pool of up to 1000 connections, of which up to 100 are kept alive while idle. These are the defaults of the OpenAI and Anthropic SDKs' own clients. To change them, create a client with [`create_async_httpx2_client()`][pydantic_ai.models.create_async_httpx2_client], which keeps the remaining defaults and Pydantic AI's `User-Agent`, and pass it to the provider as `http_client`:
+The HTTP clients Pydantic AI creates have a 600-second timeout (20 minutes for [Google](google.md#long-decode)) with a 5-second connect timeout, and a connection pool of up to 1000 connections, of which up to 100 are kept alive while idle. These are the defaults of the OpenAI and Anthropic SDKs' own clients. To change them, create a client with [`create_async_httpx2_client()`][pydantic_ai.models.create_async_httpx2_client], which keeps the remaining defaults and Pydantic AI's `User-Agent`, and pass it to the provider as `http_client`:
 
 ```python {title="configure_http_client.py"}
 import httpx2

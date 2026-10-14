@@ -10,7 +10,7 @@ import asyncio
 import inspect
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NoReturn, cast
+from typing import NoReturn
 
 import pytest
 
@@ -34,7 +34,7 @@ with try_import() as imports_successful:
     from pydantic_ai_harness import RenderSandbox, RenderWorkflows
     from pydantic_ai_harness.render_sandbox import RenderSandboxCleanupError, RenderSandboxEvent
 
-    from ..render.test_workspaces import WorkspaceTaskContext
+    from ..render.conftest import WorkspaceTaskContext
     from .workspace_helpers import WorkspaceHarness
 
 pytestmark = [
@@ -332,8 +332,6 @@ class TestRenderSandboxWorkflows:
         self, workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # Execute the published wiring unchanged, replacing only external services.
-        from render.workflows import TaskDefinition
-
         import pydantic_ai
         import pydantic_ai_harness
 
@@ -354,13 +352,11 @@ class TestRenderSandboxWorkflows:
         path = Path(__file__).parents[3] / 'src/pydantic_ai_harness/pydantic_ai_harness/render_sandbox/README.md'
         section = path.read_text().split('## Use with Render Workflows', 1)[1]
         snippet = section.split('```python\n', 1)[1].split('```', 1)[0]
-        namespace: dict[str, object] = {}
-        exec(compile(snippet, str(path), 'exec'), namespace)
-        task = namespace['solve']
-        assert isinstance(task, TaskDefinition)
-        # exec loses static types; the snippet declares one string input and output.
-        typed_task = cast(TaskDefinition[[str], str], task)
-        pending = typed_task.func(WorkspaceTaskContext(), 'verify the documented wiring')
+        # Execute the call in the snippet's namespace, then check the returned value.
+        namespace: dict[str, object] = {'test_context': WorkspaceTaskContext()}
+        invocation = "\nexample_result = solve.func(test_context, 'verify the documented wiring')\n"
+        exec(compile(snippet + invocation, str(path), 'exec'), namespace)
+        pending = namespace['example_result']
         assert inspect.isawaitable(pending)
         assert await pending == 'verified'
         assert workspace_harness.created == workspace_harness.terminated == ['sb-1']

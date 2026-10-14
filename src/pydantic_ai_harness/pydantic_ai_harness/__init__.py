@@ -61,6 +61,7 @@ if TYPE_CHECKING:
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
+    from .smol_sandbox import SmolSandbox, SmolSandboxBackend
     from .spend import SpendLimits
     from .sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
     from .ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
@@ -135,6 +136,8 @@ __all__ = [
     'Shell',
     'Skills',
     'SlidingWindowCompaction',
+    'SmolSandbox',
+    'SmolSandboxBackend',
     'SpendLimits',
     'SpritesSandbox',
     'SpritesSandboxBackend',
@@ -197,6 +200,7 @@ _CAPABILITY_EXPORTS = {
     'Shell': 'shell',
     'Skills': 'skills',
     'SlidingWindowCompaction': 'compaction',
+    'SmolSandbox': 'smol_sandbox',
     'SpendLimits': 'spend',
     'SpritesSandbox': 'sprites_sandbox',
     'SSHWorkspace': 'ssh_workspace',
@@ -224,6 +228,7 @@ _CONSTANT_EXPORTS = {
     'ModalSandboxBackend': 'modal_sandbox',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
     'RenderSandboxBackend': 'render_sandbox',
+    'SmolSandboxBackend': 'smol_sandbox',
     'SpritesSandboxBackend': 'sprites_sandbox',
     'SSHWorkspaceBackend': 'ssh_workspace',
     'SubAgent': 'subagents',

@@ -21,6 +21,7 @@ from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent
+from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
@@ -177,8 +178,11 @@ def create_agent(model: str | None = None) -> Agent[None, str]:
 
 
 def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str]:
-    """Build the CLI-owned template; caller-supplied agents are never reconstructed."""
-    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[customization_guide()])
+    """Build the CLI-owned template; caller-supplied agents are never reconstructed.
+
+    It is named `clai2`, which its run spans carry and which Logfire Agent Control addresses it by.
+    """
+    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[customization_guide()], name='clai2')
 
 
 @asynccontextmanager
@@ -1581,7 +1585,7 @@ async def _run_prompt(
         status.output_tokens = result.usage.output_tokens
         for message in reversed(result.all_messages()):  # pragma: no branch -- successful runs contain a response.
             if isinstance(message, ModelResponse):
-                status.context_tokens = message.usage.total_tokens or None
+                status.context_tokens = context_tokens(message) or None
                 break
         if not renderer.rendered_text or not isinstance(result.output, str):
             console.print(str(result.output), markup=False)

@@ -16,13 +16,13 @@ already includes cache reads and writes; no CLAI sum adds them again.
 
 | Surface | Source | What the number means |
 | --- | --- | --- |
-| Status row `context: X/Y`, before each request | `compaction` `_ContextGauge` on harness `ContextUsageEvent` (`ReportContextUsage`, `estimate_context_tokens`) | Latest response's `input + output`, plus a heuristic for the messages since, minus the reclaim of a compaction in this request |
-| Status row `context`, during streaming | `Session._stream`, every event | Latest response's `usage.total_tokens` (`input + output`) |
-| Status row `context`, end of turn | `_run_prompt` | Last response's `usage.total_tokens` |
+| Status row `context: X/Y`, before each request | `compaction` `_ContextGauge` on harness `ContextUsageEvent` (`ReportContextUsage`, `estimate_context_tokens`) | Latest response's `context_tokens` (input as `context_input_tokens` reads it, plus output), plus a heuristic for the messages since, minus the reclaim of a compaction in this request |
+| Status row `context`, during streaming | `Session._stream`, every event | Latest response's `context_tokens` (a long decode's input is its first request's) |
+| Status row `context`, end of turn | `_run_prompt` | Last response's `context_tokens` |
 | Status row window `Y` | gauge window (honours the `compaction` override), else `Model.context_window` | Model window |
 | Status row `~N streamed tokens` / `N output tokens` | streamed characters / 4, then `result.usage.output_tokens` | Turn output, including a summary call and forwarded subagent usage |
 | Status row cost, `/cost`, `/usage` | `usage_report.session_usage`: sum of `ModelResponse.usage` in retained history | Tokens processed and billed, per turn |
-| Subagent status row | `tasks.py`: child's last `usage.total_tokens`, child model window | Same as the main row |
+| Subagent status row | `tasks.py`: child's last `context_tokens`, child model window | Same as the main row |
 | `herdr` pane: `tokens`, `context` | `session_usage(...).total.total_tokens`; gauge fraction | Tokens processed; context fraction |
 | `/resume` browser `N tok` | harness `ConversationStore`: sum of `total_tokens` | Tokens processed |
 | Automatic compaction (0.85), `coder` `ClearToolResults` (0.7) | `estimate_context_tokens` | Trigger for each |

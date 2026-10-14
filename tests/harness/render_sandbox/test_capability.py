@@ -586,16 +586,58 @@ async def test_wrapped_caller_failure_surfaces_without_waiting_for_other_runs(
 
 
 async def test_durable_run_rejected_before_resource_creation(workspace_harness: WorkspaceHarness) -> None:
+    from collections.abc import Awaitable, Callable
+    from typing import NoReturn
+
+    from pydantic_ai.durable_exec import (
+        JSON_CODEC,
+        BaseDurabilityCapability,
+        CallableOperationBackend,
+        DurabilityEngineSpec,
+        DurableOperationId,
+        JournalOperationNamer,
+        RoleBasedOperationConfig,
+    )
     from pydantic_ai.exceptions import UserError
 
-    from ...durable_exec.test_durable_workspace import FakeDurability
+    class UnsupportedBackend(CallableOperationBackend[None]):
+        """Fail if the rejected engine reaches a model, tool, or workspace operation."""
+
+        async def execute(
+            self,
+            *,
+            operation_id: DurableOperationId,
+            name: str,
+            body: Callable[[], Awaitable[object]],
+            cache_key: tuple[object, ...],
+            config: None,
+        ) -> NoReturn:
+            raise AssertionError('The unsupported engine must be rejected before executing operations')
+
+    class UnsupportedDurability(BaseDurabilityCapability[None]):
+        """Advertise an active durable run through the public capability interface."""
+
+        engine_spec = DurabilityEngineSpec(
+            engine_name='Unsupported', durable_unit_noun='unit', durable_container_noun='run', codec=JSON_CODEC
+        )
+
+        @property
+        def in_durable_context(self) -> bool:
+            return True
+
+        def get_durable_operation_backend(self) -> UnsupportedBackend:
+            # Register operations normally, so the test still uses the real agent setup path.
+            return UnsupportedBackend(
+                namer=JournalOperationNamer(self.name),
+                config=RoleBasedOperationConfig(model=None, event=None, capability=None, tool=None),
+            )
 
     agent = Agent(
         tool_model(),
         name='render_durable_rejection',
         deps_type=type(None),
         capabilities=[
-            FakeDurability(),
+            UnsupportedDurability(),
             RenderSandbox(id='sandbox', client=workspace_harness.client, config=workspace_harness.config),
         ],
     )

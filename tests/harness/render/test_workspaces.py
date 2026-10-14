@@ -7,13 +7,10 @@ storage shared by this test process, so these cases do not establish hosted stor
 from __future__ import annotations
 
 import inspect
-from contextvars import ContextVar
 from pathlib import Path
-from typing import ParamSpec, TypeVar
 
 import pytest
 from render import TaskContext, Workflows
-from render.workflows import TaskDefinition
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
@@ -22,25 +19,7 @@ from pydantic_ai_harness import RenderWorkflows
 
 from ...durable_exec.workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents
 from ...workspace_fakes import InMemoryProvider
-from .conftest import RecordingTaskContext
-
-P = ParamSpec('P')
-R = TypeVar('R')
-
-
-class WorkspaceTaskContext(RecordingTaskContext):
-    """Expose whether the shared provider is being reached from a child task."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.in_child_task = ContextVar('render_workspace_child_task', default=False)
-
-    async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
-        token = self.in_child_task.set(True)
-        try:
-            return await super().run(task, *args, **kwargs)
-        finally:
-            self.in_child_task.reset(token)
+from .conftest import RecordingTaskContext, WorkspaceTaskContext
 
 
 @pytest.mark.parametrize('check', cases())

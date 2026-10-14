@@ -18,6 +18,7 @@ from typing_extensions import TypeVar, deprecated
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
+from ._context_size import context_tokens
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
@@ -151,8 +152,9 @@ class AnchoredEvidence:
 
 
 def context_window_fraction(messages: Sequence[_messages.ModelMessage], context_window: int | None) -> float | None:
-    """The latest response's `total_tokens` over `context_window`, or `None` when it can't be calculated.
+    """The latest response's context size over `context_window`, or `None` when it can't be calculated.
 
+    The context size is the response's `context_tokens`.
     Shared by [`RunContext.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] and
     [`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used].
     """
@@ -160,7 +162,7 @@ def context_window_fraction(messages: Sequence[_messages.ModelMessage], context_
         return None
     for message in reversed(messages):
         if isinstance(message, _messages.ModelResponse):
-            tokens = message.usage.total_tokens
+            tokens = context_tokens(message)
             return tokens / context_window if tokens else None
     return None
 
@@ -518,10 +520,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     def context_window_used(self) -> float | None:
         """Fraction of the model's context window occupied as of the most recent model response.
 
-        Computed as the latest response's reported
-        [`total_tokens`][pydantic_ai.usage.RequestUsage.total_tokens] (input, including cached tokens,
-        plus output) over the active model's
-        [`context_window`][pydantic_ai.models.AbstractModel.context_window]. This estimates how full
+        Computed as the latest response's reported input tokens (including cached tokens) plus output
+        tokens over the active model's
+        [`context_window`][pydantic_ai.models.AbstractModel.context_window]. For a response a provider
+        merged from several requests (Google long decode), whose usage sums their input tokens, the
+        input is the first request's. This estimates how full
         the next request may be; history processing and newly added content can change its actual
         size, and the value can exceed `1.0` when the last response came from a model with a larger
         window. Useful to trigger history compaction, e.g. in a

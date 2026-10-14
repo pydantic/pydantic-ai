@@ -150,6 +150,7 @@ _CAPABILITY_PAGE_META = {
     'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
     'render-sandbox.md': ('render_sandbox', 'Render Sandbox'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
+    'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
     'bubblewrap-sandbox.md': ('bubblewrap_sandbox', 'Bubblewrap Sandbox'),
     'repo-context.md': ('repo_context', 'Repo Context'),
