@@ -1328,6 +1328,25 @@ class _RequireUrlMediaType:
             schema['choices'][kind] = pydantic_core.core_schema.chain_schema([cls._carries_media_type(), choice])
         return schema
 
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, schema: pydantic_core.CoreSchema, handler: pydantic.GetJsonSchemaHandler
+    ) -> pydantic.json_schema.JsonSchemaValue:
+        """Document each gated URL choice as the choice it gates.
+
+        In validation mode, pydantic documents a chain by its first step. Here that is the anonymous
+        `media_type` mapping, so the discriminator `mapping` would carry an inline object where OpenAPI
+        requires a reference, and FastAPI could not build `/openapi.json` for a route that uses
+        `ModelMessage`.
+        """
+        assert schema['type'] == 'tagged-union', schema['type']
+        choices = dict(schema['choices'])
+        for kind in _FILE_URL_KINDS:
+            gated = choices[kind]
+            assert isinstance(gated, dict) and gated['type'] == 'chain', gated
+            choices[kind] = gated['steps'][-1]
+        return handler({**schema, 'choices': choices})
+
     @staticmethod
     def _carries_media_type() -> pydantic_core.CoreSchema:
         mapping_carrying_media_type = pydantic_core.core_schema.typed_dict_schema(
