@@ -34,6 +34,7 @@ EXEMPT_PAGES = {
     'capabilities/thinking.md': 'thinking support and settings differ per model',
     'evals/evaluators/built-in.md': "documents the judge's default model",
     'harness/clai2.md': 'lists the models Codex offers',
+    'harness/gh-aw.md': 'the engine runs `openai/` models on Chat Completions, where the aliased ones reject tools',
     'harness/compaction.md': 'context windows differ per model',
     'realtime/azure.md': 'Azure Voice Live serves specific models',
     'realtime/overview.md': 'Azure Voice Live serves specific models',
