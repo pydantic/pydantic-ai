@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-import json
+import re
 from collections.abc import Callable
 from dataclasses import replace
-from typing import Any, cast
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
-import httpx2
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, AgentRunResultEvent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     CachePoint,
@@ -25,9 +24,10 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.planning import (
@@ -55,19 +55,16 @@ from pydantic_ai_harness.planning._toolset import (
     status_icon,
     validate_hierarchy,
 )
-from tests.conftest import try_import
+from tests.conftest import RequestCapture, try_import
 from tests.harness._recording_durability import RecordingDurability
+from tests.models.conftest import cache_breakpoints, json_objects
 
 with try_import() as anthropic_imports:
-    from anthropic import AsyncAnthropic
-
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as openai_imports:
-    from openai import AsyncOpenAI
-
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
@@ -1333,6 +1330,11 @@ class TestEndToEnd:
         ]
         assert cache_points(result_2.all_messages()) == []
 
+    @pytest.mark.vcr
+    @pytest.mark.moves_cache_prefix(
+        reason='The plan reminder and its breakpoint exist only in the request they are sent with, so the next '
+        'request drops them by design; the test asserts everything before them carries over unchanged.'
+    )
     @pytest.mark.parametrize(
         'provider',
         [
@@ -1343,144 +1345,104 @@ class TestEndToEnd:
         ],
     )
     async def test_breakpoint_lands_on_the_last_tool_result_on_the_wire(
-        self, provider: str, allow_model_requests: None
+        self,
+        provider: str,
+        allow_model_requests: None,
+        request_capture: RequestCapture,
+        anthropic_api_key: str,
+        openai_api_key: str,
     ) -> None:
-        """On the bytes the provider receives, each request caches up to the block before the reminder.
+        """On the bytes the provider receives, each request caches up to the latest tool result.
 
-        That block is the latest tool result, the last content the next request keeps, so the next
-        request reads its whole prefix from cache. Anchoring on the last user prompt instead left every
-        tool turn since it uncached, and Anthropic automatic caching then wrote its entry at the reminder,
-        which no later request contains. A mock transport rather than a recording: the claim is where
-        the breakpoints land across a whole tool loop, which the outgoing request bodies show.
+        That block is the last one the next request keeps, so the next request reads the whole tool
+        history back from cache. Anchoring on the last user prompt instead left every tool turn since it
+        uncached, and Anthropic automatic caching then wrote its entry at the reminder, which no later
+        request contains. The recorded usage shows the reads growing turn over turn.
         """
-        script: list[tuple[str, dict[str, object]] | None] = [
-            ('write_plan', {'items': [{'content': 'inspect'}]}),
-            ('lookup', {'n': 1}),
-            ('lookup', {'n': 2}),
-            None,
-        ]
-        bodies: list[dict[str, Any]] = []
-        sse = _anthropic_sse if provider == 'anthropic' else _openai_sse
-
-        def handler(request: httpx2.Request) -> httpx2.Response:
-            bodies.append(json.loads(request.content))
-            content = sse(len(bodies), script[len(bodies) - 1])
-            return httpx2.Response(200, content=content, headers={'content-type': 'text/event-stream'})
-
-        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
-            if provider == 'anthropic':
-                client = AsyncAnthropic(api_key='test', http_client=http_client)
-                agent: Agent[None, str] = Agent(
-                    AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client)),
-                    capabilities=[Planning()],
-                    model_settings=AnthropicModelSettings(anthropic_cache=True),
-                )
-            else:
-                openai_client = AsyncOpenAI(api_key='test', http_client=http_client)
-                agent = Agent(
-                    OpenAIChatModel('gpt-5.6', provider=OpenAIProvider(openai_client=openai_client)),
-                    capabilities=[Planning()],
-                )
-
-            @agent.tool_plain
-            def lookup(n: int) -> str:
-                return f'result {n}'
-
-            # Streamed, so the mock needs one response shape whether or not a capability with an event hook
-            # elsewhere in the process would have made `agent.run` stream anyway.
-            async with agent.run_stream('Fix the bug.') as streamed:
-                assert await streamed.get_output() == 'done'
-
-        marker = 'cache_control' if provider == 'anthropic' else 'prompt_cache_breakpoint'
-        sent = [_wire_blocks(body) for body in bodies]
-        assert len(sent) == 4
-        assert not any(marker in block for block in sent[0])
-        cached_prefixes: list[list[str]] = []
-        for request in sent[1:]:
-            marked = [i for i, block in enumerate(request) if marker in block]
-            reminder_start = next(i for i, block in enumerate(request) if block.get('text') == '<plan-reminder>\n')
-            assert marked == [reminder_start - 1]
-            assert request[marked[0]]['type' if provider == 'anthropic' else 'role'] == (
-                'tool_result' if provider == 'anthropic' else 'tool'
+        if provider == 'anthropic':
+            model: Model = AnthropicModel(
+                'claude-sonnet-4-6',
+                provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
             )
-            cached_prefixes.append([_without(marker, block) for block in request[: marked[0] + 1]])
-        for cached, later in zip(cached_prefixes, sent[2:]):
-            assert [_without(marker, block) for block in later[: len(cached)]] == cached
-
-
-def _anthropic_sse(index: int, step: tuple[str, dict[str, object]] | None) -> bytes:
-    if step is None:
-        start_block: dict[str, object] = {'type': 'text', 'text': ''}
-        delta: dict[str, object] = {'type': 'text_delta', 'text': 'done'}
-    else:
-        start_block = {'type': 'tool_use', 'id': f't{index}', 'name': step[0], 'input': {}}
-        delta = {'type': 'input_json_delta', 'partial_json': json.dumps(step[1])}
-    stop_reason = 'end_turn' if step is None else 'tool_use'
-    message: dict[str, object] = {
-        'id': f'msg_{index}',
-        'type': 'message',
-        'role': 'assistant',
-        'model': 'claude-sonnet-4-6',
-        'content': [],
-        'stop_reason': None,
-        'stop_sequence': None,
-        'usage': {'input_tokens': 1, 'output_tokens': 1},
-    }
-    events: list[dict[str, object]] = [
-        {'type': 'message_start', 'message': message},
-        {'type': 'content_block_start', 'index': 0, 'content_block': start_block},
-        {'type': 'content_block_delta', 'index': 0, 'delta': delta},
-        {'type': 'content_block_stop', 'index': 0},
-        {
-            'type': 'message_delta',
-            'delta': {'stop_reason': stop_reason, 'stop_sequence': None},
-            'usage': {'output_tokens': 1},
-        },
-        {'type': 'message_stop'},
-    ]
-    return ''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in events).encode()
-
-
-def _openai_sse(index: int, step: tuple[str, dict[str, object]] | None) -> bytes:
-    if step is None:
-        delta: dict[str, object] = {'role': 'assistant', 'content': 'done'}
-    else:
-        call = {
-            'index': 0,
-            'id': f't{index}',
-            'type': 'function',
-            'function': {'name': step[0], 'arguments': json.dumps(step[1])},
-        }
-        delta = {'role': 'assistant', 'tool_calls': [call]}
-    chunk = {'id': f'chatcmpl-{index}', 'object': 'chat.completion.chunk', 'created': 0, 'model': 'gpt-5.6'}
-    chunks: list[dict[str, object]] = [
-        {**chunk, 'choices': [{'index': 0, 'delta': delta, 'finish_reason': None}]},
-        {**chunk, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop' if step is None else 'tool_calls'}]},
-    ]
-    return (''.join(f'data: {json.dumps(chunk)}\n\n' for chunk in chunks) + 'data: [DONE]\n\n').encode()
-
-
-def _wire_blocks(body: dict[str, Any]) -> list[dict[str, Any]]:
-    """Every content block of a request body, tagged with its message's role, in order.
-
-    A string body counts as one text block, so a tool result reads the same whether or not it carries
-    a breakpoint (OpenAI turns a marked string body into a one-part list).
-    """
-    blocks: list[dict[str, Any]] = []
-    for message in body['messages']:
-        tag = {key: value for key, value in message.items() if key != 'content'}
-        content = message.get('content')
-        if isinstance(content, str):
-            blocks.append({**tag, 'type': 'text', 'text': content})
-        elif isinstance(content, list):
-            blocks.extend({**tag, **block} for block in cast(list[dict[str, Any]], content))
+            settings: ModelSettings = AnthropicModelSettings(anthropic_cache=True)
+            path = '/v1/messages'
         else:
-            blocks.append(tag)
-    return blocks
+            model = OpenAIChatModel(
+                'gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+            )
+            settings = OpenAIChatModelSettings(openai_reasoning_effort='none')
+            path = '/chat/completions'
+        agent: Agent[None, str] = Agent(model, capabilities=[Planning()], model_settings=settings)
 
+        @agent.tool_plain
+        def read_section(n: int) -> str:
+            """Read section `n` of the incident report."""
+            # Long enough that the cached prefix clears the providers' minimum cacheable size.
+            return '\n'.join(f'Section {n}, line {i}: the service returned 503 for a while.' for i in range(150))
 
-def _without(marker: str, block: dict[str, Any]) -> str:
-    return json.dumps({key: value for key, value in block.items() if key != marker}, sort_keys=True)
+        # Streamed, so the recording has one response shape whether or not a capability with an event hook
+        # elsewhere in the process would have made `agent.run` stream anyway. Unlike `run_stream`, this
+        # doesn't stop at the first text the model writes alongside a tool call.
+        messages: list[ModelMessage] = []
+        async with agent.run_stream_events(
+            'First call `write_plan` with the single step "read the report". Then call `read_section` with '
+            'n=1, then with n=2, one tool call per turn. After that, reply with just the word done.'
+        ) as events:
+            async for event in events:
+                if isinstance(event, AgentRunResultEvent):
+                    messages = event.result.all_messages()
+
+        bodies = request_capture.bodies(path)
+        assert [cache_breakpoints(body) for body in bodies] == snapshot(
+            {
+                'anthropic': [
+                    ({'type': 'ephemeral', 'ttl': '5m'}, []),
+                    ({'type': 'ephemeral', 'ttl': '5m'}, ['messages[2].content[0]']),
+                    ({'type': 'ephemeral', 'ttl': '5m'}, ['messages[4].content[0]']),
+                    ({'type': 'ephemeral', 'ttl': '5m'}, ['messages[6].content[0]']),
+                    ({'type': 'ephemeral', 'ttl': '5m'}, ['messages[8].content[0]']),
+                    ({'type': 'ephemeral', 'ttl': '5m'}, ['messages[10].content[0]']),
+                    ({'type': 'ephemeral', 'ttl': '5m'}, ['messages[12].content[0]']),
+                ],
+                'openai': [
+                    (None, []),
+                    (None, ['messages[3].content[0]']),
+                    (None, ['messages[5].content[0]']),
+                    (None, ['messages[7].content[0]']),
+                ],
+            }
+        )[provider]
+        # From the second request on, the one block breakpoint is on the latest tool result, right before
+        # the plan reminder, and everything before that message is what the next request starts with.
+        for body, later in zip(bodies[1:], [*bodies[2:], None]):
+            _, (marked,) = cache_breakpoints(body)
+            message_index, block_index = (int(i) for i in re.findall(r'\[(\d+)\]', marked))
+            if later is not None:
+                assert later.get('tools') == body.get('tools') and later.get('system') == body.get('system')
+                assert json_objects(later['messages'])[:message_index] == json_objects(body['messages'])[:message_index]
+            body_messages = json_objects(body['messages'])
+            content = json_objects(body_messages[message_index]['content'])
+            if provider == 'anthropic':
+                assert content[block_index]['type'] == 'tool_result'
+                assert content[block_index + 1]['text'] == '<plan-reminder>\n'
+            else:
+                assert body_messages[message_index]['role'] == 'tool'
+                assert json_objects(body_messages[message_index + 1]['content'])[0]['text'] == '<plan-reminder>\n'
+        responses = [message for message in messages if isinstance(message, ModelResponse)]
+        assert [(r.usage.cache_read_tokens, r.usage.cache_write_tokens) for r in responses] == snapshot(
+            {
+                'anthropic': [
+                    (2334, 0),
+                    (2334, 166),
+                    (2456, 2966),
+                    (5378, 2966),
+                    (8300, 138),
+                    (8394, 130),
+                    (8480, 149),
+                ],
+                'openai': [(1243, 0), (1243, 110), (1312, 2619), (3890, 2619)],
+            }
+        )[provider]
 
 
 async def test_plan_tools_update_and_remove_through_the_recorded_store() -> None:
