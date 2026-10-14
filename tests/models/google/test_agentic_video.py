@@ -395,7 +395,6 @@ async def test_media_processing_pairing_preserves_explicit_ids(
 
 def test_untyped_tool_call_with_a_payload_is_not_media_processing() -> None:
     """Unit test: a manufactured unknown native tool must not be inferred as media processing."""
-    """Unit test: pins that only the observed id-only shape is inferred; no model produces this input today."""
     with pytest.raises(UnexpectedModelBehavior, match='Missing tool_type on native tool part'):
         _process_response([{'tool_call': {'id': 'other', 'args': {'query': 'x'}}}], grounding={})
 

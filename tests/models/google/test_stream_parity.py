@@ -27,7 +27,6 @@ from typing import Any
 import httpx2
 import pytest
 
-from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import BaseToolCallPart, ModelResponse, ModelResponsePart, NativeToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, FileSearchTool, WebFetchTool, WebSearchTool
@@ -148,12 +147,8 @@ async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str,
     model_name = _MODEL_NAME_PATTERN.search(interaction['request']['uri'])
     assert model_name is not None
     # vcrpy recorded the raw text as `string`; cassetter writes a typed `{type, content}` mapping.
-    response_body = interaction['response']['body']
-    if 'string' not in response_body:
-        assert response_body['type'] == 'text'
-    body_text = response_body.get('string', response_body.get('content'))
-    assert isinstance(body_text, str)
-    body = body_text.encode()
+    recorded_body = interaction['response']['body']
+    body = (recorded_body['string'] if 'string' in recorded_body else recorded_body['content']).encode()
     headers = {key: values[0] for key, values in interaction['response']['headers'].items()}
     headers.pop('content-encoding', None)
     headers.pop('content-length', None)
@@ -164,9 +159,9 @@ async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str,
         ),
     )
     model = GoogleModel(model_name.group(1), provider=provider)
-    request_body = recorded_request_body(interaction['request'])
-    assert is_str_dict(request_body)
-    model_request_parameters = ModelRequestParameters(native_tools=_native_tools(request_body))
+    model_request_parameters = ModelRequestParameters(
+        native_tools=_native_tools(recorded_request_body(interaction['request']))
+    )
 
     async def open_stream() -> AsyncIterator[GenerateContentResponse]:
         # One recorded response is compared, so a long decode's continuation token must not send another request.
