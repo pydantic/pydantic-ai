@@ -110,6 +110,25 @@ class TestLogfireMCP:
         assert ('Provider instructions.' in (request.instructions or '')) is include
 
     @pytest.mark.parametrize(
+        ('tool_prefix', 'note'),
+        [
+            ('logfire', '`query_run` is `logfire_query_run`.'),
+            ('work', '`query_run` is `work_query_run`.'),
+            (None, None),
+        ],
+    )
+    async def test_instructions_name_the_tool_prefix(
+        self, server: FastMCP, tool_prefix: str | None, note: str | None
+    ) -> None:
+        agent = Agent(TestModel(call_tools=[]), capabilities=[LogfireMCP(client=server, tool_prefix=tool_prefix)])
+        request = (await agent.run('Hello')).all_messages()[0]
+        assert isinstance(request, ModelRequest)
+        instructions = request.instructions or ''
+        assert ("which the server's own text leaves out" in instructions) is (note is not None)
+        if note is not None:
+            assert note in instructions
+
+    @pytest.mark.parametrize(
         ('auth', 'url'),
         [('key', LOGFIRE_US_MCP_URL), (per_user_token, LOGFIRE_US_MCP_URL), (None, LOGFIRE_EU_MCP_URL)],
     )

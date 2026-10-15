@@ -108,13 +108,30 @@ one. To add more than one `DayAI` to an agent, give each a distinct `id` and
 The agent sees each of the server's tools under the `day_ai_` prefix, as in
 `day_ai_<tool>`, so they don't collide with other tools on the agent. Set
 `tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names
-the server gives them. Earlier releases used the server's names unprefixed: pass
-`tool_prefix=None` to keep those names, for example for message histories or
-durable runs that recorded them.
+the server gives them.
 
 A [toolset wrapper](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/) on
 `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees,
 prefix included.
+
+## Upgrading
+
+`DayAI` used to give the agent the server's tool names unprefixed. They now
+reach the agent as `day_ai_<tool>`. Code that refers to them by name, such as a
+`filtered()` wrapper, an approval rule, or a `ToolGuardrail(tools=[...])`, needs
+the new names. Pass `tool_prefix=None` to keep the old ones. If you wrapped
+`DayAI` in
+[PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) to avoid
+collisions, you can drop the wrapper and set `tool_prefix` instead; keeping it
+adds both prefixes.
+
+- **Durable runs in flight.** A Temporal or DBOS run replays the model responses
+  it recorded, and their tool calls use the old names, so a run started before
+  the change that calls a `DayAI` tool after it no longer replays. Activity and
+  step names come from the capability's `id`, which is unchanged. Let those runs
+  finish, keep `tool_prefix=None` until they have, or version the deployment;
+  see [deploying
+  changes](https://pydantic.dev/docs/ai/harness/durable-execution/#engine-notes).
 
 ## Tool selection and approval
 

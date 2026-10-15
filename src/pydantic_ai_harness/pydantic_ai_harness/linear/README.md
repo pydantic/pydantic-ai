@@ -75,9 +75,15 @@ With durable execution such as Temporal, read the credential from the run's deps
 
 ## Tool names
 
-The agent sees each of the server's tools under the `linear_` prefix, as in `linear_list_issues`, so they don't collide with other tools on the agent. Set `tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names the server gives them. Earlier releases used the server's names unprefixed: pass `tool_prefix=None` to keep those names, for example for message histories or durable runs that recorded them.
+The agent sees each of the server's tools under the `linear_` prefix, as in `linear_list_issues`, so they don't collide with other tools on the agent. Set `tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names the server gives them.
 
 `read_only` selects tools by what the server marks as read-only, not by name, so the prefix does not change what it keeps. A [toolset wrapper](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/) on `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees, prefix included.
+
+## Upgrading
+
+`Linear` used to give the agent the server's tool names unprefixed. A tool such as `list_issues` now reaches the agent as `linear_list_issues`. Code that refers to them by name, such as a `filtered()` wrapper, an approval rule, or a `ToolGuardrail(tools=[...])`, needs the new names. Pass `tool_prefix=None` to keep the old ones. If you wrapped `Linear` in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) to avoid collisions, you can drop the wrapper and set `tool_prefix` instead; keeping it adds both prefixes.
+
+- **Durable runs in flight.** A Temporal or DBOS run replays the model responses it recorded, and their tool calls use the old names, so a run started before the change that calls a `Linear` tool after it no longer replays. Activity and step names come from the capability's `id`, which is unchanged. Let those runs finish, keep `tool_prefix=None` until they have, or version the deployment; see [deploying changes](https://pydantic.dev/docs/ai/harness/durable-execution/#engine-notes).
 
 ## Tool selection and approval
 
