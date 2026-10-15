@@ -614,7 +614,12 @@ async def test_resuming_a_suspended_response_defers_the_enqueued_reminder():
     assert result.output == 'done'
     assert 'Reminder' not in str(seen[0])
     assert [
-        [str(part.content) for part in messages[-1].parts if 'Reminder' in str(part.content)] for messages in seen[1:]
+        [
+            str(part.content)
+            for part in messages[-1].parts
+            if isinstance(part, UserPromptPart) and 'Reminder' in str(part.content)
+        ]
+        for messages in seen[1:]
     ] == [
         [
             '<system>Reminder: be terse. This is request 1.</system>',
@@ -940,9 +945,10 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_breakpoint_anthropic()
     _, anthropic_messages = await model._map_message(prepared, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
     model._apply_message_cache_control(anthropic_messages, '5m', _turn_scoped_tail_texts(prepared))  # pyright: ignore[reportPrivateUsage]
 
-    blocks = cast(list[dict[str, Any]], anthropic_messages[-1]['content'])
-    assert [block.get('text') for block in blocks[-2:]] == ['<system>Reminder.</system>', '<system>Reminder.</system>']
-    assert [index for index, block in enumerate(blocks) if 'cache_control' in block] == [len(blocks) - 2]
+    blocks = [block for message in anthropic_messages for block in cast(list[dict[str, Any]], message['content'])]
+    texts = [index for index, block in enumerate(blocks) if block.get('text') == '<system>Reminder.</system>']
+    assert len(texts) == 2
+    assert [index for index, block in enumerate(blocks) if 'cache_control' in block] == [texts[0]]
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
