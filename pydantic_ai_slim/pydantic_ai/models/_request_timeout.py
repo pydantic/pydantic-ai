@@ -98,9 +98,11 @@ class RequestDeadline:
 
 
 def carry_deadline(response: ModelResponse | StreamedResponse, deadline: RequestDeadline) -> None:
-    """Carry `deadline` on a suspended response, for the segments that continue it."""
-    if response.metadata is None:
-        response.metadata = {}
+    """Carry `deadline` on a suspended response, for the segments that continue it.
+
+    It goes next to the continuation pin, which a `FallbackModel` stamps on the response first.
+    """
+    assert response.metadata is not None, 'The continuation pin is stamped before the deadline is carried'
     namespace = response.metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})
     namespace[_CARRIED_DEADLINE_KEY] = deadline.expires_at().isoformat()
 
@@ -119,11 +121,9 @@ def without_carried_deadline(response: ModelResponse) -> ModelResponse:
     namespace = (metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
     if metadata is None or not (is_str_dict(namespace) and _CARRIED_DEADLINE_KEY in namespace):
         return response
+    # The continuation pin stays next to it, so the namespace isn't left empty.
     namespace = {key: value for key, value in namespace.items() if key != _CARRIED_DEADLINE_KEY}
-    metadata = {key: value for key, value in metadata.items() if key != _PYDANTIC_AI_METADATA_KEY}
-    if namespace:
-        metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
-    return replace(response, metadata=metadata or None)
+    return replace(response, metadata={**metadata, _PYDANTIC_AI_METADATA_KEY: namespace})
 
 
 def start_request_deadline(model: Model, model_settings: ModelSettings | None) -> RequestDeadline | None:
