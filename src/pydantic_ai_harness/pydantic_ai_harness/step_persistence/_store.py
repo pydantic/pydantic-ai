@@ -337,57 +337,56 @@ _STRING_ADAPTER: TypeAdapter[str] = TypeAdapter(str)
 _OBJECT_LIST_ADAPTER: TypeAdapter[list[object]] = TypeAdapter(list[object])
 
 
-class _MessageRefs(TypedDict):
-    message_refs: list[str]
+class _StoredMessages(TypedDict):
+    """What a snapshot row's `messages` column holds when its history is in `snapshot_message_refs`."""
+
+    stored_messages: int
 
 
-_MESSAGE_REFS_ADAPTER: TypeAdapter[_MessageRefs] = TypeAdapter(_MessageRefs)
+_STORED_MESSAGES_ADAPTER: TypeAdapter[_StoredMessages] = TypeAdapter(_StoredMessages)
 
 
-def _store_messages(conn: sqlite3.Connection, messages_json: object) -> list[str]:
-    """Insert the messages `snapshot_messages` lacks; return the snapshot's ordered references."""
-    refs: list[str] = []
+def _store_messages(conn: sqlite3.Connection, snapshot_seq: int, messages: list[object]) -> None:
+    """Store the messages `snapshot_messages` lacks and reference each from the snapshot, in order."""
     rows: list[tuple[str, str]] = []
-    for message in _OBJECT_LIST_ADAPTER.validate_python(messages_json):
+    refs: list[tuple[int, int, str]] = []
+    for position, message in enumerate(messages):
         text = json.dumps(message, sort_keys=True, separators=(',', ':'))
         sha256 = hashlib.sha256(text.encode()).hexdigest()
-        refs.append(sha256)
         rows.append((sha256, text))
+        refs.append((snapshot_seq, position, sha256))
     conn.executemany('INSERT OR IGNORE INTO snapshot_messages (sha256, message) VALUES (?, ?)', rows)
-    return refs
+    conn.executemany('INSERT INTO snapshot_message_refs (snapshot_seq, position, sha256) VALUES (?, ?, ?)', refs)
 
 
-def _snapshot_already_saved(conn: sqlite3.Connection, snapshot: ContinuableSnapshot) -> bool:
-    """Whether the `snapshots_idempotency_ignore` trigger would drop this snapshot's row."""
-    if snapshot.idempotency_key is None:
-        return False
-    row = conn.execute(
-        'SELECT 1 FROM snapshot_idempotency_keys WHERE run_id = ? AND idempotency_key = ?',
-        (snapshot.run_id, snapshot.idempotency_key),
-    ).fetchone()
-    return row is not None
+def _referenced_messages(
+    conn: sqlite3.Connection, seqs_sql: str, params: tuple[object, ...]
+) -> dict[int, list[str | None]]:
+    """Each snapshot's referenced message JSON in order, `None` for a message that is missing."""
+    histories: dict[int, list[str | None]] = {}
+    for seq, message in conn.execute(
+        'SELECT r.snapshot_seq, m.message FROM snapshot_message_refs r '
+        'LEFT JOIN snapshot_messages m ON m.sha256 = r.sha256 '
+        f'WHERE r.snapshot_seq IN ({seqs_sql}) ORDER BY r.snapshot_seq, r.position',
+        params,
+    ):
+        histories.setdefault(seq, []).append(message)
+    return histories
 
 
-def _expand_message_refs(conn: sqlite3.Connection, messages: object) -> object:
-    """Rebuild the JSON list a `deduplicate_messages` row references; return any other value as stored.
+def _history_json(messages: object, referenced: list[str | None]) -> object:
+    """Rebuild the JSON list of a snapshot whose history is referenced; return a row written inline as stored.
 
-    Raises `ValueError` when a referenced message is missing.
+    Raises `ValueError` when the snapshot's references or messages are incomplete.
     """
-    # Harness writes a JSON list otherwise, so only a referencing row starts with `{`.
+    # Rows written before messages were stored once hold the JSON list itself.
     if not (isinstance(messages, str) and messages.startswith('{')):
         return messages
-    refs = _MESSAGE_REFS_ADAPTER.validate_json(messages)['message_refs']
-    unique = list(dict.fromkeys(refs))
-    found: dict[str, str] = {}
-    per_query = 500  # under SQLite's lowest default limit on bound parameters
-    for start in range(0, len(unique), per_query):
-        chunk = unique[start : start + per_query]
-        placeholders = ','.join('?' * len(chunk))
-        query = f'SELECT sha256, message FROM snapshot_messages WHERE sha256 IN ({placeholders})'
-        found.update(conn.execute(query, chunk).fetchall())
-    if len(found) < len(unique):
-        raise ValueError(f'snapshot references {len(unique) - len(found)} message(s) missing from `snapshot_messages`')
-    return '[' + ','.join(found[sha256] for sha256 in refs) + ']'
+    expected = _STORED_MESSAGES_ADAPTER.validate_json(messages)['stored_messages']
+    found = [message for message in referenced if message is not None]
+    if len(found) != expected:
+        raise ValueError(f'snapshot is missing {expected - len(found)} of its {expected} stored message(s)')
+    return '[' + ','.join(found) + ']'
 
 
 def _str_str_dict(value: object) -> dict[str, str]:
@@ -972,6 +971,29 @@ CREATE TABLE IF NOT EXISTS snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_snapshots_run ON snapshots(run_id, seq);
 
+CREATE TABLE IF NOT EXISTS snapshot_messages (
+    sha256 TEXT PRIMARY KEY,
+    message TEXT NOT NULL
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS snapshot_message_refs (
+    snapshot_seq INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    PRIMARY KEY (snapshot_seq, position)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_snapshot_message_refs_sha256 ON snapshot_message_refs(sha256);
+CREATE TRIGGER IF NOT EXISTS snapshots_release_messages
+AFTER DELETE ON snapshots
+BEGIN
+    DELETE FROM snapshot_message_refs WHERE snapshot_seq = OLD.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS snapshot_message_refs_release
+AFTER DELETE ON snapshot_message_refs
+WHEN NOT EXISTS (SELECT 1 FROM snapshot_message_refs WHERE sha256 = OLD.sha256)
+BEGIN
+    DELETE FROM snapshot_messages WHERE sha256 = OLD.sha256;
+END;
+
 CREATE TABLE IF NOT EXISTS snapshot_idempotency_keys (
     run_id TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
@@ -1001,7 +1023,7 @@ class SqliteStepStore:
 
     `BinaryContent` payloads and text parts at or above
     `media_threshold_bytes` (default 64 KiB) are externalized through that
-    store, leaving a URI reference in the `snapshots.messages` JSON. Pass
+    store, leaving a URI reference in the stored message JSON. Pass
     `media_store=None` to keep payloads inline. Snapshots written before text
     externalization existed still restore: `restore_media` recognizes the
     older marker shape.
@@ -1023,14 +1045,20 @@ class SqliteStepStore:
     - `events(seq PK AUTOINCREMENT, run_id, kind, step_index, timestamp, ..., idempotency_key)`
     - `snapshots(seq PK AUTOINCREMENT, run_id, step_index, ..., messages)` --
       the `AUTOINCREMENT` `seq` mirrors `FileStepStore._next_snapshot_seq`
-      so `ctx.run_step` resets across `Agent.run` cannot collide.
+      so `ctx.run_step` resets across `Agent.run` cannot collide. `messages`
+      holds `{"stored_messages": N}`; rows written before messages were
+      stored once hold the history's JSON list, and still read.
+    - `snapshot_messages(sha256 PK, message)` -- each message's JSON once,
+      keyed by its SHA-256.
+    - `snapshot_message_refs(snapshot_seq, position PK, sha256)` -- each
+      snapshot's history, in order. Deleting a snapshot row deletes its
+      references, and a message no snapshot references any more, by trigger,
+      so pruning and deleting runs release messages without the caller's help.
     - `snapshot_idempotency_keys(run_id, idempotency_key PK)` -- survives pruning.
     - `tool_effects(run_id, tool_call_id PK)` -- upsert per
       `(run_id, tool_call_id)`, matching `InMemoryStepStore` semantics.
     - `media(sha256 PK, media_type, bytes, size_bytes)` -- `INSERT OR IGNORE`
       for content-addressed dedup.
-    - `snapshot_messages(sha256 PK, message)` -- only with
-      `deduplicate_messages=True`, described below.
 
     The `runs.run_id` PK enforces the "explicit `run_id` is single-shot"
     contract -- `register_run` raises `sqlite3.IntegrityError` on reuse,
@@ -1041,13 +1069,9 @@ class SqliteStepStore:
     snapshot growth: after each write, one indexed `DELETE` prunes rows
     outside the retain set (see `_sync_prune_snapshots`).
 
-    `deduplicate_messages=True` stores each message once in
-    `snapshot_messages` and writes the snapshot's
-    `messages` column as `{"message_refs": [sha256, ...]}`. Every snapshot
-    repeats the history before it, so this keeps the store growing with
-    distinct messages rather than with snapshots times history length. Reads
-    accept both row shapes whatever the flag, so a store written with and
-    without it stays readable by this release and later ones.
+    Every snapshot repeats the history before it, so storing each message once
+    keeps the store growing with distinct messages rather than with snapshots
+    times history length.
     """
 
     def __init__(
@@ -1058,13 +1082,11 @@ class SqliteStepStore:
         media_store: MediaStore | None | _AutoMedia = 'auto',
         media_threshold_bytes: int = _DEFAULT_MEDIA_THRESHOLD_BYTES,
         max_snapshots_per_run: int | None = None,
-        deduplicate_messages: bool = False,
     ) -> None:
         if (database is None) == (connection is None):
             raise ValueError('provide exactly one of `database=` or `connection=`')
         _validate_max_snapshots(max_snapshots_per_run)
         self._max_snapshots_per_run = max_snapshots_per_run
-        self._deduplicate_messages = deduplicate_messages
         self._database = Path(database) if database is not None else None
         self._connection = connection
         self._schema_ready = False
@@ -1149,11 +1171,6 @@ class SqliteStepStore:
             END;
             """
         )
-        if self._deduplicate_messages:
-            conn.execute(
-                'CREATE TABLE IF NOT EXISTS snapshot_messages (sha256 TEXT PRIMARY KEY, message TEXT NOT NULL) '
-                'WITHOUT ROWID'
-            )
         conn.commit()
         self._schema_ready = True
 
@@ -1302,23 +1319,16 @@ class SqliteStepStore:
         await anyio.to_thread.run_sync(self._sync_save_snapshot, snapshot, messages_json)
 
     def _sync_save_snapshot(self, snapshot: ContinuableSnapshot, messages_json: object) -> None:
+        messages = _OBJECT_LIST_ADAPTER.validate_python(messages_json)
         conn = self._open()
-        # On a connection this store opened, the messages and the row that
-        # references them commit together; closing without `COMMIT` rolls both back.
-        own_transaction = self._deduplicate_messages and self._connection is None
+        # On a connection this store opened, the row and its messages commit
+        # together; closing without `COMMIT` rolls both back.
+        own_transaction = self._connection is None
         try:
             self._ensure_schema(conn)
             if own_transaction:
                 conn.execute('BEGIN IMMEDIATE')
-            if self._deduplicate_messages:
-                # The idempotency trigger's `RAISE(IGNORE)` drops only the snapshot row, so
-                # check first, or a retry's messages would stay behind with nothing referencing them.
-                if _snapshot_already_saved(conn, snapshot):
-                    if own_transaction:
-                        conn.execute('COMMIT')
-                    return
-                messages_json = {'message_refs': _store_messages(conn, messages_json)}
-            conn.execute(
+            cursor = conn.execute(
                 'INSERT INTO snapshots ('
                 'run_id, step_index, conversation_id, parent_run_id, agent_name, timestamp, state, messages, '
                 'idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -1330,10 +1340,14 @@ class SqliteStepStore:
                     snapshot.agent_name,
                     snapshot.timestamp.isoformat(),
                     snapshot.state,
-                    json.dumps(messages_json),
+                    json.dumps(_StoredMessages(stored_messages=len(messages))),
                     snapshot.idempotency_key,
                 ),
             )
+            # The idempotency trigger ignores a retried save's row, leaving `lastrowid` at an earlier one.
+            if cursor.rowcount == 1:
+                assert cursor.lastrowid is not None
+                _store_messages(conn, cursor.lastrowid, messages)
             self._sync_prune_snapshots(conn, snapshot.run_id)
             if own_transaction:
                 conn.execute('COMMIT')
@@ -1347,7 +1361,8 @@ class SqliteStepStore:
         sibling `media` table is content-addressed and may be shared across
         snapshots and runs, so a deleted snapshot row never removes a media row
         -- orphaned-blob GC is a separate concern (see the capability README
-        non-goals).
+        non-goals). Stored messages no remaining snapshot references are
+        deleted with the rows, by the `snapshots_release_messages` trigger.
 
         The retain set is computed inside SQL rather than enumerated as bound
         parameters: the newest `keep` by `seq` (which subsumes the newest
@@ -1395,14 +1410,15 @@ class SqliteStepStore:
             self._ensure_schema(conn)
             sql = (
                 'SELECT step_index, conversation_id, parent_run_id, agent_name, timestamp, state, messages, '
-                'idempotency_key '
+                'idempotency_key, seq '
                 'FROM snapshots WHERE run_id = ?'
             )
             if not include_interrupted:
                 sql += " AND state = 'complete'"
             row = conn.execute(sql + ' ORDER BY seq DESC LIMIT 1', (run_id,)).fetchone()
             if row is not None:
-                row = (*row[:6], _expand_message_refs(conn, row[6]), row[7])
+                referenced = _referenced_messages(conn, '?', (row[8],))
+                row = (*row[:6], _history_json(row[6], referenced.get(row[8], [])), row[7])
         finally:
             self._maybe_close(conn)
         if row is None:
@@ -1468,15 +1484,16 @@ class SqliteStepStore:
             self._ensure_schema(conn)
             sql = (
                 'SELECT step_index, conversation_id, parent_run_id, agent_name, timestamp, state, messages, '
-                'idempotency_key '
+                'idempotency_key, seq '
                 'FROM snapshots WHERE run_id = ?'
             )
             if not include_interrupted:
                 sql += " AND state = 'complete'"
+            referenced = _referenced_messages(conn, 'SELECT seq FROM snapshots WHERE run_id = ?', (run_id,))
             rows: list[tuple[object, ...]] = []
             for row in conn.execute(sql + ' ORDER BY seq ASC', (run_id,)).fetchall():
                 try:
-                    messages = _expand_message_refs(conn, row[6])
+                    messages = _history_json(row[6], referenced.get(row[8], []))
                 except ValueError:
                     # Kept as stored, so `list_snapshots` skips and logs it like any unparsable row.
                     messages = row[6]
