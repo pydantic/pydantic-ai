@@ -10,7 +10,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from strict_no_cover_data import combine
 
 MODULE = """\
-def first(value):
+def first(run):
+    value = run()
     if value is None:
         return None  # pragma: no cover
     return value
@@ -31,13 +32,14 @@ def test_drops_arcs_a_311_job_borrowed(tmp_path: Path) -> None:
     name = str(module)
     data_dir = tmp_path / 'data'
     data_dir.mkdir()
-    # `first` returned from line 4, then the rest of an `asyncio` frame was filed under it, reaching line 3.
-    write(data_dir / '.coverage.3.11-all-extras-1', {name: [(-1, 2), (2, 4), (4, 650), (650, 3), (3, -618)]})
+    # While `first` waited on its call at line 2, the rest of `asyncio`'s `run_until_complete` was filed
+    # under it, reaching line 4.
+    write(data_dir / '.coverage.3.11-all-extras-1', {name: [(-1, 2), (2, 650), (650, 4), (4, -618)]})
     # The `sys.monitoring` core records arcs the parser does not predict, such as a line to itself.
-    write(data_dir / '.coverage.3.14-standard', {name: [(2, 2)]})
+    write(data_dir / '.coverage.3.14-standard', {name: [(3, 3)]})
 
     combine(data_dir, tmp_path / 'audit')
 
     audit = CoverageData(str(tmp_path / 'audit'))
     audit.read()
-    assert sorted(audit.arcs(name) or []) == [(-1, 2), (2, 2), (2, 4)]
+    assert sorted(audit.arcs(name) or []) == [(-1, 2), (3, 3)]
