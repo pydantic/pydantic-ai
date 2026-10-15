@@ -67,7 +67,7 @@ export function reduce(state: State, message: ServerMessage): State {
         running: message.running,
         status: message.status,
         questions: message.questions,
-        turnStartedAt: message.running ? (state.turnStartedAt ?? Date.now()) : null,
+        turnStartedAt: message.running ? state.turnStartedAt : null,
       }
     case 'item':
       return { ...state, entries: [...state.entries, message.item] }
