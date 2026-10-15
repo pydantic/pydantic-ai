@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ._base import BaseDurabilityCapability
-    from ._batch import BatchTicket, DurableBatchBinding
     from ._codec import IDENTITY_CODEC, JSON_CODEC, DurabilityCodec
     from ._operation import (
         CapabilityOperationId,
@@ -24,7 +23,6 @@ if TYPE_CHECKING:
         ModelCancelSuspendedResponseId,
         ModelCompactMessagesId,
         ModelRequestId,
-        ModelRequestParams,
         OperationConfigRole,
         ToolsetCallToolId,
         ToolsetGetInstructionsId,
@@ -44,8 +42,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     'BaseDurabilityCapability',
-    'DurableBatchBinding',
-    'BatchTicket',
     'ToolsetCallToolId',
     'CallableOperationBackend',
     'ModelCancelSuspendedResponseId',
@@ -64,7 +60,6 @@ __all__ = [
     'JournalCallableOperationBackend',
     'JournalOperationNamer',
     'ModelRequestId',
-    'ModelRequestParams',
     'OperationConfigRole',
     'RegisteredOperationBackend',
     'RoleBasedOperationConfig',
@@ -74,8 +69,6 @@ __all__ = [
 
 _exports = {
     'BaseDurabilityCapability': ('._base', 'BaseDurabilityCapability'),
-    'DurableBatchBinding': ('._batch', 'DurableBatchBinding'),
-    'BatchTicket': ('._batch', 'BatchTicket'),
     'DurabilityCodec': ('._codec', 'DurabilityCodec'),
     'DurabilityEngineSpec': ('._spec', 'DurabilityEngineSpec'),
     'IDENTITY_CODEC': ('._codec', 'IDENTITY_CODEC'),
@@ -88,7 +81,6 @@ _exports = {
     'EventStreamHandlerId': ('._operation', 'EventStreamHandlerId'),
     'ToolsetGetInstructionsId': ('._operation', 'ToolsetGetInstructionsId'),
     'ToolsetGetToolsId': ('._operation', 'ToolsetGetToolsId'),
-    'ModelRequestParams': ('._operation', 'ModelRequestParams'),
     'ModelRequestId': ('._operation', 'ModelRequestId'),
     'OperationConfigRole': ('._operation', 'OperationConfigRole'),
     'ToolsetKind': ('._operation', 'ToolsetKind'),

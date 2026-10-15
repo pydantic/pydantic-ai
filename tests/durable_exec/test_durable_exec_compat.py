@@ -75,8 +75,6 @@ from ..workspace_fakes import FakeWorkspace
 def test_public_engine_builder_exports() -> None:
     assert durable_exec.__all__ == [
         'BaseDurabilityCapability',
-        'DurableBatchBinding',
-        'BatchTicket',
         'ToolsetCallToolId',
         'CallableOperationBackend',
         'ModelCancelSuspendedResponseId',
@@ -95,7 +93,6 @@ def test_public_engine_builder_exports() -> None:
         'JournalCallableOperationBackend',
         'JournalOperationNamer',
         'ModelRequestId',
-        'ModelRequestParams',
         'OperationConfigRole',
         'RegisteredOperationBackend',
         'RoleBasedOperationConfig',

@@ -43,12 +43,6 @@ class ModelRequestId:
 
 @dataclass(frozen=True)
 class ModelRequestParams:
-    """Captured inputs to a durable model operation.
-
-    `model_id` identifies the registered model. Batch bindings receive these inputs in container code;
-    persist messages, settings and request parameters, not the live `run_context`.
-    """
-
     model_id: str | None = None
     _: KW_ONLY
     messages: list[ModelMessage]

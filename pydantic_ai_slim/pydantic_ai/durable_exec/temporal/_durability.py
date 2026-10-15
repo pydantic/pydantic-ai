@@ -21,7 +21,6 @@ from pydantic_ai.durable_exec._base import (
     BaseDurabilityCapability,
     conversation_id_from_run_id,
 )
-from pydantic_ai.durable_exec._batch import find_batch_model
 from pydantic_ai.durable_exec._capability_operation import CapabilityMethodDeclaration
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import (
@@ -37,7 +36,6 @@ from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_thre
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, infer_model
-from pydantic_ai.models.batch import BatchModel
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -45,8 +43,6 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, 
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
-from ._batch import TemporalBatchBinding
-from ._batch_queue import BatchQueueWorkflow
 from ._event_stream import (
     DurableAgentRunEvents,
     WorkflowStreamTopic,
@@ -303,7 +299,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # Populated by for_agent().
         self._operation_backend: TemporalOperationBackend | None = None
-        self._batch_binding: TemporalBatchBinding | None = None
 
     def _check_bindable(self) -> None:
         if self.in_durable_context:
@@ -336,28 +331,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             resolve_tool_config=self._resolve_temporal_tool_config,
             runtime=self,
         )
-        has_batch_model = any(map(find_batch_model, self._models_by_id.values()))
-        self._batch_binding = (
-            TemporalBatchBinding(
-                agent_name=self.name,
-                resolve_model=self._registered_batch_model,
-                activity_config=self._model_activity_config,
-            )
-            if has_batch_model
-            else None
-        )
         self._register_activities(agent)
-
-    def _registered_batch_model(self, model_id: str | None) -> BatchModel:
-        model = self._models_by_id.get(model_id or 'default')
-        batch_model = find_batch_model(model) if model is not None else None
-        if batch_model is None:
-            registered_as = f'under {model_id!r}' if model_id else 'as the default model'
-            raise UserError(f'No `BatchModel` is registered {registered_as} on this worker.')
-        return batch_model
-
-    def get_durable_batch_binding(self) -> TemporalBatchBinding | None:
-        return self._batch_binding
 
     def _workspace_call_transport(self) -> _WorkspaceCallTransport:
         return _WorkspaceCallTransport(self)
@@ -512,17 +486,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         backend = self._operation_backend
         if backend is None:
             return []
-        batch_registrations = self._batch_binding.registrations if self._batch_binding is not None else []
-        return [*backend.registrations(), *batch_registrations]
-
-    @property
-    def temporal_workflows(self) -> list[type]:
-        """The Temporal workflows this capability needs on the worker besides your own.
-
-        A `BatchModel` needs its batch queue workflow. `AgentPlugin` and `PydanticAIPlugin` register
-        these for you.
-        """
-        return [BatchQueueWorkflow] if self._batch_binding is not None else []
+        return list(backend.registrations())
 
     # --- Capability hooks ---
 
