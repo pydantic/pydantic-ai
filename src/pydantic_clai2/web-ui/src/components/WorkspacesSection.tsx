@@ -31,7 +31,7 @@ export function WorkspacesSection({ version, onError }: Props) {
   // Workspaces start and stop in other CLAIs too; list them again now and then while the plugin is on.
   useEffect(() => {
     if (rows === null) return
-    const interval = window.setInterval(() => void load(), 10000)
+    const interval = window.setInterval(() => void load(), 5000)
     return () => window.clearInterval(interval)
   }, [load, rows])
 

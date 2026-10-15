@@ -1382,7 +1382,7 @@ it; never show it to the model. A new backend implements `backend.Backend`: `cre
 plugin's settings, or returns `None` while it is off.
 
 **In the web UI.** While `workspaces` is on, the sidebar shows a **Workspaces** section above the
-projects: each workspace's ID, branch, and status, refreshed every ten seconds, and **Open**, which
+projects: each workspace's ID, branch, and status, refreshed every five seconds, and **Open**, which
 starts its CLAI if needed (`POST /api/workspaces/ID/open`) and opens its own page in a new tab. Only
 that response carries the workspace's token, to the page that already has its own; `GET
 /api/workspaces` never does.
