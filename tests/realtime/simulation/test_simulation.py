@@ -194,7 +194,7 @@ def test_second_commit_keeps_the_turn_of_earlier_audio_in_place() -> None:
     run_clean(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual')), scenario)
 
 
-def test_live_utterance_spoken_after_a_reply_is_filed_after_it() -> None:
+def test_live_utterance_transcribed_after_a_reply_is_filed_after_it() -> None:
     """On GPT-Live, audio streamed before the model's reply, transcribed only after it, is a turn after it (SIM-11, fixed by the session core)."""
 
     def scenario(sim: LiveSimulation) -> None:

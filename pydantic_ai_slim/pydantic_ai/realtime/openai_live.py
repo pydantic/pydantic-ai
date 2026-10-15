@@ -869,14 +869,15 @@ class OpenAILiveConnection(RealtimeConnection):
         if delegation is None:
             # A call we can't correlate to a delegation has no response we can wait on, so continue now.
             await self._send_event({'type': 'response.create'})
-        elif delegation.pending_tool_calls:
+            return True
+        if delegation.pending_tool_calls:
             # With `parallel_tool_calls` the backend resumes from all of its calls' outputs together.
-            pass
-        elif delegation.response_in_flight:
+            return True
+        if delegation.response_in_flight:
             # The response that asked for these calls may still ask for more: continue at its terminal.
             delegation.continuation_due = True
-        else:
-            await self._continue(delegation)
+            return True
+        await self._continue(delegation)
         return True
 
     async def _send_due_continuations(self) -> None:
