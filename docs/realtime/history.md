@@ -206,7 +206,8 @@ sends one frame per second — so for camera and screen streams, use both delibe
 
 Input transcription defaults to `'auto'`; see [Input transcription](audio.md#input-transcription)
 and each provider page for configuration. Transcripts are recorded with the user turn they describe,
-even when they arrive after that turn's response or overlap the following turn.
+even when they arrive after that turn's response or overlap the following turn (on Gemini Live and
+GPT-Live, until that response ends: see below).
 
 History follows the order of the provider's own conversation:
 
@@ -214,10 +215,13 @@ History follows the order of the provider's own conversation:
   it. A turn the user started while the model was still answering, but which the provider only committed
   after that answer ended, is recorded after the answer. Gemini Live and GPT-Live don't say where an input
   joined their conversation, nor when a reply starts: a spoken turn is recorded ahead of the reply to it, and
-  something sent while a reply is owed (requested, or already being spoken) is recorded after that reply.
-- A message appears in `all_messages()` once everything before it is final. A reply waits for the
-  transcript of the spoken turn before it, which can arrive after the reply itself is done, for up to 30
-  seconds after that; past that, the turn is recorded with the transcript it has so far.
+  something sent while a reply is owed (requested, or already being spoken) is recorded after that reply. On
+  them, a spoken turn's transcript is complete when the reply to it ends, and words transcribed after that are
+  recorded as a turn of their own, after the reply.
+- A message appears in `all_messages()` once everything before it is final. On OpenAI, Azure OpenAI, and
+  xAI, a reply waits for the transcript of the spoken turn before it, which can arrive after the reply
+  itself is done, for up to 30 seconds after that; past that, the turn is recorded with the transcript it
+  has so far.
 - Nothing is inserted ahead of messages already returned, so each snapshot starts with the one before it.
   The one exception is a tool's return, which always directly follows the response that called it: a tool
   that finishes after later messages were recorded has its return inserted ahead of them.

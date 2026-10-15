@@ -1216,3 +1216,14 @@ def test_a_reply_taken_with_audio_starts_ahead_of_it() -> None:
     assert [type(event).__name__ for event, _ in tracker.message([AudioDelta(b'\x00\x10')], takes_turn=True)] == (
         snapshot(['ResponseStarted', 'AudioDelta'])
     )
+
+
+def test_a_tool_result_the_backend_will_never_take_doesnt_join_the_conversation() -> None:
+    """Held behind the reply under way, a result that goes nowhere stays out of the conversation when that reply ends."""
+    tracker = InferredLifecycle(transcribes=True)
+    tracker.message([OutputTranscript('Let me check.')])
+    tracker.input_sent(0, ToolResult('call_1', output='sunny'))
+    tracker.input_unanswerable(0)
+    assert [type(event).__name__ for event, _ in tracker.message([ResponseDone()])] == snapshot(
+        ['InputLost', 'ResponseDone', 'ResponseEnded']
+    )
