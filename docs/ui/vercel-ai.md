@@ -52,6 +52,8 @@ If you're using a web framework not based on Starlette (e.g. Django or Flask) or
 !!! note
     This example uses FastAPI, but can be modified to work with any web framework.
 
+If you serialize [`VercelAIAdapter.dump_messages()`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] output yourself, use `model_dump(mode='json', by_alias=True)` so unset fields are omitted, as the AI SDK requires.
+
 ### Cancellation
 
 When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — `ctx.cancel()` from a tool, `AgentRun.cancel()`, or a [`CancellationToken`][pydantic_ai.CancellationToken] your server wires to a cancel endpoint — the adapter emits a Vercel `abort` chunk. [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) keeps the partial message and reports `isAbort` to `onFinish` instead of entering an error state. Pass an `on_cancel` callback to persist the resumable message history, as shown in the example below.
