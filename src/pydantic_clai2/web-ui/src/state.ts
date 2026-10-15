@@ -76,7 +76,7 @@ export function reduce(state: State, message: ServerMessage): State {
         status: message.status,
         questions: message.questions,
         dialogs: message.dialogs,
-        turnStartedAt: message.running ? (state.turnStartedAt ?? Date.now()) : null,
+        turnStartedAt: message.running ? state.turnStartedAt : null,
         theme: message.theme,
       }
     case 'item':
