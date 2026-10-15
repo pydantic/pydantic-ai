@@ -610,6 +610,7 @@ def response_price_calculation(response: ModelResponse) -> PriceCalculation | No
         provider_api_url=response.provider_url,
         provider_name=response.provider_name,
         genai_request_timestamp=response.timestamp,
+        price_context=response.provider_details,
     )
 
 

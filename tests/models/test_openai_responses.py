@@ -7830,7 +7830,7 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                             details={'reasoning_tokens': 448},
                             output_reasoning_tokens=448,
                             requests=1,
-                            cost=Decimal('0.00475625'),
+                            cost=Decimal('0.002378125'),
                         )
                     )
                     # The run counts the step once its response is committed, after the stream.
@@ -7842,7 +7842,7 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                         details={'reasoning_tokens': 448},
                         output_reasoning_tokens=448,
                         requests=1,
-                        cost=Decimal('0.00475625'),
+                        cost=Decimal('0.002378125'),
                     )
                 )
     assert run.usage == snapshot(
@@ -7852,7 +7852,7 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
             details={'reasoning_tokens': 448},
             output_reasoning_tokens=448,
             requests=1,
-            cost=Decimal('0.00475625'),
+            cost=Decimal('0.002378125'),
         )
     )
 
