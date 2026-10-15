@@ -87,6 +87,8 @@ from pydantic_ai.realtime import (
     TranscriptUpdate,
     _session as realtime_session_module,  # pyright: ignore[reportPrivateUsage]
 )
+from pydantic_ai.realtime._inferred_lifecycle import InferredLifecycle
+from pydantic_ai.realtime._lifecycle import LIFECYCLE_EVENT_TYPES, TaggedEvent
 from pydantic_ai.realtime._retained_audio import RetainedAudioBudget
 from pydantic_ai.realtime._session import (
     _AUDIO_TAP_MAX_CHUNKS,  # pyright: ignore[reportPrivateUsage]
@@ -12204,6 +12206,37 @@ class _ProviderToolConnection(FakeRealtimeConnection):
             yield event
 
 
+class _CoreProviderToolConnection(_ProviderToolConnection):
+    """The same provider, on version 2 of the lifecycle contract: the session core keeps its history and waits."""
+
+    _lifecycle_version = 2
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._lifecycle = InferredLifecycle(transcribes=True, transcripts_lag_replies=True)
+        self._inputs = 0
+
+    async def send(self, content: RealtimeInput) -> None:
+        self._lifecycle.input_sent(self._inputs, content)
+        self._inputs += 1
+        await super().send(content)
+
+    async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:
+        async for event in super().__aiter__():
+            yield self._lifecycle.message([event])
+        await asyncio.Event().wait()
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async for frame in self._tagged_frames():
+            for event, _ in frame:
+                if not isinstance(event, LIFECYCLE_EVENT_TYPES):
+                    yield event
+
+
+def _provider_tool_connection(core: bool) -> _ProviderToolConnection:
+    return _CoreProviderToolConnection() if core else _ProviderToolConnection()
+
+
 async def _run_native_approval(
     capabilities: list[AbstractCapability[Any]],
 ) -> tuple[_ProviderToolConnection, list[RealtimeEvent], list[ModelMessage]]:
@@ -12296,8 +12329,9 @@ async def test_a_provider_tool_call_nothing_approves_is_denied() -> None:
     assert not any(isinstance(e, DeferredToolResultsEvent) for e in events)
 
 
+@pytest.mark.parametrize('core', [False, True], ids=['codec', 'core'])
 @pytest.mark.parametrize('waiting_since', ['before the request', 'after its response ended'])
-async def test_wait_for_reply_waits_for_the_approval_decision(waiting_since: str) -> None:
+async def test_wait_for_reply_waits_for_the_approval_decision(waiting_since: str, core: bool) -> None:
     """The response that asked ended, but the exchange goes on once the call is decided: a wait covers the decision."""
     asked = asyncio.Event()
     decide_now = asyncio.Event()
@@ -12308,7 +12342,7 @@ async def test_wait_for_reply_waits_for_the_approval_decision(waiting_since: str
         return requests.build_results(approve_all=True)
 
     agent: Agent[None, str] = Agent()
-    conn = _ProviderToolConnection()
+    conn = _provider_tool_connection(core)
     model = FakeRealtimeModel(conn)
     async with agent.realtime(
         model, capabilities=[HandleDeferredToolCalls(handler=wait_for_a_person)]
