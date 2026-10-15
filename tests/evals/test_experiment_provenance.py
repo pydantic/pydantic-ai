@@ -169,26 +169,38 @@ async def test_github_pull_request(capfire: CaptureLogfire, monkeypatch: pytest.
 
 
 @pytest.mark.usefixtures('pull_request_env')
-async def test_github_pull_request_target(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """`pull_request_target` checks out the base branch by default, so the head SHA isn't reported as the commit under test."""
-    event_path = tmp_path / 'event.json'
-    event_path.write_text(
-        json.dumps(
-            {'pull_request': {'number': 42, 'head': {'ref': 'feature-x', 'sha': 'head-sha'}, 'base': {'ref': 'main'}}}
+@pytest.mark.parametrize('readable_payload', [True, False])
+async def test_github_pull_request_target(
+    capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, readable_payload: bool
+):
+    """`pull_request_target` checks out the base branch by default, so the PR head isn't reported as the code under test."""
+    if readable_payload:
+        event_path = tmp_path / 'event.json'
+        event_path.write_text(
+            json.dumps(
+                {
+                    'pull_request': {
+                        'number': 42,
+                        'head': {'ref': 'feature-x', 'sha': 'head-sha'},
+                        'base': {'ref': 'main'},
+                    }
+                }
+            )
         )
-    )
-    monkeypatch.setenv('GITHUB_EVENT_PATH', str(event_path))
+        monkeypatch.setenv('GITHUB_EVENT_PATH', str(event_path))
+    # Unlike `pull_request`, these point at the base branch rather than a merge commit.
     monkeypatch.setenv('GITHUB_EVENT_NAME', 'pull_request_target')
     monkeypatch.setenv('GITHUB_SHA', 'base-tip-sha')
+    monkeypatch.setenv('GITHUB_REF', 'refs/heads/main')
+    monkeypatch.setenv('GITHUB_REF_NAME', 'main')
 
-    assert await _provenance(capfire) == snapshot(
-        {
-            'logfire.experiment.ci.run_url': 'https://github.com/acme/widgets/actions/runs/1234567890',
-            'logfire.experiment.git.branch': 'feature-x',
-            'logfire.experiment.git.base_branch': 'main',
-            'logfire.experiment.ci.pull_request': 42,
-        }
-    )
+    expected: dict[str, Any] = {
+        'logfire.experiment.ci.run_url': 'https://github.com/acme/widgets/actions/runs/1234567890',
+        'logfire.experiment.git.base_branch': 'main',
+    }
+    if readable_payload:
+        expected['logfire.experiment.ci.pull_request'] = 42
+    assert await _provenance(capfire) == expected
 
 
 @pytest.mark.usefixtures('pull_request_env')
