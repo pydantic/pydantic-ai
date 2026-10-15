@@ -1,29 +1,7 @@
-"""Identified lifecycle events: the second version of the contract between a connection and the session.
+"""The lifecycle events a connection yields alongside the codec events (see `pydantic_ai.realtime.lifecycle`).
 
-The codec vocabulary in `codec.py` tells the session *what* the model said, but not which response it
-belongs to, when that response began or ended, or which of the session's inputs it answers. The session
-used to infer all of that from the shapes of event sequences, which is where most of its ordering bugs
-came from. Only the connection sees the frames that settle those questions, so under this contract it
-states them outright, with an id on every entity:
-
-- a response is bracketed by exactly one `ResponseStarted` and one `ResponseEnded`, and its content
-  events (which carry its `response_id`) arrive only in between;
-- `ResponseStarted.answers` names the inputs whose reply the response is, so a reply obligation is
-  settled by the response the provider says answers it rather than by whichever starts next;
-- a spoken user turn is bracketed by `UserTurnStarted` and `UserTurnEnded` (or `UserTurnDiscarded`);
-- `InputAdded` marks where an input joined the provider's conversation, so history can follow the
-  provider's order;
-- `InputLost` and `ResponseRequestRefused` settle the inputs no response will ever answer;
-- `OutputItemDetails` carries what the provider says about an item of a response's output, for the part it
-  makes.
-
-An input is identified the way `InputRejected.input_index` identifies it: by its position among every
-`send()` call made on the connection.
-
-These types are internal. A connection opts in with `RealtimeConnection._lifecycle_version = 2` and
-yields them, interleaved with the codec events, from `RealtimeConnection._lifecycle_events()`; its public
-iterator keeps yielding the codec events alone, so anything iterating a connection directly sees exactly
-the vocabulary it always has. They become public only once they are documented as a provider-facing API.
+Defined here, apart from `InferredLifecycle`, so that `codec.py` can name them without importing the codec
+vocabulary back.
 """
 
 from __future__ import annotations as _annotations
@@ -167,7 +145,7 @@ LifecycleEvent = TypeAliasType(
     | ResponseRequestRefused
     | OutputItemDetails,
 )
-"""The events a connection on the second version of the lifecycle contract yields besides the codec events."""
+"""What a connection says about the responses, spoken turns, and inputs its codec events are about."""
 
 LIFECYCLE_EVENT_TYPES = (
     ResponseStarted,
@@ -182,5 +160,22 @@ LIFECYCLE_EVENT_TYPES = (
 )
 """The `LifecycleEvent` variants, for `isinstance` checks."""
 
-TaggedEvent: TypeAlias = 'tuple[RealtimeCodecEvent | LifecycleEvent, bool]'
-"""An event of a connection's `_tagged_frames()`, with whether it is stale."""
+
+
+@dataclass(frozen=True)
+class StaleEvent:
+    """A codec event about a response that has already ended: a repeated terminal, or content trailing it.
+
+    The application still receives `event`, as it always has, but nothing applies it to the conversation: the
+    response it is about is over. A connection that can't tell such events apart (most can't) never yields one.
+    """
+
+    event: RealtimeCodecEvent
+
+
+RealtimeFrame: TypeAlias = 'list[RealtimeCodecEvent | LifecycleEvent | StaleEvent]'
+"""What one message from the provider (or one transition of the connection's own, like a reconnect) makes.
+
+The events are in order, and the session applies a frame whole before it streams any of it, so whatever reacts
+to one of its events finds the conversation as far along as the frame takes it.
+"""

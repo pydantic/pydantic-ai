@@ -4000,7 +4000,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         [`realtime`][pydantic_ai.agent.AbstractAgent.realtime] for the parameter reference.
         """
         from ..realtime import RealtimeSession
-        from ..realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput
+        from ..realtime.codec import RealtimeConnection, RealtimeInput
+        from ..realtime.lifecycle import RealtimeFrame
 
         # A WebRTC sideband session doesn't own the audio transport: the browser streams audio to the
         # provider directly, so the session disables its audio methods and retains no audio bytes.
@@ -4042,7 +4043,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             'This realtime session was short-circuited before connecting.'
                         )
 
-                    def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+                    def frames(self) -> AsyncIterator[RealtimeFrame]:
                         raise exceptions.UserError(  # pragma: no cover
                             'This realtime session was short-circuited before connecting.'
                         )

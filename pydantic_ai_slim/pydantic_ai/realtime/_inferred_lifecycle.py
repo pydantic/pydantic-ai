@@ -1,29 +1,8 @@
-"""Lifecycle events for a protocol that identifies no responses, turns, or inputs: which each message is about.
-
-Gemini Live and OpenAI GPT-Live give their responses no ids, have no response-start frame and no item
-acknowledgements, so their connections feed this tracker the inputs they send and the codec events each
-server message makes, and yield the [lifecycle events](./_lifecycle.py) it works out from their order
-alongside them:
-
-- A response starts with its first output (audio, a transcript, a native tool part, a tool call), or where the
-  connection says the model took the turn without one (GPT-Live delegating work), and ends at its terminal
-  (`ResponseDone`), or at the usage report that closes a response's tool calls. Its id is made up
-  (`ResponseStarted.provider_id=False`).
-- A response answers every input that asked for one and hadn't been answered when it started (a typed turn, a
-  tool result): the model replies to each on its own, in order (`ResponseStarted.basis='inferred'`).
-- A spoken turn has no id and no speech frames either: it starts with its first input transcript, joins the
-  conversation as the reply to it starts, and has its whole transcript once that reply ends, if the transcript
-  isn't marked finished before. Without input transcription, audio streamed since the last reply is a turn of
-  its own, with no transcript, when the model next replies to speech.
-- An input joins the conversation when it is sent, unless a reply is under way or owed: then it reached the
-  provider while the model was working on that reply, which it follows.
-- A dropped connection loses the response under way and every reply still owed: neither protocol resumes a
-  generation on a new connection.
-"""
+"""`InferredLifecycle`: lifecycle events worked out for a protocol that identifies no responses, turns, or inputs."""
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -33,10 +12,10 @@ from ._lifecycle import (
     InputId,
     InputLost,
     LifecycleEvent,
+    RealtimeFrame,
     ResponseEnded,
     ResponseStarted,
     ResponseStatus,
-    TaggedEvent,
     UserTurnDiscarded,
     UserTurnEnded,
     UserTurnStarted,
@@ -60,13 +39,42 @@ class _Turn:
     """A spoken turn, from its first transcript until its reply ended."""
 
     id: str
+    identified: bool = False
+    """Named by the provider (its transcripts carry an item id), which then says when its transcript is final."""
     joined: bool = False
     final: bool = False
     """Its transcript is whole: marked finished, or no more will come."""
 
 
 class InferredLifecycle:
-    """Turns a connection's sends and messages into lifecycle events, for a protocol that identifies nothing."""
+    """Works out a connection's lifecycle events from the order of what it sends and receives.
+
+    For a protocol that identifies no responses, spoken turns, or inputs, as Gemini Live and OpenAI GPT-Live
+    don't. The connection reports every input it sends ([`input_sent`][pydantic_ai.realtime.lifecycle.InferredLifecycle.input_sent],
+    first thing in its [`send`][pydantic_ai.realtime.codec.RealtimeConnection.send]), passes the codec events each
+    provider message makes through [`message`][pydantic_ai.realtime.lifecycle.InferredLifecycle.message] to get the
+    frame to yield, and reports a dropped connection
+    ([`connection_lost`][pydantic_ai.realtime.lifecycle.InferredLifecycle.connection_lost]). A connection whose
+    codec events are an async iterable of their own can have
+    [`frames`][pydantic_ai.realtime.lifecycle.InferredLifecycle.frames] do the last two.
+
+    What it works out:
+
+    - A response starts with its first output (audio, a transcript, a native tool part, a tool call), and ends at
+      its [`ResponseDone`][pydantic_ai.realtime.codec.ResponseDone], or at the usage report that follows a response's
+      tool calls when they are reported with `response_usage_follows`. Its id is made up, so it is recorded as no
+      provider's (`ResponseStarted.provider_id=False`).
+    - A response answers every input that asked for one (a `str` turn, a tool result, a `CreateResponse`) and wasn't
+      answered when it started (`ResponseStarted.basis='inferred'`).
+    - A spoken turn starts with its first input transcript, joins the conversation as the reply to it starts, and
+      has its whole transcript once that reply ends, unless the transcript is marked final before. A turn the
+      provider identifies (its transcripts carry an `item_id`) is named by that id, and waits for its final
+      transcript. Without input transcription, audio sent since the last reply is a turn of its own, with no
+      transcript, when the model next replies to speech.
+    - An input joins the conversation when it is sent, unless a reply is under way or owed: it then reached the
+      provider while the model was working on that reply, and follows it.
+    - A dropped connection loses the response under way and every reply still owed.
+    """
 
     def __init__(
         self, *, transcribes: bool, transcripts_lag_replies: bool = False, audio_starts_response: bool = True
@@ -85,11 +93,14 @@ class InferredLifecycle:
         self._audio_starts_response = audio_starts_response
         self._transcribes = transcribes
         self._transcripts_lag_replies = transcripts_lag_replies
+        self._inputs = 0
         self._pending: list[LifecycleEvent] = []
         """Events that come outside any message (an input sent), yielded ahead of the next one."""
         self._responses = 0
         self._open: str | None = None
         """The response under way."""
+        self._open_named = False
+        """Whether the provider named the response under way, by the `response_id` of its content."""
         self._deferred: ResponseDone | None = None
         """The terminal of a response the model said the exchange continues past (`interaction_status=IN_PROGRESS`):
         it stays open for the tool call it was stalling for, and ends at anything else."""
@@ -109,14 +120,22 @@ class InferredLifecycle:
         """Audio went out since the last reply started: without transcription, the next turn of speech."""
         self._continues: str | None = None
         """A response the model ended saying the exchange goes on, which the next response carries on from."""
+        self._identified: set[str] = set()
+        """The turns the provider named, by item id."""
 
     # --- what the connection sends ----------------------------------------------------------------
 
-    def input_sent(self, input_id: InputId, content: RealtimeInput) -> None:
-        """An input is about to go out: note whether it asks for a reply, and where it joins the conversation."""
+    def input_sent(self, content: RealtimeInput) -> InputId:
+        """An input is about to go out: note whether it asks for a reply, and where it joins the conversation.
+
+        Call it for every `send()`, before anything in it can fail, as the session numbers its inputs that way.
+        Returns the input's id, for `input_failed` and `input_unanswerable`.
+        """
+        input_id = self._inputs
+        self._inputs += 1
         if isinstance(content, BinaryContent) and content.is_audio:
             self._audio_since_reply = True
-            return
+            return input_id
         if self._reply_owed():
             # It reaches the provider while the model works on a reply, which it follows. (A response that answers
             # it places it ahead of itself, should that come first.)
@@ -126,9 +145,10 @@ class InferredLifecycle:
             self._pending.append(InputAdded(input_id=input_id))
         if isinstance(content, (str, ToolResult, CreateResponse)):
             self._unanswered.append(input_id)
+        return input_id
 
     def input_failed(self, input_id: InputId) -> None:
-        """An input never went out: forget it."""
+        """The input never went out (its send raised): forget it."""
         self._unanswered = [unanswered for unanswered in self._unanswered if unanswered != input_id]
         self._held = [held for held in self._held if held != input_id]
         self._pending = [event for event in self._pending if event != InputAdded(input_id=input_id)]
@@ -140,6 +160,10 @@ class InferredLifecycle:
             self._pending.append(InputLost(input_ids=(input_id,)))
 
     def take_pending(self) -> list[LifecycleEvent]:
+        """The events waiting for the next frame (where inputs sent since the last one joined the conversation).
+
+        For a frame of the connection's own, like the one it reports a reconnect in.
+        """
         pending, self._pending = self._pending, []
         return pending
 
@@ -149,31 +173,40 @@ class InferredLifecycle:
 
     # --- what the server says ---------------------------------------------------------------------
 
-    def message(self, codec: Sequence[RealtimeCodecEvent], *, takes_turn: bool = False) -> list[TaggedEvent]:
-        """The lifecycle events around the codec events one server message makes, in order.
+    def message(self, codec: Sequence[RealtimeCodecEvent], *, takes_turn: bool = False) -> RealtimeFrame:
+        """The frame to yield for the codec events one provider message makes: them, with the lifecycle events around.
 
-        `takes_turn` says the message has the model take the turn (GPT-Live's connection says where, as its audio
-        track runs on between replies): a response starts with its audio, or after its events if it has none,
-        if none is under way.
+        `takes_turn` says the message has the model take the turn, for a connection that knows where it does better
+        than its output shows (GPT-Live's audio track runs on between replies): a response starts with its audio,
+        or after its events if it has none, if none is under way.
         """
-        tagged: list[TaggedEvent] = [(event, False) for event in self.take_pending()]
+        frame: RealtimeFrame = [*self.take_pending()]
         if any(isinstance(event, RealtimeResponseInterruptedEvent) for event in codec):
             # The user cut in, and the message reports what they said ahead of the cut: that is new speech, not
             # more of the turn being answered, whose transcript is over.
             closed: list[LifecycleEvent] = []
             self._unprompted_reply = None
             self._close_turn(closed)
-            tagged.extend((event, False) for event in closed)
+            frame.extend(closed)
         for event in codec:
             before, after = self._event(event, takes_turn=takes_turn)
-            tagged.extend((lifecycle, False) for lifecycle in before)
-            tagged.append((event, False))
-            tagged.extend((lifecycle, False) for lifecycle in after)
+            frame.extend(before)
+            frame.append(event)
+            frame.extend(after)
         if takes_turn:
             started: list[LifecycleEvent] = []
             self._ensure_response(started)
-            tagged.extend((lifecycle, False) for lifecycle in started)
-        return tagged
+            frame.extend(started)
+        return frame
+
+    async def frames(self, events: AsyncIterable[RealtimeCodecEvent]) -> AsyncIterator[RealtimeFrame]:
+        """Frames for a connection's codec events, one event to a frame, ending with what the end of `events` loses.
+
+        For a connection whose codec events are an async iterable of their own, and end with the connection.
+        """
+        async for event in events:
+            yield self.message([event])
+        yield self.connection_lost()
 
     def _event(
         self, event: RealtimeCodecEvent, *, takes_turn: bool = False
@@ -199,7 +232,11 @@ class InferredLifecycle:
                 self._deferred = None
             # Anything else (the user's transcript, usage) leaves it held: the exchange isn't over.
         if output:
-            self._ensure_response(before)
+            named = event.response_id if isinstance(event, (AudioDelta, OutputTranscript, ToolCall)) else None
+            if named is not None and self._open is not None and self._open_named and named != self._open:
+                # Content of a response the provider names differently: the one under way is over.
+                self._end(before, status='completed')
+            self._ensure_response(before, named=named)
             if isinstance(event, ToolCall) and event.response_usage_follows:
                 self._calls_awaiting_usage = True
         elif isinstance(event, SessionUsage):
@@ -229,7 +266,7 @@ class InferredLifecycle:
             # `gemini-live-2.5-flash` closes a tool call's turn before its answer this way, and Gemini 3.8 an
             # exchange a resumed session was stuck on; their usage is the next response's.
             return
-        self._ensure_response(before)
+        self._ensure_response(before, named=event.provider_response_id)
         if event.more_expected and not event.interrupted and event.provider_details is None:
             self._deferred = event
             return
@@ -242,9 +279,23 @@ class InferredLifecycle:
 
     def _input_transcript(self, event: InputTranscript, before: list[LifecycleEvent]) -> None:
         turn = self._turn
+        if event.item_id is not None and event.item_id in self._identified:
+            # More of a turn the provider named, which needn't be the one being said now.
+            if turn is not None and turn.id == event.item_id and event.is_final:
+                turn.final = True
+                if turn.joined:
+                    self._turn = None
+            return
+        if turn is not None and event.item_id is not None and turn.id != event.item_id:
+            # The provider names a turn of its own: the one before it is over.
+            self._turn = None
+            turn = None
         if turn is None:
             self._turns += 1
-            turn = self._turn = _Turn(f'pydantic_ai_user_turn_{self._turns}')
+            turn_id = event.item_id or f'pydantic_ai_user_turn_{self._turns}'
+            turn = self._turn = _Turn(turn_id, identified=event.item_id is not None)
+            if turn.identified:
+                self._identified.add(turn_id)
             before.append(UserTurnStarted(turn_id=turn.id))
             if (reply := self._unprompted_reply) is not None:
                 # The model started replying to speech before its transcript came (as Gemini usually does): this
@@ -260,8 +311,11 @@ class InferredLifecycle:
 
     # --- responses ----------------------------------------------------------------------------------
 
-    def _ensure_response(self, events: list[LifecycleEvent]) -> None:
-        """Start a response, if none is under way: its first output (or usage) is all that announces it."""
+    def _ensure_response(self, events: list[LifecycleEvent], *, named: str | None = None) -> None:
+        """Start a response, if none is under way: its first output (or terminal) is all that announces it.
+
+        `named` is the id the provider gave it, if its content carries one.
+        """
         if self._open is not None:
             return
         answers = tuple(self._unanswered)
@@ -269,7 +323,8 @@ class InferredLifecycle:
         self._held = [input_id for input_id in self._held if input_id not in answers]
         turn_id = self._join_turn(events, replying=not answers)
         self._responses += 1
-        self._open = f'pydantic_ai_response_{self._responses}'
+        self._open = named or f'pydantic_ai_response_{self._responses}'
+        self._open_named = named is not None
         if turn_id is not None:
             self._turn_reply = self._open
         elif not answers and self._transcribes and self._transcripts_lag_replies:
@@ -282,7 +337,7 @@ class InferredLifecycle:
                 basis='inferred',
                 user_turn_id=turn_id if not answers else None,
                 continues=continues,
-                provider_id=False,
+                provider_id=named is not None,
             )
         )
 
@@ -346,7 +401,9 @@ class InferredLifecycle:
             return
         # (A joined turn whose transcript was marked finished is done with already.)
         self._turn = self._turn_reply = None
-        events.append(UserTurnDiscarded(turn_id=turn.id))
+        if not turn.identified:
+            # The provider doesn't say when it has transcribed all of it: what it has is all there is.
+            events.append(UserTurnDiscarded(turn_id=turn.id))
 
     def _place_held(self, events: list[LifecycleEvent]) -> None:
         held, self._held = self._held, []
@@ -371,7 +428,8 @@ class InferredLifecycle:
         # Ending the response closed the turn it replied to: one still here is the next, not joined yet.
         if (turn := self._turn) is not None:
             self._turn = None
-            events.append(UserTurnEnded(turn_id=turn.id))
+            if not turn.joined:
+                events.append(UserTurnEnded(turn_id=turn.id))
             if not turn.final:
                 events.append(UserTurnDiscarded(turn_id=turn.id))
         self._place_held(events)

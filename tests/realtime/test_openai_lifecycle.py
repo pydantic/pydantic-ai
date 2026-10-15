@@ -29,6 +29,7 @@ from pydantic_ai.realtime._lifecycle import (
 )
 
 from ..conftest import try_import
+from ..realtime_connections import lifecycle_events
 
 with try_import() as imports_successful:
     from pydantic_ai.messages import BinaryAudio
@@ -39,14 +40,12 @@ with try_import() as imports_successful:
         CommitAudio,
         CreateResponse,
         RealtimeCodecEvent,
-        ResponseDone,
         TextContext,
         ToolResult,
     )
     from pydantic_ai.realtime.openai import OpenAIRealtimeConnection
 
     from .test_openai import FakeWebSocket
-    from .test_session import FakeRealtimeConnection
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
 
@@ -109,7 +108,7 @@ class Stream:
     def __init__(self, *incoming: dict[str, Any], **kwargs: Any) -> None:
         self.ws = FakeWebSocket(frames(*incoming))
         self.connection = OpenAIRealtimeConnection(self.ws, **kwargs)  # pyright: ignore[reportArgumentType]
-        self._events = aiter(self.connection._lifecycle_events())  # pyright: ignore[reportPrivateUsage]
+        self._events = aiter(lifecycle_events(self.connection))
 
     def feed(self, *incoming: dict[str, Any]) -> None:
         """More frames from the server, read after those already scripted."""
@@ -660,12 +659,6 @@ async def test_a_reconnect_loses_an_unstarted_request_the_caller_cancelled() -> 
     assert replacement.sent == []
 
 
-async def test_a_version_1_connection_yields_its_codec_events_as_its_lifecycle_stream() -> None:
-    connection = FakeRealtimeConnection([ResponseDone()])
-    assert connection._lifecycle_version == 1  # pyright: ignore[reportPrivateUsage]
-    assert [event async for event in connection._lifecycle_events()] == [ResponseDone()]  # pyright: ignore[reportPrivateUsage]
-
-
 def test_response_request_metadata() -> None:
     assert response_request_metadata([1, 2]) == {'pydantic_ai_inputs': '1-2'}
     assert response_request_metadata([]) is None
@@ -918,11 +911,7 @@ async def test_a_commit_that_fails_to_go_out_places_nothing() -> None:
     await connection.send('First.')
     with pytest.raises(OSError):
         await connection.send(CommitAudio())
-    events = [
-        event
-        async for event in connection._lifecycle_events()  # pyright: ignore[reportPrivateUsage]
-        if isinstance(event, (InputAdded, UserTurnEnded))
-    ]
+    events = [event async for event in lifecycle_events(connection) if isinstance(event, (InputAdded, UserTurnEnded))]
     assert events == snapshot([UserTurnEnded(turn_id='item_u1')])
 
 

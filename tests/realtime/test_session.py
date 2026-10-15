@@ -125,6 +125,7 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsStr
+from ..realtime_connections import InferredConnection
 from .conversation import assert_conversation_invariants
 
 T = TypeVar('T')
@@ -304,7 +305,7 @@ def _profile(
     )
 
 
-class FakeRealtimeConnection(RealtimeConnection):
+class FakeRealtimeConnection(InferredConnection):
     """A connection that replays a fixed list of events and records what is sent."""
 
     def __init__(
@@ -341,10 +342,10 @@ class FakeRealtimeConnection(RealtimeConnection):
     def reconnect_restores_in_flight_state(self) -> bool:
         return self._reconnect_restores_in_flight_state
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         self.sent.append(content)
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
         if self._release is not None:
@@ -361,8 +362,8 @@ _LIVENESS_TIMEOUT = 5
 class BlockingRealtimeConnection(FakeRealtimeConnection):
     """Replay fixed events, then remain open until the session closes."""
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-        async for event in super().__aiter__():
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async for event in super().codec_events():
             yield event
         await asyncio.Event().wait()
 
@@ -677,7 +678,7 @@ async def test_send_audio_finalizes_late_anonymous_transcript_for_transcript_vie
     next_audio_sent = asyncio.Event()
 
     class _LateTranscriptBeforeNextAudio(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             for event in [
                 OutputTranscript(text='answer one', is_final=True),
                 ResponseDone(),
@@ -687,8 +688,8 @@ async def test_send_audio_finalizes_late_anonymous_transcript_for_transcript_vie
             late_transcript_processed.set()
             await next_audio_sent.wait()
 
-        async def send(self, content: RealtimeInput) -> None:
-            await super().send(content)
+        async def send_input(self, content: RealtimeInput) -> None:
+            await super().send_input(content)
             if len(self.sent) == 2:
                 next_audio_sent.set()
 
@@ -1534,7 +1535,7 @@ class _GatedRealtimeConnection(FakeRealtimeConnection):
         self._second = second
         self.release = asyncio.Event()
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
         await self.release.wait()
@@ -1554,14 +1555,14 @@ class _CancelGatedRealtimeConnection(FakeRealtimeConnection):
         self._after_cancel = after_cancel
         self.cancelled = asyncio.Event()
 
-    async def send(self, content: RealtimeInput) -> None:
-        await super().send(content)
+    async def send_input(self, content: RealtimeInput) -> None:
+        await super().send_input(content)
         # The think-time barge-in this gate exists for sends the cancel on its own, with no
         # truncation beside it, so nothing else reaches this fake.
         if isinstance(content, CancelResponse):  # pragma: no branch
             self.cancelled.set()
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
         await self.cancelled.wait()
@@ -2327,13 +2328,13 @@ async def test_turn_completes_once_the_tool_round_is_over_not_before() -> None:
     tool_answered = asyncio.Event()
 
     class _AnswersTheTool(FakeRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             # The tool result is the only thing the session sends in this scenario.
             if isinstance(content, ToolResult):  # pragma: no branch
                 tool_answered.set()
             self.sent.append(content)
 
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}')
             yield ResponseDone()  # the tool-call response; the exchange is not over
             await tool_answered.wait()
@@ -2811,7 +2812,7 @@ async def test_idless_late_transcript_closes_before_the_next_audio_turn() -> Non
     second_audio_sent = asyncio.Event()
 
     class _LateIdlessTranscript(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             for event in [
                 OutputTranscript(text='answer one', is_final=True),
                 ResponseDone(),
@@ -2827,8 +2828,8 @@ async def test_idless_late_transcript_closes_before_the_next_audio_turn() -> Non
             ]:
                 yield event
 
-        async def send(self, content: RealtimeInput) -> None:
-            await super().send(content)
+        async def send_input(self, content: RealtimeInput) -> None:
+            await super().send_input(content)
             if len(self.sent) == 2:
                 second_audio_sent.set()
 
@@ -2865,7 +2866,7 @@ async def test_idless_next_audio_turn_keeps_anchor_when_output_precedes_transcri
     second_audio_sent = asyncio.Event()
 
     class _OutputBeforeSecondTranscript(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             for event in [
                 OutputTranscript(text='answer one', is_final=True),
                 ResponseDone(),
@@ -2881,8 +2882,8 @@ async def test_idless_next_audio_turn_keeps_anchor_when_output_precedes_transcri
             ]:
                 yield event
 
-        async def send(self, content: RealtimeInput) -> None:
-            await super().send(content)
+        async def send_input(self, content: RealtimeInput) -> None:
+            await super().send_input(content)
             if len(self.sent) == 2:
                 second_audio_sent.set()
 
@@ -2955,7 +2956,7 @@ async def test_idless_late_transcript_does_not_merge_with_next_audio_turn() -> N
     second_audio_sent = asyncio.Event()
 
     class _LateTranscriptAfterNextAudio(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             for event in [OutputTranscript(text='answer one', is_final=True), ResponseDone()]:
                 yield event
             await second_audio_sent.wait()
@@ -2967,8 +2968,8 @@ async def test_idless_late_transcript_does_not_merge_with_next_audio_turn() -> N
             ]:
                 yield event
 
-        async def send(self, content: RealtimeInput) -> None:
-            await super().send(content)
+        async def send_input(self, content: RealtimeInput) -> None:
+            await super().send_input(content)
             if len(self.sent) == 2:
                 second_audio_sent.set()
 
@@ -3037,12 +3038,12 @@ class _ContinuousMicrophoneConnection(FakeRealtimeConnection):
         self.session: _RealtimeSession | None = None
         self._tool_result_sent = asyncio.Event()
 
-    async def send(self, content: RealtimeInput) -> None:
-        await super().send(content)
+    async def send_input(self, content: RealtimeInput) -> None:
+        await super().send_input(content)
         if isinstance(content, ToolResult):
             self._tool_result_sent.set()
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         assert self.session is not None
         for item in self._script:
             if isinstance(item, _UserAction):
@@ -3609,7 +3610,7 @@ async def test_non_object_json_args_reported() -> None:
 class _RepeatedMalformedToolArgsConnection(FakeRealtimeConnection):
     """Start a new response after the first malformed call is returned for retry."""
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         yield ToolCall(tool_call_id='tc1', tool_name='noop', args='not json')
         while not self.sent:
             await asyncio.sleep(0)
@@ -3662,7 +3663,7 @@ async def test_tool_runner_base_exception_wins_connection_completion_race() -> N
     connection_finished = asyncio.Event()
 
     class _ConnectionEndsWithTool(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             try:
                 yield ToolCall(tool_call_id='tc', tool_name='boom', args='{}')
             finally:
@@ -3684,7 +3685,7 @@ async def test_tool_runner_cancelled_call_ends_cleanly() -> None:
     cancelled = asyncio.Event()
 
     class _CancelAfterToolStarts(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='tc', tool_name='slow', args='{}')
             await started.wait()
             yield ToolCallCancelled(tool_call_ids=['tc'])
@@ -3898,17 +3899,17 @@ def test_insert_tool_return_skips_existing_parallel_returns() -> None:
     assert session.new_messages() == [response, first_return, second_return]
 
 
-class AwaitBetweenConnection(RealtimeConnection):
+class AwaitBetweenConnection(InferredConnection):
     """A connection that yields control between events so tool tasks can progress."""
 
     def __init__(self, events: list[RealtimeCodecEvent]) -> None:
         self._events = events
         self.sent: list[RealtimeInput] = []
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         self.sent.append(content)
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
             await asyncio.sleep(0)
@@ -3943,7 +3944,7 @@ async def test_tool_completion_drained_between_events() -> None:
     assert result.part.content == 'quick'
 
 
-class IdleAfterToolConnection(RealtimeConnection):
+class IdleAfterToolConnection(InferredConnection):
     """Yields one ToolCall, then blocks forever — the model goes idle with no further events."""
 
     def __init__(self, call: ToolCall) -> None:
@@ -3951,10 +3952,10 @@ class IdleAfterToolConnection(RealtimeConnection):
         self.sent: list[RealtimeInput] = []
         self.iteration_task: asyncio.Task[Any] | None = None
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         self.sent.append(content)
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         self.iteration_task = asyncio.current_task()
         yield self._call
         await asyncio.Event().wait()
@@ -3981,16 +3982,16 @@ async def test_tool_completion_delivered_while_upstream_idle() -> None:
         assert completed.part.content == 'ready'
 
 
-class ExplodingConnection(RealtimeConnection):
+class ExplodingConnection(InferredConnection):
     """A connection whose iteration raises after yielding one event."""
 
     def __init__(self) -> None:
         self.sent: list[RealtimeInput] = []
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         self.sent.append(content)
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         yield AudioDelta(data=b'\x00')
         raise RuntimeError('connection dropped')
 
@@ -4210,7 +4211,7 @@ async def test_close_error_reaches_the_survivor_when_the_closer_was_cancelled() 
             raise
 
     class _ExplodesWithRunningTool(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='tc', tool_name='slow', args='{}')
             await tool_started.wait()
             raise RuntimeError('connection dropped')
@@ -4378,7 +4379,7 @@ async def test_tool_error_delivered_to_send_is_skipped_by_the_iterator() -> None
 
 async def test_pump_error_delivered_to_send_is_not_raised_again_by_the_iterator() -> None:
     class _DyingConnection(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield RealtimeInputSpeechStartEvent()
             raise RuntimeError('socket died')
 
@@ -4406,7 +4407,7 @@ async def test_delivered_pump_error_still_reports_an_in_flight_tool_result() -> 
     release = asyncio.Event()
 
     class _DyingAfterToolCall(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield RealtimeInputSpeechStartEvent()
             yield ToolCall(tool_call_id='bg', tool_name='slow', args='{}')
             raise RuntimeError('socket died')
@@ -4527,12 +4528,12 @@ async def _collect(iterator: AsyncIterator[Any]) -> list[Any]:
 
 
 async def test_upstream_error_does_not_wait_for_running_tool() -> None:
-    class _ExplodingAfterTool(RealtimeConnection):
+    class _ExplodingAfterTool(InferredConnection):
         # Tool is cancelled first.
-        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover
+        async def send_input(self, content: RealtimeInput) -> None:  # pragma: no cover
             raise AssertionError
 
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='bg', tool_name='hang', args='{}')
             await asyncio.sleep(0)  # let the tool start before the pump fails
             raise RuntimeError('connection dropped')
@@ -4562,7 +4563,7 @@ async def test_upstream_error_does_not_wait_for_running_tool() -> None:
     assert cancelled.is_set()
 
 
-class SendFailsConnection(RealtimeConnection):
+class SendFailsConnection(InferredConnection):
     """Replays events but raises on every send — a connection dropping mid tool call (the only thing
     sent through it in these tests is the tool's `ToolResult`).
 
@@ -4577,10 +4578,10 @@ class SendFailsConnection(RealtimeConnection):
         self._idle = idle
         self._release = release
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         raise RuntimeError('connection lost')
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
         if self._release is not None:
@@ -4666,7 +4667,7 @@ async def test_tool_call_cancellation_cancels_running_tool() -> None:
         return 'never'  # pragma: no cover
 
     class _CancelAfterStart(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='c1', tool_name='slow', args='{}')
             await started.wait()  # let the tool task start before the model cancels it
             yield ToolCallCancelled(tool_call_ids=['c1'])
@@ -4802,7 +4803,7 @@ async def test_cancelled_realtime_barrier_releases_following_tool() -> None:
         return 'after'
 
     class _CancelBarrier(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='barrier', tool_name='barrier', args='{}')
             yield ToolCall(tool_call_id='after', tool_name='after', args='{}')
             await barrier_started.wait()
@@ -4905,7 +4906,7 @@ async def test_interrupt_does_not_cancel_in_flight_tool() -> None:
         return 'done'
 
     class _IdleAfterCall(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='c1', tool_name='slow', args='{}')
             await asyncio.Event().wait()  # stay open; the consumer breaks out on the tool result
 
@@ -5113,11 +5114,11 @@ async def test_image_respond_frames_cannot_be_interleaved() -> None:
     release_image = asyncio.Event()
 
     class _PausedImageConnection(FakeRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             if isinstance(content, BinaryImage):
                 image_started.set()
                 await release_image.wait()
-            await super().send(content)
+            await super().send_input(content)
 
     conn = _PausedImageConnection([])
     session = RealtimeSession(conn, _noop_runner)
@@ -5133,7 +5134,7 @@ async def test_image_respond_frames_cannot_be_interleaved() -> None:
 
 async def test_respond_send_failures_roll_back_history_and_reservations() -> None:
     class _FailingConnection(FakeRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             raise RuntimeError('send failed')
 
     conn = _FailingConnection([])
@@ -5169,10 +5170,10 @@ async def test_failed_unretained_image_send_has_nothing_to_take_back() -> None:
     # With `retain_images_every_n=2` the second image is never recorded, so when its send fails
     # there is no phantom history to roll back; the failure still propagates.
     class _SecondImageSendFails(FakeRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             if isinstance(content, BinaryImage) and self.sent:
                 raise RuntimeError('send failed')
-            await super().send(content)
+            await super().send_input(content)
 
     conn = _SecondImageSendFails([])
     session = RealtimeSession(conn, _noop_runner, retain_images_every_n=2)
@@ -5791,11 +5792,11 @@ async def test_send_during_response_is_recorded_after_response() -> None:
     response_started = asyncio.Event()
     continue_response = asyncio.Event()
 
-    class MidResponseConnection(RealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+    class MidResponseConnection(InferredConnection):
+        async def send_input(self, content: RealtimeInput) -> None:
             assert content == 'next turn'
 
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield OutputTranscript(text='first ', item_id='assistant-1')
             response_started.set()
             await continue_response.wait()
@@ -5842,7 +5843,7 @@ async def test_manual_turn_control_helpers_forward_to_connection() -> None:
 
 async def test_text_request_reserved_before_response_finishes_during_send() -> None:
     class _FinishingSend(FakeRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             self.sent.append(content)
             session._translate_event(OutputTranscript(text='done', is_final=True))  # pyright: ignore[reportPrivateUsage]
             session._translate_event(ResponseDone())  # pyright: ignore[reportPrivateUsage]
@@ -5870,7 +5871,7 @@ async def test_send_audio_reserved_before_speech_boundary_during_send() -> None:
     """
 
     class _BoundarySend(FakeRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             self.sent.append(content)
             session._translate_event(RealtimeInputSpeechEndEvent())  # pyright: ignore[reportPrivateUsage]
 
@@ -5887,7 +5888,7 @@ async def test_failed_sends_leave_no_phantom_history_or_audio() -> None:
     class _FailingSend(FakeRealtimeConnection):
         fail = True
 
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             if self.fail:
                 raise RuntimeError('send failed')
             self.sent.append(content)
@@ -5926,7 +5927,7 @@ async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_th
     class _TurnEndsDuringFailingSend(FakeRealtimeConnection):
         fail = False
 
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             if self.fail:
                 session._translate_event(InputTranscript(text='Hi.', is_final=True))  # pyright: ignore[reportPrivateUsage]
                 raise RuntimeError('send failed')
@@ -5956,7 +5957,7 @@ async def test_transport_failure_while_sending_becomes_a_realtime_error() -> Non
     class _DisconnectedConnection(FakeRealtimeConnection):
         transport_errors = (ConnectionResetError,)
 
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             raise ConnectionResetError('connection reset by peer')
 
     session = RealtimeSession(_DisconnectedConnection([]), model_name='gpt-realtime')
@@ -5973,7 +5974,7 @@ async def test_transport_failure_while_sending_becomes_a_realtime_error() -> Non
     class _DisconnectedAfterTruncate(FakeRealtimeConnection):
         transport_errors = (ConnectionResetError,)
 
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             if isinstance(content, CancelResponse):
                 raise ConnectionResetError('connection reset by peer')
             self.sent.append(content)
@@ -6006,7 +6007,7 @@ class _ReconnectingDisconnectedConnection(FakeRealtimeConnection):
     def _can_reconnect(self) -> bool:
         return self.can_reconnect
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         if self.dropped:
             raise ConnectionResetError('connection reset by peer')
         self.sent.append(content)
@@ -6050,7 +6051,7 @@ async def test_audio_raises_once_receiving_has_ended_even_if_the_connection_stil
     # connection marking its reconnect as given up. Once a consumer has caught that failure, nothing will
     # replace the link, so a mic chunk must raise rather than be dropped silently forever.
     class _DialBlowsUp(_ReconnectingDisconnectedConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             raise RuntimeError('handshake rejected')
             yield  # pragma: no cover  (makes this an async generator)
 
@@ -6073,7 +6074,7 @@ async def test_undeclared_send_failure_is_left_alone() -> None:
     # A connection that fails for a reason it didn't declare as a transport error is reporting a bug,
     # not a lost connection; dressing it up as a `RealtimeError` would hide that.
     class _BuggyConnection(FakeRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             raise ValueError('bug in the connection')
 
     session = RealtimeSession(_BuggyConnection([]))
@@ -6086,7 +6087,7 @@ async def test_failed_image_send_is_not_recorded_in_history() -> None:
     # when sends interleave. When the send fails there is no image on the wire to agree with, so the
     # record has to come back out.
     class _BuggyConnection(FakeRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             raise ValueError('bug in the connection')
 
     session = RealtimeSession(_BuggyConnection([]), profile=_profile(supports_image_input=True))
@@ -6101,7 +6102,7 @@ async def test_failed_create_response_releases_its_reservation() -> None:
     # mistaken for the model speaking on its own. When the frame never reaches the provider there is
     # no response coming, and leaving the reservation would mis-label the next spontaneous turn.
     class _BuggyConnection(FakeRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             raise ValueError('bug in the connection')
 
     session = RealtimeSession(_BuggyConnection([]), profile=_profile(supports_manual_turn_control=True))
@@ -6218,9 +6219,9 @@ async def test_output_truncation_guard() -> None:
 class SlowSendConnection(FakeRealtimeConnection):
     """A connection that yields control inside `send`, so concurrent senders can interleave."""
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         await asyncio.sleep(0)
-        await super().send(content)
+        await super().send_input(content)
 
 
 async def test_concurrent_image_and_text_history_matches_wire_order() -> None:
@@ -6228,11 +6229,11 @@ async def test_concurrent_image_and_text_history_matches_wire_order() -> None:
     release_image = asyncio.Event()
 
     class _PausedImageConnection(FakeRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             if isinstance(content, BinaryImage):
                 image_send_started.set()
                 await release_image.wait()
-            await super().send(content)
+            await super().send_input(content)
 
     conn = _PausedImageConnection([])
     session = RealtimeSession(conn)
@@ -6321,15 +6322,15 @@ async def test_early_break_cancels_pump() -> None:
     parked = asyncio.Event()
     cancelled = asyncio.Event()
 
-    class _BlockAfterFirst(RealtimeConnection):
+    class _BlockAfterFirst(InferredConnection):
         def __init__(self) -> None:
             self.iteration_task: asyncio.Task[Any] | None = None
 
         # Never sent to.
-        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover
+        async def send_input(self, content: RealtimeInput) -> None:  # pragma: no cover
             raise AssertionError
 
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             self.iteration_task = asyncio.current_task()
             yield AudioDelta(data=b'\x00')
             parked.set()
@@ -6364,12 +6365,12 @@ def test_asap_notification_is_ignored_after_loop_closes() -> None:
 
 
 async def test_concurrent_iteration_raises() -> None:
-    class _IdleConnection(RealtimeConnection):
+    class _IdleConnection(InferredConnection):
         # Never sent to.
-        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover
+        async def send_input(self, content: RealtimeInput) -> None:  # pragma: no cover
             raise AssertionError
 
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield AudioDelta(data=b'\x00')
             await asyncio.Event().wait()
 
@@ -6710,7 +6711,7 @@ async def test_audio_retention_segmentation_follows_provider_boundaries() -> Non
     finish_openai = asyncio.Event()
 
     class _SpeechEndConnection(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             await speech_ended.wait()
             yield RealtimeInputSpeechEndEvent(item_id='turn')
             await finish_openai.wait()
@@ -7125,7 +7126,7 @@ async def test_queued_message_flushes_when_reconnect_closes_orphaned_turn() -> N
             self.audio_started = asyncio.Event()
             self.enqueued = asyncio.Event()
 
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='tc', tool_name='queue_followup', args='{}')
             while not any(isinstance(item, ToolResult) for item in self.sent):
                 await asyncio.sleep(0)
@@ -7268,7 +7269,7 @@ async def test_input_audio_segmented_by_item_id_across_overlapping_turns() -> No
     gate_b = asyncio.Event()
 
     class _Overlapping(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             await gate_a.wait()
             yield RealtimeInputSpeechEndEvent(item_id='A')  # segments turn A's audio
             await gate_b.wait()
@@ -8076,7 +8077,7 @@ async def test_agent_realtime_session_invalid_args_return_retry_message() -> Non
 class _ToolRoundConnection(FakeRealtimeConnection):
     """Wait for the first retry result before yielding the next tool-call round."""
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         yield ToolCall(tool_call_id='tc1', tool_name='double', args='{"x": 1}')
         while len(self.sent) < 1:
             await asyncio.sleep(0)
@@ -8086,7 +8087,7 @@ class _ToolRoundConnection(FakeRealtimeConnection):
 class _EnqueueConnection(FakeRealtimeConnection):
     """Hold the turn boundary until the tool result has been sent."""
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         yield ToolCall(
             tool_call_id='tc',
             tool_name='queue_followup',
@@ -8111,7 +8112,7 @@ class _EnqueueDuringSpeechConnection(FakeRealtimeConnection):
         self.enqueued = asyncio.Event()
         self.sent_before_response_complete: list[RealtimeInput] = []
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         yield ToolCall(tool_call_id='tc', tool_name='queue_during_speech', args='{}')
         while not any(isinstance(item, ToolResult) for item in self.sent):
             await asyncio.sleep(0)
@@ -8133,7 +8134,7 @@ class _SessionEnqueueDuringSpeechConnection(FakeRealtimeConnection):
         self.enqueued = asyncio.Event()
         self.sent_before_response_complete: list[RealtimeInput] = []
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         yield AudioDelta(data=b'audio')
         self.audio_started.set()
         await self.enqueued.wait()
@@ -8212,11 +8213,11 @@ class _RespondingConnection(FakeRealtimeConnection):
         self._text_sent = asyncio.Event()
         self.sent_before_each_done: list[list[str]] = []
 
-    async def send(self, content: RealtimeInput) -> None:
-        await super().send(content)
+    async def send_input(self, content: RealtimeInput) -> None:
+        await super().send_input(content)
         self._text_sent.set()
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         for _ in range(self._replies):
             await self._text_sent.wait()
             self._text_sent.clear()
@@ -8331,14 +8332,14 @@ class _ConcurrentEnqueueConnection(FakeRealtimeConnection):
         self.first_send_started = ThreadEvent()
         self.second_enqueued = ThreadEvent()
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         self.sent.append(content)
         if content == 'first':
             self.first_send_started.set()
             while not self.second_enqueued.is_set():
                 await asyncio.sleep(0)
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         yield ToolCall(tool_call_id='tc-1', tool_name='queue_concurrently', args='{"text": "first"}')
         yield ToolCall(tool_call_id='tc-2', tool_name='queue_concurrently', args='{"text": "second"}')
         while sum(isinstance(item, ToolResult) for item in self.sent) < 2:
@@ -8545,7 +8546,7 @@ def test_asap_notifications_without_live_loop_and_after_close_are_ignored() -> N
 
 async def test_failed_asap_drain_is_forwarded_to_session_iterator() -> None:
     class _FailingSend(FakeRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             raise RuntimeError('send failed')
 
     session = RealtimeSession(_FailingSend([]))
@@ -8613,11 +8614,11 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
     # the consumer — mirroring `_pending_message_task_done` — instead of letting it vanish as an
     # unretrieved-task-exception warning at GC, silently losing the enqueued follow-up.
     class _FailingDrain(BlockingRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             if isinstance(content, str):
                 raise RuntimeError('drain send failed')
             # This test only drives the drain's text-turn send.
-            await super().send(content)  # pragma: no cover
+            await super().send_input(content)  # pragma: no cover
 
     conn = _FailingDrain([])
     session = RealtimeSession(conn)
@@ -10668,7 +10669,7 @@ async def test_wait_for_reply_spans_a_tool_calling_turn() -> None:
     answer_sent = asyncio.Event()
 
     class _AnswersAfterTheTool(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}')
             yield ResponseDone()
             await answer_sent.wait()
@@ -10750,7 +10751,7 @@ async def test_wait_for_reply_returns_when_the_receive_side_fails() -> None:
     """A reply that can no longer arrive must not park the caller: the pump died owing one."""
 
     class _DyingConnection(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield RealtimeInputSpeechStartEvent()
             raise RuntimeError('socket died')
 
@@ -10770,10 +10771,10 @@ async def test_wait_for_reply_returns_when_the_send_that_asked_for_it_failed() -
     """A rolled-back reservation stops counting, or the failed send would park every later waiter."""
 
     class _RefusingConnection(FakeRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             raise RuntimeError('send failed')
 
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield RealtimeInputSpeechStartEvent()
             await asyncio.Event().wait()  # the receive side stays open
 
@@ -10790,7 +10791,7 @@ async def test_wait_for_reply_waits_for_every_requested_reply() -> None:
     second_reply = asyncio.Event()
 
     class _TwoReplies(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield OutputTranscript(text='first', is_final=True)
             yield ResponseDone()
             await second_reply.wait()
@@ -10825,11 +10826,11 @@ async def test_wait_for_reply_wakes_when_a_concurrent_send_fails() -> None:
     fail_send = asyncio.Event()
 
     class _FailsMidSend(FakeRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             await fail_send.wait()
             raise RuntimeError('send failed')
 
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield RealtimeInputSpeechStartEvent()
             await asyncio.Event().wait()  # the receive side stays open
 
@@ -10858,13 +10859,13 @@ class _AnswersEachInput(FakeRealtimeConnection):
         self._answer = answer
         self._events: asyncio.Queue[RealtimeCodecEvent] = asyncio.Queue()
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         index = len(self.sent)
-        await super().send(content)
+        await super().send_input(content)
         for event in self._answer(index, content):
             self._events.put_nowait(event)
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         while True:
             yield await self._events.get()
 
@@ -10932,8 +10933,8 @@ async def test_image_refused_while_still_sending_is_not_retained() -> None:
     refused = BinaryImage(data=b'refused', media_type='image/png')
 
     class _RefusesMidSend(_AnswersEachInput):
-        async def send(self, content: RealtimeInput) -> None:
-            await super().send(content)
+        async def send_input(self, content: RealtimeInput) -> None:
+            await super().send_input(content)
             if content == refused:
                 for _ in range(20):  # the pump reads the refusal before this send returns
                     await asyncio.sleep(0)
@@ -10988,8 +10989,8 @@ async def test_refused_response_request_already_answered_releases_nothing() -> N
         return []
 
     class _GatedSecondReply(_AnswersEachInput):
-        async def send(self, content: RealtimeInput) -> None:
-            await super().send(content)
+        async def send_input(self, content: RealtimeInput) -> None:
+            await super().send_input(content)
             if len(self.sent) == 2:
                 self._events.put_nowait(OutputTranscript(text='again', is_final=True))
 
@@ -11034,7 +11035,7 @@ async def test_wait_for_reply_returns_when_a_reconnect_discards_the_reply() -> N
     reconnected = asyncio.Event()
 
     class _ReconnectsMidReply(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield OutputTranscript(text='half a sen', is_final=False)
             yield RealtimeSessionReconnectEvent(state_restored=False)
             reconnected.set()
@@ -11056,11 +11057,11 @@ async def test_wait_for_reply_wakes_when_a_concurrent_image_send_fails() -> None
     fail_send = asyncio.Event()
 
     class _FailsMidSend(FakeRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             await fail_send.wait()
             raise RuntimeError('send failed')
 
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield RealtimeInputSpeechStartEvent()
             await asyncio.Event().wait()  # the receive side stays open
 
@@ -11163,7 +11164,7 @@ async def test_wait_for_reply_holds_through_a_stalled_exchange() -> None:
     continue_exchange = asyncio.Event()
 
     class _StallsThenCallsTheTool(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield OutputTranscript(text='Let me check that for you.', is_final=True)
             yield ResponseDone(more_expected=True)
             filler_done.set()
@@ -11332,12 +11333,12 @@ class _ToolBatchConnection(FakeRealtimeConnection):
     def results(self) -> list[ToolResult]:
         return [content for content in self.sent if isinstance(content, ToolResult)]
 
-    async def send(self, content: RealtimeInput) -> None:
-        await super().send(content)
+    async def send_input(self, content: RealtimeInput) -> None:
+        await super().send_input(content)
         if len(self.results()) == len(self.calls):
             self.all_results_in.set()
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         for call in self.calls:
             yield call
         await self.close_response.wait()
@@ -11495,7 +11496,7 @@ async def test_lost_conversation_leaves_no_tool_batch_reply_owed() -> None:
     """A reconnect that lost the conversation doesn't count a reply for results it may not have."""
 
     class _DropsMidBatch(_ToolBatchConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='c1', tool_name='fast', args='{}', response_usage_follows=True)
             yield ToolCall(tool_call_id='c2', tool_name='slow', args='{}', response_usage_follows=True)
             await self.close_response.wait()
@@ -11557,10 +11558,10 @@ async def test_tool_result_that_fails_to_send_leaves_no_reply_owed(failing_call:
     """
 
     class _RefusesTheSlowResult(_ToolBatchConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             if isinstance(content, ToolResult) and content.tool_call_id == failing_call:
                 raise RuntimeError('send failed')
-            await super().send(content)
+            await super().send_input(content)
 
     release_slow = asyncio.Event()
     conn = _RefusesTheSlowResult()
@@ -11592,7 +11593,7 @@ async def test_tool_result_outside_any_batch_is_a_reply_of_its_own() -> None:
 
 async def test_tool_result_outside_any_batch_that_fails_to_send_counts_no_reply() -> None:
     class _Refuses(FakeRealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             raise RuntimeError('send failed')
 
     session = RealtimeSession(_Refuses([]))
@@ -11614,7 +11615,7 @@ async def test_wait_for_reply_counts_merged_response_requests_once() -> None:
             merged, self.merged = self.merged, 0
             return merged
 
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield OutputTranscript(text='Paris', is_final=True)
             await answer.wait()
             yield ResponseDone()
@@ -11659,7 +11660,7 @@ async def test_wait_for_reply_after_a_failed_tool_still_waits_for_a_later_reply(
     answer = asyncio.Event()
 
     class _AnswersLater(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='c1', tool_name='boom', args='{}')
             await answer.wait()
             yield OutputTranscript(text='later', is_final=True)
@@ -11706,7 +11707,7 @@ async def test_tool_failure_leaves_a_reply_requested_before_it_owed() -> None:
     answer = asyncio.Event()
 
     class _AnswersTheQueuedTurn(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='c1', tool_name='boom', args='{}', response_usage_follows=True)
             yield SessionUsage(usage=RequestUsage(input_tokens=1), finish_reason='tool_call')
             await answer.wait()
@@ -11753,7 +11754,7 @@ async def test_tool_failure_does_not_hide_a_later_server_started_reply() -> None
     finish_reply = asyncio.Event()
 
     class _ServerReplies(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='c1', tool_name='boom', args='{}')
             await _until(lambda: bool(session._parked_errors))  # pyright: ignore[reportPrivateUsage]
             yield OutputTranscript(text='unprompted')
@@ -11795,7 +11796,7 @@ async def test_reconnect_with_tools_running_leaves_no_tool_batch_behind() -> Non
     """A batch whose response a reconnect settles is closed then, so it retires once its calls are cancelled."""
 
     class _DropsWhileRunning(_ToolBatchConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='c1', tool_name='slow', args='{}', response_usage_follows=True)
             yield RealtimeSessionReconnectEvent(state_restored=False)
             await asyncio.Event().wait()
@@ -11834,7 +11835,7 @@ async def test_tool_failure_while_another_exchange_streams_still_ends_its_exchan
     finish_b = asyncio.Event()
 
     class _BStreamsWhileAFails(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='c1', tool_name='boom', args='{}', response_usage_follows=True)
             yield SessionUsage(usage=RequestUsage(input_tokens=1), finish_reason='tool_call')
             yield OutputTranscript(text='B is streaming')

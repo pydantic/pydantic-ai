@@ -1138,11 +1138,11 @@ def test_a_held_filler_keeps_the_wait_through_a_transcript_until_the_model_carri
     session_core = core()
 
     def message(*codec: Any) -> None:
-        for event, _ in tracker.message(list(codec)):
+        for event in tracker.message(list(codec)):
             session_core.apply(event)
 
     session_core.apply(InputSent(input_id=0, request=text_request('Weather?'), solicits=True))
-    tracker.input_sent(0, 'Weather?')
+    tracker.input_sent('Weather?')
     message(OutputTranscript('Let me check.'))
     message(SessionUsage(RequestUsage(input_tokens=1)), ResponseDone(more_expected=True))
     wait = session_core.wait_tokens()
@@ -1165,7 +1165,7 @@ def test_a_held_filler_keeps_the_wait_through_a_transcript_until_the_model_carri
 def test_a_reply_the_provider_will_never_give_is_lost_once() -> None:
     """GPT-Live drops a tool result whose backend gave up: its reply is lost, unless a response already took it."""
     tracker = InferredLifecycle(transcribes=True)
-    tracker.input_sent(0, ToolResult('call_1', output='sunny'))
+    tracker.input_sent(ToolResult('call_1', output='sunny'))
     tracker.input_unanswerable(0)
     tracker.input_unanswerable(0)
     assert tracker.take_pending() == snapshot([InputAdded(input_id=0), InputLost(input_ids=(0,))])
@@ -1177,7 +1177,7 @@ def test_what_the_user_says_as_they_cut_in_is_a_turn_of_its_own() -> None:
     session_core = core()
 
     def message(*codec: Any) -> None:
-        for event, _ in tracker.message(list(codec)):
+        for event in tracker.message(list(codec)):
             session_core.apply(event)
 
     message(InputTranscript('First question'))
@@ -1209,7 +1209,7 @@ def test_what_the_user_says_as_they_cut_in_is_a_turn_of_its_own() -> None:
 def test_a_reply_taken_with_audio_starts_ahead_of_it() -> None:
     """GPT-Live's audio track runs on between replies, so its connection says where the model takes the turn."""
     tracker = InferredLifecycle(transcribes=True, audio_starts_response=False)
-    assert [type(event).__name__ for event, _ in tracker.message([AudioDelta(b'\x00\x00')])] == snapshot(['AudioDelta'])
-    assert [type(event).__name__ for event, _ in tracker.message([AudioDelta(b'\x00\x10')], takes_turn=True)] == (
+    assert [type(event).__name__ for event in tracker.message([AudioDelta(b'\x00\x00')])] == snapshot(['AudioDelta'])
+    assert [type(event).__name__ for event in tracker.message([AudioDelta(b'\x00\x10')], takes_turn=True)] == (
         snapshot(['ResponseStarted', 'AudioDelta'])
     )
