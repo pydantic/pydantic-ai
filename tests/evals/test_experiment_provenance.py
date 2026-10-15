@@ -340,11 +340,13 @@ async def test_case_hashes_omitted_when_unserializable(capfire: CaptureLogfire):
         [
             Case(name='object', inputs=object(), expected_output='yes'),
             Case(name='cyclic', inputs='x', metadata={'self': cyclic}),
+            Case(name='unsupported_key', inputs={frozenset({1}): 'x'}, expected_output='yes'),
         ],
     )
     assert {name: sorted(h) for name, h in hashes.items()} == snapshot(
         {
             'object': ['expected_output_hash', 'metadata_hash'],
             'cyclic': ['expected_output_hash', 'inputs_hash'],
+            'unsupported_key': ['expected_output_hash', 'metadata_hash'],
         }
     )
