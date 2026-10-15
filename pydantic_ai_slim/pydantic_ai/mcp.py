@@ -1527,38 +1527,34 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             return await self.direct_call_tool(name, tool_args, use_task=use_task)
 
         # Tools without a UI keep calling `direct_call_tool`, which subclasses and tests may replace. App tools
-        # take the same steps, but keep the arguments and raw result of the last call to this tool: mapping it
-        # for the model keeps either `structuredContent` (when every block is text) or the content blocks, and
-        # always drops `_meta`, which the app needs.
+        # take the same steps, but also keep the raw result of this tool's call: a hook only sees the value mapped
+        # for the model, and the mapping drops `_meta` and sometimes the content blocks, which the app needs.
         tool_name = name
-        last_call: tuple[dict[str, Any], CallToolResult, ToolResult] | None = None
+        sent: tuple[dict[str, Any], CallToolResult] | None = None
 
         async def call_tool_func(
             name: str, args: dict[str, Any], *, metadata: dict[str, Any] | None = None
         ) -> ToolResult:
-            nonlocal last_call
+            nonlocal sent
             result = await self._call_tool_checked(name, args, metadata=metadata, use_task=use_task)
-            mapped = _map_mcp_call_tool_result(result)
             if name == tool_name:
-                # A copy, so a hook that edits the returned value in place still reads as a rewrite.
-                last_call = args, result, copy.deepcopy(mapped)
-            return mapped
+                # Copies, as the mapped value shares objects with the result and a hook may edit either in place.
+                sent = copy.deepcopy(args), copy.deepcopy(result)
+            return _map_mcp_call_tool_result(result)
 
-        # A copy, so a hook that edits the arguments in place still reads as a rewrite.
-        model_args = copy.deepcopy(tool_args)
         if self.process_tool_call is not None:
             return_value = await self.process_tool_call(ctx, call_tool_func, name, tool_args)
         else:
             return_value = await call_tool_func(name, tool_args)
 
-        # The app gets the result only when the model's call produced it and the model got it unchanged: a
-        # `process_tool_call` hook that changes the arguments or the result decides what leaves the toolset.
-        if last_call is None or last_call[0] != model_args or return_value != last_call[2]:
+        # Mapping the kept result again gives what the model would have got, so a `process_tool_call` hook that
+        # changed the result keeps the raw one from reaching the app.
+        if sent is None or return_value != _map_mcp_call_tool_result(sent[1]):
             return return_value
-        _, result, _ = last_call
+        args, result = sent
         app = MCPAppToolResult(
             resource_uri=resource_uri,
-            tool_input=model_args,
+            tool_input=args,
             result=_call_tool_result_to_wire(result),
             toolset_id=self.id,
         )
