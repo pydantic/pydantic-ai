@@ -162,7 +162,7 @@ The actual delay depends on the `multiplier`, `min`, and `max` parameters passed
 
 ## Task Timeouts
 
-A task that hangs, such as a stalled network call, holds up the whole evaluation. Pass `task_timeout` to `evaluate()` or `evaluate_sync()` to bound each call of the task, in seconds:
+A task that hangs, such as a stalled network call, holds up the whole evaluation. Pass `task_timeout` to [`evaluate()`][pydantic_evals.dataset.Dataset.evaluate] or [`evaluate_sync()`][pydantic_evals.dataset.Dataset.evaluate_sync] to bound each call of the task, in seconds:
 
 ```python
 from tenacity import retry_if_not_exception_type, stop_after_attempt

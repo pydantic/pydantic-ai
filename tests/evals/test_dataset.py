@@ -2660,7 +2660,7 @@ async def test_task_timeout_validation(task_timeout: float):
         raise NotImplementedError
 
     dataset = Dataset[str, str, None](name='timeout', cases=[Case(inputs='input')])
-    with pytest.raises(ValueError, match='task_timeout must be a finite number of seconds greater than 0, got '):
+    with pytest.raises(ValueError, match='`task_timeout` must be a finite number of seconds greater than 0, got '):
         await dataset.evaluate(task, task_timeout=task_timeout)
 
 

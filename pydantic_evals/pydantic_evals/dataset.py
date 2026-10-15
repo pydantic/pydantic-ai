@@ -332,7 +332,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         if task_timeout is not None and (
             isinstance(task_timeout, bool) or not math.isfinite(task_timeout) or task_timeout <= 0
         ):
-            raise ValueError(f'task_timeout must be a finite number of seconds greater than 0, got {task_timeout!r}')
+            raise ValueError(f'`task_timeout` must be a finite number of seconds greater than 0, got {task_timeout!r}')
 
         task_name = task_name or get_unwrapped_function_name(task)
         name = name or task_name
