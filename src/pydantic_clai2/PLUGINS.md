@@ -1188,7 +1188,8 @@ The composer's **Code** and **Speculative** toggles flip `run.code_mode` and
 `run.speculative_code_mode` by sending `/set` through the prompt, so they save the setting as
 typing it would; a running turn keeps the tools it started with. While speculation is on, code
 mode is on too, so its toggle stays lit. A change made with Ctrl+X Ctrl+S in the terminal shows in
-the browser with its next status update.
+the browser at its next status update, which an idle session sends only when a prompt or command
+runs; reloading the page shows it at once.
 
 While `web` is loaded it answers `ask_user_question` itself, in the browser and in the
 terminal picker at once, whichever answers first; the `ask_user` plugin stays off meanwhile,
@@ -2180,7 +2181,8 @@ prompt the keyboard does:
   which reads its prompts line by line.
 - `self.host.setting(KEY)` reads the effective value of a CLAI setting, such as
   `run.code_mode`, as `/set KEY` shows it; change one as the user would, with
-  `send_input('/set KEY VALUE')`. It raises `KeyError` for an unknown key.
+  `send_input('/set KEY VALUE')`. It raises `KeyError` for an unknown key, and on a host without
+  CLAI's settings, such as one built in a test without `setting=`.
 - `self.host.interrupt()` cancels the running turn or command as Esc does, and returns
   `False` when nothing was running. A menu stays open, and a headless `-p` run is not cancelled.
 - `await self.host.complete(text)` returns what Tab offers for `text`: termflow `Completion`s
