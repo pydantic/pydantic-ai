@@ -427,7 +427,11 @@ def test_fastmcp_info_logging_stays_off_the_prompt() -> None:
     script = (
         "import logging, pydantic_clai2.mcp; print(logging.getLogger('fastmcp.client.auth.oauth').getEffectiveLevel())"
     )
-    env = {name: value for name, value in os.environ.items() if name != 'FASTMCP_LOG_LEVEL'}
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name != 'FASTMCP_LOG_LEVEL' and not name.startswith('COVERAGE_')
+    }
     result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, check=True, env=env)
     assert int(result.stdout) >= logging.WARNING
 
