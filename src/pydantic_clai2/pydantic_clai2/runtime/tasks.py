@@ -120,13 +120,18 @@ class Tasks:
         directory: Path | None,
         step_store: StepStore | None = None,
         fire: Callable[[TaskEvent], Awaitable[None]] | None = None,
+        listening: Callable[[], bool] = lambda: True,
         send_input: Callable[[str], None] | None = None,
     ) -> None:
-        """`fire` tells plugins about the current conversation's tasks; `send_input` enters `resume`'s prompt."""
+        """`fire` tells plugins about the current conversation's tasks, while `listening` says one handles them.
+
+        `send_input` enters `resume`'s prompt.
+        """
         self.presentation = TaskPresentation()
         self.console = console
         self.conversation_id = conversation_id
         self.fire = fire
+        self.listening = listening
         self.send_input = send_input
         self.sink: Callable[[AgentStreamEvent], Awaitable[None]] | None = None
         self.wake: Callable[[], None] | None = None
@@ -174,7 +179,8 @@ class Tasks:
             self.partial_truncated.add(record.id)
         if event is not None:
             progress.observe(event)
-        if self.fire is not None and record.conversation_id == self.conversation_id():
+        # It runs for every event of the child's stream, so build nothing that no plugin reads.
+        if self.fire is not None and record.conversation_id == self.conversation_id() and self.listening():
             await self.fire(TaskEvent(task=self.info(record), event=event))
         if (
             record.status == 'finished'
@@ -290,6 +296,7 @@ class Tasks:
             if isinstance(message, ModelResponse):
                 usage.incr(message.usage)
                 usage.requests += 1
+                usage.tool_calls += len(message.tool_calls)
         return TaskInfo(
             id=record.id,
             parent_id=record.parent_id,
@@ -324,8 +331,15 @@ class Tasks:
         record = self._record(task_id)
         if self.send_input is None:
             raise RuntimeError('This CLAI has no prompt to ask the agent to resume a task at.')
+        stopped = record.user_stopped
         await self.owner.allow_resume(record.id)
-        self.send_input(resume_prompt(record))
+        try:
+            self.send_input(resume_prompt(record))
+        except RuntimeError:
+            # The shell's line-mode prompt takes no input: the user's stop still holds.
+            record.user_stopped = stopped
+            await self.owner.save(record)
+            raise
 
     def steer(self, task_id: str, text: str) -> bool:
         return self.owner.steer(self._record(task_id).id, text)
