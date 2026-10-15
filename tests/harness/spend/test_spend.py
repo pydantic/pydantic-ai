@@ -2857,9 +2857,8 @@ class TestInterruptedStreams:
                         async for node in run:  # pragma: no branch
                             if Agent.is_model_request_node(node):
                                 async with node.stream(run.ctx) as stream:
-                                    async for text in stream.stream_text(debounce_by=None):  # pragma: no branch
-                                        if 'C' in text:
-                                            raise RuntimeError('consumer stopped')
+                                    async for _ in stream.stream_text(debounce_by=None):  # pragma: no branch
+                                        raise RuntimeError('consumer stopped')
             resumed = run.usage
             assert isinstance(resumed_messages[-1], ModelResponse)
             assert resumed_messages[-1].state == 'interrupted'
