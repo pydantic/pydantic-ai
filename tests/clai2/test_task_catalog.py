@@ -10,7 +10,16 @@ import anyio
 import pytest
 from rich.console import Console
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.coder import Coder
@@ -130,8 +139,14 @@ async def test_catalog_lists_and_controls_the_current_conversations_tasks() -> N
     parent.messages = [
         ModelRequest(parts=[UserPromptPart('inspect')]),
         ModelResponse(
-            parts=[TextPart('found'), ToolCallPart('shell', {'command': 'ls'})],
+            parts=[TextPart('found'), ToolCallPart('shell', {'command': 'ls'}, 'ls'), ToolCallPart('shell', {}, 'bad')],
             usage=RequestUsage(input_tokens=10, output_tokens=3),
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('shell', 'README.md', 'ls'),
+                RetryPromptPart('command is required', tool_name='shell', tool_call_id='bad'),
+            ]
         ),
     ]
     ui.owner.records = {child.id: child, parent.id: parent, elsewhere.id: elsewhere}
