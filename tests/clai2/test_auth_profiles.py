@@ -98,7 +98,7 @@ async def test_codex_profiles_sign_in_and_run_on_separate_accounts(monkeypatch: 
         return CREDENTIALS
 
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
-    monkeypatch.setattr('webbrowser.open', fake_browser)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
     output = io.StringIO()
     auth = CodexAuth(Console(file=output), read_line=never_pasted)
     message = await login_command(['codex@work'], codex=auth)
@@ -382,7 +382,6 @@ def test_chains_and_profiles_take_their_model_settings(tmp_path: Path) -> None:
     context = CommandContext(
         settings=Settings(model='chain:pool'),
         store=store,
-        clear_history=lambda: None,
         apply_setting=lambda key, settings: None,
         settings_model=lambda model: settings_model(store, model),
     )
