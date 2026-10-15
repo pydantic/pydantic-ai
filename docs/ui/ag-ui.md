@@ -316,7 +316,7 @@ Anything that isn't meant for the model at all — a Slack channel ID, a locale 
 
 When the agent's events reach you outside the request that serves the frontend, there's no run input to read them off at all — see ["Encoding events without a request"](./overview.md#encoding-events-without-a-request), where [`AGUIEventStream.thread_id`][pydantic_ai.ui.ag_ui.AGUIEventStream.thread_id] and [`run_id`][pydantic_ai.ui.ag_ui.AGUIEventStream.run_id] take over as the source of the identity the protocol requires.
 
-`context`, `forwardedProps` and `parentRunId` are read straight off [`run_input`][pydantic_ai.ui.UIAdapter.run_input] rather than through adapter properties of their own. The adapter's properties — `messages`, `toolset`, `state`, `conversation_id`, `deferred_tool_results` — are the concepts every UI protocol shares and that the adapter itself feeds into the agent run. These three are AG-UI-specific and consumed by your code (the adapter only reads `forwardedProps.__proxiedMCPRequest`, for [MCP Apps](#mcp-apps)), so they stay on the protocol object where their types are the protocol's own.
+`context`, `forwardedProps` and `parentRunId` are read straight off [`run_input`][pydantic_ai.ui.UIAdapter.run_input] rather than through adapter properties of their own. The adapter's properties — `messages`, `toolset`, `state`, `conversation_id`, `deferred_tool_results` — are the concepts every UI protocol shares and that the adapter itself feeds into the agent run. These three are AG-UI-specific and consumed only by your code, so they stay on the protocol object where their types are the protocol's own.
 
 ### Tool approval (interrupts)
 
@@ -524,30 +524,7 @@ AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`]
 
 After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stream carries an `ACTIVITY_SNAPSHOT` with `activityType: "mcp-apps"` (`ag-ui-protocol` 0.1.19 or later). Its `content`: `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`), and `serverId` and `serverHash` (both the toolset `id`, when set). This is the shape the AG-UI [MCP Apps middleware](https://www.npmjs.com/package/@ag-ui/mcp-apps-middleware) emits, so renderers built for it work unchanged. Dumped history keeps it as an `ActivityMessage`; loading ignores it.
 
-Renderers built for the MCP Apps middleware, such as CopilotKit's, load the page and relay its requests by starting a run with `forwardedProps.__proxiedMCPRequest` and reading `RUN_FINISHED.result`. Pass `mcp_app_toolsets` to answer those runs without running the agent:
-
-```python {title="ag_ui_mcp_apps.py"}
-from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import Response
-from starlette.routing import Route
-
-from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.ui.ag_ui import AGUIAdapter
-
-weather = MCPToolset('http://localhost:8000/mcp', id='weather')
-agent = Agent('{{ openai:medium }}', toolsets=[weather])
-
-
-async def run_agent(request: Request) -> Response:
-    return await AGUIAdapter.dispatch_request(request, agent=agent, mcp_app_toolsets=[weather])
-
-
-app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
-```
-
-Toolsets are matched by `id`, so each one needs an `id`. Tool calls go through [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] (app-visible tools only, no `process_tool_call`) and resource reads through [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] (any resource). MCP errors come back as `{"error": ...}` in the result; other failures end the run with `RUN_ERROR`. Keep the toolsets entered (`async with weather:`) while your app runs.
+CopilotKit's MCP Apps renderer loads the page and relays its requests by posting a run with `forwardedProps.__proxiedMCPRequest` (`serverId`, `method`, `params`) to your AG-UI endpoint, and reads the answer from `RUN_FINISHED.result`. `AGUIAdapter` runs the agent for these, so answer them in your route before calling `dispatch_request`: get the result from the [MCP Apps relay](../mcp/client.md#mcp-apps), and send it as `RUN_STARTED` followed by `RUN_FINISHED` with that `result`.
 
 ### Assistant message identity
 

@@ -6,7 +6,7 @@ import json
 import uuid
 import warnings
 from base64 import b64decode
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
 from typing import (
@@ -76,9 +76,6 @@ try:
         FunctionCall,
         Message,
         RunAgentInput,
-        RunErrorEvent,
-        RunFinishedEvent,
-        RunStartedEvent,
         SystemMessage,
         TextInputContent,
         Tool as AGUITool,
@@ -133,7 +130,6 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from ...agent import AbstractAgent
-    from ...mcp import MCPToolset
 else:
     try:
         from ag_ui.core import ReasoningMessage
@@ -290,18 +286,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     unaffected — they ride inline in `ToolMessage.content`.
     """
 
-    mcp_app_toolsets: Sequence[MCPToolset[Any]] = ()
-    """MCP toolsets whose [MCP Apps](../mcp/client.md#mcp-apps) pages can send requests through this endpoint.
-
-    Renderers built for the AG-UI MCP Apps middleware, such as CopilotKit's, send a page's `tools/call` and
-    `resources/read` requests as runs. A run that names one of these toolsets by [`id`][pydantic_ai.mcp.MCPToolset.id]
-    is answered with [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] or
-    [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] instead of running the agent.
-    Anyone who can post to this endpoint can make these requests, so check the user before dispatching.
-
-    Only [`run_stream`][pydantic_ai.ui.UIAdapter.run_stream], and so `dispatch_request`, answers these runs.
-    """
-
     @classmethod
     def build_run_input(cls, body: bytes) -> RunAgentInput:
         """Build an AG-UI run input object from the request body.
@@ -347,7 +331,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
         allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
-        mcp_app_toolsets: Sequence[MCPToolset[Any]] = (),
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with AG-UI-specific parameters."""
@@ -361,58 +344,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
             allowed_content_types=allowed_content_types,
-            mcp_app_toolsets=mcp_app_toolsets,
             **kwargs,
         )
-
-    def _answer_without_run(self) -> AsyncIterator[BaseEvent] | None:
-        props = self.run_input.forwarded_props
-        if not self.mcp_app_toolsets or not is_str_dict(props) or '__proxiedMCPRequest' not in props:
-            return None
-        return self._answer_mcp_app_request(props['__proxiedMCPRequest'])
-
-    async def _answer_mcp_app_request(self, request: Any) -> AsyncIterator[BaseEvent]:
-        """Answer a page's MCP request the way the AG-UI MCP Apps middleware does."""
-        thread_id, run_id = self.run_input.thread_id, self.run_input.run_id
-        timestamp_ms = AGUIEventStream._get_timestamp  # pyright: ignore[reportPrivateUsage]
-        yield RunStartedEvent(thread_id=thread_id, run_id=run_id, timestamp=timestamp_ms())
-        try:
-            result = await self._mcp_app_request_result(request)
-        except Exception as e:
-            yield RunErrorEvent(message=str(e), timestamp=timestamp_ms())
-            return
-        yield RunFinishedEvent(thread_id=thread_id, run_id=run_id, result=result, timestamp=timestamp_ms())
-
-    async def _mcp_app_request_result(self, request: Any) -> dict[str, Any]:
-        from ...mcp import MCPError
-
-        if not is_str_dict(request):
-            return {'error': 'Invalid MCP request'}
-        # Like the middleware, look the server up by `serverId`, then by `serverHash`; both carry the toolset ID.
-        toolset = next(
-            (
-                toolset
-                for server_id in (request.get('serverId'), request.get('serverHash'))
-                for toolset in self.mcp_app_toolsets
-                if server_id is not None and toolset.id == server_id
-            ),
-            None,
-        )
-        if toolset is None:
-            return {'error': 'Unknown MCP server'}
-        method = request.get('method')
-        try:
-            match method, request.get('params'):
-                case 'tools/call', {'name': str(name), **params}:
-                    return await toolset.call_tool_for_app(name, params.get('arguments'))
-                case 'resources/read', {'uri': str(uri)}:
-                    return await toolset.read_resource_for_app(uri)
-                case 'tools/call' | 'resources/read', _:
-                    return {'error': 'Invalid MCP params'}
-                case _:
-                    return {'error': f'MCP method not supported: {method}'}
-        except MCPError as e:
-            return {'error': e.message}
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
