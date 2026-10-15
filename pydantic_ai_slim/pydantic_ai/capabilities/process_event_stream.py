@@ -149,6 +149,7 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
                 async def pull_next(scope: anyio.CancelScope) -> AgentStreamEvent:
                     with scope:
                         return await anext(stream_iterator)
+                    # Reached only when teardown cancelled `scope`, which swallows that cancellation.
                     raise StopAsyncIteration
 
                 try:
@@ -172,6 +173,8 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
                                         await handler_task
 
                         try:
+                            # A plain await would forward a cancel of this task into the pull natively.
+                            # Teardown cancels it through `next_scope`, which the source's shielded cleanup survives.
                             event = await asyncio.shield(next_task)
                         except StopAsyncIteration:
                             break
@@ -185,20 +188,22 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
                         yield event
                         next_scope = anyio.CancelScope()
                 except BaseException:
-                    # Request one edge cancellation before sender closure. The handler's
-                    # async finally can then await without inheriting a cancelled scope.
+                    # Cancel the handler natively, once, before `send_stream` closes, so it sees a
+                    # cancellation rather than a normal end of stream. A native cancel is edge-triggered,
+                    # so the handler's `finally` can still await cleanup without shielding it.
                     handler_task.cancel()
                     handler_cancel_requested = True
                     raise
 
-            # Cancelling a pull must not forward Task.cancel() into the handler's
-            # shielded finalizer. Its own scope below owns cancellation and teardown.
+            # A plain `await handler_task` would forward a cancel of this task into the handler as a
+            # native cancel, which interrupts even its shielded cleanup. `handler_scope` below owns that.
             await asyncio.shield(handler_task)
         except BaseException:
             # The consumer stopped early or the inner stream failed: tear the handler down rather
             # than leaving it parked on `receive`, and let the original exception propagate.
-            # After EOF, use the handler's scope so an in-progress shielded finalizer
-            # can finish. A forwarding error has already requested its single edge cancel.
+            # Unless the handler was already cancelled natively above, cancel it through `handler_scope`,
+            # and the pull through `next_scope`: a scope cancel lets their shielded cleanup finish.
+            # `_utils.cancel_and_drain` cancels natively and would interrupt that cleanup.
             with anyio.CancelScope(shield=True):
                 if not handler_cancel_requested:
                     handler_scope.cancel()
