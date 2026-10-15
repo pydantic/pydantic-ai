@@ -27,9 +27,6 @@ pydantic-settings = false
 pydantic-monty-client = false
 genai-prices = false
 pydantic-monty = false
-termflow-md = "2026-10-02T15:05:25Z"
-anthropic = "2026-10-08T03:42:01.588842Z"
-openai = "2026-10-06T21:31:20Z"
 google-genai = "2026-10-13T00:38:20Z"
 
 [manifest]
