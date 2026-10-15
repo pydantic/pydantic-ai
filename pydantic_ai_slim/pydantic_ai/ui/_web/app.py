@@ -13,6 +13,7 @@ from urllib.parse import quote, unquote
 import anyio
 import anyio.to_thread
 import httpx2
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -181,7 +182,12 @@ def _normalize_same_origin_path(path: str, parameter: str) -> str:
     return path if path.endswith('/') else f'{path}/'
 
 
-def _serialize_config(config: dict[str, str]) -> str:
+class _ChatConfig(TypedDict, total=False):
+    basePath: str
+    apiPath: str
+
+
+def _serialize_config(config: _ChatConfig) -> str:
     serialized = json.dumps(config, ensure_ascii=True, separators=(',', ':'))
     return serialized.replace('&', r'\u0026').replace('<', r'\u003c').replace('>', r'\u003e')
 
@@ -255,7 +261,7 @@ def create_web_app(
     # instead of from the first request: Starlette builds its middleware stack lazily. Normalizing is
     # idempotent, so the middleware doing it again over the same list is a no-op.
     allowed_hosts = [normalized_pattern(pattern) for pattern in allowed_hosts or ()]
-    explicit: dict[str, str] = {}
+    explicit: _ChatConfig = {}
     if base_path is not None:
         explicit['basePath'] = _normalize_same_origin_path(base_path, 'base_path')
     if api_path is not None:
@@ -281,13 +287,13 @@ def create_web_app(
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""
         root_path = quote(request.scope.get('root_path', ''), safe='/')
-        derived: dict[str, str] = {}
+        derived: _ChatConfig = {}
         if root_path not in ('', '/'):
             root_path = _normalize_same_origin_path(root_path, 'root_path')
             derived = {'basePath': root_path, 'apiPath': f'{root_path}api/'}
 
         source = html_source
-        paths: dict[str, str] = derived | explicit
+        paths: _ChatConfig = derived | explicit
         if source is None and (paths.get('basePath', '/') != '/' or paths.get('apiPath', '/api/') != '/api/'):
             # Runtime path configuration requires 2.3.0; keep the existing UI for root deployments.
             source = 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.3.0/dist/index.html'
