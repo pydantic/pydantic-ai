@@ -2647,7 +2647,8 @@ async def test_late_input_transcript_anchors_from_sent_audio_without_speech_boun
             InputTranscript(text="what's the weather in Paris"),
             OutputTranscript(text="It's sunny in Paris", is_final=True),
             ResponseDone(),
-        ]
+        ],
+        after_input=True,
     )
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
@@ -5452,24 +5453,21 @@ def _transcripts(session: _RealtimeSession) -> list[tuple[str, str | None, bool]
     ]
 
 
-@pytest.mark.parametrize('speech_start', [False, True], ids=['audio-opens-turn', 'speech-start-opens-turn'])
-async def test_audio_retention_budget_evicting_the_message_a_turn_started_after_keeps_its_place(
-    speech_start: bool,
-) -> None:
+async def test_audio_retention_budget_evicting_the_message_a_turn_started_after_keeps_its_place() -> None:
     """The message a user turn is anchored to can lose its audio before the turn is recorded; the turn keeps its place.
 
     The context sent after the turn started goes after it, so recording the turn at the end would misplace it.
     The second turn is two tenths of a second, so starting it evicts the first turn's question and answer.
+    (Without speech boundaries, a turn joins the conversation at its transcript, so there's no earlier place to keep.)
     """
-    item_id = 'user-1' if speech_start else None
     conn = _ContinuousMicrophoneConnection(
         [
-            *_answered_turn(0, item_id='user-0' if speech_start else None),
-            *([RealtimeInputSpeechStartEvent(item_id=item_id)] if speech_start else []),
+            *_answered_turn(0, item_id='user-0'),
+            RealtimeInputSpeechStartEvent(item_id='user-1'),
             _speak(_tenths_of_a_second(1) * 2),
             _send_context('Context.'),
-            *([RealtimeInputSpeechEndEvent(item_id=item_id)] if speech_start else []),
-            InputTranscript(text='Question 1.', is_final=True, item_id=item_id),
+            RealtimeInputSpeechEndEvent(item_id='user-1'),
+            InputTranscript(text='Question 1.', is_final=True, item_id='user-1'),
         ]
     )
     session = RealtimeSession(conn, audio_retention='all', retain_audio_max_seconds=0.2)
