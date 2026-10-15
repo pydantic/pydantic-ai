@@ -418,7 +418,8 @@ class SessionCore:
         elif isinstance(item, (ResponseRequestRefused, InputLost)):
             self._settle(item.input_ids, 'refused' if isinstance(item, ResponseRequestRefused) else 'lost')
         elif isinstance(item, InputRejected):
-            if item.refused == 'content':
+            # (Refusing the content of an input that records none, a bare request for a response, takes nothing back.)
+            if item.refused == 'content' and item.input_index in self._inputs:
                 self._withdraw((item.input_index,))
         elif isinstance(item, ToolCallCancelled):
             self._settled_calls.update(item.tool_call_ids)

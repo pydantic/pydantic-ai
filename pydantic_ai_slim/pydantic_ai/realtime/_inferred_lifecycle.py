@@ -22,6 +22,7 @@ from ._lifecycle import (
     LifecycleEvent,
     RealtimeFrame,
     ResponseEnded,
+    ResponseRequestRefused,
     ResponseStarted,
     ResponseStatus,
     UserTurnDiscarded,
@@ -33,6 +34,7 @@ from .codec import (
     CommitAudio,
     ConversationItemCreated,
     CreateResponse,
+    InputRejected,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -143,6 +145,8 @@ class InferredLifecycle:
         """A turn joined the conversation, unnamed and without words yet (see `_commit_unnamed`)."""
         self._speaking = False
         """The provider heard the user start speaking, in a turn it didn't name, and not stop yet."""
+        self._transcribed_while_speaking = False
+        """Words came since the user started speaking: the speech is the turn they transcribe."""
         self._spoken_unanswered: str | None = None
         """A spoken turn that joined the conversation ahead of a reply that hasn't started yet."""
         self._identified: set[str] = set()
@@ -290,34 +294,9 @@ class InferredLifecycle:
             or (isinstance(event, OutputTranscript) and bool(event.text))
         )
         if self._deferred is not None:
-            if isinstance(event, (ToolCall, ResponseDone)):
-                # The tool call the model was stalling for belongs to the filler's response, and so does the next
-                # boundary (handled below).
-                self._deferred = None
-            elif output:
-                # The stall didn't end in the tool call it was for: the filler was a response of its own, which
-                # this one carries on.
-                self._end_deferred(before)
-            elif isinstance(event, RealtimeResponseInterruptedEvent):
-                # The user cut in: the exchange is over, and the filler is ended by the terminal that follows.
-                self._deferred = None
-            # Anything else (the user's transcript, usage) leaves it held: the exchange isn't over.
+            self._settle_deferred(event, output, before)
         if output:
-            self._ended_by_usage = None
-            named = event.response_id if isinstance(event, (AudioDelta, OutputTranscript, ToolCall)) else None
-            if self._open is not None and self._cut_off:
-                # More output after the response under way was cut off: a response of its own.
-                self._end(before, status='cancelled')
-            elif named is not None and self._open is not None and self._open_named and named != self._open:
-                # Content of a response the provider names differently: the one under way is over.
-                self._end(before, status='completed')
-            self._ensure_response(before, named=named)
-            if isinstance(event, ToolCall):
-                if event.response_usage_follows:
-                    self._calls_awaiting_usage = True
-                elif not self._calls_awaiting_usage:
-                    # No usage report closes its response: the call does, as the answer comes once its result is in.
-                    self._end(after, status='completed', finish_reason='tool_call')
+            self._output(event, before, after)
         elif isinstance(event, SessionUsage):
             # Usage reported between responses doesn't start one: it is the next response's (see `_response_done`).
             if event.response_scoped and self._calls_awaiting_usage:
@@ -340,9 +319,58 @@ class InferredLifecycle:
             self._speech_ended(event, after)
         elif isinstance(event, ResponseDone):
             self._response_done(event, before, after)
+        elif isinstance(event, InputRejected):
+            self._input_rejected(event, after)
         # Everything else (the end of a native part, a cancelled call, a typed turn the connection reports lost to a
         # drop, which `connection_lost` lost already, ...) says nothing about the lifecycle.
         return before, after
+
+    def _settle_deferred(self, event: RealtimeCodecEvent, output: bool, before: list[LifecycleEvent]) -> None:
+        """Whether the filler the model said while stalling for a tool call is over, with this event."""
+        if isinstance(event, ResponseDone) and event.interrupted:
+            # The exchange was cut off before the tool call came (by a drop the connection closes this way, say):
+            # the filler was a complete response, and the cut-off rest is one of its own.
+            self._end_deferred(before)
+        elif isinstance(event, (ToolCall, ResponseDone)):
+            # The tool call the model was stalling for belongs to the filler's response, and so does the next
+            # boundary (handled below).
+            self._deferred = None
+        elif output:
+            # The stall didn't end in the tool call it was for: the filler was a response of its own, which
+            # this one carries on.
+            self._end_deferred(before)
+        elif isinstance(event, RealtimeResponseInterruptedEvent):
+            # The user cut in: the exchange is over, and the filler is ended by the terminal that follows.
+            self._deferred = None
+        # Anything else (the user's transcript, usage) leaves it held: the exchange isn't over.
+
+    def _output(self, event: RealtimeCodecEvent, before: list[LifecycleEvent], after: list[LifecycleEvent]) -> None:
+        """The model's output, of the response under way or of one it starts."""
+        self._ended_by_usage = None
+        named = event.response_id if isinstance(event, (AudioDelta, OutputTranscript, ToolCall)) else None
+        if self._open is not None and self._cut_off:
+            # More output after the response under way was cut off: a response of its own.
+            self._end(before, status='cancelled')
+        elif named is not None and self._open is not None and self._open_named and named != self._open:
+            # Content of a response the provider names differently: the one under way is over.
+            self._end(before, status='completed')
+        self._ensure_response(before, named=named)
+        if isinstance(event, ToolCall):
+            if event.response_usage_follows:
+                self._calls_awaiting_usage = True
+            elif not self._calls_awaiting_usage:
+                # No usage report closes its response: the call does, as the answer comes once its result is in.
+                self._end(after, status='completed', finish_reason='tool_call')
+
+    def _input_rejected(self, event: InputRejected, after: list[LifecycleEvent]) -> None:
+        """The provider refused an input's content (it never joins the conversation), or its request for a reply."""
+        input_id = event.input_index
+        if event.refused == 'content':
+            self._held = [held for held in self._held if held != input_id]
+        if input_id in self._unanswered:
+            self._unanswered.remove(input_id)
+            if event.refused == 'response':
+                after.append(ResponseRequestRefused(input_ids=(input_id,)))
 
     def _replayed(self, event: RealtimeCodecEvent) -> bool:
         """Whether `event` is about an item a resumed conversation replays, which says nothing new."""
@@ -372,7 +400,10 @@ class InferredLifecycle:
             return
         self._ensure_response(before, named=event.provider_response_id)
         if event.more_expected and not event.interrupted and event.provider_details is None:
+            # The model said a filler while it stalls for a tool call: held open, as the call is its, but spoken
+            # all the same, so what the user says next is a turn of its own.
             self._deferred = event
+            self._close_turn(after)
             return
         self._end(
             after,
@@ -408,13 +439,15 @@ class InferredLifecycle:
                 return  # (the turn its words already started)
             self._end_turn(turn, before)
         self._speaking = True
+        self._transcribed_while_speaking = False
         if event.item_id is not None and event.item_id not in self._identified:
             # Speech starting while the model answers is the user speaking over it, not the speech it answers.
             self._start_turn(event.item_id, before, transcribed=False)
 
     def _speech_ended(self, event: RealtimeInputSpeechEndEvent, after: list[LifecycleEvent]) -> None:
         """The provider heard the user stop: the turn joins the conversation, as the provider commits it now."""
-        self._speaking = False
+        transcribed = self._speaking and self._transcribed_while_speaking
+        self._speaking = self._transcribed_while_speaking = False
         if event.item_id is not None and event.item_id in self._identified:
             turn = self._turn
             if turn is None or turn.id != event.item_id or turn.joined:
@@ -425,7 +458,9 @@ class InferredLifecycle:
                 # A turn of its own: the one before it is over.
                 self._audio_since_reply = False
                 if event.item_id is None:
-                    self._commit_unnamed(after)
+                    if not transcribed:
+                        self._commit_unnamed(after)
+                    # (Otherwise the speech is the turn its words transcribed, which joined with the last of them.)
                     return
                 if turn is not None:
                     self._end_turn(turn, after)
@@ -438,9 +473,13 @@ class InferredLifecycle:
     ) -> None:
         """Some of the user's words, or word that they can't be transcribed (which is the last there will be)."""
         final = isinstance(event, RealtimeInputTranscriptionErrorEvent) or event.is_final
-        if event.item_id is None or event.item_id not in self._identified:
-            self._announce_committed(before, event.item_id)
+        self._transcribed_while_speaking = self._speaking
         turn = self._turn
+        late = turn is not None and turn.replied and not turn.words and event.item_id is None
+        if not late and (event.item_id is None or event.item_id not in self._identified):
+            # (Late words are the replied turn's, which came first, not those of a turn committed since.)
+            self._announce_committed(before, event.item_id)
+            turn = self._turn
         if event.item_id is not None and event.item_id in self._identified:
             # More of a turn the provider named, which needn't be the one being said now.
             if turn is not None and turn.id == event.item_id and final:
@@ -537,8 +576,9 @@ class InferredLifecycle:
                 self._turn = None
             # (A turn that joined already, at its speech end or commit, is the one this replies to all the same.)
             return turn.id
-        if not (audio and replying) or (self._transcribes and self._identified):
-            # Nothing was said for the model to reply to (or the provider names its turns, and named none here).
+        if not (audio and replying) or (self._transcribes and self._identified) or self._spoken_unanswered:
+            # Nothing was said for the model to reply to (or the provider names its turns, and named none here), or
+            # what was said joined the conversation already, at its last transcript, say.
             return None
         # The model replies to the audio sent since its last reply: that is a turn, which joins ahead of the reply,
         # and gets what transcript comes for it (transcripts naming no turn are the latest one's).
@@ -633,5 +673,8 @@ class InferredLifecycle:
             if not turn.final:
                 events.append(UserTurnDiscarded(turn_id=turn.id))
         self._place_held(events)
-        self._audio_since_reply = False
+        if self._transcribes:
+            # What audio was sent is the turn its transcript names, or nothing. (Without transcripts, it is still
+            # what the user said, for a commit or the next reply to make a turn of.)
+            self._audio_since_reply = False
         return events

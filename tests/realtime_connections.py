@@ -11,6 +11,7 @@ from abc import abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from functools import cached_property
 
+from pydantic_ai.messages import RealtimeSessionReconnectEvent
 from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput
 from pydantic_ai.realtime.lifecycle import InferredLifecycle, LifecycleEvent, RealtimeFrame, StaleEvent
 
@@ -35,8 +36,16 @@ class InferredConnection(RealtimeConnection):
     async def send_input(self, content: RealtimeInput) -> None:
         raise NotImplementedError
 
-    def frames(self) -> AsyncIterator[RealtimeFrame]:
-        return self.lifecycle.frames(self.codec_events())
+    async def frames(self) -> AsyncIterator[RealtimeFrame]:
+        async for frame in self.lifecycle.frames(self.codec_events()):
+            if any(
+                isinstance(event, RealtimeSessionReconnectEvent)
+                and not (event.state_restored and self.reconnect_restores_in_flight_state)
+                for event in frame
+            ):
+                # A scripted re-dial: as a real connection does, it loses what was under way on the dropped one.
+                frame = [*self.lifecycle.connection_lost(), *frame]
+            yield frame
 
     @abstractmethod
     def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:

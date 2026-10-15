@@ -161,7 +161,6 @@ LIFECYCLE_EVENT_TYPES = (
 """The `LifecycleEvent` variants, for `isinstance` checks."""
 
 
-
 @dataclass(frozen=True)
 class StaleEvent:
     """A codec event about a response that has already ended: a repeated terminal, or content trailing it.

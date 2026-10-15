@@ -3192,7 +3192,7 @@ async def test_push_to_talk_user_turn_precedes_its_answer_when_its_transcript_la
             _MIC,
             _MIC,
             _RELEASE,
-            InputTranscript(text='What is the capital of France?', is_final=True, item_id='u1'),
+            InputTranscript(text='What is the capital of France?', is_final=True),
             OutputTranscript(text='Paris.', is_final=True),
             ResponseDone(),
             _MIC,
@@ -3200,10 +3200,10 @@ async def test_push_to_talk_user_turn_precedes_its_answer_when_its_transcript_la
             _RELEASE,
             OutputTranscript(text='Lima.', is_final=True),
             ResponseDone(),
-            InputTranscript(text='And of Peru?', is_final=True, item_id='u2'),
+            InputTranscript(text='And of Peru?', is_final=True),
             _MIC,
             _RELEASE,
-            InputTranscript(text='Remind me of the first one.', is_final=True, item_id='u3'),
+            InputTranscript(text='Remind me of the first one.', is_final=True),
             OutputTranscript(text='Paris.', is_final=True),
             ResponseDone(),
         ]
@@ -3231,11 +3231,11 @@ async def test_push_to_talk_turn_committed_while_the_model_answers_follows_that_
             _MIC,
             _RELEASE,
             ResponseDone(),
-            InputTranscript(text='What is the capital of France?', is_final=True, item_id='u1'),
+            InputTranscript(text='What is the capital of France?', is_final=True),
             AudioDelta(data=b'\x01\x00'),
             OutputTranscript(text='Lima.'),
             ResponseDone(),
-            InputTranscript(text='And of Peru?', is_final=True, item_id='u2'),
+            InputTranscript(text='And of Peru?', is_final=True),
         ]
     )
     session = RealtimeSession(conn)
@@ -11065,6 +11065,7 @@ async def test_wait_for_reply_returns_when_a_reconnect_discards_the_reply() -> N
 
     class _ReconnectsMidReply(FakeRealtimeConnection):
         async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+            await self._input_sent.wait()  # (the reply to the input)
             yield OutputTranscript(text='half a sen', is_final=False)
             yield RealtimeSessionReconnectEvent(state_restored=False)
             reconnected.set()
