@@ -22,8 +22,10 @@ export function Switches({
       <button
         className={`switch ${codeOn ? 'on' : ''}`}
         aria-pressed={codeOn}
-        disabled={status.speculation}
-        onClick={() => flip('run.code_mode', !status.code_mode)}
+        aria-disabled={status.speculation}
+        onClick={() => {
+          if (!status.speculation) flip('run.code_mode', !status.code_mode)
+        }}
         title={
           status.speculation
             ? 'Code mode is on while speculative execution is.'
