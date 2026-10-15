@@ -26,7 +26,13 @@ from pydantic import TypeAdapter, ValidationError
 WORKFLOW = Path(__file__).parents[1] / 'workflows' / 'ci.yml'
 
 # Job-level env vars that put a check on specific legs; each such leg must run on a pull request.
-LANE_VARS = ('COLLECT_COVERAGE', 'BLOCKBUSTER_ENABLED', 'PYTEST_TEST_BUDGET_SECONDS', 'PYTEST_COLLECT_BUDGET_SECONDS')
+LANE_VARS = (
+    'COLLECT_COVERAGE',
+    'BLOCKBUSTER_ENABLED',
+    'PYTEST_TEST_BUDGET_SECONDS',
+    'PYTEST_COLLECT_BUDGET_SECONDS',
+    'TYPECHECK_EXAMPLES',
+)
 REDUCED_JOBS = ('test', 'test-all-extras', 'test-durable-exec', 'test-lowest-versions', 'test-examples')
 
 Leg = dict[str, object]
