@@ -9,7 +9,7 @@ import { TurnMeter } from './components/TurnMeter'
 import { compact } from './format'
 import { PluginsPanel } from './components/PluginsPanel'
 import { DialogLayer } from './components/DialogLayer'
-import { ReplPanel } from './components/ReplPanel'
+import { MontyPanel } from './components/MontyPanel'
 import { SidebarIcon, TerminalIcon } from './components/icons'
 import type { ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
 import { MAC, MOD } from './platform'
@@ -34,7 +34,7 @@ export function App() {
   const [connection, setConnection] = useState<Connection>('connecting')
   const [theme, setTheme] = useState<Theme>(initialTheme)
   const [sidebar, setSidebar] = useState(true)
-  const [repl, setRepl] = useState(() => localStorage.getItem('clai-repl') === 'open')
+  const [monty, setMonty] = useState(() => localStorage.getItem('clai-monty') === 'open')
   const [preview, setPreview] = useState<Saved | null>(null)
   // The session the user picked, until it shows: its transcript loads, then the shell resumes it.
   const [opening, setOpening] = useState<Opening | null>(null)
@@ -73,7 +73,7 @@ export function App() {
     }
   }, [])
 
-  useEffect(() => localStorage.setItem('clai-repl', repl ? 'open' : 'closed'), [repl])
+  useEffect(() => localStorage.setItem('clai-monty', monty ? 'open' : 'closed'), [monty])
 
   // A `/theme` palette paints the page as it paints the terminal; `default` keeps Pydantic's colours in the chosen mode.
   const palette = state.theme?.palette ?? null
@@ -170,7 +170,7 @@ export function App() {
         void api.newSession().catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
       } else if (mod && event.key === 'j') {
         event.preventDefault()
-        setRepl((open) => !open)
+        setMonty((open) => !open)
       } else if (mod && event.key === ',') {
         event.preventDefault()
         setPlugins(true)
@@ -212,7 +212,7 @@ export function App() {
   )
 
   return (
-    <div className={`app ${sidebar ? '' : 'no-sidebar'} ${repl ? 'with-repl' : ''}`}>
+    <div className={`app ${sidebar ? '' : 'no-sidebar'} ${monty ? 'with-monty' : ''}`}>
       {sidebar && (
         <Sidebar
           ref={sidebarRef}
@@ -255,10 +255,10 @@ export function App() {
             </div>
           )}
           <button
-            className={`icon-button repl-toggle ${repl ? 'active' : ''}`}
-            onClick={() => setRepl(!repl)}
-            title={`${repl ? 'Hide' : 'Show'} the run_code REPL (${MOD}J)`}
-            aria-pressed={repl}
+            className={`icon-button monty-toggle ${monty ? 'active' : ''}`}
+            onClick={() => setMonty(!monty)}
+            title={`${monty ? 'Hide' : 'Show'} Monty, the run_code sandbox (${MOD}J)`}
+            aria-pressed={monty}
           >
             <TerminalIcon size={16} />
           </button>
@@ -339,12 +339,12 @@ export function App() {
           onNotice={showNotice}
         />
       )}
-      {repl && (
-        <ReplPanel
+      {monty && (
+        <MontyPanel
           entries={entries}
           status={status}
           running={state.running}
-          onClose={() => setRepl(false)}
+          onClose={() => setMonty(false)}
           onError={showError}
         />
       )}
