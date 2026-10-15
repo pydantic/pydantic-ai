@@ -224,6 +224,16 @@ result, as a standard run does
 from policy or by asking a person from inside the handler, or move that workflow to a standard agent
 run.
 
+The same handler decides on calls the provider runs itself, when it asks first: a tool on an MCP server
+configured on the provider's side to require approval, say. The call reaches the handler in
+`requests.approvals` like a function tool's, with what the provider says about it in `requests.metadata`.
+Approving it lets the provider run it, and denying it, or approving it with
+[`override_args`][pydantic_ai.tools.ToolApproved.override_args] (which the provider can't use), tells the
+provider no. With no handler, or one that doesn't decide, the call is denied. The call and its outcome
+are recorded as a [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and
+[`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart], like any other call the provider
+runs.
+
 Tools registered with `defer_loading=True` are rejected in a realtime session for a related reason;
 see [Deferred capability loading](capabilities.md#deferred-capability-loading).
 

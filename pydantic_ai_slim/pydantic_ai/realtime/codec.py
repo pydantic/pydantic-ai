@@ -127,6 +127,25 @@ class TruncateOutput:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False)
+class NativeToolApproval:
+    """The answer to a [`NativeToolApprovalRequest`][pydantic_ai.realtime.codec.NativeToolApprovalRequest].
+
+    Sent by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] once the session's approval handler
+    has decided, or denied by default when nothing approves the call.
+    """
+
+    tool_call_id: str
+    """The `tool_call_id` of the request this answers."""
+    _: KW_ONLY
+    approved: bool
+    """Whether the provider may run the call."""
+    reason: str | None = None
+    """Why the call was denied, for a provider that tells its model."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 RealtimeSessionInput = TypeAliasType('RealtimeSessionInput', 'str | BinaryContent')
 """The content types a caller feeds into [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send].
 
@@ -143,7 +162,7 @@ completes — neither is accepted by `send()`.
 
 RealtimeInput = TypeAliasType(
     'RealtimeInput',
-    'str | TextContext | BinaryAudio | BinaryImage | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput | ToolResult',
+    'str | TextContext | BinaryAudio | BinaryImage | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput | ToolResult | NativeToolApproval',
 )
 """Union of content types accepted by [`RealtimeConnection.send`][pydantic_ai.realtime.codec.RealtimeConnection.send].
 
@@ -153,8 +172,9 @@ already normalized: a `str` is a complete text turn that solicits a response,
 [`BinaryAudio`][pydantic_ai.messages.BinaryAudio] carries a raw mono PCM16 chunk at the model's
 [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
 (`media_type='audio/pcm'`), and a [`BinaryImage`][pydantic_ai.messages.BinaryImage] an image frame.
-The connection additionally accepts the turn-control verbs and
-[`ToolResult`][pydantic_ai.realtime.codec.ToolResult], which
+The connection additionally accepts the turn-control verbs,
+[`ToolResult`][pydantic_ai.realtime.codec.ToolResult], and
+[`NativeToolApproval`][pydantic_ai.realtime.codec.NativeToolApproval], which
 [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] sends on the caller's behalf.
 """
 
@@ -422,6 +442,38 @@ class InputRejected:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False)
+class NativeToolApprovalRequest:
+    """The provider asks to approve one of its own tool calls before it runs it.
+
+    For a tool the provider runs itself (an MCP server it connects to, say) that it was configured to run
+    only with approval: it holds the call until a
+    [`NativeToolApproval`][pydantic_ai.realtime.codec.NativeToolApproval] answers this request.
+    [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] asks the session's approval handler, as for a
+    function tool that requires approval (see
+    [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]), and denies the call
+    when nothing approves it.
+
+    The call itself, and its outcome, are the connection's to report, as a
+    [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and a
+    [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] (a denied call's included, when the
+    provider doesn't report one), like any other call the provider runs.
+    """
+
+    tool_call_id: str
+    """The provider's id for the call, which the [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] reporting it has too."""
+    _: KW_ONLY
+    tool_name: str
+    """The name of the tool the provider would call."""
+    args: str | dict[str, Any] | None = None
+    """The arguments the provider would call it with."""
+    metadata: dict[str, Any] | None = None
+    """What the provider says about the call (the MCP server it is on, say), handed to the approval handler as
+    [`DeferredToolRequests.metadata`][pydantic_ai.tools.DeferredToolRequests.metadata]."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 RealtimeCodecEvent = TypeAliasType(
     'RealtimeCodecEvent',
     AudioDelta
@@ -441,6 +493,7 @@ RealtimeCodecEvent = TypeAliasType(
     | ConversationCreated
     | ConversationItemCreated
     | InputRejected
+    | NativeToolApprovalRequest
     | PartStartEvent
     | PartEndEvent
     | RealtimeSessionErrorEvent,
@@ -671,6 +724,7 @@ __all__ = (
     'ConversationCreated',
     'ConversationItemCreated',
     'InputRejected',
+    'NativeToolApprovalRequest',
     'SessionUsage',
     # Turn-control verbs a connection accepts.
     'CommitAudio',
@@ -679,6 +733,7 @@ __all__ = (
     'TextContext',
     'CancelResponse',
     'TruncateOutput',
+    'NativeToolApproval',
     # Model-profile helpers for provider implementations.
     'merge_realtime_profile',
     'DEFAULT_AUDIO_SAMPLE_RATE',
