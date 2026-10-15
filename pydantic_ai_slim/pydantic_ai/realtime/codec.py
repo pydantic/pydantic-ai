@@ -336,6 +336,10 @@ class SessionUsage:
     `ModelResponse.usage`. `False` is run-level only, e.g. input audio transcription usage,
     which is billed on a separate model/meter and is accumulated into the run's `RunUsage`
     but attributed to no `ModelResponse`.
+
+    A response-scoped report read as the session closes, after its response was recorded, still counts as a
+    request (against `request_limit` too), but goes into the run total only: there's no response left to add it
+    (or its `provider_details`) to.
     """
 
     context_window_used: float | None = None
