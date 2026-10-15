@@ -273,4 +273,8 @@ def _validate_batch_group(model: OpenAIResponsesModel, group: str) -> None:
 def _batch_client(model: OpenAIResponsesModel) -> AsyncOpenAI:
     if model.batch_max_requests is None:
         raise UserError(f'The {model.system!r} provider does not support the OpenAI Batch API.')
-    return model.client
+    client = model.client
+    # A batch is grouped, submitted and polled with one credential, which an API key callback could vary per request.
+    if getattr(client, '_api_key_provider', None) is not None:
+        raise UserError('The OpenAI Batch API requires a static API key on the client, not an API key callback.')
+    return client

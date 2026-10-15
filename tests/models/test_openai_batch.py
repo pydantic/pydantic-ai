@@ -240,6 +240,17 @@ async def test_batch_encode_rejects_a_websocket_model(monkeypatch: pytest.Monkey
         await model.batch_encode(_request())
 
 
+async def test_batch_requires_a_static_api_key() -> None:
+    """A key callback could choose a different credential per request, while a batch is submitted and polled with one."""
+
+    async def api_key() -> str:
+        return 'tenant-key'  # pragma: no cover
+
+    model = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(openai_client=AsyncOpenAI(api_key=api_key)))
+    with pytest.raises(UserError, match='requires a static API key'):
+        await model.batch_encode(_request())
+
+
 @dataclass
 class _FakeBatchAPI:
     """Serves the Files and Batches endpoints a batch round trip uses."""
