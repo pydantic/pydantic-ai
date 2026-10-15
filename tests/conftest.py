@@ -1528,10 +1528,11 @@ def _hang_watchdog(request: pytest.FixtureRequest) -> Any:  # pragma: no cover  
     import threading
 
     def report() -> None:
-        os.write(2, f'\nHANG? {request.node.nodeid}\n'.encode())
+        # Crash the worker: xdist then names the test it was running.
         faulthandler.dump_traceback(all_threads=True)
+        os._exit(3)
 
-    timer = threading.Timer(120, report)
+    timer = threading.Timer(150, report)
     timer.daemon = True
     timer.start()
     yield
