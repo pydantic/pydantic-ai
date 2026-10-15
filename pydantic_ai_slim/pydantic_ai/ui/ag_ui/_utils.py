@@ -6,9 +6,9 @@ import importlib.metadata
 import json
 import re
 import warnings
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, Required
 
-from typing_extensions import Required, TypedDict
+from typing_extensions import TypedDict
 
 from ..._utils import is_str_dict
 from ...messages import ThinkingPart, ToolPartKind, parse_tool_kind, tool_return_content_ta

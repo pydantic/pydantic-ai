@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import os
 import re
 import shlex
 import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -834,6 +834,26 @@ class TestFilesystem:
             await backend.list_dir('/srv')
         assert '/srv/a' in str(exc.value)
 
+    async def test_list_dir_keeps_a_transient_symlink_failure_unchanged(
+        self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A rate limit propagates as raised, so durable engines can retry it.
+        backend = await started()
+        files = fake_e2b.sandboxes[0].files
+        await backend.make_dir('/srv')
+        files.symlinks['/srv/link'] = '/srv/target'
+        files.files['/srv/link'] = b''
+        error = RateLimitException('rate limited')
+
+        async def limited(path: str, user: str | None = None, request_timeout: float | None = None) -> Any:
+            raise error
+
+        monkeypatch.setattr(files, 'get_info', limited)
+        with pytest.raises(RateLimitException) as exc:
+            await backend.list_dir('/srv')
+        assert exc.value is error
+        assert exc.value.__cause__ is None
+
     async def test_symlink_whose_target_is_gone_reads_as_dangling(self, fake_e2b: FakeE2B) -> None:
         backend = await started()
         fake_e2b.sandboxes[0].files.symlinks['/srv/link'] = '/srv/removed'
@@ -999,19 +1019,12 @@ async def test_missing_key_is_reported_as_not_found(fake_e2b: FakeE2B) -> None:
     assert str(exc.value) == 'No E2B API key found. Set E2B_API_KEY in the environment.'
 
 
-def test_missing_e2b_extra_has_an_install_hint() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            '-c',
-            "import sys; sys.modules['e2b'] = None; import pydantic_ai_harness.e2b_sandbox",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode != 0
-    assert 'Install `pydantic-ai-harness[e2b]`' in result.stderr
+def test_missing_e2b_extra_has_an_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, 'e2b', None)
+    for name in [name for name in sys.modules if name.startswith('pydantic_ai_harness.e2b_sandbox')]:
+        monkeypatch.delitem(sys.modules, name)
+    with pytest.raises(ImportError, match=r'^Install `pydantic-ai-harness\[e2b\]` to use E2BSandbox\.$'):
+        importlib.import_module('pydantic_ai_harness.e2b_sandbox')
 
 
 async def test_command_timeout_starts_once_the_sandbox_is_acquired(fake_e2b: FakeE2B) -> None:

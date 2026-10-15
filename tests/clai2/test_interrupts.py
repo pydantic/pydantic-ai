@@ -2,7 +2,6 @@
 
 import asyncio
 import signal
-import sys
 
 import pytest
 
@@ -46,13 +45,25 @@ async def test_interrupt_cleans_up_and_preserves_parent(double: bool) -> None:
     assert signal.getsignal(signal.SIGINT) == original
     current = asyncio.current_task()
     assert current is not None
-    if sys.version_info >= (3, 11):  # 3.10 has no cancellation counter to leak.
-        assert current.cancelling() == 0
+    assert current.cancelling() == 0
 
     async def next_operation() -> None:
         return
 
     assert await interrupts.run(next_operation())
+
+
+async def test_signal_cancels_from_the_loop() -> None:
+    """Ctrl-C can land inside an asyncio callback, such as `asyncio.shield` settling its result, which must finish first."""
+
+    async def operation() -> None:
+        current = asyncio.current_task()
+        assert current is not None
+        signal.raise_signal(signal.SIGINT)
+        assert current.cancelling() == 0
+        await asyncio.Event().wait()
+
+    assert not await Interrupts().run(operation())
 
 
 async def test_external_cancellation_propagates() -> None:

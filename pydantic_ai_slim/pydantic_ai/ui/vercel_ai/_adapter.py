@@ -7,10 +7,9 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, InitVar, dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, assert_never, cast
 
 from pydantic import TypeAdapter
-from typing_extensions import assert_never
 
 from pydantic_ai._utils import is_str_dict as _is_str_dict
 
@@ -124,6 +123,13 @@ _MEDIA_PREFIX_TO_URL_TYPE: dict[str, type[ImageUrl | AudioUrl | VideoUrl]] = {
     'image': ImageUrl,
     'video': VideoUrl,
     'audio': AudioUrl,
+}
+
+_KIND_TO_URL_TYPE: dict[str, type[ImageUrl | AudioUrl | VideoUrl | DocumentUrl]] = {
+    ImageUrl.kind: ImageUrl,
+    VideoUrl.kind: VideoUrl,
+    AudioUrl.kind: AudioUrl,
+    DocumentUrl.kind: DocumentUrl,
 }
 
 
@@ -357,7 +363,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     identifier=provider_meta.get('identifier'),
                                 )
                             else:
-                                url_type = _MEDIA_PREFIX_TO_URL_TYPE.get(part.media_type.split('/', 1)[0], DocumentUrl)
+                                if part.media_type:
+                                    url_type = _MEDIA_PREFIX_TO_URL_TYPE.get(
+                                        part.media_type.split('/', 1)[0], DocumentUrl
+                                    )
+                                else:
+                                    # A URL Pydantic AI could not read a media type out of, dumped with an
+                                    # empty one: recover the kind from the metadata written alongside it,
+                                    # rather than letting the empty media prefix make everything a document.
+                                    # `provider_metadata` is the client's to send, so normalize before the
+                                    # lookup, which falls back to a document on anything we didn't write.
+                                    url_type = _KIND_TO_URL_TYPE.get(str(provider_meta.get('kind')), DocumentUrl)
                                 file = url_type(
                                     url=part.url,
                                     media_type=part.media_type,
@@ -1103,15 +1119,22 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                     )
                 )
             elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):
+                try:
+                    media_type = item.media_type
+                except ValueError:
+                    media_type = ''
                 ui_parts.append(
                     FileUIPart(
                         url=item.url,
-                        media_type=item.media_type,
+                        media_type=media_type,
                         # Round-trip vendor_metadata (e.g. OpenAI/xAI image `detail`,
                         # Google `video_metadata`) and non-default `force_download`; see `FileUrl`.
+                        # `kind` only for a URL we could not read a media type out of: the media type
+                        # is what the kind is normally recovered from, and `''` recovers nothing.
                         provider_metadata=dump_provider_metadata(
                             force_download=item.force_download or None,
                             vendor_metadata=item.vendor_metadata,
+                            kind=None if media_type else item.kind,
                         ),
                     )
                 )
@@ -1173,8 +1196,9 @@ def _normalize_client_file_shapes(value: Any) -> Any:
     - `{kind: 'image-url', url: ...}` and its three siblings with no `media_type`: the union requires
       one of a URL item, so we infer it here the way the type itself would, by building the item and
       reading back the media type it derived from the URL. A URL the type cannot derive one from is
-      left alone, and reaches the agent as the ordinary mapping it is rather than as a file that would
-      raise the moment the history is dumped.
+      left as the client sent it: with `media_type` absent or empty it reaches the agent as the
+      ordinary mapping it is, and with `null`, the value our own dump writes for such a URL, as a file
+      with no media type.
 
     Everything else is passed through, and a plain user mapping that merely reuses one of our `kind`
     values keeps the values its tool put in it: the binary branch is gated on the `media_type` a real

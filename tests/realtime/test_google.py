@@ -667,6 +667,7 @@ def test_ws_trace_context_does_not_duplicate_a_differently_cased_header() -> Non
     assert headers == {'Traceparent': 'preset'}
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_ws_connect_lock_is_per_event_loop() -> None:
     # The lock is process-wide by intent (it guards a replacement of the `google.genai.live.ws_connect`
     # module global), but an `anyio.Lock` binds to the loop it is first used on, so one shared instance

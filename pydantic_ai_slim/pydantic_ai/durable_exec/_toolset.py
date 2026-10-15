@@ -6,17 +6,17 @@ import inspect
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, replace
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, TypeAlias, assert_never, cast
 
 import anyio
 from pydantic import Discriminator, Tag, ValidationError
 from pydantic_core import PydanticCustomError, PydanticSerializationError, to_jsonable_python
-from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._agent_graph import build_validation_context
 from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._run_context import ToolNamePath, with_tool_name_path, without_tool_name_path
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
@@ -207,7 +207,7 @@ async def get_dynamic_tools(toolset: AbstractToolset[AgentDepsT], ctx: RunContex
     async with toolset_for_unit(toolset, ctx) as run_toolset:
         run_toolset = await run_toolset.for_run_step(ctx)
         tools = await run_toolset.get_tools(ctx)
-        instructions = await run_toolset.get_instructions(ctx)
+        instructions = await run_toolset.get_instructions(without_tool_name_path(ctx))
         return DynamicToolsResult(
             tools={
                 name: DynamicToolInfo(
@@ -268,8 +268,9 @@ async def call_dynamic_tool(
     async with toolset_for_unit(toolset, ctx) as run_toolset:
         run_toolset = await run_toolset.for_run_step(ctx)
         tool = await _dynamic_tool(toolset, run_toolset, name, tool_def, ctx)
-        args = tool.args_validator.validate_python(tool_args, context=validation_context(ctx))
-        return await run_toolset.call_tool(name, args, ctx, tool)
+        tool_ctx = without_tool_name_path(ctx)
+        args = tool.args_validator.validate_python(tool_args, context=validation_context(tool_ctx))
+        return await run_toolset.call_tool(name, args, tool_ctx, tool)
 
 
 async def validate_dynamic_tool_args(
@@ -285,7 +286,7 @@ async def validate_dynamic_tool_args(
     async with toolset_for_unit(toolset, ctx) as run_toolset:
         run_toolset = await run_toolset.for_run_step(ctx)
         tool = await _dynamic_tool(toolset, run_toolset, name, tool_def, ctx)
-        await validate_tool_args(tool, tool_args, ctx, validation_context=validation_context)
+        await validate_tool_args(tool, tool_args, without_tool_name_path(ctx), validation_context=validation_context)
 
 
 async def validate_tool_args(
@@ -752,6 +753,7 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
         self._validate_args_operation = validate_args_operation
         self._resolve_validation_config = resolve_validation_config or resolve_tool_config
         self._run_instructions: Instructions = None
+        self._run_tool_name_path: ToolNamePath = ()
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         if not self._in_durable_context():
@@ -760,11 +762,12 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
             # (The wrapped `DynamicToolset` only resolves in `for_run`; delegating the
             # individual methods to the unresolved factory would silently yield no tools.)
             return await self.wrapped.for_run(ctx)
-        # Per-run copy isolates `_run_instructions` and `_run_held` from the process-shared
-        # instance. The shallow copy shares the engine-registered operations; this is only state
-        # isolation.
+        # Per-run copy isolates `_run_instructions`, `_run_tool_name_path` and `_run_held` from the
+        # process-shared instance. The shallow copy shares the engine-registered operations; this is
+        # only state isolation.
         run_copy = copy.copy(self)
         run_copy._run_instructions = None
+        run_copy._run_tool_name_path = ()
         run_copy._run_held = None
         if not self._dynamic_toolset.per_run_step and (toolset_id := self._dynamic_toolset.id) is not None:
             # `per_run_step=False` is the factory's own statement that one resolution covers the
@@ -784,9 +787,22 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
         return self
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        self._run_tool_name_path = ctx._tool_name_path  # pyright: ignore[reportPrivateUsage]
         result = await self._get_tools_operation(self._ctx_for_unit(ctx))
         self._run_instructions = result.instructions
         return {name: self._tool_for_info(name, info) for name, info in result.tools.items()}
+
+    def _ctx_for_unit(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        """Also attach the tool name path the tools were listed under.
+
+        The validate and call units resolve the tool by listing the toolset again, which re-runs its
+        `prepare`. Only listing carries the path, so without it they would read a different retry
+        count than discovery did, and could drop a tool that discovery listed.
+        """
+        unit_ctx = super()._ctx_for_unit(ctx)
+        if unit_ctx._tool_name_path == self._run_tool_name_path:  # pyright: ignore[reportPrivateUsage]
+            return unit_ctx
+        return with_tool_name_path(unit_ctx, self._run_tool_name_path)
 
     def _tool_for_info(self, name: str, info: DynamicToolInfo) -> ToolsetTool[AgentDepsT]:
         tool = ToolsetTool[AgentDepsT](
@@ -890,7 +906,8 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         cache_key = self.id or ''
         if self._mcp_toolset.cache_tools and (cached := ctx._mcp_tool_defs_cache.get(cache_key)) is not None:  # pyright: ignore[reportPrivateUsage]
             return {name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in cached.items()}
-        tool_defs = await self._get_tools_operation(self._ctx_for_unit(ctx))
+        # Listing an MCP server reads no retry counts, so its discovery unit gets no name path.
+        tool_defs = await self._get_tools_operation(self._ctx_for_unit(without_tool_name_path(ctx)))
         if self._mcp_toolset.cache_tools:
             ctx._mcp_tool_defs_cache[cache_key] = tool_defs  # pyright: ignore[reportPrivateUsage]
         return {name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in tool_defs.items()}

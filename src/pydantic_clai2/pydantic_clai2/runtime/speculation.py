@@ -1,12 +1,15 @@
-"""The Speculative Execution switch, its session counters, and the pinned row they paint.
+"""The code mode and Speculative Execution switches, the session counters, and the pinned row they paint.
 
-The switch is the `run.speculative_code_mode` setting, off by default. `Ctrl+X Ctrl+S` flips
-it; the next turn honours the new value and a run already in flight keeps the tools it started
-with. The wiring itself lives in `speculative_mode`, imported only while the switch is on so
-Monty stays out of startup.
+`run.code_mode`, on by default, folds tools into an eager `run_code` sandbox. The speculation switch
+is the `run.speculative_code_mode` setting, off by default; it also launches read-only calls early,
+and turns on code mode for its runs. `Ctrl+X Ctrl+S` flips it and saves it at once. Core binds a run's tools when it starts, so a turn already running keeps
+the tools it started with and the next prompt uses the new value; meanwhile the pinned row keeps
+counting for the running turn and says the change is pending. The wiring itself lives in
+`speculative_mode`, imported only when a run binds it so Monty stays out of startup.
 """
 
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from rich.console import Console
@@ -14,6 +17,7 @@ from rich.console import Console
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.ui.rendering import theme
 
 SETTING = 'run.speculative_code_mode'
@@ -67,38 +71,67 @@ class Speculation:
     context: CommandContext
     console: Console
     counters: SpeculationCounters = field(default_factory=SpeculationCounters)
+    repl_states: ReplStates | None = None
+    """Where each session's `run_code` REPL is kept between prompts; `None` keeps it to one run."""
+    _running: bool | None = field(default=None, init=False, repr=False)
+    """The switch as the running turn bound it, or `None` between turns."""
 
     @property
     def enabled(self) -> bool:
         """Read the saved setting each time, so `/set` and the chord agree."""
         return self.context.settings.speculative_code_mode
 
+    @property
+    def _pending(self) -> bool:
+        """Whether the switch differs from what the running turn bound."""
+        return self._running is not None and self._running != self.enabled
+
+    @contextmanager
+    def turn(self) -> Generator[None]:
+        """Remember the switch as the turn starting now binds it, until the turn ends."""
+        self._running = self.enabled
+        try:
+            yield
+        finally:
+            self._running = None
+
     def toggle(self) -> str:
         """Flip and persist the switch; return the footer notice."""
         enabled = not self.enabled
         self.context.set_setting([SETTING, 'true' if enabled else 'false'])
         state = 'on' if enabled else 'off'
-        return f'Speculative execution {state} from the next turn. {TOGGLE_KEYS} toggles it.'
+        if self._pending:
+            return f'Speculative execution {state} from the next prompt; this turn keeps its tools.'
+        return f'Speculative execution {state}. {TOGGLE_KEYS} toggles it.'
 
     def row(self) -> str:
-        """The pinned stats row while the switch is on; nothing while it is off."""
-        return self.counters.row() if self.enabled else ''
+        """The pinned stats row while the switch or the running turn has speculation on.
 
-    def capabilities(self, granted: Sequence[AgentCapability[AgentDepsT]]) -> 'list[AbstractCapability[AgentDepsT]]':
-        """The speculative CodeMode bundle for one run, or nothing while the switch is off.
-
-        `granted` is the run's other capabilities; the sandbox mounts only what their `FileSystem` allows.
+        When the two differ, the row says what the next prompt gets.
         """
-        if not self.enabled:
+        if not (self.enabled or self._running):
+            return ''
+        if not self._pending:
+            return self.counters.row()
+        state = 'on' if self.enabled else 'off'
+        return f'{self.counters.row()}    {theme.sgr(theme.MUTED)}{state} from the next prompt\x1b[0m'
+
+    def capabilities(
+        self, granted: Sequence[AgentCapability[AgentDepsT]] | None
+    ) -> 'list[AbstractCapability[AgentDepsT]]':
+        """The CodeMode bundle for one run, speculating while the switch is on, or nothing with code mode off.
+
+        `granted` is the run's other capabilities; the sandbox mounts only what their `FileSystem` allows,
+        and nothing when they are unknown (`None`).
+        """
+        if not (self.enabled or self.context.settings.code_mode):
             return []
         try:
             from pydantic_clai2.runtime.speculative_mode import speculative_capabilities
         except ImportError as exc:
-            self.console.print(
-                f'Speculative execution is unavailable: {exc}', style=theme.color(theme.WARNING), markup=False
-            )
+            self.console.print(f'Code mode is unavailable: {exc}', style=theme.color(theme.WARNING), markup=False)
             return []
-        return speculative_capabilities(self.counters, granted)
+        return speculative_capabilities(self.counters, granted, speculate=self.enabled, repl_states=self.repl_states)
 
 
 def _lit(on: bool, text: str, role: str) -> str:

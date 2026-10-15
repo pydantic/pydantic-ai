@@ -196,6 +196,10 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
     # Verified live 2026-09-06: the Developer API 404s this id toward `gemini-3.1-pro-preview`.
     # The level set is from Google's documented thinking table.
     ('gemini-3-pro-preview', frozenset(('LOW', 'HIGH'))),
+    # https://ai.google.dev/gemini-api/docs/generate-content/long-decode: "Gemini 4 Argon does not support
+    # minimal. Use low, medium, or high." Verified live 2026-10-13 against the Gemini API and Vertex `global`:
+    # `LOW`, `MEDIUM` and `HIGH` are accepted, `MINIMAL` returns 400.
+    ('gemini-4-argon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
 )
 """Model name prefixes mapped to their documented thinking levels."""
 
@@ -488,6 +492,14 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
         # `$defs`/`$ref` and `anyOf [X, null]` have no OpenAPI-subset equivalent, so definitions are
         # inlined and a nullable union becomes the plain type plus `nullable: true`.
         super().__init__(schema, strict=strict, prefer_inlined_defs=True, simplify_nullable_unions=True)
+
+    def _handle_object(self, schema: JsonSchema) -> JsonSchema:
+        # `transform` drops `additionalProperties` and `Schema` has no `patternProperties`, so neither
+        # subschema reaches Gemini. Walking them anyway would refuse a recursive `dict[str, Node]` over a
+        # `$ref` the declaration doesn't contain.
+        schema.pop('additionalProperties', None)
+        schema.pop('patternProperties', None)
+        return super()._handle_object(schema)
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         # `additionalProperties` is mishandled by Gemini, so a `dict[str, MyType]` field always arrives
