@@ -262,6 +262,11 @@ def test_binary_content_video(media_type: str, format: str):
         ('text/html', 'html'),
         ('text/markdown', 'md'),
         ('application/vnd.ms-excel', 'xls'),
+        ('application/vnd.openxmlformats-officedocument.presentationml.presentation', 'pptx'),
+        ('application/vnd.ms-powerpoint', 'ppt'),
+        ('application/rtf', 'rtf'),
+        ('text/rtf', 'rtf'),
+        ('application/vnd.oasis.opendocument.text', 'odt'),
     ],
 )
 def test_binary_content_document(media_type: str, format: str):
@@ -334,6 +339,15 @@ _url_formats = [
     ),
     pytest.param(DocumentUrl('foobar.html'), 'text/html', 'html', id='html'),
     pytest.param(DocumentUrl('foobar.xls'), 'application/vnd.ms-excel', 'xls', id='xls'),
+    pytest.param(
+        DocumentUrl('foobar.pptx'),
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'pptx',
+        id='pptx',
+    ),
+    pytest.param(DocumentUrl('foobar.ppt'), 'application/vnd.ms-powerpoint', 'ppt', id='ppt'),
+    pytest.param(DocumentUrl('foobar.rtf'), 'application/rtf', 'rtf', id='rtf'),
+    pytest.param(DocumentUrl('foobar.odt'), 'application/vnd.oasis.opendocument.text', 'odt', id='odt'),
 ]
 if sys.version_info > (3, 11):  # pragma: no branch
     # This solves an issue with MIMEType on MacOS + python < 3.12. mimetypes.py added the text/markdown in 3.12, but on

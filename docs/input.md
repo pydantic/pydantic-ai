@@ -86,7 +86,7 @@ print(result.output)
 #> This document is the technical report introducing Gemini 1.5, Google's latest large language model...
 ```
 
-The supported document formats vary by model.
+Pydantic AI recognizes PDF, plain text, CSV, HTML, Markdown, Word (`.doc`, `.docx`), Excel (`.xls`, `.xlsx`), PowerPoint (`.ppt`, `.pptx`), RTF and OpenDocument text (`.odt`) documents (see [`DocumentFormat`][pydantic_ai.messages.DocumentFormat]), but the supported document formats vary by model.
 
 You can also use [`BinaryContent`][pydantic_ai.BinaryContent] to pass document data directly:
 

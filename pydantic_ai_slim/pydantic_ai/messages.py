@@ -75,6 +75,8 @@ for file in mimetypes.knownfiles:
         _mime_types.read(file)  # pragma: lax no cover
 # Document types
 _mime_types.add_type('application/rtf', '.rtf')
+_mime_types.add_type('application/vnd.oasis.opendocument.text', '.odt')
+_mime_types.add_type('application/vnd.openxmlformats-officedocument.presentationml.presentation', '.pptx')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx')
 _mime_types.add_type('text/markdown', '.mdx')
@@ -121,6 +123,11 @@ DocumentMediaType: TypeAlias = Literal[
     'text/markdown',
     'application/msword',
     'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/vnd.ms-powerpoint',
+    'application/rtf',
+    'text/rtf',
+    'application/vnd.oasis.opendocument.text',
 ]
 VideoMediaType: TypeAlias = Literal[
     'video/x-matroska',
@@ -135,7 +142,9 @@ VideoMediaType: TypeAlias = Literal[
 
 AudioFormat: TypeAlias = Literal['wav', 'mp3', 'oga', 'flac', 'aiff', 'aac']
 ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp']
-DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx']
+DocumentFormat: TypeAlias = Literal[
+    'csv', 'doc', 'docx', 'html', 'md', 'odt', 'pdf', 'ppt', 'pptx', 'rtf', 'txt', 'xls', 'xlsx'
+]
 VideoFormat: TypeAlias = Literal['mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp']
 
 FinishReason: TypeAlias = Literal[
@@ -1082,6 +1091,11 @@ _document_format_lookup: dict[str, DocumentFormat] = {
     'text/markdown': 'md',
     'application/msword': 'doc',
     'application/vnd.ms-excel': 'xls',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+    'application/vnd.ms-powerpoint': 'ppt',
+    'application/rtf': 'rtf',
+    'text/rtf': 'rtf',
+    'application/vnd.oasis.opendocument.text': 'odt',
 }
 _audio_format_lookup: dict[str, AudioFormat] = {
     'audio/mpeg': 'mp3',
