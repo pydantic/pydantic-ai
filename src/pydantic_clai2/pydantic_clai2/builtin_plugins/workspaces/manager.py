@@ -147,6 +147,10 @@ class Workspaces:
     async def token(self, workspace_id: str) -> str:
         """The token of the workspace's running CLAI, for a client; `RuntimeError` when none runs."""
         workspace = await self.get(workspace_id)
+        problem = RuntimeError(f'Workspace {workspace_id} has no CLAI running. Start it first.')
         if workspace.status != 'running' or workspace.session is None:
-            raise RuntimeError(f'Workspace {workspace_id} has no CLAI running. Start it first.')
-        return await to_thread.run_sync(read_token, workspace.session)
+            raise problem
+        try:
+            return await to_thread.run_sync(read_token, workspace.session)
+        except FileNotFoundError:  # Stopped meanwhile, by this CLAI or another.
+            raise problem from None
