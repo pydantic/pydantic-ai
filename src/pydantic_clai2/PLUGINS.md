@@ -1281,6 +1281,70 @@ The UI is a React app in `web-ui/` in the CLAI source tree. Its built files ship
 package, so running it needs no Node. After changing it, run `npm ci && npm run build` there and
 commit the rebuilt `pydantic_clai2/builtin_plugins/web/static/`.
 
+`clai2 --web --port PORT` replaces the saved port for one launch. `--token-file PATH` replaces the
+launch's random token with the one in PATH, which must belong to you, be readable by you alone
+(mode 0600), and hold one URL-safe token of at least 32 characters. That is for a program that
+starts CLAI and talks to it, such as the `workspaces` plugin: the address is printed without the
+token, and no browser opens.
+
+### `workspaces`: checkouts with their own CLAI
+
+The built-in `workspaces` plugin (`pydantic_clai2.builtin_plugins.workspaces`) starts disabled.
+Enable it with `/plugins enable workspaces`. A workspace is a checkout of a repository on its own
+branch, with its own CLAI running there as `clai2 --web`.
+
+| Command | Does |
+|---|---|
+| `/workspaces` or `/workspaces list` | every workspace: its ID, status (`ready`, `running at URL`, `stopped`), kind, branch, and folder |
+| `/workspaces create KIND [REPO [REF]]` | check out REPO at REF on a new branch named after the workspace's ID; the kind's own repository and ref fill in what is left out |
+| `/workspaces open ID` | start the workspace's CLAI unless it runs, and open its page in your browser |
+| `/workspaces stop ID` | stop its CLAI as Ctrl-C would, killing it after ten seconds |
+| `/workspaces destroy ID` | stop its CLAI, remove the checkout (or keep it, as the kind says), and forget it; the branch is kept |
+
+**Kinds.** The settings are named kinds of workspace, each a backend with its options, edited in
+the settings menu (`/plugins configure workspaces`, or the web UI's plugins panel), which also adds
+and removes kinds. `local-worktree` is the only backend so far: a linked Git worktree on this
+machine. Its CLAI runs as you, in your environment, with your CLAI settings and sign-ins, so nothing
+is copied into it. The default settings have one kind of that name:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `repo` | empty | the repository when `create` names none: a local path, or a URL |
+| `ref` | empty | the branch, tag, or commit to start from when `create` names none; empty is the repository's `HEAD` |
+| `root` | empty | the folder checkouts go in, an absolute path; empty is `.worktrees/` in the repository, as for `clai2 --worktree` |
+| `branch_prefix` | `clai-` | each workspace's branch is this prefix and its ID |
+| `teardown` | `remove` | `destroy` removes the checkout, uncommitted changes included, or `keep`s it |
+| `model` | empty | the model the workspace's CLAI starts with; empty is your saved default |
+
+A local path is checked out from that repository. A URL is cloned once into
+`$XDG_STATE_HOME/pydantic-clai2/workspaces/clones/` and fetched again for each new workspace, with
+your own Git credentials; a REF names `origin`'s branch first. The new branch tracks nothing, so the
+first push names its remote branch.
+
+**The registry.** Each workspace has a folder in `$XDG_STATE_HOME/pydantic-clai2/workspaces/registry/`
+(`~/.local/state/...` by default), readable by you alone: `workspace.json` (kind, repository, ref,
+branch, folder, status, creation time, teardown, and its CLAI's process ID and port), and while its
+CLAI runs, `token` and `session.log`. Every CLAI reads the same folders, so a workspace made in one
+session can be opened and destroyed from another, and its CLAI keeps running when the CLAI that
+started it quits or unloads the plugin. A workspace whose CLAI has ended reads as `stopped`.
+
+**Security.** A workspace's CLAI listens on 127.0.0.1 only, on a free port, with its own random
+token, written to its `token` file (mode 0600) and passed with `--token-file`, never on a command
+line or in a log; `/workspaces` never prints it. `open` hands the browser the address through a
+page in the same folder that only you can read. `stop` signals a process only after it answered
+with its token, so a process ID the system gave to another program is left alone. `destroy` removes
+only a checkout named after the workspace directly inside the folder it was made in, through
+`git worktree remove`, which also refuses anything that is not a worktree. Workspace sessions run on
+macOS and Linux.
+
+**From another plugin.** `pydantic_clai2.builtin_plugins.workspaces` exports `Workspaces`, what
+`/workspaces` calls, built from the kinds: `Workspaces(kinds=settings.kinds)`. Read the user's kinds
+from `host.plugins` (the `workspaces` row's `settings`, a `WorkspacesSettings`). Its methods:
+`listing()`, `get(id)`, `create(kind=, repo=, ref=)`, `start(id)`, `stop(id)`, `destroy(id)`, each
+returning a `Workspace` record, and `token(id)`, the running CLAI's token, for a client that talks to
+it; never show it to the model. A new backend implements `backend.Backend`: `create`, `start`,
+`alive`, `stop`, and `destroy`.
+
 ### `github`: tools from GitHub's hosted MCP server
 
 The `github` built-in (`pydantic_clai2.builtin_plugins.github`) gives the model harness

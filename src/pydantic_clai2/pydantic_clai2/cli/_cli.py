@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import os
+import re
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -63,6 +64,18 @@ def run(*, splash: Splash | None = None) -> None:
         '--web',
         action='store_true',
         help='Drive CLAI from a local web UI instead of the terminal prompt; prints the address and opens it',
+    )
+    parser.add_argument(
+        '--port', type=int, metavar='PORT', help='With --web, listen on PORT for this launch instead of the saved port'
+    )
+    parser.add_argument(
+        '--token-file',
+        type=Path,
+        metavar='PATH',
+        help=(
+            "With --web, read this launch's access token from PATH, a file only you can read, instead of making one; "
+            'the address printed leaves it out and no browser opens'
+        ),
     )
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
@@ -138,6 +151,8 @@ def run(*, splash: Splash | None = None) -> None:
                     resume_from=args.resume_from,
                     session_id=args.session_id,
                     fork_session=args.fork_session,
+                    port=args.port,
+                    token=None if args.token_file is None else read_token(args.token_file),
                 )
             )
             return
@@ -258,6 +273,20 @@ def relaunch_argv(
     return argv
 
 
+_TOKEN = re.compile(r'[A-Za-z0-9_-]{32,256}')
+
+
+def read_token(path: Path) -> str:
+    """The access token in `path`; `ValueError` unless only this user can read the file and it holds a long random token."""
+    info = path.stat()
+    if sys.platform != 'win32' and (info.st_mode & 0o077 or info.st_uid != os.geteuid()):
+        raise ValueError(f'{path} must belong to you and be readable by you alone (mode 0600).')
+    token = path.read_text(encoding='utf-8').strip()
+    if not _TOKEN.fullmatch(token):
+        raise ValueError(f'{path} must hold one URL-safe token of at least 32 characters.')
+    return token
+
+
 def _add_resume_flags(parser: argparse.ArgumentParser) -> None:
     """`--resume` and its Claude Code and Codex counterparts, of which one may be given."""
     flags = parser.add_mutually_exclusive_group()
@@ -304,6 +333,10 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
             parser.error('--web cannot be combined with config, plugins, --prompt, or --agent')
         if args.resume == '':
             parser.error('--web requires an explicit --resume SESSION-ID')
+    elif args.port is not None or args.token_file is not None:
+        parser.error('--port and --token-file need --web')
+    if args.port is not None and not 0 < args.port < 65536:
+        parser.error('--port must be between 1 and 65535')
     if args.prompt is not None:
         if args.command:
             parser.error('--prompt cannot be combined with config or plugins')

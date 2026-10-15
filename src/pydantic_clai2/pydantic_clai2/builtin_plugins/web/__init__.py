@@ -80,6 +80,8 @@ class WebPlugin(Plugin[WebSettings]):
         super().__init__(host, settings)
         self.token = secrets.token_urlsafe(32)
         """Checked on every request; new each launch, so an old link stops working."""
+        self.port: int | None = None
+        """This launch's port, replacing the saved one, as `clai2 --web --port` sets it."""
         self.hub = Hub()
         terminal = (
             TerminalAnswerer(full_screen=host.full_screen, console=host.console) if host.console.is_terminal else None
@@ -158,7 +160,9 @@ class WebPlugin(Plugin[WebSettings]):
                 hosts |= frozenset(names)
             return create_app(remote=self.remote, token=self.token, hosts=hosts)
 
-        self.server = WebServer.serve(app, host=self.settings.host, port=self.settings.port)
+        self.server = WebServer.serve(
+            app, host=self.settings.host, port=self.settings.port if self.port is None else self.port
+        )
         self.url = f'http://{address}:{self.server.port}/?token={self.token}'
         return self.url
 

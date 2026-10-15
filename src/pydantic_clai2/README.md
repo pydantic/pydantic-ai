@@ -139,6 +139,29 @@ the link private. The `web` plugin starts disabled; `/web` works once it is enab
 `/plugins enable web`, and `--web` loads it for that launch only. See
 [the plugin guide](PLUGINS.md#web-this-session-in-your-browser) for settings and limits.
 
+`clai2 --web --port PORT` listens on PORT for that launch. `--token-file PATH` takes the launch's
+token from a file only you can read, instead of making one, for a program that starts CLAI and
+keeps the token itself: the printed address leaves it out, and no browser opens.
+
+## Workspaces
+
+The `workspaces` plugin makes workspaces: a checkout of a repository on its own branch, with its
+own CLAI. Turn it on with `/plugins enable workspaces`, then:
+
+```text
+/workspaces create local-worktree ~/code/pydantic-ai main
+/workspaces open pydantic-ai-3f2a9c
+```
+
+`create KIND [REPO [REF]]` checks out REPO (a local path, or a URL that CLAI clones once and
+fetches afterwards) at REF on a new branch, `clai-ID`. `open ID` starts that workspace's own
+`clai2 --web` in the checkout and opens it in your browser; `stop ID` stops it, and `destroy ID`
+stops it and removes the checkout, keeping the branch. `/workspaces` lists them all, from any
+CLAI: they are kept in CLAI's state directory, and a workspace's CLAI keeps running when the CLAI
+that started it quits. The kinds of workspace are the plugin's settings (`/plugins configure
+workspaces`, or the web UI's plugins panel); `local-worktree`, a Git worktree on this machine,
+is the one backend so far. See [the plugin guide](PLUGINS.md#workspaces-checkouts-with-their-own-clai).
+
 ## Herdr integration
 
 Enable `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane to report
