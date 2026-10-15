@@ -210,8 +210,16 @@ Each event has `event.name = 'gen_ai.evaluation.result'` and a short human-reada
 - `gen_ai.evaluation.target` — `@evaluate(target=...)` or agent `name`. See [Target](#target).
 - `gen_ai.evaluation.evaluator.version` — `Evaluator.evaluator_version` class attribute; omitted when the class doesn't set it. See [Evaluator Versioning](#evaluator-versioning).
 - `gen_ai.evaluation.evaluator.source` — JSON-serialized [`EvaluatorSpec`][pydantic_evals.evaluators.evaluator.EvaluatorSpec] identifying the evaluator class and its constructor arguments, so downstream queries can group by evaluator identity without relying on `name` alone (two different `LLMJudge(rubric=...)` instances share a name but have different sources).
+- `gen_ai.evaluation.id` — a fresh UUID per event, so consumers can deduplicate records that are delivered more than once.
 
-[OTel baggage](https://pydantic.dev/docs/logfire/reference/baggage/) entries (if any) are also attached to each event as attributes — configurable via `include_baggage` on the config. The `gen_ai.*` and `error.type` attributes above always win on conflict with baggage.
+The `logfire.evaluation.*` attributes make the record lossless and groupable, for consumers such as Logfire that read results back from these events:
+
+- `logfire.evaluation.kind` — the type of the evaluator's return value: `'assertion'` for `bool`, `'score'` for `int`/`float`, `'label'` for `str`. This tells a passed assertion apart from a `1.0` score or a `'pass'` label, which share `score.value`/`score.label`. Omitted on failure events, which have no value.
+- `logfire.evaluation.context` — where the evaluation ran: always `'online'` for online evaluation. The other values in the set are reserved for offline [`Dataset`][pydantic_evals.dataset.Dataset] evaluation (`'experiment'`) and for evaluators run by Logfire (`'hosted'`).
+- `logfire.evaluation.scoring_run_id` — a UUID shared by every event (results and failures) from one function or agent call's evaluators, including evaluators routed to different sinks. Each call gets a new ID, so consumers can group the results of one scoring pass.
+- `logfire.evaluation.schema_version` — the version of this record's attribute schema, currently `1`.
+
+[OTel baggage](https://pydantic.dev/docs/logfire/reference/baggage/) entries (if any) are also attached to each event as attributes — configurable via `include_baggage` on the config. The `gen_ai.*` and `error.type` attributes above always win on conflict with baggage, and baggage keys in the `logfire.evaluation.*` namespace are dropped.
 
 For example, the `OutputNotEmpty` evaluator above, decorated as `@evaluate(OutputNotEmpty(), target='customer_support')` and returning `True` for a given call, emits one event with:
 
@@ -220,10 +228,15 @@ For example, the `OutputNotEmpty` evaluator above, decorated as `@evaluate(Outpu
 - `gen_ai.evaluation.score.label = 'pass'`
 - `gen_ai.evaluation.target = 'customer_support'`
 - `gen_ai.evaluation.evaluator.source = '{"name":"OutputNotEmpty","arguments":null}'`
+- `gen_ai.evaluation.id = '<uuid>'`
+- `logfire.evaluation.kind = 'assertion'`
+- `logfire.evaluation.context = 'online'`
+- `logfire.evaluation.scoring_run_id = '<uuid>'`
+- `logfire.evaluation.schema_version = 1`
 
 An evaluator with constructor arguments gets those rendered into `source` — e.g. [`LLMJudge(rubric='Is the response helpful?')`][pydantic_evals.evaluators.LLMJudge] emits `gen_ai.evaluation.evaluator.source = '{"name":"LLMJudge","arguments":["Is the response helpful?"]}'`, so two `LLMJudge` instances with different rubrics remain distinguishable downstream.
 
-Attributes under `gen_ai.evaluation.evaluator.*` are pydantic-evals extensions — they aren't in the current OTel GenAI semconv, and their names may change to align with future semconv additions.
+`gen_ai.evaluation.id` and the attributes under `gen_ai.evaluation.evaluator.*` are pydantic-evals extensions — they aren't in the current OTel GenAI semconv, and their names may change to align with future semconv additions.
 
 To disable the default emission (e.g. in a test harness that only wants to assert on a custom sink), set `emit_otel_events=False` on the config:
 
