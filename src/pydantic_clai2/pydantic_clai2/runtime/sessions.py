@@ -188,22 +188,26 @@ class Sessions(Generic[DepsT, OutputT]):
             raise ValueError('Session changed. Refresh and rename again.')
 
     async def delete(self, conversation_id: str) -> None:
-        """Delete a saved conversation other than the current one; one running elsewhere is refused."""
+        """Delete a saved conversation other than the current one, with its REPL; one running elsewhere is refused."""
         if conversation_id == self.session.conversation_id:
             raise ValueError('The current session cannot be deleted. Switch to another one first.')
         source = (await self.store.get(conversation_id=conversation_id)).summary
-        await self.store.delete(source=source)
+        await self._delete(source)
 
     async def fork(self, conversation_id: str) -> ConversationSummary:
         """Save a copy of a conversation under a new ID, as `--fork-session` does, without switching to it.
 
         A copy of an interrupted conversation keeps its unanswered tool calls closed, so none is replayed.
+        The copy gets its own copy of the `run_code` REPL, as `/fork` and `--fork-session` give theirs.
         """
         saved = await self.store.get(conversation_id=conversation_id)
         messages = saved.messages
         if saved.summary.outcome in ('running', 'failed', 'cancelled'):
             messages = interrupted_history(messages)
-        return await self.store.save(summary=fork_summary(saved.summary), messages=messages)
+        copy = await self.store.save(summary=fork_summary(saved.summary), messages=messages)
+        if self.session.repl_states is not None:
+            self.session.repl_states.copy(source=saved.summary.id, target=copy.id)
+        return copy
 
     async def command(self, args: list[str]) -> str:
         """Shared command/startup resolver; loading history never executes pending tools.
