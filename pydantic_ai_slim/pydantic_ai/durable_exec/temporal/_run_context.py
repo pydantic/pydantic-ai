@@ -7,7 +7,7 @@ from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT, ToolNamePath
 from pydantic_ai.capabilities.abstract import select_workspace
-from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
+from pydantic_ai.durable_exec._toolset import DispatchSnapshots, EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.tools import RunContext
@@ -122,7 +122,11 @@ class TemporalRunContext(RunContext[AgentDepsT]):
         setattr(
             self,
             '__dataclass_fields__',
-            {name: field for name, field in RunContext.__dataclass_fields__.items() if name in self.__dict__},
+            {
+                name: field
+                for name, field in (RunContext.__dataclass_fields__ | DispatchSnapshots.__dataclass_fields__).items()
+                if name in self.__dict__
+            },
         )
 
     def __getattribute__(self, name: str) -> Any:
