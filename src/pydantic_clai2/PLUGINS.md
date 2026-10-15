@@ -1270,7 +1270,8 @@ The `github` built-in (`pydantic_clai2.builtin_plugins.github`) gives the model 
 MCP server, acting as the account behind a token. It starts disabled.
 `/plugins enable github`, or Space on it in `/plugins`, loads it and opens its
 settings menu. To change the settings later, run `/plugins configure github` or
-press `c` on it in `/plugins`.
+press `c` on it in `/plugins`. The same menu opens in the web UI's plugins
+panel, with the sign-in, key, and host steps shown as dialogs in the page.
 You never need to reinstall it.
 
 The menu is the shared field editor that `/set` uses: type to filter, Enter to
@@ -1295,11 +1296,12 @@ GitHub's hosted MCP server does not support dynamic client registration, so an
 MCP client can only use OAuth with an OAuth App registered to that client. CLAI
 doesn't register one. Instead it uses the GitHub CLI (`gh`), which has its own.
 Choosing **GitHub CLI (browser)** under Sign-in runs
-`gh auth login --hostname HOST --web --clipboard`. The menu shows the one-time
-code (`gh` also copies it to your clipboard) and opens
-`https://github.com/login/device` in your browser. Once you approve the code,
-the screen closes by itself. Enter opens the page again, and Esc stops `gh` and
-leaves the setting unchanged. If `gh` already has a login for the host, choosing
+`gh auth login --hostname HOST --web --clipboard`. A waiting screen shows the
+one-time code (`gh` also copies it to your clipboard) and the link to
+`https://github.com/login/device`, which it also opens in your browser. Once you
+approve the code, the screen closes by itself. Cancelling it (Esc in the
+terminal, or closing the dialog in the web UI) stops `gh` and leaves the setting
+unchanged. If `gh` already has a login for the host, choosing
 it just switches the plugin over. `HOST` is `github.com`, or the ghe.com host for
 GitHub Enterprise Cloud.
 
@@ -2637,7 +2639,7 @@ close** row; a list you build yourself ends with `save_and_close_item()` and tre
 a result as closed when `picked(result)` is `None`. For a row that opens something
 other than a plain value, pass `submenus` to `run_flow`, or await
 `field_menu.run_flow_async` when the submenu is itself async, such as
-`api_keys.prompt_api_key`. The built-in `github` plugin still works this way.
+`api_keys.prompt_api_key`.
 
 Plugin settings are plaintext SQLite. Never save a token, API key, or client
 secret in them: keep it in `/keys` with `prompt_api_key` and `save_key`, save only
