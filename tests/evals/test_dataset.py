@@ -1090,6 +1090,14 @@ def test_serialization_errors(tmp_path: Path):
     )
 
 
+def test_from_file_schema_mismatch(tmp_path: Path):
+    path = tmp_path / 'test_cases.yaml'
+    path.write_text('cases: not-a-list\n')
+
+    with pytest.raises(ValueError, match=r'test_cases\.yaml contains data that does not match the schema for Dataset'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(path)
+
+
 async def test_from_text():
     """Test creating a dataset from text."""
     dataset_dict = {

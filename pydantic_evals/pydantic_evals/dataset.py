@@ -607,7 +607,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 custom_report_evaluator_types=custom_report_evaluator_types,
                 default_name=path.stem,
             )
-        except ValidationError as e:  # pragma: no cover
+        except ValidationError as e:
             raise ValueError(f'{path} contains data that does not match the schema for {cls.__name__}:\n{e}.') from e
 
     @classmethod
